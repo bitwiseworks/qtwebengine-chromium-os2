@@ -20,9 +20,16 @@
 #include <stdlib.h>
 #include <functional>
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
 #include <fcntl.h>
 #include <io.h>
+#endif
+
+#ifdef __OS2__
+#define _fileno fileno
+#define _setmode setmode
+#define _O_BINARY O_BINARY
+#define _O_TEXT O_TEXT
 #endif
 
 #if defined(__SVR4) && defined(__sun)

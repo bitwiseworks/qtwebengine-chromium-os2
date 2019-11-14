@@ -62,12 +62,14 @@ class Platform(object):
             self._platform = 'aix'
         elif self._platform.startswith('dragonfly'):
             self._platform = 'dragonfly'
+        elif self._platform.startswith('os2'):
+            self._platform = 'os2'
 
     @staticmethod
     def known_platforms():
       return ['linux', 'darwin', 'freebsd', 'openbsd', 'solaris', 'sunos5',
               'mingw', 'msvc', 'gnukfreebsd', 'bitrig', 'netbsd', 'aix',
-              'dragonfly']
+              'dragonfly', 'os2']
 
     def platform(self):
         return self._platform
@@ -80,6 +82,9 @@ class Platform(object):
 
     def is_msvc(self):
         return self._platform == 'msvc'
+
+    def is_os2(self):
+        return self._platform == 'os2'
 
     def msvc_needs_fs(self):
         popen = subprocess.Popen(['cl', '/nologo', '/?'],
@@ -110,7 +115,7 @@ class Platform(object):
                 and not self.is_aix())
 
     def can_rebuild_in_place(self):
-        return not (self.is_windows() or self.is_aix())
+        return not (self.is_windows() or self.is_aix() or self.is_os2())
 
 class Bootstrap:
     """API shim for ninja_syntax.Writer that instead runs the commands.
@@ -281,7 +286,7 @@ def cc(name, **kwargs):
 def cxx(name, **kwargs):
     return n.build(built(name + objext), 'cxx', src(name + '.cc'), **kwargs)
 def binary(name):
-    if platform.is_windows():
+    if platform.is_windows() or platform.is_os2():
         exe = name + '.exe'
         n.build(name, 'phony', exe)
         return exe
@@ -298,7 +303,10 @@ n.variable('cxx', CXX)
 if platform.is_msvc():
     n.variable('ar', 'link')
 else:
-    n.variable('ar', configure_env.get('AR', 'ar'))
+    if platform.is_os2():
+        n.variable('ar', configure_env.get('AR', 'emxomfar'))
+    else:
+        n.variable('ar', configure_env.get('AR', 'ar'))
 
 if platform.is_msvc():
     cflags = ['/showIncludes',
@@ -334,8 +342,12 @@ else:
               '-Wno-unused-parameter',
               '-fno-rtti',
               '-fno-exceptions',
-              '-fvisibility=hidden', '-pipe',
+              '-pipe',
               '-DNINJA_PYTHON="%s"' % options.with_python]
+    if platform.is_os2():
+        cflags += ['-Zomf']
+    else:
+        cflags += ['-fvisibility=hidden']
     if options.debug:
         cflags += ['-D_GLIBCXX_DEBUG', '-D_GLIBCXX_DEBUG_PEDANTIC']
         cflags.remove('-fno-rtti')  # Needed for above pedanticness.
@@ -360,6 +372,8 @@ else:
         # printf formats for int64_t, uint64_t; large file support
         cflags.append('-D__STDC_FORMAT_MACROS')
         cflags.append('-D_LARGE_FILES')
+    if platform.is_os2():
+        ldflags += ['-Zomf', '-Zhigh-mem']
 
 
 libs = []
@@ -681,7 +695,7 @@ if options.bootstrap:
     if platform.can_rebuild_in_place():
         rebuild_args.append('./ninja')
     else:
-        if platform.is_windows():
+        if platform.is_windows() or platform.is_os2():
             bootstrap_exe = 'ninja.bootstrap.exe'
             final_exe = 'ninja.exe'
         else:

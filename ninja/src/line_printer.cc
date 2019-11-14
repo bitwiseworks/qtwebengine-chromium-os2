@@ -98,10 +98,16 @@ void LinePrinter::Print(string to_print, LineType type) {
 #else
     // Limit output to width of the terminal if provided so we don't cause
     // line-wrapping.
+#ifdef __OS2__
+    int size[2];
+    _scrsize(size);
+    to_print = ElideMiddle(to_print, size[0]);
+#else
     winsize size;
     if ((ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0) && size.ws_col) {
       to_print = ElideMiddle(to_print, size.ws_col);
     }
+#endif
     printf("%s", to_print.c_str());
     printf("\x1B[K");  // Clear to end of line.
     fflush(stdout);

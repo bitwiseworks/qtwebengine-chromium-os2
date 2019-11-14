@@ -26,8 +26,9 @@
 #include "getopt.h"
 #include <unistd.h>
 #else
-#include <getopt.h>
+// must come before getopt.h on OS/2, see https://github.com/bitwiseworks/libc/issues/44
 #include <unistd.h>
+#include <getopt.h>
 #endif
 
 #include "browse.h"

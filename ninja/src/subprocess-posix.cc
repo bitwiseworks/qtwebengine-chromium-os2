@@ -24,6 +24,15 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <spawn.h>
+#ifdef __OS2__
+#include <sys/socket.h>
+#endif
+
+#ifdef __OS2__
+#define BIN_SH "/@unixroot/usr/bin/sh"
+#else
+#define BIN_SH "/bin/sh"
+#endif
 
 extern char** environ;
 
@@ -43,8 +52,16 @@ Subprocess::~Subprocess() {
 
 bool Subprocess::Start(SubprocessSet* set, const string& command) {
   int output_pipe[2];
+#ifdef __OS2__
+  // Note that using socketpair instead of pipe breaks grabbing output from
+  // non-kLIBC processes but we need https://github.com/bitwiseworks/libcx/issues/34
+  // to make select work with native pipes.
+  if (socketpair(AF_LOCAL, SOCK_STREAM, 0, output_pipe) < 0)
+    Fatal("socketpair: %s", strerror(errno));
+#else
   if (pipe(output_pipe) < 0)
     Fatal("pipe: %s", strerror(errno));
+#endif
   fd_ = output_pipe[0];
 #if !defined(USE_PPOLL)
   // If available, we use ppoll in DoWork(); otherwise we use pselect
@@ -110,8 +127,8 @@ bool Subprocess::Start(SubprocessSet* set, const string& command) {
   if (err != 0)
     Fatal("posix_spawnattr_setflags: %s", strerror(err));
 
-  const char* spawned_args[] = { "/bin/sh", "-c", command.c_str(), NULL };
-  err = posix_spawn(&pid_, "/bin/sh", &action, &attr,
+  const char* spawned_args[] = { BIN_SH, "-c", command.c_str(), NULL };
+  err = posix_spawn(&pid_, BIN_SH, &action, &attr,
         const_cast<char**>(spawned_args), environ);
   if (err != 0)
     Fatal("posix_spawn: %s", strerror(err));
@@ -298,7 +315,13 @@ bool SubprocessSet::DoWork() {
   }
 
   interrupted_ = 0;
+#ifdef __OS2__
+  // TODO we might need to emulate pselect by calling setmask in an atomic manner,
+  // see e.g. https://linux.die.net/man/2/pselect
+  int ret = select(nfds, &set, 0, 0, 0);
+#else
   int ret = pselect(nfds, &set, 0, 0, 0, &old_mask_);
+#endif
   if (ret == -1) {
     if (errno != EINTR) {
       perror("ninja: pselect");

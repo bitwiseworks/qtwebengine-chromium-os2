@@ -82,7 +82,7 @@ TEST(CanonicalizePath, PathSamples) {
 
   path = "//foo";
   EXPECT_TRUE(CanonicalizePath(&path, &err));
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
   EXPECT_EQ("//foo", path);
 #else
   EXPECT_EQ("/foo", path);
@@ -109,7 +109,7 @@ TEST(CanonicalizePath, PathSamples) {
   EXPECT_EQ(".", path);
 }
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
 TEST(CanonicalizePath, PathSamplesWindows) {
   string path;
   string err;

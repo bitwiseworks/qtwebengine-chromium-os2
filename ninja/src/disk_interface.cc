@@ -28,13 +28,18 @@
 #include <direct.h>  // _mkdir
 #endif
 
+#if defined(__OS2__)
+// Until https://github.com/bitwiseworks/libc/issues/45 is done.
+#define st_mtim st_mtimespec
+#endif
+
 #include "metrics.h"
 #include "util.h"
 
 namespace {
 
 string DirName(const string& path) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__OS2__)
   static const char kPathSeparators[] = "\\/";
 #else
   static const char kPathSeparators[] = "/";
