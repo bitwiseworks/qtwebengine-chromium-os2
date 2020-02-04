@@ -70,7 +70,7 @@
 namespace {
 
 std::string FormatSourceDir(const SourceDir& dir) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // On Windows we fix up system absolute paths to look like native ones.
   // Internally, they'll look like "/C:\foo\bar/"
   if (dir.is_system_absolute()) {

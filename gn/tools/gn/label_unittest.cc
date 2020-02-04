@@ -36,7 +36,7 @@ TEST(Label, Resolve) {
     // Absolute paths.
     {"//chrome/", "/chrome:bar", true, "/chrome/", "bar", "//t/", "d"},
     {"//chrome/", "/chrome/:bar", true, "/chrome/", "bar", "//t/", "d"},
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
     {"//chrome/", "/C:/chrome:bar", true, "/C:/chrome/", "bar", "//t/", "d"},
     {"//chrome/", "/C:/chrome/:bar", true, "/C:/chrome/", "bar", "//t/", "d"},
     {"//chrome/", "C:/chrome:bar", true, "/C:/chrome/", "bar", "//t/", "d"},

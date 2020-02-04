@@ -125,7 +125,7 @@ LabelPattern LabelPattern::GetPattern(const SourceDir& current_dir,
   base::StringPiece path;
   base::StringPiece name;
   size_t offset = 0;
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   if (IsPathAbsolute(str)) {
     size_t drive_letter_pos = str[0] == '/' ? 1 : 0;
     if (str.size() > drive_letter_pos + 2 && str[drive_letter_pos + 1] == ':' &&

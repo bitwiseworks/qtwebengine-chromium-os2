@@ -229,7 +229,7 @@ TEST(NinjaActionTargetWriter, ForEach) {
       "stamp input1.out input2.out || obj/foo/datadep.stamp\n";
 
   std::string out_str = out.str();
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   std::replace(out_str.begin(), out_str.end(), '\\', '/');
 #endif
   EXPECT_EQ(expected_linux, out_str);

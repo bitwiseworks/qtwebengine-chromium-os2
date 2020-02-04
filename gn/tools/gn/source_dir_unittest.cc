@@ -12,7 +12,7 @@
 TEST(SourceDir, ResolveRelativeFile) {
   Err err;
   SourceDir base("//base/");
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   base::StringPiece source_root("C:/source/root");
 #else
   base::StringPiece source_root("/source/root");
@@ -59,7 +59,7 @@ TEST(SourceDir, ResolveRelativeFile) {
 
 // If the given relative path points outside the source root, we
 // expect an absolute path.
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   EXPECT_TRUE(base.ResolveRelativeFile(Value(nullptr, "../../foo"), &err,
                                        source_root) ==
               SourceFile("/C:/source/foo"));
@@ -101,7 +101,7 @@ TEST(SourceDir, ResolveRelativeFile) {
   EXPECT_FALSE(err.has_error());
 #endif
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // Note that we don't canonicalize the backslashes to forward slashes.
   // This could potentially be changed in the future which would mean we should
   // just change the expected result.
@@ -115,7 +115,7 @@ TEST(SourceDir, ResolveRelativeFile) {
 TEST(SourceDir, ResolveRelativeDir) {
   Err err;
   SourceDir base("//base/");
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   base::StringPiece source_root("C:/source/root");
 #else
   base::StringPiece source_root("/source/root");
@@ -148,7 +148,7 @@ TEST(SourceDir, ResolveRelativeDir) {
 
 // If the given relative path points outside the source root, we
 // expect an absolute path.
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   EXPECT_TRUE(
       base.ResolveRelativeDir(Value(nullptr, "../../foo"), &err, source_root) ==
       SourceDir("/C:/source/foo/"));
@@ -174,7 +174,7 @@ TEST(SourceDir, ResolveRelativeDir) {
   EXPECT_FALSE(err.has_error());
 #endif
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // Canonicalize the existing backslashes to forward slashes and add a
   // leading slash if necessary.
   EXPECT_TRUE(base.ResolveRelativeDir(Value(nullptr, "\\C:\\foo"), &err) ==
@@ -196,7 +196,7 @@ TEST(SourceDir, SourceWithNoTrailingSlash) {
   SourceDir relative_root("//");
   EXPECT_EQ(relative_root.SourceWithNoTrailingSlash(), "//");
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   SourceDir root("C:/");
   SourceDir root_no_slash("C:");
   EXPECT_EQ(root.SourceWithNoTrailingSlash(), "C:");

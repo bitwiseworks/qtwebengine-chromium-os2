@@ -41,10 +41,12 @@ class Platform(object):
       self._platform = 'fuchsia'
     elif self._platform.startswith('freebsd'):
       self._platform = 'freebsd'
+    elif self._platform.startswith('os2'):
+      self._platform = 'os2'
 
   @staticmethod
   def known_platforms():
-    return ['linux', 'darwin', 'msvc', 'aix', 'fuchsia']
+    return ['linux', 'darwin', 'msvc', 'aix', 'fuchsia', 'os2']
 
   def platform(self):
     return self._platform
@@ -67,8 +69,14 @@ class Platform(object):
   def is_aix(self):
     return self._platform == 'aix'
 
+  def is_os2(self):
+    return self._platform == 'os2'
+
+  def is_doslike(self):
+    return self.is_windows() or self.is_os2()
+
   def is_posix(self):
-    return self._platform in ['linux', 'freebsd', 'darwin', 'aix']
+    return self._platform in ['linux', 'freebsd', 'darwin', 'aix', 'os2']
 
 
 def main(argv):
@@ -183,12 +191,13 @@ def WriteGenericNinja(path, static_libraries, executables,
       'linux': 'build_linux.ninja.template',
       'freebsd': 'build_linux.ninja.template',
       'aix': 'build_aix.ninja.template',
+      'os2': 'build_os2.ninja.template',
   }[platform.platform()])
 
   with open(template_filename) as f:
     ninja_template = f.read()
 
-  if platform.is_windows():
+  if platform.is_doslike():
     executable_ext = '.exe'
     library_ext = '.lib'
     object_ext = '.obj'
@@ -290,9 +299,12 @@ def WriteGNNinja(path, platform, host, options):
   ar = options.ar
 
   if not ar:
-     if platform.is_msvc():
-        ar = os.environ.get('AR', 'lib.exe')
-     else:
+    if platform.is_msvc():
+      ar = os.environ.get('AR', 'lib.exe')
+    else:
+      if platform.is_os2():
+        ar = os.environ.get('AR', 'emxomfar')
+      else:
         ar = os.environ.get('AR', 'ar')
 
   cflags = []
@@ -316,11 +328,12 @@ def WriteGNNinja(path, platform, host, options):
       # Use -fdata-sections and -ffunction-sections to place each function
       # or data item into its own section so --gc-sections can eliminate any
       # unused functions and data items.
-      cflags.extend(['-fdata-sections', '-ffunction-sections'])
-      ldflags.extend(['-fdata-sections', '-ffunction-sections'])
+      if not platform.is_os2():
+        cflags.extend(['-fdata-sections', '-ffunction-sections'])
+        ldflags.extend(['-fdata-sections', '-ffunction-sections'])
       if platform.is_darwin():
         ldflags.append('-Wl,-dead_strip')
-      elif not platform.is_aix():
+      elif not platform.is_aix() and not platform.is_os2():
         # Garbage collection is done by default on aix.
         ldflags.append('-Wl,--gc-sections')
 
@@ -330,11 +343,13 @@ def WriteGNNinja(path, platform, host, options):
           ldflags.append('-Wl,-S')
         elif platform.is_aix():
           ldflags.append('-Wl,-s')
+        elif platform.is_os2():
+          ldflags.append('-s')
         else:
           ldflags.append('-Wl,-strip-all')
 
       # Enable identical code-folding.
-      if options.use_icf and not platform.is_darwin():
+      if options.use_icf and not platform.is_darwin() and not platform.is_os2():
         ldflags.append('-Wl,--icf=all')
 
     cflags.extend([
@@ -362,6 +377,9 @@ def WriteGNNinja(path, platform, host, options):
     elif platform.is_aix():
       cflags_cc.append('-maix64')
       ldflags.append('-maix64')
+    elif platform.is_os2():
+      cflags_cc.append('-Zomf')
+      ldflags.append('-Zomf -Zhigh-mem')
 
     if platform.is_posix():
       ldflags.append('-pthread')
@@ -671,6 +689,10 @@ def WriteGNNinja(path, platform, host, options):
         'base/files/file_util_posix.cc',
         'base/posix/file_descriptor_shuffle.cc',
         'base/posix/safe_strerror.cc',
+    ])
+
+  if platform.is_posix() and not platform.is_os2():
+    static_libraries['base']['sources'].extend([
         'base/strings/string16.cc',
     ])
 

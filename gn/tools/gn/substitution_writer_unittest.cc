@@ -164,7 +164,7 @@ TEST(SubstitutionWriter, SourceSubstitutions) {
             GetRelSubst("/baz.txt", SUBSTITUTION_SOURCE_GEN_DIR));
   EXPECT_EQ("obj/ABS_PATH",
             GetRelSubst("/baz.txt", SUBSTITUTION_SOURCE_OUT_DIR));
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   EXPECT_EQ("gen/ABS_PATH/C",
             GetRelSubst("/C:/baz.txt", SUBSTITUTION_SOURCE_GEN_DIR));
   EXPECT_EQ("obj/ABS_PATH/C",

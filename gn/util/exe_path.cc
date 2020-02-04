@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "util/build_config.h"
+
+#if defined(OS_OS2)
+#define _EMX_SOURCE // for _execname
+#endif
+
 #include "util/exe_path.h"
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
-#include "util/build_config.h"
 
 #if defined(OS_MACOSX)
 #include <mach-o/dyld.h>
@@ -47,6 +52,17 @@ base::FilePath GetExePath() {
     return base::FilePath();
   }
   return base::FilePath(system_buffer);
+}
+
+#elif defined(OS_OS2)
+
+base::FilePath GetExePath() {
+  char buf[_MAX_PATH];
+  buf[0] = 0;
+  if (_execname(buf, _MAX_PATH) == -1) {
+    return base::FilePath();
+  }
+  return base::FilePath(buf);
 }
 
 #elif defined(OS_FREEBSD)

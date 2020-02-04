@@ -380,7 +380,7 @@ int EditArgsFile(const std::string& build_dir) {
         // use the default contents.
         base::ReadFileToString(full_path, &argfile_default_contents);
       }
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
       // Use Windows lineendings for this file since it will often open in
       // Notepad which can't handle Unix ones.
       base::ReplaceSubstringsAfterOffset(&argfile_default_contents, 0, "\n",

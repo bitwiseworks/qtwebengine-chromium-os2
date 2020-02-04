@@ -56,7 +56,7 @@ namespace base {
 namespace {
 
 #if defined(OS_BSD) || defined(OS_MACOSX) || defined(OS_NACL) || \
-    defined(OS_ANDROID) && __ANDROID_API__ < 21
+    defined(OS_OS2) || defined(OS_ANDROID) && __ANDROID_API__ < 21
 int CallStat(const char* path, stat_wrapper_t* sb) {
   return stat(path, sb);
 }
@@ -181,7 +181,7 @@ bool CopyFileContents(File* infile, File* outfile) {
 }
 #endif  // !defined(OS_NACL_NONSFI)
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && !defined(OS_OS2)
 // Appends |mode_char| to |mode| before the optional character set encoding; see
 // https://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html for
 // details.
@@ -584,9 +584,10 @@ FILE* OpenFile(const FilePath& filename, const char* mode) {
       strchr(mode, 'e') == nullptr ||
       (strchr(mode, ',') != nullptr && strchr(mode, 'e') > strchr(mode, ',')));
   FILE* result = nullptr;
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_OS2)
   // macOS does not provide a mode character to set O_CLOEXEC; see
   // https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man3/fopen.3.html.
+  // OS/2 doesn't provide it either.
   const char* the_mode = mode;
 #else
   std::string mode_with_e(AppendModeCharacter(mode, 'e'));
@@ -595,7 +596,7 @@ FILE* OpenFile(const FilePath& filename, const char* mode) {
   do {
     result = fopen(filename.value().c_str(), the_mode);
   } while (!result && errno == EINTR);
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_OS2)
   // Mark the descriptor as close-on-exec.
   if (result)
     SetCloseOnExec(fileno(result));

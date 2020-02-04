@@ -36,7 +36,7 @@ TEST(PathOutput, Basic) {
     writer.WriteFile(out, SourceFile("//out/Debug/bar/baz.cc"));
     EXPECT_EQ("foo.cc bar/baz.cc", out.str());
   }
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   {
     // System-absolute path.
     std::ostringstream out;

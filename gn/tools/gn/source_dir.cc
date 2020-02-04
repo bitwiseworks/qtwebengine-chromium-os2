@@ -13,7 +13,7 @@ namespace {
 
 void AssertValueSourceDirString(const std::string& s) {
   if (!s.empty()) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
     DCHECK(s[0] == '/' ||
            (s.size() > 2 && s[0] != '/' && s[1] == ':' && IsSlash(s[2])));
 #else

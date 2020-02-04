@@ -158,7 +158,7 @@ void PathOutput::WritePathStr(std::ostream& out,
   } else {
 // Input begins with one slash, don't write the current directory since
 // it's system-absolute.
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
     // On Windows, trim the leading slash, since the input for absolute
     // paths will look like "/C:/foo/bar.txt".
     EscapeStringToStream(out, str.substr(1), options_);

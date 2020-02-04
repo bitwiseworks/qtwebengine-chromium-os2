@@ -61,7 +61,7 @@ TEST(LabelPattern, PatternParse) {
     // Absolute paths.
     {"/la/*", true, LabelPattern::RECURSIVE_DIRECTORY, "/la/", "", ""},
     {"/la:bar", true, LabelPattern::MATCH, "/la/", "bar", ""},
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
     {"/C:/la/*", true, LabelPattern::RECURSIVE_DIRECTORY, "/C:/la/", "", ""},
     {"C:/la/*", true, LabelPattern::RECURSIVE_DIRECTORY, "/C:/la/", "", ""},
     {"/C:/la:bar", true, LabelPattern::MATCH, "/C:/la/", "bar", ""},

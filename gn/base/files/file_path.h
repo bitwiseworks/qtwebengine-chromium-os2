@@ -118,10 +118,10 @@
 // enabled and disabled independently, to aid testing.  These #defines are
 // here so that the same setting can be used in both the implementation and
 // in the unit test.
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
 #define FILE_PATH_USES_DRIVE_LETTERS
 #define FILE_PATH_USES_WIN_SEPARATORS
-#endif  // OS_WIN
+#endif  // OS_DOSLIKE
 
 // To print path names portably use PRIsFP (based on PRIuS and friends from
 // C99 and format_macros.h) like this:

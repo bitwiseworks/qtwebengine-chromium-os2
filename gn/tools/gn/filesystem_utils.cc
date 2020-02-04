@@ -2,6 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "util/build_config.h"
+
+#if defined(OS_OS2)
+#define _EMX_SOURCE // for stricmp
+#endif
+
 #include "tools/gn/filesystem_utils.h"
 
 #include <algorithm>
@@ -13,7 +19,6 @@
 #include "tools/gn/location.h"
 #include "tools/gn/settings.h"
 #include "tools/gn/source_dir.h"
-#include "util/build_config.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -72,7 +77,7 @@ DotDisposition ClassifyAfterDot(const std::string& path,
   return NOT_A_DIRECTORY;
 }
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
 inline char NormalizeWindowsPathChar(char c) {
   if (c == '/')
     return '\\';
@@ -131,7 +136,7 @@ std::vector<base::FilePath::StringType> GetPathComponents(
       result[0] == FILE_PATH_LITERAL("\\"))
     result.erase(result.begin());
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // On Windows, GetComponents will give us [ "C:", "/", "foo" ], and we
   // don't want the slash in there. This doesn't support input like "C:foo"
   // which means foo relative to the current directory of the C drive but
@@ -161,6 +166,9 @@ bool FilesystemStringsEqual(const base::FilePath::StringType& a,
   // There should not be embedded nulls in filesystem strings.
   return ::CompareString(LOCALE_USER_DEFAULT, LINGUISTIC_IGNORECASE, a.c_str(),
                          -1, b.c_str(), -1) == CSTR_EQUAL;
+#elif defined(OS_OS2)
+  // Same as Windows but use stricmp which is locale-aware in LIBCn.
+  return stricmp(a.c_str(), b.c_str()) == 0;
 #else
   // Assume case-sensitive filesystems on non-Windows.
   return a == b;
@@ -184,7 +192,7 @@ void AppendFixedAbsolutePathSuffix(const BuildSettings* build_settings,
                            source_dir.value().size() - build_dir_size);
   } else {
     result->value().append("ABS_PATH");
-#if defined(OS_WIN)
+#if defined(OS_DSLIKE)
     // Windows absolute path contains ':' after drive letter. Remove it to
     // avoid inserting ':' in the middle of path (eg. "ABS_PATH/C:/").
     std::string src_dir_value = source_dir.value();
@@ -325,7 +333,7 @@ bool IsPathAbsolute(const base::StringPiece& path) {
     return false;
 
   if (!IsSlash(path[0])) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
     // Check for Windows system paths like "C:\foo".
     if (path.size() > 2 && path[1] == ':' && IsSlash(path[2]))
       return true;
@@ -356,7 +364,7 @@ bool MakeAbsolutePathRelativeIfPossible(const base::StringPiece& source_root,
   if (source_root.size() > path.size())
     return false;  // The source root is longer: the path can never be inside.
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // Source root should be canonical on Windows. Note that the initial slash
   // must be forward slash, but that the other ones can be either forward or
   // backward.
@@ -426,7 +434,7 @@ base::FilePath MakeAbsoluteFilePathRelativeIfPossible(
   std::vector<base::FilePath::StringType> target_components;
   base.GetComponents(&base_components);
   target.GetComponents(&target_components);
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // On Windows, it's impossible to have a relative path from C:\foo to D:\bar,
   // so return the target as an absolute path instead.
   if (base_components[0] != target_components[0])
@@ -527,7 +535,7 @@ void NormalizePath(std::string* path, const base::StringPiece& source_root) {
                        !IsSlash(source_root[source_root.size() - 1u]));
                 size_t source_root_len = source_root.size();
 
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
                 // On Windows, if the source_root does not start with a slash,
                 // append one here for consistency.
                 if (!IsSlash(source_root[0])) {
@@ -591,7 +599,7 @@ void NormalizePath(std::string* path, const base::StringPiece& source_root) {
 }
 
 void ConvertPathToSystem(std::string* path) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   if (path->size() > 2) {
     if (IsSlash((*path)[0]) && (*path)[2] == ':') {
       *path = path->substr(1);
@@ -606,7 +614,7 @@ void ConvertPathToSystem(std::string* path) {
 
 std::string MakeRelativePath(const std::string& input,
                              const std::string& dest) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
   // Make sure that absolute |input| path starts with a slash if |dest| path
   // does. Otherwise skipping common prefixes won't work properly. Ensure the
   // same for |dest| path too.
@@ -696,7 +704,7 @@ std::string RebasePath(const std::string& input,
       dest_full.push_back('/');
       dest_full.append(dest_dir.value(), 2, std::string::npos);
     } else {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
       // On Windows, SourceDir system-absolute paths start
       // with /, e.g. "/C:/foo/bar".
       const std::string& value = dest_dir.value();
@@ -769,7 +777,7 @@ std::string ResolveRelative(const StringType& input,
   } else if (IsPathAbsolute(input)) {
     if (source_root.empty() ||
         !MakeAbsolutePathRelativeIfPossible(source_root, input, &result)) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
       if (input[0] != '/')  // See the file case for why we do this check.
         result = "/";
 #endif
@@ -790,7 +798,7 @@ std::string ResolveRelative(const StringType& input,
                            .value());
     NormalizePath(&absolute);
     if (!MakeAbsolutePathRelativeIfPossible(source_root, absolute, &result)) {
-#if defined(OS_WIN)
+#if defined(OS_DOSLIKE)
       if (absolute[0] != '/')  // See the file case for why we do this check.
         result = "/";
 #endif
