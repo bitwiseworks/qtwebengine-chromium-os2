@@ -656,7 +656,8 @@ def WriteGNNinja(path, platform, host, options):
         'tools/gn/parser_unittest.cc',
         'tools/gn/path_output_unittest.cc',
         'tools/gn/pattern_unittest.cc',
-        'tools/gn/qmake_link_writer_unittest.cc',
+# This requires googletest which is not part of gn, disable for now.
+#        'tools/gn/qmake_link_writer_unittest.cc',
         'tools/gn/runtime_deps_unittest.cc',
         'tools/gn/scope_per_file_provider_unittest.cc',
         'tools/gn/scope_unittest.cc',
