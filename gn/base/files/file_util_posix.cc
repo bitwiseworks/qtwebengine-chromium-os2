@@ -51,6 +51,12 @@
 extern "C" char* mkdtemp(char* path);
 #endif
 
+#if defined(OS_OS2)
+#define creat(N,M) open((N), O_WRONLY|O_TRUNC|O_CREAT|O_BINARY, (M))
+#elif !defined(O_BINARY)
+#define O_BINARY 0
+#endif
+
 namespace base {
 
 namespace {
@@ -615,7 +621,7 @@ FILE* FileToFILE(File file, const char* mode) {
 #endif  // !defined(OS_NACL)
 
 int ReadFile(const FilePath& filename, char* data, int max_size) {
-  int fd = HANDLE_EINTR(open(filename.value().c_str(), O_RDONLY));
+  int fd = HANDLE_EINTR(open(filename.value().c_str(), O_RDONLY | O_BINARY));
   if (fd < 0)
     return -1;
 

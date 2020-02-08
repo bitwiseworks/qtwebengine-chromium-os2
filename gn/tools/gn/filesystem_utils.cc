@@ -192,7 +192,7 @@ void AppendFixedAbsolutePathSuffix(const BuildSettings* build_settings,
                            source_dir.value().size() - build_dir_size);
   } else {
     result->value().append("ABS_PATH");
-#if defined(OS_DSLIKE)
+#if defined(OS_DOSLIKE)
     // Windows absolute path contains ':' after drive letter. Remove it to
     // avoid inserting ':' in the middle of path (eg. "ABS_PATH/C:/").
     std::string src_dir_value = source_dir.value();
