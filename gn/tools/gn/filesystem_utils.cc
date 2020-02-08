@@ -633,19 +633,22 @@ std::string MakeRelativePath(const std::string& input,
   if (IsPathAbsolute(input) && IsPathAbsolute(dest) && input.size() > 1 &&
       dest.size() > 1) {
     int letter_pos = base::IsAsciiAlpha(input[0]) ? 0 : 1;
-    if (input[letter_pos] != dest[letter_pos] &&
-        base::ToUpperASCII(input[letter_pos]) ==
-            base::ToUpperASCII(dest[letter_pos])) {
-      std::string corrected_input = input;
-      corrected_input[letter_pos] = dest[letter_pos];
-      return MakeRelativePath(corrected_input, dest);
-    }
-    // Give up if the drive paths are different so we don't end up
-    // returning a meaningless result.
-    if (input[letter_pos] != dest[letter_pos]) {
-      std::string ret = input;
-      ConvertPathToSystem(&ret);
-      return ret;
+    if (input.size() > letter_pos + 1 && input[letter_pos + 1] == ':' &&
+        dest.size() > letter_pos + 1 && dest[letter_pos + 1] == ':') {
+      if (input[letter_pos] != dest[letter_pos] &&
+          base::ToUpperASCII(input[letter_pos]) ==
+              base::ToUpperASCII(dest[letter_pos])) {
+        std::string corrected_input = input;
+        corrected_input[letter_pos] = dest[letter_pos];
+        return MakeRelativePath(corrected_input, dest);
+      }
+      // Give up if the drive paths are different so we don't end up
+      // returning a meaningless result.
+      if (input[letter_pos] != dest[letter_pos]) {
+        std::string ret = input;
+        ConvertPathToSystem(&ret);
+        return ret;
+      }
     }
   }
 #endif
