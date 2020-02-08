@@ -41,5 +41,8 @@ TEST_F(SetupTest, DotGNFileIsGenDep) {
       setup.DoSetup(FilePathToUTF8(build_temp_dir.GetPath()), true, cmdline));
   std::vector<base::FilePath> gen_deps = g_scheduler->GetGenDependencies();
   ASSERT_EQ(1u, gen_deps.size());
-  EXPECT_EQ(gen_deps[0], base::MakeAbsoluteFilePath(dot_gn_name));
+  // Normalize paths as on OS/2 we may get mixed slashes due to POSIX calls
+  // (which may return forward ones whilst "native" onse are back slashes).
+  EXPECT_EQ(gen_deps[0].NormalizePathSeparators(),
+            base::MakeAbsoluteFilePath(dot_gn_name).NormalizePathSeparators());
 }
