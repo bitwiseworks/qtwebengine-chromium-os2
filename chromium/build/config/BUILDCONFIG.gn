@@ -216,6 +216,8 @@ if (host_toolchain == "") {
     } else {
       host_toolchain = "//build/toolchain/win:$host_cpu"
     }
+  } else if (host_os == "os2") {
+    host_toolchain = "//build/toolchain/os2:$host_cpu"
   } else if (host_os == "aix") {
     host_toolchain = "//build/toolchain/aix:$host_cpu"
   } else {
@@ -260,6 +262,8 @@ if (target_os == "android") {
   assert(target_cpu == "x86" || target_cpu == "x64" || target_cpu == "arm" ||
          target_cpu == "arm64")
   _default_toolchain = "//build/toolchain/win:uwp_$target_cpu"
+} else if (target_os == "os2") {
+  _default_toolchain = "//build/toolchain/os2:$target_cpu"
 } else if (target_os == "aix") {
   _default_toolchain = "//build/toolchain/aix:$target_cpu"
 } else {
@@ -300,6 +304,7 @@ is_linux = current_os == "chromeos" || current_os == "linux"
 is_mac = current_os == "mac"
 is_nacl = current_os == "nacl"
 is_win = current_os == "win" || current_os == "winuwp"
+is_os2 = current_os == "os2"
 
 is_posix = !is_win && !is_fuchsia
 
@@ -460,7 +465,7 @@ if (is_win) {
 }
 
 if (is_posix) {
-  if (current_os != "aix") {
+  if (!is_os2 && current_os != "aix") {
     default_compiler_configs +=
         [ "//build/config/gcc:symbol_visibility_hidden" ]
   }

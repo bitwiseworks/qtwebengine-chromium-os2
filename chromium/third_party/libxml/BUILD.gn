@@ -10,10 +10,17 @@ if (is_linux || is_android || is_nacl || is_fuchsia) {
   os_include = "mac"
 } else if (is_win) {
   os_include = "win32"
+} else if (is_os2) {
+  os_include = "os2"
 }
 
 declare_args() {
-  use_system_libxml = false
+  if (is_os2) {
+    # Always use system library on OS/2 as it contains all current patches.
+    use_system_libxml = true
+  } else {
+    use_system_libxml = false
+  }
 }
 
 config("libxml_config") {

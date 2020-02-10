@@ -89,7 +89,9 @@ target(crash_key_target_type, "crash_key") {
       ]
     }
 
-    deps += [ "//third_party/breakpad:client" ]
+    if (!is_os2) {
+      deps += [ "//third_party/breakpad:client" ]
+    }
   }
 }
 

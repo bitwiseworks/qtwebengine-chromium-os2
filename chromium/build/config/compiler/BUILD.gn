@@ -237,6 +237,8 @@ config("compiler") {
     configs += [ "//build/config/ios:compiler" ]
   } else if (is_fuchsia) {
     configs += [ "//build/config/fuchsia:compiler" ]
+  } else if (is_os2) {
+    configs += [ "//build/config/os2:compiler" ]
   } else if (current_os == "aix") {
     configs += [ "//build/config/aix:compiler" ]
   }

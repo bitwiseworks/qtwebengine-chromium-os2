@@ -953,7 +953,7 @@ group("content_shell_crash_test") {
   if (is_win) {
     data_deps += [ "//build/win:copy_cdb_to_output" ]
   }
-  if (is_posix && !is_android) {
+  if (is_posix && !is_android && !is_os2) {
     data_deps += [
       "//third_party/breakpad:dump_syms($host_toolchain)",
       "//third_party/breakpad:minidump_stackwalk($host_toolchain)",

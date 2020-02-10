@@ -5268,7 +5268,7 @@ test("chrome_app_unittests") {
     "//components/crash/core/common",
     "//components/flags_ui:switches",
   ]
-  if (!is_fuchsia) {
+  if (!is_fuchsia && !is_os2) {
     # TODO(crbug.com/753619): Enable crash reporting on Fuchsia.
     deps += [ "//third_party/breakpad:client" ]
   }

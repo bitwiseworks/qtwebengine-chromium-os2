@@ -1,0 +1,41 @@
+# Copyright 2017 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/config/sanitizers/sanitizers.gni")
+import("//build/toolchain/toolchain.gni")
+
+assert(is_os2)
+
+# This is included by reference in the //build/config/compiler config that
+# is applied to all targets. It is here to separate out the logic that is
+# OS/2-only.
+config("compiler") {
+  cflags = [
+    "-Zomf",
+  ]
+
+  ldflags = [
+    "-Zomf",
+    "-Zmap",
+    "-Zhigh-mem",
+    "-Zstack 0x2000",
+    "-lcx",
+  ]
+}
+
+# Settings for EXEs.
+config("os2_executable_flags") {
+  ldflags = [ "-Zexe" ]
+
+  # All executables are PM apps except AddressSanitizer builds that write
+  # to stderr. Having a console attached is also handy for debug builds.
+  if (!is_debug && !is_asan) {
+    ldflags += [ "-Zlinker", "/PM:PM", "-Zno-fork" ]
+  }
+}
+
+# Settings for DLLs.
+config("os2_dynamic_flags") {
+  ldflags = [ "-Zdll" ]
+}

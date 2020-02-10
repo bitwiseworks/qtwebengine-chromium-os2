@@ -1,0 +1,21 @@
+# Copyright 2017 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/toolchain/gcc_toolchain.gni")
+
+gcc_toolchain("x86") {
+  cc = "gcc"
+  cxx = "g++"
+
+  readelf = "readelf"
+  nm = "nm"
+  ar = "emxomfar"
+  ld = cxx
+
+  toolchain_args = {
+    current_cpu = "x86"
+    current_os = "os2"
+    is_clang = false
+  }
+}
