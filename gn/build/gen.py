@@ -379,7 +379,8 @@ def WriteGNNinja(path, platform, host, options):
       ldflags.append('-maix64')
     elif platform.is_os2():
       cflags_cc.append('-Zomf')
-      ldflags.append('-Zomf -Zhigh-mem')
+      # LIBCx is needed for spawn2 used in ExecProcess.
+      ldflags.append('-Zomf -Zhigh-mem -lcx')
 
     if platform.is_posix():
       ldflags.append('-pthread')

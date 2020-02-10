@@ -25,6 +25,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(OS_OS2)
+#include <libcx/spawn2.h>
+#include <sys/socket.h>
+#define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
+#endif
+
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/file_descriptor_shuffle.h"
 #endif
@@ -181,11 +187,15 @@ bool ExecProcess(const base::CommandLine& cmdline,
 
   int out_fd[2], err_fd[2];
   pid_t pid;
-  base::InjectiveMultimap fd_shuffle1, fd_shuffle2;
   std::unique_ptr<char*[]> argv_cstr(new char*[argv.size() + 1]);
+#if defined(OS_OS2)
+  int stdfds[3] = {0};
+#else
+  base::InjectiveMultimap fd_shuffle1, fd_shuffle2;
 
   fd_shuffle1.reserve(3);
   fd_shuffle2.reserve(3);
+#endif
 
   if (pipe(out_fd) < 0)
     return false;
@@ -198,6 +208,22 @@ bool ExecProcess(const base::CommandLine& cmdline,
   if (out_read.get() >= FD_SETSIZE || err_read.get() >= FD_SETSIZE)
     return false;
 
+#if defined(OS_OS2)
+  // Use spawn2 on OS/2 instead of fork since fork is not thread-safe (as of
+  // kLIBC 0.6.6 and LIBCn 0.1.3). Spawning is also much more natural and
+  // resource friendly there.
+  {
+    for (size_t i = 0; i < argv.size(); i++)
+      argv_cstr[i] = const_cast<char*>(argv[i].c_str());
+    argv_cstr[argv.size()] = nullptr;
+    stdfds[1] = out_fd[1];
+    stdfds[2] = err_fd[1];
+    pid = spawn2(P_NOWAIT | P_2_THREADSAFE | P_2_NOINHERIT,
+                 argv_cstr[0], argv_cstr.get(),
+                 startup_dir.value().c_str(), nullptr, stdfds);
+    if (pid == -1)
+      return false;
+#else
   switch (pid = fork()) {
     case -1:  // error
       return false;
@@ -246,6 +272,7 @@ bool ExecProcess(const base::CommandLine& cmdline,
       _exit(127);
     }
     default:  // parent
+#endif
     {
       // Close our writing end of pipe now. Otherwise later read would not
       // be able to detect end of child's output (in theory we could still

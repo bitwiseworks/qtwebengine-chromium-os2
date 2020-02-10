@@ -373,7 +373,8 @@ else:
         cflags.append('-D__STDC_FORMAT_MACROS')
         cflags.append('-D_LARGE_FILES')
     if platform.is_os2():
-        ldflags += ['-Zomf', '-Zhigh-mem']
+        # Use LIBCx to get .TRP on crashes.
+        ldflags += ['-Zomf', '-Zhigh-mem', '-lcx']
 
 
 libs = []
