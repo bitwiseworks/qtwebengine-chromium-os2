@@ -24,6 +24,12 @@
 #    endif
 typedef DWORD TLSIndex;
 #    define TLS_INVALID_INDEX (TLS_OUT_OF_INDEXES)
+#elif defined(ANGLE_PLATFORM_OS2)
+#    define INCL_BASE
+#    define INCL_PM
+#    include <os2.h>
+     typedef PULONG TLSIndex;
+#    define TLS_INVALID_INDEX (nullptr)
 #elif defined(ANGLE_PLATFORM_POSIX)
 #    include <errno.h>
 #    include <pthread.h>
