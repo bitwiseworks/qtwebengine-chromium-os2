@@ -350,8 +350,15 @@ template("gcc_toolchain") {
         command = "$ar -X64 {{arflags}} -r -c -s {{output}} {{inputs}}"
       } else {
         rspfile = "{{output}}.rsp"
-        rspfile_content = "{{inputs}}"
-        command = "\"$ar\" {{arflags}} -r -c -s -D {{output}} @\"$rspfile\""
+        if (current_os == "os2") {
+          # OS/2 EMX ar does not support -s and -D flags and expects
+          # new line separators in response files.
+          rspfile_content = "{{inputs_newline}}"
+          command = "\"$ar\" {{arflags}} -r -c {{output}} @\"$rspfile\""
+        } else {
+          rspfile_content = "{{inputs}}"
+          command = "\"$ar\" {{arflags}} -r -c -s -D {{output}} @\"$rspfile\""
+        }
       }
 
       # Remove the output file first so that ar doesn't try to modify the
@@ -556,7 +563,12 @@ template("gcc_toolchain") {
           rebase_path("//build/toolchain/gcc_link_wrapper.py", root_build_dir)
       command = "$python_path \"$link_wrapper\" --output=\"$outfile\"$strip_switch$map_switch -- $link_command"
       description = "LINK $outfile"
-      rspfile_content = "{{inputs}}"
+      if (is_os2) {
+        # OS/2 EMX ld expects new line separators in response files.
+        rspfile_content = "{{inputs_newline}}"
+      } else {
+        rspfile_content = "{{inputs}}"
+      }
       outputs = [
         outfile,
       ]
