@@ -27,6 +27,12 @@
 #if !defined(OPENSSL_WINDOWS)
 #include <netdb.h>
 #include <unistd.h>
+#ifdef __EMX__
+// getaddrinfo and friends are not part of LIBC netdb.h yet
+// (see https://github.com/bitwiseworks/libc/issues/64).
+#include <sys/socket.h>
+#include <libcx/net.h>
+#endif
 #else
 OPENSSL_MSVC_PRAGMA(warning(push, 3))
 #include <winsock2.h>
