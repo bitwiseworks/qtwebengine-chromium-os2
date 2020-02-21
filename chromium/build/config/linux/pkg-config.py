@@ -106,8 +106,8 @@ def RewritePath(path, strip_prefix, sysroot):
 def main():
   # If this is run on non-Linux platforms, just return nothing and indicate
   # success. This allows us to "kind of emulate" a Linux build from other
-  # platforms.
-  if "linux" not in sys.platform:
+  # platforms. OS/2 has and needs pkg-config as well so let it go.
+  if "linux" not in sys.platform and "os2" not in sys.platform:
     print "[[],[],[],[],[]]"
     return 0
 
