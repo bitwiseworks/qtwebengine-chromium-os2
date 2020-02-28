@@ -466,6 +466,8 @@ jumbo_component("base") {
     "message_loop/message_pump_io_ios.h",
     "message_loop/message_pump_mac.h",
     "message_loop/message_pump_mac.mm",
+    "message_loop/message_pump_os2.cc",
+    "message_loop/message_pump_os2.h",
     "message_loop/message_pump_win.cc",
     "message_loop/message_pump_win.h",
     "message_loop/pending_task_queue.cc",

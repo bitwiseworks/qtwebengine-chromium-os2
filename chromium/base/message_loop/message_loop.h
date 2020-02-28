@@ -425,7 +425,7 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
   void QuitWhenIdle(base::OnceClosure callback);
 #endif
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
   // See method of the same name in the Windows MessagePumpForUI implementation.
   void EnableWmQuit();
 #endif

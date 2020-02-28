@@ -12,6 +12,8 @@
 
 #if defined(OS_WIN)
 #include "base/message_loop/message_pump_win.h"
+#elif defined(OS_OS2)
+#include "base/message_loop/message_pump_os2.h"
 #elif defined(OS_ANDROID)
 #include "base/message_loop/message_pump_android.h"
 #elif defined(OS_MACOSX)
@@ -30,6 +32,9 @@ namespace base {
 
 #if defined(OS_WIN)
 // Windows defines it as-is.
+using MessagePumpForUI = MessagePumpForUI;
+#elif defined(OS_OS2)
+// OS/2 defines it as-is.
 using MessagePumpForUI = MessagePumpForUI;
 #elif defined(OS_ANDROID)
 // Android defines it as-is.
