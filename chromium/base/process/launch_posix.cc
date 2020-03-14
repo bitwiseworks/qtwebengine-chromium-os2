@@ -7,18 +7,28 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#if !defined(OS_OS2)
 #include <sched.h>
+#endif
 #include <setjmp.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/resource.h>
+#if !defined(OS_OS2)
 #include <sys/syscall.h>
+#endif
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#if defined(OS_OS2)
+#include <libcx/spawn2.h>
+#include <sys/socket.h>
+#define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
+#endif
 
 #include <iterator>
 #include <limits>
@@ -85,6 +95,7 @@ char** GetEnvironment() {
   return environ;
 }
 
+#if !defined(OS_OS2)
 // Set the process's "environment" (i.e. the thing that setenv/getenv
 // work with).
 void SetEnvironment(char** env) {
@@ -192,8 +203,10 @@ void ResetChildSignalHandlersToDefaults(void) {
 }
 #endif  // !defined(OS_LINUX) ||
         // (!defined(__i386__) && !defined(__x86_64__) && !defined(__arm__))
+#endif  // !defined(OS_OS2)
 }  // anonymous namespace
 
+#if !defined(OS_OS2)
 // Functor for |ScopedDIR| (below).
 struct ScopedDIRClose {
   inline void operator()(DIR* x) const {
@@ -276,6 +289,7 @@ void CloseSuperfluousFds(const base::InjectiveMultimap& saved_mapping) {
     DPCHECK(ret == 0);
   }
 }
+#endif  // !defined(OS_OS2)
 
 Process LaunchProcess(const CommandLine& cmdline,
                       const LaunchOptions& options) {
@@ -286,10 +300,12 @@ Process LaunchProcess(const std::vector<std::string>& argv,
                       const LaunchOptions& options) {
   TRACE_EVENT0("base", "LaunchProcess");
 
+#if !defined(OS_OS2)
   InjectiveMultimap fd_shuffle1;
   InjectiveMultimap fd_shuffle2;
   fd_shuffle1.reserve(options.fds_to_remap.size());
   fd_shuffle2.reserve(options.fds_to_remap.size());
+#endif
 
   std::vector<char*> argv_cstr;
   argv_cstr.reserve(argv.size() + 1);
@@ -305,9 +321,11 @@ Process LaunchProcess(const std::vector<std::string>& argv,
   if (!options.environ.empty())
     new_environ = AlterEnvironment(old_environ, options.environ);
 
+#if !defined(OS_OS2)
   sigset_t full_sigset;
   sigfillset(&full_sigset);
   const sigset_t orig_sigmask = SetSignalMask(full_sigset);
+#endif
 
   const char* current_directory = nullptr;
   if (!options.current_directory.empty()) {
@@ -316,6 +334,73 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 
   pid_t pid;
   base::TimeTicks before_fork = TimeTicks::Now();
+#if defined(OS_OS2)
+  // Use spawn2 on OS/2 instead of fork since spawning is much more natural and
+  // resource friendly there.
+  const char* executable_path = !options.real_path.empty() ?
+      options.real_path.value().c_str() : argv_cstr[0];
+
+  // Reserve space for possible stdin/err/out inheritance and EOL
+  int stdfds[options.fds_to_remap.size() + 3 * 2 + 1];
+  int *pfd = stdfds;
+  int null_fd = -1;
+
+  // Process file descriptors for the child. By default, LaunchProcess will
+  // open stdin to /dev/null and inherit stdout and stderr (this part is based
+  // on code from launch_mac.cc).
+  bool inherit_stdout = true, inherit_stderr = true;
+  bool null_stdin = true;
+  for (const auto& dup2_pair : options.fds_to_remap) {
+    if (dup2_pair.second == STDIN_FILENO) {
+      null_stdin = false;
+    } else if (dup2_pair.second == STDOUT_FILENO) {
+      inherit_stdout = false;
+    } else if (dup2_pair.second == STDERR_FILENO) {
+      inherit_stderr = false;
+    }
+
+    *pfd++ = dup2_pair.first;
+    *pfd++ = dup2_pair.second;
+  }
+
+  if (null_stdin) {
+    *pfd++ = null_fd = open("/dev/null", O_RDONLY);
+    DPCHECK(null_fd != -1);
+    *pfd++ = STDIN_FILENO;
+  }
+  if (inherit_stdout) {
+    *pfd++ = STDOUT_FILENO;
+    *pfd++ = STDOUT_FILENO;
+  }
+  if (inherit_stderr) {
+    *pfd++ = STDERR_FILENO;
+    *pfd++ = STDERR_FILENO;
+  }
+
+  *pfd++ = -1;
+
+  pid = spawn2(P_NOWAIT | P_2_THREADSAFE | P_2_XREDIR,
+               executable_path, argv_cstr.data(),
+               current_directory, new_environ.get(), stdfds);
+
+  if (null_fd != -1)
+    close(null_fd);
+
+  base::TimeTicks after_fork = TimeTicks::Now();
+  base::TimeDelta fork_time = after_fork - before_fork;
+  UMA_HISTOGRAM_TIMES("MPArch.SpawnTime", fork_time);
+
+  if (pid < 0) {
+    DPLOG(ERROR) << "LaunchProcess: failed to spawn2: " << executable_path
+                 << ": " << strerror(errno);
+    return Process();
+  }
+
+  if (options.wait) {
+    pid_t ret = HANDLE_EINTR(waitpid(pid, nullptr, 0));
+    DPCHECK(ret > 0);
+  }
+#else
 #if defined(OS_LINUX) || defined(OS_AIX)
   if (options.clone_flags) {
     // Signal handling in this function assumes the creation of a new
@@ -492,6 +577,7 @@ Process LaunchProcess(const std::vector<std::string>& argv,
       DPCHECK(ret > 0);
     }
   }
+#endif
 
   return Process(pid);
 }
@@ -518,7 +604,9 @@ static bool GetAppOutputInternal(
     std::string* output,
     bool do_search_path,
     int* exit_code) {
+#if !defined(OS_OS2)
   ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+#endif
   // exit_code must be supplied so calling function can determine success.
   DCHECK(exit_code);
   *exit_code = EXIT_FAILURE;
@@ -527,10 +615,12 @@ static bool GetAppOutputInternal(
   // process cannot allocate memory.
   std::vector<char*> argv_cstr;
   argv_cstr.reserve(argv.size() + 1);
+#if !defined(OS_OS2)
   InjectiveMultimap fd_shuffle1;
   InjectiveMultimap fd_shuffle2;
   fd_shuffle1.reserve(3);
   fd_shuffle2.reserve(3);
+#endif
 
   // Either |do_search_path| should be false or |envp| should be null, but not
   // both.
@@ -540,6 +630,27 @@ static bool GetAppOutputInternal(
   if (pipe(pipe_fd) < 0)
     return false;
 
+#if defined(OS_OS2)
+  // Use spawn2 on OS/2 instead of fork since spawning is much more natural and
+  // resource friendly there.
+  for (const auto& arg : argv)
+    argv_cstr.push_back(const_cast<char*>(arg.c_str()));
+  argv_cstr.push_back(nullptr);
+
+  int dev_null = open("/dev/null", O_WRONLY);
+  if (dev_null < 0)
+    return false;
+
+  int stdfds[3] = {0};
+  stdfds[0] = dev_null;
+  stdfds[1] = pipe_fd[1];
+  stdfds[2] = include_stderr ? pipe_fd[1] : dev_null;
+  pid_t pid = spawn2(P_NOWAIT | P_2_THREADSAFE | P_2_NOINHERIT,
+                     argv_cstr[0], argv_cstr.data(),
+                     nullptr, envp, stdfds);
+
+  close(dev_null);
+#else
   pid_t pid = fork();
   switch (pid) {
     case -1: {
@@ -589,6 +700,7 @@ static bool GetAppOutputInternal(
       _exit(127);
     }
     default: {
+#endif
       // parent
       //
       // Close our writing end of pipe now. Otherwise later read would not
@@ -615,8 +727,10 @@ static bool GetAppOutputInternal(
       // process that launched it and thus chances of deadlock are low.
       GetAppOutputScopedAllowBaseSyncPrimitives allow_base_sync_primitives;
       return process.WaitForExit(exit_code);
+#if !defined(OS_OS2)
     }
   }
+#endif
 }
 
 bool GetAppOutput(const CommandLine& cl, std::string* output) {
