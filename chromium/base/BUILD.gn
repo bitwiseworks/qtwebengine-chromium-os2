@@ -1669,6 +1669,13 @@ jumbo_component("base") {
     ]
   }
 
+  # OS/2.
+  if (is_os2) {
+    sources -= [
+      "strings/string16.cc",
+    ]
+  }
+
   # Desktop Mac.
   if (is_mac) {
     sources -= [
