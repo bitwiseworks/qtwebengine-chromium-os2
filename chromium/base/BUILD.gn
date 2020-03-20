@@ -1119,6 +1119,16 @@ jumbo_component("base") {
       "threading/thread_local_storage_posix.cc",
       "timer/hi_res_timer_manager_posix.cc",
     ]
+
+    if (is_os2) {
+      sources -= [
+        "rand_util_posix.cc",
+      ]
+
+      sources += [
+        "rand_util_os2.cc",
+      ]
+    }
   }
 
   if (!is_nacl) {
