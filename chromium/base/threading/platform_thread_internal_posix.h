@@ -32,6 +32,7 @@ int ThreadPriorityToNiceValue(ThreadPriority priority);
 // specific implementation of kThreadPriorityToNiceValueMap.
 BASE_EXPORT ThreadPriority NiceValueToThreadPriority(int nice_value);
 
+#if !defined(OS_OS2)
 // If non-nullopt, this return value will be used as the platform-specific
 // result of CanIncreaseThreadPriority().
 Optional<bool> CanIncreaseCurrentThreadPriorityForPlatform(
@@ -46,6 +47,7 @@ bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority);
 // If non-null, this return value will be used as the platform-specific result
 // of CanIncreaseThreadPriority().
 Optional<ThreadPriority> GetCurrentThreadPriorityForPlatform();
+#endif
 
 #if defined(OS_LINUX)
 // Current thread id is cached in thread local storage for performance reasons.

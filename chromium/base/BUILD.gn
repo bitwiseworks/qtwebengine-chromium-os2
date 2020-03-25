@@ -839,6 +839,7 @@ jumbo_component("base") {
     "threading/platform_thread_android.cc",
     "threading/platform_thread_linux.cc",
     "threading/platform_thread_mac.mm",
+    "threading/platform_thread_os2.cc",
     "threading/platform_thread_win.cc",
     "threading/platform_thread_win.h",
     "threading/post_task_and_reply_impl.cc",
@@ -1870,7 +1871,7 @@ jumbo_component("base") {
     ]
   }
 
-  if (is_posix && !is_mac && !is_ios && !is_nacl) {
+  if (is_posix && !is_mac && !is_ios && !is_nacl && !is_os2) {
     sources += [
       "posix/can_lower_nice_to.cc",
       "posix/can_lower_nice_to.h",

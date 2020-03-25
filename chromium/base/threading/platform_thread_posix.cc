@@ -6,7 +6,9 @@
 
 #include <errno.h>
 #include <pthread.h>
+#if !defined(OS_OS2)
 #include <sched.h>
+#endif
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/time.h>
@@ -216,7 +218,12 @@ PlatformThreadHandle PlatformThread::CurrentHandle() {
 
 // static
 void PlatformThread::YieldCurrentThread() {
+#if defined(OS_OS2)
+  // Under OS/2 this will end up in DosSleep(0) which does yielding.
+  pthread_yield();
+#else
   sched_yield();
+#endif
 }
 
 // static
@@ -290,6 +297,8 @@ void PlatformThread::Detach(PlatformThreadHandle thread_handle) {
 bool PlatformThread::CanIncreaseThreadPriority(ThreadPriority priority) {
 #if defined(OS_NACL)
   return false;
+#elif defined(OS_OS2)
+  return true;
 #else
   auto platform_specific_ability =
       internal::CanIncreaseCurrentThreadPriorityForPlatform(priority);
@@ -306,8 +315,10 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
 #if defined(OS_NACL)
   NOTIMPLEMENTED();
 #else
+#if !defined(OS_OS2)
   if (internal::SetCurrentThreadPriorityForPlatform(priority))
     return;
+#endif
 
   // setpriority(2) should change the whole thread group's (i.e. process)
   // priority. However, as stated in the bugs section of
@@ -329,11 +340,13 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
   NOTIMPLEMENTED();
   return ThreadPriority::NORMAL;
 #else
+#if !defined(OS_OS2)
   // Mirrors SetCurrentThreadPriority()'s implementation.
   auto platform_specific_priority =
       internal::GetCurrentThreadPriorityForPlatform();
   if (platform_specific_priority)
     return platform_specific_priority.value();
+#endif
 
   // Need to clear errno before calling getpriority():
   // http://man7.org/linux/man-pages/man2/getpriority.2.html
@@ -353,9 +366,13 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
 
 // static
 size_t PlatformThread::GetDefaultThreadStackSize() {
+#if !defined(OS_OS2)
   pthread_attr_t attributes;
   pthread_attr_init(&attributes);
   return base::GetDefaultThreadStackSize(attributes);
+#else
+  return 0;
+#endif
 }
 
 }  // namespace base
