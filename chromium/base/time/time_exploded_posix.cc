@@ -182,7 +182,8 @@ bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
   timestruct.tm_wday = exploded.day_of_week;  // mktime/timegm ignore this
   timestruct.tm_yday = 0;                     // mktime/timegm ignore this
   timestruct.tm_isdst = -1;                   // attempt to figure it out
-#if !defined(OS_NACL) && !defined(OS_SOLARIS) && !defined(OS_AIX)
+#if !defined(OS_NACL) && !defined(OS_SOLARIS) && !defined(OS_AIX) && \
+    !defined(OS_OS2)
   timestruct.tm_gmtoff = 0;   // not a POSIX field, so mktime/timegm ignore
   timestruct.tm_zone = nullptr;  // not a POSIX field, so mktime/timegm ignore
 #endif
