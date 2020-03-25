@@ -15,12 +15,7 @@ if (is_linux || is_android || is_nacl || is_fuchsia) {
 }
 
 declare_args() {
-  if (is_os2) {
-    # Always use system library on OS/2 as it contains all current patches.
-    use_system_libxml = true
-  } else {
-    use_system_libxml = false
-  }
+  use_system_libxml = is_os2
 }
 
 config("libxml_config") {

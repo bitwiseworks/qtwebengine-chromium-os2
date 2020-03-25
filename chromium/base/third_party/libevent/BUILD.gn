@@ -6,7 +6,7 @@ import("//build/config/nacl/config.gni")
 import("//build/shim_headers.gni")
 
 declare_args() {
-  use_system_libevent = false
+  use_system_libevent = is_os2
 }
 
 static_library("bundled_libevent") {
@@ -97,7 +97,7 @@ source_set("system_libevent") {
 }
 
 group("libevent") {
-  if (host_toolchain != current_toolchain) {
+  if (is_os2 || host_toolchain != current_toolchain) {
     if (use_system_libevent) {
        public_deps = [ ":system_libevent" ]
     } else {
