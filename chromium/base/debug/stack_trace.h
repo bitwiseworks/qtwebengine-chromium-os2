@@ -87,7 +87,7 @@ class BASE_EXPORT StackTrace {
   // each output line.
   void PrintWithPrefix(const char* prefix_string) const;
 
-#if !defined(__UCLIBC__) & !defined(_AIX)
+#if !defined(__UCLIBC__) && !defined(_AIX) && !defined(OS_OS2)
   // Resolves backtrace to symbols and write to stream.
   void OutputToStream(std::ostream* os) const;
   // Resolves backtrace to symbols and write to stream, with the provided

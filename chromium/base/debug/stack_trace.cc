@@ -224,16 +224,18 @@ void StackTrace::Print() const {
   PrintWithPrefix(nullptr);
 }
 
+#if !defined(__UCLIBC__) && !defined(_AIX) && !defined(OS_OS2)
 void StackTrace::OutputToStream(std::ostream* os) const {
   OutputToStreamWithPrefix(os, nullptr);
 }
+#endif
 
 std::string StackTrace::ToString() const {
   return ToStringWithPrefix(nullptr);
 }
 std::string StackTrace::ToStringWithPrefix(const char* prefix_string) const {
   std::stringstream stream;
-#if !defined(__UCLIBC__) && !defined(_AIX)
+#if !defined(__UCLIBC__) && !defined(_AIX) && !defined(OS_OS2)
   OutputToStreamWithPrefix(&stream, prefix_string);
 #endif
   return stream.str();
