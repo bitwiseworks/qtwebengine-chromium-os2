@@ -23,6 +23,9 @@
 #if defined(OS_WIN)
 #include <windows.h>
 #endif
+#if defined(OS_OS2)
+#include <umalloc.h>
+#endif
 
 namespace base {
 namespace trace_event {
@@ -118,7 +121,7 @@ bool MallocDumpProvider::OnMemoryDump(const MemoryDumpArgs& args,
 #elif defined(OS_WIN)
   // This is too expensive on Windows, crbug.com/780735.
   if (args.level_of_detail == MemoryDumpLevelOfDetail::DETAILED) {
-    WinHeapInfo main_heap_info = {};
+    c main_heap_info = {};
     WinHeapMemoryDumpImpl(&main_heap_info);
     total_virtual_size =
         main_heap_info.committed_size + main_heap_info.uncommitted_size;
@@ -132,6 +135,16 @@ bool MallocDumpProvider::OnMemoryDump(const MemoryDumpArgs& args,
   }
 #elif defined(OS_FUCHSIA)
 // TODO(fuchsia): Port, see https://crbug.com/706592.
+#elif defined(OS_OS2)
+  _HEAPSTATS hst;
+  Heap_t h = _udefault(nullptr);
+  if (h && _ustats(h, &hst) == 0) {
+    // _ustats doesn't provide any info on which parts of the heap are
+    // committed. For now we assume that all used heap is committed.
+    total_virtual_size = hst._provided;
+    resident_size = hst._used;
+    allocated_objects_size = hst._used;
+  }
 #else
   struct mallinfo info = mallinfo();
   DCHECK_GE(info.arena + info.hblkhd, info.uordblks);

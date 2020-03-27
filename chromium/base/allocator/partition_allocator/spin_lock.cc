@@ -9,7 +9,7 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
-#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+#elif (defined(OS_POSIX) && !defined(OS_OS2)) || defined(OS_FUCHSIA)
 #include <sched.h>
 #endif
 
@@ -55,7 +55,12 @@
 #define YIELD_PROCESSOR ((void)0)
 #endif
 
+#if defined(OS_OS2)
+// Under OS/2 this will end up in DosSleep(0) which does yielding.
+#define YIELD_THREAD pthread_yield()
+#else
 #define YIELD_THREAD sched_yield()
+#endif
 
 #else  // Other OS
 
