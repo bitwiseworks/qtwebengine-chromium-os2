@@ -106,7 +106,7 @@ bool MemoryMappedFile::MapFileRegionToMemory(
       // fail if the disk is full and the file is sparse.
       bool do_manual_extension = false;
 
-#if defined(OS_ANDROID) && __ANDROID_API__ < 21
+#if (defined(OS_ANDROID) && __ANDROID_API__ < 21) || defined(OS_OS2)
       // Only Android API>=21 supports the fallocate call. Older versions need
       // to manually extend the file by writing zeros at block intervals.
       do_manual_extension = true;
