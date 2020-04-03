@@ -9,7 +9,7 @@
 #define MOJO_SYSTEM_IMPL_EXPORT
 #else
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(MOJO_SYSTEM_IMPL_IMPLEMENTATION)
 #define MOJO_SYSTEM_IMPL_EXPORT __declspec(dllexport)

@@ -6,7 +6,7 @@
 #define GPU_COMMAND_BUFFER_CLIENT_WEBGPU_EXPORT_H_
 
 #if defined(COMPONENT_BUILD) && !defined(NACL_WIN64)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(WEBGPU_IMPLEMENTATION)
 #define WEBGPU_EXPORT __declspec(dllexport)

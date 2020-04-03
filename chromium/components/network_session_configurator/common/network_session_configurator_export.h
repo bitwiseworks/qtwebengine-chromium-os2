@@ -7,7 +7,7 @@
 
 #if defined(COMPONENT_BUILD)
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(NETWORK_SESSION_CONFIGURATOR_IMPLEMENTATION)
 #define NETWORK_SESSION_CONFIGURATOR_EXPORT __declspec(dllexport)

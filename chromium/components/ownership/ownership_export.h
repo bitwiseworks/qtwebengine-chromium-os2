@@ -7,7 +7,7 @@
 
 #if defined(COMPONENT_BUILD)
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(OWNERSHIP_IMPLEMENTATION)
 #define OWNERSHIP_EXPORT __declspec(dllexport)

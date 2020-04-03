@@ -7,7 +7,7 @@
 
 #include "include/v8config.h"
 
-#if V8_OS_WIN
+#if V8_OS_DOSLIKE
 
 #ifdef BUILDING_V8_BASE_SHARED
 #define V8_BASE_EXPORT __declspec(dllexport)

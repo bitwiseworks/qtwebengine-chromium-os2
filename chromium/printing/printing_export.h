@@ -6,7 +6,7 @@
 #define PRINTING_PRINTING_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(PRINTING_IMPLEMENTATION)
 #define PRINTING_EXPORT __declspec(dllexport)

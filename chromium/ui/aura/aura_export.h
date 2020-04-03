@@ -9,7 +9,7 @@
 // can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(AURA_IMPLEMENTATION)
 #define AURA_EXPORT __declspec(dllexport)

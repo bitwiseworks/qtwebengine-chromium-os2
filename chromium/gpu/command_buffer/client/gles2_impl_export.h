@@ -6,7 +6,7 @@
 #define GPU_COMMAND_BUFFER_CLIENT_GLES2_IMPL_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GLES2_IMPL_IMPLEMENTATION)
 #define GLES2_IMPL_EXPORT __declspec(dllexport)

@@ -6,7 +6,7 @@
 #define CC_ANIMATION_ANIMATION_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CC_ANIMATION_IMPLEMENTATION)
 #define CC_ANIMATION_EXPORT __declspec(dllexport)

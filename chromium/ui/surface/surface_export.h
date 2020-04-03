@@ -6,7 +6,7 @@
 #define UI_SURFACE_SURFACE_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(SURFACE_IMPLEMENTATION)
 #define SURFACE_EXPORT __declspec(dllexport)

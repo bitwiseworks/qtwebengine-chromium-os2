@@ -6,7 +6,7 @@
 #define COMPONENTS_SESSION_MANAGER_SESSION_MANAGER_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(SESSION_IMPLEMENTATION)
 #define SESSION_EXPORT __declspec(dllexport)

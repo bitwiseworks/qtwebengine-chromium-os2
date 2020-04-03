@@ -15,7 +15,11 @@
 #define MESSAGE_DUMP_EXPORT __declspec(dllexport)
 #else
 #define PidToStringType base::IntToString
+#if defined(__OS2__)
+#define MESSAGE_DUMP_EXPORT __declspec(dllexport)
+#else
 #define MESSAGE_DUMP_EXPORT __attribute__((visibility("default")))
+#endif
 #endif
 
 namespace ipc_fuzzer {

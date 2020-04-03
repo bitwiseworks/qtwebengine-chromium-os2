@@ -6,7 +6,7 @@
 #define UI_EVENTS_KEYCODES_KEYCODES_X_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(KEYCODES_X_IMPLEMENTATION)
 #define KEYCODES_X_EXPORT __declspec(dllexport)

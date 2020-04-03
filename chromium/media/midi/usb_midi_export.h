@@ -10,7 +10,7 @@
 // or in the unit tests (where we never want to export/import, even in
 // component mode). The EXPORT_USB_MIDI define controls this.
 #if defined(COMPONENT_BUILD) && defined(EXPORT_USB_MIDI)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(MIDI_IMPLEMENTATION)
 #define USB_MIDI_EXPORT __declspec(dllexport)

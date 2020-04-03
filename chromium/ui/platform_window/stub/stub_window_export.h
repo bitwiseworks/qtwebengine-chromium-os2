@@ -6,7 +6,7 @@
 #define UI_PLATFORM_WINDOW_STUB_STUB_WINDOW_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(STUB_WINDOW_IMPLEMENTATION)
 #define STUB_WINDOW_EXPORT __declspec(dllexport)

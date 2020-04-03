@@ -6,7 +6,7 @@
 #define SERVICES_DEVICE_FINGERPRINT_FINGERPRINT_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(SERVICES_DEVICE_FINGERPRINT_IMPLEMENTATION)
 #define SERVICES_DEVICE_FINGERPRINT_EXPORT __declspec(dllexport)

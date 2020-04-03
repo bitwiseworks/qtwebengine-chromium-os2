@@ -9,7 +9,7 @@
 // Dialogs module can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(SHELL_DIALOGS_IMPLEMENTATION)
 #define SHELL_DIALOGS_EXPORT __declspec(dllexport)

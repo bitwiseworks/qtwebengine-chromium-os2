@@ -6,7 +6,7 @@
 #define CC_PAINT_PAINT_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CC_PAINT_IMPLEMENTATION)
 #define CC_PAINT_EXPORT __declspec(dllexport)

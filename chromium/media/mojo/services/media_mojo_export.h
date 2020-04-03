@@ -9,7 +9,7 @@
 // media/mojo module can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(MEDIA_MOJO_IMPLEMENTATION)
 #define MEDIA_MOJO_EXPORT __declspec(dllexport)

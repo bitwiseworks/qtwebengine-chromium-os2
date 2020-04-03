@@ -6,7 +6,7 @@
 #define UI_PLATFORM_WINDOW_X11_X11_WINDOW_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(X11_WINDOW_IMPLEMENTATION)
 #define X11_WINDOW_EXPORT __declspec(dllexport)

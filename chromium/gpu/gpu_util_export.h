@@ -6,7 +6,7 @@
 #define GPU_GPU_UTIL_EXPORT_H_
 
 #if defined(COMPONENT_BUILD) && !defined(NACL_WIN64)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GPU_UTIL_IMPLEMENTATION)
 #define GPU_UTIL_EXPORT __declspec(dllexport)

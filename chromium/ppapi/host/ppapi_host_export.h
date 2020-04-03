@@ -6,7 +6,7 @@
 #define PPAPI_HOST_PPAPI_HOST_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(PPAPI_HOST_IMPLEMENTATION)
 #define PPAPI_HOST_EXPORT __declspec(dllexport)

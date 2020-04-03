@@ -9,7 +9,7 @@
 // views_content_client module can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(VIEWS_CONTENT_CLIENT_IMPLEMENTATION)
 #define VIEWS_CONTENT_CLIENT_EXPORT __declspec(dllexport)

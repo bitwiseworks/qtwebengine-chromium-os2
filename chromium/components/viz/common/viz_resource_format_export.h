@@ -6,7 +6,7 @@
 #define COMPONENTS_VIZ_COMMON_VIZ_RESOURCE_FORMAT_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(VIZ_RESOURCE_FORMAT_IMPLEMENTATION)
 #define VIZ_RESOURCE_FORMAT_EXPORT __declspec(dllexport)

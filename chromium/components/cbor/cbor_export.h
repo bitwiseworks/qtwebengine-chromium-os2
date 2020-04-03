@@ -6,7 +6,7 @@
 #define COMPONENTS_CBOR_CBOR_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CBOR_IMPLEMENTATION)
 #define CBOR_EXPORT __declspec(dllexport)

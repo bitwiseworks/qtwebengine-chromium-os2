@@ -6,7 +6,7 @@
 #define SERVICES_SERVICE_MANAGER_SERVICE_MANAGER_PUBLIC_CPP_TYPES_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(SERVICE_MANAGER_PUBLIC_CPP_TYPES_IMPL)
 #define SERVICE_MANAGER_PUBLIC_CPP_TYPES_EXPORT __declspec(dllexport)

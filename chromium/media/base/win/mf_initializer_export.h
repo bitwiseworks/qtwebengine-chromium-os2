@@ -6,7 +6,7 @@
 #define MEDIA_BASE_WIN_MF_INITIALIZER_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(MF_INITIALIZER_IMPLEMENTATION)
 #define MF_INITIALIZER_EXPORT __declspec(dllexport)

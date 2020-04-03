@@ -6,7 +6,7 @@
 #define UI_GFX_CODEC_CODEC_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CODEC_IMPLEMENTATION)
 #define CODEC_EXPORT __declspec(dllexport)

@@ -6,7 +6,7 @@
 #define GIN_GIN_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GIN_IMPLEMENTATION)
 #define GIN_EXPORT __declspec(dllexport)

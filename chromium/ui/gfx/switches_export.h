@@ -6,7 +6,7 @@
 #define UI_GFX_SWITCHES_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GFX_SWITCHES_IMPLEMENTATION)
 #define GFX_SWITCHES_EXPORT __declspec(dllexport)

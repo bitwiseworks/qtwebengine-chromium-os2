@@ -5,7 +5,7 @@
 // Note: there is intentionally no header file associated with this library so
 // we don't risk implicitly demand loading it by accessing a symbol.
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 #define BASE_PROFILER_TEST_SUPPORT_LIBRARY_EXPORT __declspec(dllexport)
 #else  // defined(WIN32)
 #define BASE_PROFILER_TEST_SUPPORT_LIBRARY_EXPORT __attribute__((visibility("default")))

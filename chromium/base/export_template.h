@@ -153,8 +153,12 @@
 
 EXPORT_TEMPLATE_TEST(DEFAULT, );
 EXPORT_TEMPLATE_TEST(DEFAULT, __attribute__((visibility("default"))));
+// GCC for DOS-like targets (Windows, OS/2) defines __declspec to be a synonym
+// for __attribute__ so the below checks make no sense (are the same as above).
+#if !defined(__GNUC__) || !defined(__declspec)
 EXPORT_TEMPLATE_TEST(MSVC_HACK, __declspec(dllexport));
 EXPORT_TEMPLATE_TEST(DEFAULT, __declspec(dllimport));
+#endif
 
 #undef EXPORT_TEMPLATE_TEST
 #undef EXPORT_TEMPLATE_TEST_DEFAULT_DEFAULT

@@ -412,7 +412,7 @@ bool is_inbounds(float_t v) {
          (kUpperBoundIsMax ? (v <= kUpperBound) : (v < kUpperBound));
 }
 
-#ifdef V8_OS_WIN
+#ifdef V8_OS_DOSLIKE
 
 // Setup for Windows shared library export.
 #ifdef BUILDING_V8_SHARED

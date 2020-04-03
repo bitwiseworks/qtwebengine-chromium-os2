@@ -6,7 +6,7 @@
 #define IPC_IPC_MESSAGE_SUPPORT_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(IPC_MESSAGE_SUPPORT_IMPL)
 #define IPC_MESSAGE_SUPPORT_EXPORT __declspec(dllexport)

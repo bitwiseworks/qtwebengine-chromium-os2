@@ -9,7 +9,7 @@
 // cdm_manager component can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CDM_MANAGER_IMPLEMENTATION)
 #define CDM_MANAGER_EXPORT __declspec(dllexport)

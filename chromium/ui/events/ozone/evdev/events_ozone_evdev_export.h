@@ -6,7 +6,7 @@
 #define UI_EVENTS_OZONE_EVDEV_EVENTS_OZONE_EVDEV_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(EVENTS_OZONE_EVDEV_IMPLEMENTATION)
 #define EVENTS_OZONE_EVDEV_EXPORT __declspec(dllexport)

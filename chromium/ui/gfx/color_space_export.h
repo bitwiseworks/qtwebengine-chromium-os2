@@ -6,7 +6,7 @@
 #define UI_GFX_COLOR_SPACE_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(COLOR_SPACE_IMPLEMENTATION)
 #define COLOR_SPACE_EXPORT __declspec(dllexport)

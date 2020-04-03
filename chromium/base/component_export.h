@@ -36,7 +36,7 @@
 // in non-component builds. These should not see much if any direct use.
 // Instead use the COMPONENT_EXPORT macro defined above.
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 #define COMPONENT_EXPORT_ANNOTATION __declspec(dllexport)
 #define COMPONENT_IMPORT_ANNOTATION __declspec(dllimport)
 #else  // defined(WIN32)

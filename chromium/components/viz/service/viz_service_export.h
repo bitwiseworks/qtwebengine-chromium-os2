@@ -6,7 +6,7 @@
 #define COMPONENTS_VIZ_SERVICE_VIZ_SERVICE_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(VIZ_SERVICE_IMPLEMENTATION)
 #define VIZ_SERVICE_EXPORT __declspec(dllexport)

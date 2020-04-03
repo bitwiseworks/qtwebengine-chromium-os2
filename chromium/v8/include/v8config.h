@@ -116,6 +116,11 @@
 # define V8_OS_QNX 1
 #elif defined(_WIN32)
 # define V8_OS_WIN 1
+# define V8_OS_DOSLIKE 1
+#elif defined(__OS2__)
+# define V8_OS_OS2 1
+# define V8_OS_POSIX 1
+# define V8_OS_DOSLIKE 1
 #endif
 
 
@@ -349,7 +354,7 @@
 #define V8_WARN_UNUSED_RESULT /* NOT SUPPORTED */
 #endif
 
-#ifdef V8_OS_WIN
+#ifdef V8_OS_DOSLIKE
 
 // Setup for Windows DLL export/import. When building the V8 DLL the
 // BUILDING_V8_SHARED needs to be defined. When building a program which uses

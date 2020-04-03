@@ -6,7 +6,7 @@
 #define GFX_IPC_GEOMETRY_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GFX_IPC_GEOMETRY_IMPLEMENTATION)
 #define GFX_IPC_GEOMETRY_EXPORT __declspec(dllexport)

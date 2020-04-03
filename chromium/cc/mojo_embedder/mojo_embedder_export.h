@@ -6,7 +6,7 @@
 #define CC_MOJO_EMBEDDER_MOJO_EMBEDDER_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CC_MOJO_EMBEDDER_IMPLEMENTATION)
 #define CC_MOJO_EMBEDDER_EXPORT __declspec(dllexport)

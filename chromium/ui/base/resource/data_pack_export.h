@@ -10,7 +10,7 @@
 
 #if defined(COMPONENT_BUILD)
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(UI_DATA_PACK_IMPLEMENTATION)
 #define UI_DATA_PACK_EXPORT __declspec(dllexport)

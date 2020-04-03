@@ -6,7 +6,7 @@
 #define MOJO_PUBLIC_C_SYSTEM_SYSTEM_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(MOJO_SYSTEM_IMPLEMENTATION)
 #define MOJO_SYSTEM_EXPORT __declspec(dllexport)

@@ -6,7 +6,7 @@
 #define PPAPI_PROXY_PPAPI_PROXY_EXPORT_H_
 
 #if defined(COMPONENT_BUILD) && !defined(NACL_WIN64)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(PPAPI_PROXY_IMPLEMENTATION)
 #define PPAPI_PROXY_EXPORT __declspec(dllexport)

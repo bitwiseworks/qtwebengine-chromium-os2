@@ -6,7 +6,7 @@
 #define GPU_GPU_IPC_SERVICE_EXPORT_H_
 
 #if defined(COMPONENT_BUILD) && !defined(NACL_WIN64)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GPU_IPC_SERVICE_IMPLEMENTATION)
 #define GPU_IPC_SERVICE_EXPORT __declspec(dllexport)

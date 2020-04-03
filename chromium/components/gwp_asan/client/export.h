@@ -6,7 +6,7 @@
 #define COMPONENTS_GWP_ASAN_CLIENT_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GWP_ASAN_IMPLEMENTATION)
 #define GWP_ASAN_EXPORT __declspec(dllexport)

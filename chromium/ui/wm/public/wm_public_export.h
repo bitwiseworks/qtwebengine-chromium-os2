@@ -9,7 +9,7 @@
 // module can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(WM_PUBLIC_IMPLEMENTATION)
 #define WM_PUBLIC_EXPORT __declspec(dllexport)

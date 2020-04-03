@@ -6,7 +6,7 @@
 #define UI_EVENTS_EVENTS_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(EVENTS_IMPLEMENTATION)
 #define EVENTS_EXPORT __declspec(dllexport)

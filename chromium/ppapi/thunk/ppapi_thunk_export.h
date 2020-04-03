@@ -6,7 +6,7 @@
 #define PPAPI_THUNK_PPAPI_THUNK_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(PPAPI_THUNK_IMPLEMENTATION)
 #define PPAPI_THUNK_EXPORT __declspec(dllexport)

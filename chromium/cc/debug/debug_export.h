@@ -6,7 +6,7 @@
 #define CC_DEBUG_DEBUG_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(CC_DEBUG_IMPLEMENTATION)
 #define CC_DEBUG_EXPORT __declspec(dllexport)

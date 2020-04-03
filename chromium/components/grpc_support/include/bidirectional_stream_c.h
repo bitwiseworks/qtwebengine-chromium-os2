@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_GRPC_SUPPORT_INCLUDE_BIDIRECTIONAL_STREAM_C_H_
 #define COMPONENTS_GRPC_SUPPORT_INCLUDE_BIDIRECTIONAL_STREAM_C_H_
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 #define GRPC_SUPPORT_EXPORT __declspec(dllexport)
 #else
 #define GRPC_SUPPORT_EXPORT __attribute__((visibility("default")))

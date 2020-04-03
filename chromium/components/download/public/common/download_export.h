@@ -6,7 +6,7 @@
 #define COMPONENTS_DOWNLOAD_PUBLIC_COMMON_DOWNLOAD_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(COMPONENTS_DOWNLOAD_IMPLEMENTATION)
 #define COMPONENTS_DOWNLOAD_EXPORT __declspec(dllexport)

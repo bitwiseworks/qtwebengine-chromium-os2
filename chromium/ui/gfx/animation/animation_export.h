@@ -6,7 +6,7 @@
 #define UI_GFX_ANIMATION_ANIMATION_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(ANIMATION_IMPLEMENTATION)
 #define ANIMATION_EXPORT __declspec(dllexport)

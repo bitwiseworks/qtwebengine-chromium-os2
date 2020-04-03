@@ -6,7 +6,7 @@
 #define UI_GFX_IPC_GFX_SKIA_IPC_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(GFX_SKIA_IPC_IMPLEMENTATION)
 #define GFX_SKIA_IPC_EXPORT __declspec(dllexport)

@@ -9,7 +9,7 @@
 // wm_platform module can be exported to consumers.
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(PLATFORM_WINDOW_HANDLER_IMPLEMENTATION)
 #define WM_PLATFORM_EXPORT __declspec(dllexport)

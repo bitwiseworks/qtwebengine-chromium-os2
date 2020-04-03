@@ -12,7 +12,7 @@
 
 #if defined(COMPONENT_BUILD)
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(UI_TOUCH_SELECTION_IMPLEMENTATION)
 #define UI_TOUCH_SELECTION_EXPORT __declspec(dllexport)

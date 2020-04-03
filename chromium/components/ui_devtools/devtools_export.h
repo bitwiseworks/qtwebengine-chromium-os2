@@ -6,7 +6,7 @@
 #define COMPONENTS_UI_DEVTOOLS_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(UI_DEVTOOLS_IMPLEMENTATION)
 #define UI_DEVTOOLS_EXPORT __declspec(dllexport)

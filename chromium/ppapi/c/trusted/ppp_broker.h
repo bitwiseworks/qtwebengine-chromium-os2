@@ -23,10 +23,9 @@
 #include "ppapi/c/pp_stdint.h"
 
 
-#if __GNUC__ >= 4
-
+#if __GNUC__ >= 4 && !defined(__OS2__)
 #define PP_EXPORT __attribute__ ((visibility("default")))
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) || defined(__OS2__)
 #define PP_EXPORT __declspec(dllexport)
 #endif
 

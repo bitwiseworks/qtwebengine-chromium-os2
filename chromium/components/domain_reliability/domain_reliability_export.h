@@ -6,7 +6,7 @@
 #define COMPONENTS_DOMAIN_RELIABILITY_DOMAIN_RELIABILITY_EXPORT_H_
 
 #if defined(COMPONENT_BUILD)
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(DOMAIN_RELIABILITY_IMPLEMENTATION)
 #define DOMAIN_RELIABILITY_EXPORT __declspec(dllexport)

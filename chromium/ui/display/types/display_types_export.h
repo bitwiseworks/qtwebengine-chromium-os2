@@ -10,7 +10,7 @@
 
 #if defined(COMPONENT_BUILD)
 
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 
 #if defined(DISPLAY_TYPES_IMPLEMENTATION)
 #define DISPLAY_TYPES_EXPORT __declspec(dllexport)
