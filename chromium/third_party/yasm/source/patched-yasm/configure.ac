@@ -5,7 +5,7 @@
 #
 AC_PREREQ(2.53)
 AC_INIT([yasm],
-       	m4_esyscmd([./YASM-VERSION-GEN.sh && tr -d '\n' <YASM-VERSION-FILE]),
+       	m4_esyscmd([./YASM-VERSION-GEN.sh && tr -d '\r\n' <YASM-VERSION-FILE]),
         [bug-yasm@tortall.net])
 #AC_CONFIG_SRCDIR([src/main.c])
 AC_CONFIG_AUX_DIR(config)
