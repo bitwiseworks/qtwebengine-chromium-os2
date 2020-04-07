@@ -19,14 +19,15 @@ config("compiler") {
     "-Zomf",
     "-Zmap",
     "-Zhigh-mem",
-    "-Zstack 0x2000",
     "-lcx",
+    # Newer gettext is not part of LIBC (yet)
+    "-lintl",
   ]
 }
 
 # Settings for EXEs.
 config("os2_executable_flags") {
-  ldflags = [ "-Zexe" ]
+  ldflags = [ "-Zexe", "-Zstack", "0x2000" ]
 
   # All executables are PM apps except AddressSanitizer builds that write
   # to stderr. Having a console attached is also handy for debug builds.

@@ -73,7 +73,7 @@ if (is_nacl) {
     ]
 
     objcopy = "${nacl_toolprefix}objcopy"
-    if (host_os == "win") {
+    if (host_os == "win" || host_os == "os2") {
       objcopy += ".exe"
     }
 

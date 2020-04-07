@@ -546,7 +546,7 @@ template("gcc_toolchain") {
 
       start_group_flag = ""
       end_group_flag = ""
-      if (current_os != "aix") {
+      if (!is_os2 && current_os != "aix") {
         # the "--start-group .. --end-group" feature isn't available on the aix ld.
         start_group_flag = "-Wl,--start-group"
         end_group_flag = "-Wl,--end-group "

@@ -45,7 +45,7 @@ template("generate_nmf") {
     } else {
       objdump = rebase_path("${nacl_toolprefix}objdump")
     }
-    if (host_os == "win") {
+    if (host_os == "win" || host_os == "os2") {
       objdump += ".exe"
     }
 

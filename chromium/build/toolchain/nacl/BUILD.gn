@@ -25,7 +25,7 @@ nacl_arm_glibc_rev = revisions[1]
 
 pnacl_newlib_rev = revisions[2]
 
-if (host_os == "win") {
+if (host_os == "win" || host_os == "os2") {
   toolsuffix = ".exe"
 } else {
   toolsuffix = ""

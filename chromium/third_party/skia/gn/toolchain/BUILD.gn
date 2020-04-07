@@ -4,7 +4,7 @@ declare_args() {
   host_cxx = cxx
 
   if (is_android) {
-    if (host_os == "win") {
+    if (host_os == "win" || host_os == "os2") {
       target_ar = "$ndk/toolchains/$ndk_gccdir-4.9/prebuilt/$ndk_host/$ndk_target/bin/ar.exe"
       target_cc = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang.exe"
       target_cxx = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang++.exe"

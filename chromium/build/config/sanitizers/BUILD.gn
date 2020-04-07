@@ -29,7 +29,7 @@ group("deps") {
     deps = [
       ":options_sources",
     ]
-    if (is_win) {
+    if (is_win || is_os2) {
       exe = ".exe"
     } else {
       exe = ""

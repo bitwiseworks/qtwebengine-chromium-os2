@@ -13,6 +13,8 @@ gcc_toolchain("x86") {
   ar = "emxomfar"
   ld = cxx
 
+  executable_extension = ".exe"
+
   toolchain_args = {
     current_cpu = "x86"
     current_os = "os2"

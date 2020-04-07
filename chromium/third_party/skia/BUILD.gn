@@ -504,7 +504,7 @@ if (skia_lex) {
     ]
     sksllex_path = "$root_out_dir/"
     sksllex_path += "sksllex"
-    if (host_os == "win") {
+    if (host_os == "win" || host_os == "os2") {
       sksllex_path += ".exe"
     }
     args = [
@@ -577,7 +577,7 @@ if (skia_compile_processors) {
       skslc_path += "$host_toolchain/"
     }
     skslc_path += "skslc"
-    if (host_os == "win") {
+    if (host_os == "win" || host_os == "os2") {
       skslc_path += ".exe"
     }
     args = [
