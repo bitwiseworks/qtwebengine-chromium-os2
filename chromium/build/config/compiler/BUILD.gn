@@ -278,6 +278,12 @@ config("compiler") {
         # Not available on aix.
         cflags += [ "-fstack-protector" ]
       }
+
+      if (is_os2) {
+        # On OS/2, stack protection helpers are in a separate library.
+        # See https://github.com/bitwiseworks/gcc-os2/issues/13
+        ldflags += [ "-fstack-protector" ]
+      }
     }
 
     # Linker warnings.
