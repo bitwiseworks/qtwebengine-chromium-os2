@@ -17,6 +17,9 @@
 #include <objc/objc.h>
 #elif defined(OS_WIN)
 #include "base/win/windows_types.h"
+#elif defined(OS_OS2)
+#define INCL_PM
+#include <os2.h>
 #endif
 
 // This file provides cross platform typedefs for native widget types.
@@ -231,6 +234,9 @@ typedef intptr_t NativeViewId;
 #if defined(OS_WIN)
 typedef HWND AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = NULL;
+#elif defined(OS_OS2)
+typedef HWND AcceleratedWidget;
+constexpr AcceleratedWidget kNullAcceleratedWidget = NULLHANDLE;
 #elif defined(USE_X11)
 typedef unsigned long AcceleratedWidget;
 constexpr AcceleratedWidget kNullAcceleratedWidget = 0;
