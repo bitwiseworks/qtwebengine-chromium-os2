@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 
-#ifdef SK_BUILD_FOR_UNIX
+#ifdef SK_BUILD_FOR_POSIX
 #include <unistd.h>
 #endif
 

@@ -19,7 +19,7 @@
 //////////////////////////////////////////////////////////////////////
 
 #if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_IOS) && !defined(SK_BUILD_FOR_WIN) && \
-    !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC)
+    !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC) && !defined(SK_BUILD_FOR_OS2)
 
     #ifdef __APPLE__
         #include "TargetConditionals.h"
@@ -27,6 +27,8 @@
 
     #if defined(_WIN32) || defined(__SYMBIAN32__)
         #define SK_BUILD_FOR_WIN
+    #elif defined(__OS2__)
+        #define SK_BUILD_FOR_OS2
     #elif defined(ANDROID) || defined(__ANDROID__)
         #define SK_BUILD_FOR_ANDROID
     #elif defined(linux) || defined(__linux) || defined(__FreeBSD__) || \
@@ -40,6 +42,14 @@
         #define SK_BUILD_FOR_MAC
     #endif
 
+#endif
+
+#if defined(SK_BUILD_FOR_WIN) || defined(SK_BUILD_FOR_OS2)
+    #define SK_BUILD_FOR_DOSLIKE
+#endif
+
+#if defined(SK_BUILD_FOR_UNIX) || defined(SK_BUILD_FOR_OS2)
+    #define SK_BUILD_FOR_POSIX
 #endif
 
 //////////////////////////////////////////////////////////////////////
@@ -183,7 +193,7 @@
 
 #if !defined(SK_API)
     #if defined(SKIA_DLL)
-        #if defined(_MSC_VER)
+        #if defined(_MSC_VER) || defined(__OS2__)
             #if SKIA_IMPLEMENTATION
                 #define SK_API __declspec(dllexport)
             #else
