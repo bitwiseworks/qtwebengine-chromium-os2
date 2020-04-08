@@ -37,6 +37,12 @@ bool GetPeerEuid(base::PlatformFile fd, uid_t* peer_euid) {
   }
   *peer_euid = socket_euid;
   return true;
+#elif defined(OS_OS2)
+  // OS/2 lacks getpeereid and friends. Assume the local connection always
+  // comes from the local user (which is always true as OS/2 is a single user
+  // system per se).
+  *peer_euid = geteuid();
+  return true;
 #else
   struct ucred cred;
   socklen_t cred_len = sizeof(cred);
@@ -67,7 +73,7 @@ bool IsPeerAuthorized(base::PlatformFile fd) {
 
 // NOTE: On Linux |SIGPIPE| is suppressed by passing |MSG_NOSIGNAL| to
 // |sendmsg()|. On Mac we instead set |SO_NOSIGPIPE| on the socket itself.
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_OS2)
 constexpr int kSendmsgFlags = 0;
 #else
 constexpr int kSendmsgFlags = MSG_NOSIGNAL;
