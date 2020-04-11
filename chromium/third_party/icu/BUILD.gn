@@ -9,7 +9,7 @@ import("//build/shim_headers.gni")
 import("//third_party/icu/config.gni")
 
 declare_args() {
-  use_system_icu = is_os2
+  use_system_icu = false
 }
 
 if (is_android) {

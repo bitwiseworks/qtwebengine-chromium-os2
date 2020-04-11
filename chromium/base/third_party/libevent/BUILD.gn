@@ -6,7 +6,7 @@ import("//build/config/nacl/config.gni")
 import("//build/shim_headers.gni")
 
 declare_args() {
-  use_system_libevent = is_os2
+  use_system_libevent = false
 }
 
 static_library("bundled_libevent") {

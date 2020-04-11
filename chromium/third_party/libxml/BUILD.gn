@@ -15,7 +15,7 @@ if (is_linux || is_android || is_nacl || is_fuchsia) {
 }
 
 declare_args() {
-  use_system_libxml = is_os2
+  use_system_libxml = false
 }
 
 config("libxml_config") {
