@@ -59,9 +59,9 @@ void SysTimeToTimeStruct(SysTime t, struct tm* timestruct, bool is_local) {
     gmtime64_r(&t, timestruct);
 }
 
-#elif defined(OS_AIX)
+#elif defined(OS_AIX) || defined(OS_OS2)
 
-// The function timegm is not available on AIX.
+// The function timegm is not available on AIX and OS/2 LIBC (yet).
 time_t aix_timegm(struct tm* tm) {
   time_t ret;
   char* tz;
