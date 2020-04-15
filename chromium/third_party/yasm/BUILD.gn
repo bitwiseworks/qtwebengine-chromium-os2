@@ -240,6 +240,13 @@ if (current_toolchain == host_toolchain) {
     }
   }
 
+  # Yasm doesn't support OMF as output, we have to use nasm on OS/2 (see
+  # yasm_assemble.gni) so don't build it. Note that there is a separate
+  # nasm_assemble template but we don't use it as simply replacing yasm
+  # executable with nasm will work in nearly 100% cases without any
+  # additional patching in other .gn files.
+
+  if (!is_os2)
   executable("yasm") {
     sources = [
       "source/patched-yasm/frontends/yasm/yasm-options.c",
