@@ -29,6 +29,9 @@
 #include <sys/sysctl.h>
 #elif defined(OS_SOLARIS) || defined(OS_AIX)
 #include <stdlib.h>
+#elif defined(OS_OS2)
+#define INCL_BASE
+#include <os2.h>
 #endif
 
 namespace base {
@@ -73,6 +76,26 @@ bool PathProviderPosix(int key, FilePath* result) {
         *result = FilePath(cpath);
       else
         *result = FilePath("/usr/local/chrome/chrome");
+      return true;
+#elif defined(OS_OS2)
+      HMODULE hmod = NULLHANDLE;
+      char pathname[CCHMAXPATH];
+      if (key == FILE_EXE) {
+        PPIB ppib;
+        if (DosGetInfoBlocks(nullptr, &ppib) == 0)
+          hmod = ppib->pib_hmte;
+      } else {
+        // Use this function's address to find the DLL handle.
+        if (DosQueryModFromEIP(&hmod, nullptr, 0, nullptr, nullptr,
+                               (ULONG)PathProviderPosix) != 0)
+          hmod = NULLHANDLE;
+      }
+      if (hmod == NULLHANDLE ||
+          DosQueryModuleName(hmod, CCHMAXPATH, pathname)) {
+        NOTREACHED() << "Unable to resolve path.";
+        return false;
+      }
+      *result = FilePath(pathname);
       return true;
 #endif
     }

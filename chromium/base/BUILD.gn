@@ -581,6 +581,7 @@ jumbo_component("base") {
     #"process/process_handle_freebsd.cc",  # Unused in Chromium build.
     "process/process_handle_linux.cc",
     "process/process_handle_mac.cc",
+    "process/process_handle_os2.cc",
 
     #"process/process_handle_openbsd.cc",  # Unused in Chromium build.
     "process/process_handle_win.cc",
@@ -592,6 +593,7 @@ jumbo_component("base") {
     #"process/process_iterator_freebsd.cc",  # Unused in Chromium build.
     "process/process_iterator_linux.cc",
     "process/process_iterator_mac.cc",
+    "process/process_iterator_os2.cc",
 
     #"process/process_iterator_openbsd.cc",  # Unused in Chromium build.
     "process/process_iterator_win.cc",
@@ -604,6 +606,7 @@ jumbo_component("base") {
     "process/process_metrics_ios.cc",
     "process/process_metrics_linux.cc",
     "process/process_metrics_mac.cc",
+    "process/process_metrics_os2.cc",
 
     #"process/process_metrics_openbsd.cc",  # Unused in Chromium build.
     "process/process_metrics_win.cc",
@@ -1120,16 +1123,6 @@ jumbo_component("base") {
       "threading/thread_local_storage_posix.cc",
       "timer/hi_res_timer_manager_posix.cc",
     ]
-
-    if (is_os2) {
-      sources -= [
-        "rand_util_posix.cc",
-      ]
-
-      sources += [
-        "rand_util_os2.cc",
-      ]
-    }
   }
 
   if (!is_nacl) {
@@ -1682,8 +1675,23 @@ jumbo_component("base") {
 
   # OS/2.
   if (is_os2) {
+    sources += [
+      "base_paths_posix.cc",
+      "nix/xdg_util.cc",
+      "nix/xdg_util.h",
+      "process/memory_os2.cc",
+      "rand_util_os2.cc",
+      "system/sys_info_os2.cc",
+    ]
     sources -= [
+      "rand_util_posix.cc",
       "strings/string16.cc",
+    ]
+
+    defines += [ "_EMX_SOURCE" ] # Use EMX extensions.
+
+    deps += [
+      "//base/third_party/xdg_user_dirs",
     ]
   }
 
