@@ -58,6 +58,8 @@
   %define PRIVATE :hidden
 %elifidn __OUTPUT_FORMAT__,elfx32
   %define PRIVATE :hidden
+%elifidn __OUTPUT_FORMAT__,obj
+  %define PRIVATE
 %elif X64WIN
   %define PRIVATE
 %else
