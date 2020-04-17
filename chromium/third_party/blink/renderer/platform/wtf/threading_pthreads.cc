@@ -36,7 +36,9 @@
 
 #include <errno.h>
 #include <limits.h>
+#if !defined(OS_OS2)
 #include <sched.h>
+#endif
 #include <sys/time.h>
 #include "base/threading/scoped_blocking_call.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
