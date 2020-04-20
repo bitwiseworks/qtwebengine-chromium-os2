@@ -275,8 +275,16 @@ typedef char* caddr_t;
 #endif
 
 #else /* !defined(Userspace_os_Windows) */
+#if defined(__Userspace_os_OS2)
+/* OS/2 defines mbstat in sys/socket.h, disable it. */
+#define mbstat mbstat_os2
+#endif
 #include <sys/socket.h>
-#if defined(__Userspace_os_DragonFly) || defined(__Userspace_os_FreeBSD) || defined(__Userspace_os_Linux) || defined(__Userspace_os_NetBSD) || defined(__Userspace_os_OpenBSD) || defined(__Userspace_os_NaCl) || defined(__Userspace_os_Fuchsia)
+#if defined(__Userspace_os_OS2)
+#undef mbstat
+#undef MT_HEADER
+#endif
+#if defined(__Userspace_os_DragonFly) || defined(__Userspace_os_FreeBSD) || defined(__Userspace_os_Linux) || defined(__Userspace_os_NetBSD) || defined(__Userspace_os_OpenBSD) || defined(__Userspace_os_NaCl) || defined(__Userspace_os_Fuchsia) || defined(__Userspace_os_OS2)
 #include <pthread.h>
 #endif
 typedef pthread_mutex_t userland_mutex_t;
@@ -427,7 +435,7 @@ int win_if_nametoindex(const char *);
 #define MA_OWNED 7 /* sys/mutex.h typically on FreeBSD */
 #if !defined(__Userspace_os_FreeBSD)
 struct mtx {int dummy;};
-#if !defined(__Userspace_os_NetBSD)
+#if !defined(__Userspace_os_NetBSD) && !defined(__Userspace_os_OS2)
 struct selinfo {int dummy;};
 #endif
 struct sx {int dummy;};
@@ -1091,7 +1099,7 @@ sctp_get_mbuf_for_msg(unsigned int space_needed, int want_header, int how, int a
 /* with the current included files, this is defined in Linux but
  *  in FreeBSD, it is behind a _KERNEL in sys/socket.h ...
  */
-#if defined(__Userspace_os_DragonFly) || defined(__Userspace_os_FreeBSD) || defined(__Userspace_os_OpenBSD) || defined(__Userspace_os_NaCl)
+#if defined(__Userspace_os_DragonFly) || defined(__Userspace_os_FreeBSD) || defined(__Userspace_os_OpenBSD) || defined(__Userspace_os_NaCl) || defined(__Userspace_os_OS2)
 /* stolen from /usr/include/sys/socket.h */
 #define CMSG_ALIGN(n)   _ALIGN(n)
 #elif defined(__Userspace_os_NetBSD)

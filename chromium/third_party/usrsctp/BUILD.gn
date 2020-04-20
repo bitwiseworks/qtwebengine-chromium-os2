@@ -137,6 +137,10 @@ static_library("usrsctp") {
     defines += [ "NON_WINDOWS_DEFINE" ]
   }
 
+  if (is_os2) {
+    defines += [ "__Userspace_os_OS2" ]
+  }
+
   if (is_fuchsia) {
     defines += [ "__Userspace_os_Fuchsia" ]
   }

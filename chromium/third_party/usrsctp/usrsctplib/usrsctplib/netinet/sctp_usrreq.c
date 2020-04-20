@@ -3303,15 +3303,19 @@ sctp_getopt(struct socket *so, int optname, void *optval, size_t *optsize,
 		       &stcb->asoc.primary_destination->ro._l_addr,
 		       ((struct sockaddr *)(&stcb->asoc.primary_destination->ro._l_addr))->sa_len);
 #else
+#ifdef INET6
 		if (stcb->asoc.primary_destination->ro._l_addr.sa.sa_family == AF_INET) {
+#endif
 			memcpy(&sstat->sstat_primary.spinfo_address,
 			       &stcb->asoc.primary_destination->ro._l_addr,
 			       sizeof(struct sockaddr_in));
+#ifdef INET6
 		} else {
 			memcpy(&sstat->sstat_primary.spinfo_address,
 			       &stcb->asoc.primary_destination->ro._l_addr,
 			       sizeof(struct sockaddr_in6));
 		}
+#endif
 #endif
 		net = stcb->asoc.primary_destination;
 		((struct sockaddr_in *)&sstat->sstat_primary.spinfo_address)->sin_port = stcb->rport;

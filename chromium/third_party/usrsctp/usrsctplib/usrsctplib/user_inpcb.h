@@ -71,12 +71,16 @@ struct in_endpoints {
 	union {
 		/* foreign host table entry */
 		struct	in_addr_4in6 ie46_foreign;
+#ifdef INET6
 		struct	in6_addr ie6_foreign;
+#endif
 	} ie_dependfaddr;
 	union {
 		/* local host table entry */
 		struct	in_addr_4in6 ie46_local;
+#ifdef INET6
 		struct	in6_addr ie6_local;
+#endif
 	} ie_dependladdr;
 #define	ie_faddr	ie_dependfaddr.ie46_foreign.ia46_addr4
 #define	ie_laddr	ie_dependladdr.ie46_local.ia46_addr4

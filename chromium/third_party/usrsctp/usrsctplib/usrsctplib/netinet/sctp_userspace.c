@@ -42,6 +42,10 @@
 #include <sys/prctl.h>
 #endif
 
+#if defined(__Userspace_os_OS2)
+#include <libcx/net.h>
+#endif
+
 #if defined(__Userspace_os_Windows)
 /* Adapter to translate Unix thread start routines to Windows thread start
  * routines.
@@ -84,6 +88,10 @@ sctp_userspace_set_threadname(const char *name)
 }
 
 #if !defined(_WIN32) && !defined(__Userspace_os_NaCl)
+#if defined(__Userspace_os_OS2)
+/* Reuse another int field, if.h misses ifr_mtu it so far */
+#define ifr_mtu ifr_metric
+#endif
 int
 sctp_userspace_get_mtu_from_ifn(uint32_t if_index, int af)
 {

@@ -14985,11 +14985,13 @@ sctp_v4src_match_nexthop(struct sctp_ifa *sifa, sctp_route_t *ro)
 }
 #elif defined(__Userspace__)
 /* TODO __Userspace__ versions of sctp_vXsrc_match_nexthop(). */
+#ifdef INET6
 int
 sctp_v6src_match_nexthop(struct sockaddr_in6 *src6, sctp_route_t *ro)
 {
     return (0);
 }
+#endif
 int
 sctp_v4src_match_nexthop(struct sctp_ifa *sifa, sctp_route_t *ro)
 {

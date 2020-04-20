@@ -59,11 +59,11 @@
 #define ERESTART (-1)
 #endif
 
-#if !defined(__Userspace_os_Darwin) && !defined(__Userspace_os_NetBSD) && !defined(__Userspace_os_OpenBSD)
+#if !defined(__Userspace_os_Darwin) && !defined(__Userspace_os_NetBSD) && !defined(__Userspace_os_OpenBSD) && !defined(__Userspace_os_OS2)
 enum	uio_rw { UIO_READ, UIO_WRITE };
 #endif
 
-#if !defined(__Userspace_os_NetBSD) && !defined(__Userspace_os_OpenBSD)
+#if !defined(__Userspace_os_NetBSD) && !defined(__Userspace_os_OpenBSD) && !defined(__Userspace_os_OS2)
 /* Segment flag values. */
 enum uio_seg {
 	UIO_USERSPACE,		/* from user data space */

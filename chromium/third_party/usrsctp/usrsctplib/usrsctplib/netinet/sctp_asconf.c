@@ -2647,11 +2647,14 @@ sctp_compose_asconf(struct sctp_tcb *stcb, int *retlen, int addr_locked)
 			lookup = (struct sctp_ipv6addr_param *)lookup_ptr;
 			lookup->ph.param_type =
 			    htons(aa->ap.addrp.ph.param_type);
+#ifdef INET6
 			if (aa->ap.addrp.ph.param_type == SCTP_IPV6_ADDRESS) {
 				/* copy IPv6 address */
 				p_size = sizeof(struct sctp_ipv6addr_param);
 				addr_size = sizeof(struct in6_addr);
-			} else {
+			} else
+#endif
+			{
 				/* copy IPv4 address */
 				p_size = sizeof(struct sctp_ipv4addr_param);
 				addr_size = sizeof(struct in_addr);
