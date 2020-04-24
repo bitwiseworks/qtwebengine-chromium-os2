@@ -28,6 +28,7 @@ bool IfAddrsConverter::ConvertIfAddrsToIPAddress(
           reinterpret_cast<sockaddr_in*>(interface->ifa_netmask)->sin_addr);
       return true;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       int ip_attributes = IPV6_ADDRESS_FLAG_NONE;
       if (!ConvertNativeAttributesToIPAttributes(interface, &ip_attributes)) {
@@ -40,6 +41,7 @@ bool IfAddrsConverter::ConvertIfAddrsToIPAddress(
           reinterpret_cast<sockaddr_in6*>(interface->ifa_netmask)->sin6_addr);
       return true;
     }
+#endif
     default: { return false; }
   }
 }

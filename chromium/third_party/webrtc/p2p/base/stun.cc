@@ -610,6 +610,7 @@ bool StunAddressAttribute::Read(ByteBufferReader* buf) {
     }
     rtc::IPAddress ipaddr(v4addr);
     SetAddress(rtc::SocketAddress(ipaddr, port));
+#ifndef WEBRTC_NO_INET6
   } else if (stun_family == STUN_ADDRESS_IPV6) {
     in6_addr v6addr;
     if (length() != SIZE_IP6) {
@@ -620,6 +621,7 @@ bool StunAddressAttribute::Read(ByteBufferReader* buf) {
     }
     rtc::IPAddress ipaddr(v6addr);
     SetAddress(rtc::SocketAddress(ipaddr, port));
+#endif
   } else {
     return false;
   }
@@ -641,11 +643,13 @@ bool StunAddressAttribute::Write(ByteBufferWriter* buf) const {
       buf->WriteBytes(reinterpret_cast<char*>(&v4addr), sizeof(v4addr));
       break;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       in6_addr v6addr = address_.ipaddr().ipv6_address();
       buf->WriteBytes(reinterpret_cast<char*>(&v6addr), sizeof(v6addr));
       break;
     }
+#endif
   }
   return true;
 }
@@ -677,6 +681,7 @@ rtc::IPAddress StunXorAddressAttribute::GetXoredIP() const {
             (v4addr.s_addr ^ rtc::HostToNetwork32(kStunMagicCookie));
         return rtc::IPAddress(v4addr);
       }
+#ifndef WEBRTC_NO_INET6
       case AF_INET6: {
         in6_addr v6addr = ip.ipv6_address();
         const std::string& transaction_id = owner_->transaction_id();
@@ -696,6 +701,7 @@ rtc::IPAddress StunXorAddressAttribute::GetXoredIP() const {
         }
         break;
       }
+#endif
     }
   }
   // Invalid ip family or transaction ID, or missing owner.
@@ -731,11 +737,13 @@ bool StunXorAddressAttribute::Write(ByteBufferWriter* buf) const {
       buf->WriteBytes(reinterpret_cast<const char*>(&v4addr), sizeof(v4addr));
       break;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       in6_addr v6addr = xored_ip.ipv6_address();
       buf->WriteBytes(reinterpret_cast<const char*>(&v6addr), sizeof(v6addr));
       break;
     }
+#endif
   }
   return true;
 }

@@ -295,15 +295,27 @@ bool MdnsResourceRecord::SetIPAddressInRecordData(
 
 bool MdnsResourceRecord::GetIPAddressFromRecordData(
     rtc::IPAddress* address) const {
-  if (GetType() != SectionEntryType::kA &&
-      GetType() != SectionEntryType::kAAAA) {
+  if (GetType() != SectionEntryType::kA
+#ifndef WEBRTC_NO_INET6
+      && GetType() != SectionEntryType::kAAAA
+#endif
+      ) {
     return false;
   }
-  if (rdata_.size() != 4 && rdata_.size() != 16) {
+  if (rdata_.size() != 4
+#ifndef WEBRTC_NO_INET6
+      && rdata_.size() != 16
+#endif
+      ) {
     return false;
   }
+#ifndef WEBRTC_NO_INET6
   char out[INET6_ADDRSTRLEN] = {0};
   int af = (GetType() == SectionEntryType::kA) ? AF_INET : AF_INET6;
+#else
+  char out[INET_ADDRSTRLEN] = {0};
+  int af = AF_INET;
+#endif
   if (!rtc::inet_ntop(af, rdata_.data(), out, sizeof(out))) {
     return false;
   }

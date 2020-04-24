@@ -144,6 +144,7 @@ uint16_t ComputeNetworkCostByType(int type) {
 }
 
 #if !defined(__native_client__)
+#ifndef WEBRTC_NO_INET6
 bool IsIgnoredIPv6(const InterfaceAddress& ip) {
   if (ip.family() != AF_INET6) {
     return false;
@@ -168,6 +169,7 @@ bool IsIgnoredIPv6(const InterfaceAddress& ip) {
 
   return false;
 }
+#endif
 #endif  // !defined(__native_client__)
 
 }  // namespace
@@ -288,6 +290,7 @@ void NetworkManagerBase::GetAnyAddressNetworks(NetworkList* networks) {
   }
   networks->push_back(ipv4_any_address_network_.get());
 
+#ifndef WEBRTC_NO_INET6
   if (!ipv6_any_address_network_) {
     const rtc::IPAddress ipv6_any_address(in6addr_any);
     ipv6_any_address_network_.reset(
@@ -297,6 +300,7 @@ void NetworkManagerBase::GetAnyAddressNetworks(NetworkList* networks) {
     ipv6_any_address_network_->AddIP(ipv6_any_address);
   }
   networks->push_back(ipv6_any_address_network_.get());
+#endif
 }
 
 void NetworkManagerBase::GetNetworks(NetworkList* result) const {
@@ -522,6 +526,7 @@ void BasicNetworkManager::ConvertIfAddrs(struct ifaddrs* interfaces,
       continue;
     }
 
+#ifndef WEBRTC_NO_INET6
     // Special case for IPv6 address.
     if (cursor->ifa_addr->sa_family == AF_INET6) {
       if (IsIgnoredIPv6(ip)) {
@@ -530,6 +535,7 @@ void BasicNetworkManager::ConvertIfAddrs(struct ifaddrs* interfaces,
       scope_id =
           reinterpret_cast<sockaddr_in6*>(cursor->ifa_addr)->sin6_scope_id;
     }
+#endif
 
     AdapterType adapter_type = ADAPTER_TYPE_UNKNOWN;
     AdapterType vpn_underlying_adapter_type = ADAPTER_TYPE_UNKNOWN;
@@ -691,6 +697,7 @@ bool BasicNetworkManager::CreateNetworks(bool include_ignored,
             ip = IPAddress(v4_addr->sin_addr);
             break;
           }
+#ifndef WEBRTC_NO_INET6
           case AF_INET6: {
             sockaddr_in6* v6_addr =
                 reinterpret_cast<sockaddr_in6*>(address->Address.lpSockaddr);
@@ -703,6 +710,7 @@ bool BasicNetworkManager::CreateNetworks(bool include_ignored,
 
             break;
           }
+#endif
           default: { continue; }
         }
 
@@ -1022,6 +1030,7 @@ IPAddress Network::GetBestIP() const {
     return static_cast<IPAddress>(ips_.at(0));
   }
 
+#ifndef WEBRTC_NO_INET6
   InterfaceAddress selected_ip, ula_ip;
 
   for (const InterfaceAddress& ip : ips_) {
@@ -1048,6 +1057,9 @@ IPAddress Network::GetBestIP() const {
   }
 
   return static_cast<IPAddress>(selected_ip);
+#else
+  return IPAddress();
+#endif
 }
 
 webrtc::MdnsResponderInterface* Network::GetMdnsResponder() const {

@@ -162,6 +162,12 @@ config("common_inherited_config") {
   if (is_win) {
     defines += [ "WEBRTC_WIN" ]
   }
+  if (is_os2) {
+    defines += [
+      "WEBRTC_OS2",
+      "WEBRTC_NO_INET6",
+    ]
+  }
   if (is_android) {
     defines += [
       "WEBRTC_LINUX",

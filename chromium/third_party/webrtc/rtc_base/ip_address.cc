@@ -11,7 +11,7 @@
 #if defined(WEBRTC_POSIX)
 #include <netinet/in.h>
 #include <sys/socket.h>
-#ifdef OPENBSD
+#if defined(OPENBSD) || defined(WEBRTC_OS2)
 #include <netinet/in_systm.h>
 #endif
 #ifndef __native_client__
@@ -31,6 +31,7 @@
 
 namespace rtc {
 
+#ifndef WEBRTC_NO_INET6
 // Prefixes used for categorizing IPv6 addresses.
 static const in6_addr kV4MappedPrefix = {
     {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0}}};
@@ -44,6 +45,7 @@ static bool IPIsHelper(const IPAddress& ip,
                        const in6_addr& tomatch,
                        int length);
 static in_addr ExtractMappedAddress(const in6_addr& addr);
+#endif
 
 uint32_t IPAddress::v4AddressAsHostOrderInteger() const {
   if (family_ == AF_INET) {
@@ -61,8 +63,10 @@ size_t IPAddress::Size() const {
   switch (family_) {
     case AF_INET:
       return sizeof(in_addr);
+#ifndef WEBRTC_NO_INET6
     case AF_INET6:
       return sizeof(in6_addr);
+#endif
   }
   return 0;
 }
@@ -74,9 +78,11 @@ bool IPAddress::operator==(const IPAddress& other) const {
   if (family_ == AF_INET) {
     return memcmp(&u_.ip4, &other.u_.ip4, sizeof(u_.ip4)) == 0;
   }
+#ifndef WEBRTC_NO_INET6
   if (family_ == AF_INET6) {
     return memcmp(&u_.ip6, &other.u_.ip6, sizeof(u_.ip6)) == 0;
   }
+#endif
   return family_ == AF_UNSPEC;
 }
 
@@ -94,9 +100,11 @@ bool IPAddress::operator<(const IPAddress& other) const {
     if (family_ == AF_UNSPEC) {
       return true;
     }
+#ifndef WEBRTC_NO_INET6
     if (family_ == AF_INET && other.family_ == AF_INET6) {
       return true;
     }
+#endif
     return false;
   }
   // Comparing addresses of the same family.
@@ -105,31 +113,43 @@ bool IPAddress::operator<(const IPAddress& other) const {
       return NetworkToHost32(u_.ip4.s_addr) <
              NetworkToHost32(other.u_.ip4.s_addr);
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       return memcmp(&u_.ip6.s6_addr, &other.u_.ip6.s6_addr, 16) < 0;
     }
+#endif
   }
   // Catches AF_UNSPEC and invalid addresses.
   return false;
 }
 
+#ifndef WEBRTC_NO_INET6
 in6_addr IPAddress::ipv6_address() const {
   return u_.ip6;
 }
+#endif
 
 in_addr IPAddress::ipv4_address() const {
   return u_.ip4;
 }
 
 std::string IPAddress::ToString() const {
-  if (family_ != AF_INET && family_ != AF_INET6) {
+  if (family_ != AF_INET
+#ifndef WEBRTC_NO_INET6
+      && family_ != AF_INET6
+#endif
+      ) {
     return std::string();
   }
-  char buf[INET6_ADDRSTRLEN] = {0};
   const void* src = &u_.ip4;
+#ifndef WEBRTC_NO_INET6
+  char buf[INET6_ADDRSTRLEN] = {0};
   if (family_ == AF_INET6) {
     src = &u_.ip6;
   }
+#else
+  char buf[INET_ADDRSTRLEN] = {0};
+#endif
   if (!rtc::inet_ntop(family_, src, buf, sizeof(buf))) {
     return std::string();
   }
@@ -151,6 +171,7 @@ std::string IPAddress::ToSensitiveString() const {
       address += ".x";
       return address;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       std::string result;
       result.resize(INET6_ADDRSTRLEN);
@@ -162,12 +183,14 @@ std::string IPAddress::ToSensitiveString() const {
       result.resize(len);
       return result;
     }
+#endif
   }
   return std::string();
 #endif
 }
 
 IPAddress IPAddress::Normalized() const {
+#ifndef WEBRTC_NO_INET6
   if (family_ != AF_INET6) {
     return *this;
   }
@@ -176,8 +199,12 @@ IPAddress IPAddress::Normalized() const {
   }
   in_addr addr = ExtractMappedAddress(u_.ip6);
   return IPAddress(addr);
+#else
+  return *this;
+#endif
 }
 
+#ifndef WEBRTC_NO_INET6
 IPAddress IPAddress::AsIPv6Address() const {
   if (family_ != AF_INET) {
     return *this;
@@ -186,6 +213,7 @@ IPAddress IPAddress::AsIPv6Address() const {
   ::memcpy(&v6addr.s6_addr[12], &u_.ip4.s_addr, sizeof(u_.ip4.s_addr));
   return IPAddress(v6addr);
 }
+#endif
 
 bool InterfaceAddress::operator==(const InterfaceAddress& other) const {
   return ipv6_flags_ == other.ipv6_flags() &&
@@ -219,27 +247,33 @@ static bool IPIsPrivateNetworkV4(const IPAddress& ip) {
          ((ip_in_host_order >> 16) == ((192 << 8) | 168));
 }
 
+#ifndef WEBRTC_NO_INET6
 static bool IPIsPrivateNetworkV6(const IPAddress& ip) {
   return IPIsHelper(ip, kPrivateNetworkPrefix, 8);
 }
+#endif
 
 bool IPIsPrivateNetwork(const IPAddress& ip) {
   switch (ip.family()) {
     case AF_INET: {
       return IPIsPrivateNetworkV4(ip);
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       return IPIsPrivateNetworkV6(ip);
     }
+#endif
   }
   return false;
 }
 
+#ifndef WEBRTC_NO_INET6
 in_addr ExtractMappedAddress(const in6_addr& in6) {
   in_addr ipv4;
   ::memcpy(&ipv4.s_addr, &in6.s6_addr[12], sizeof(ipv4.s_addr));
   return ipv4;
 }
+#endif
 
 bool IPFromAddrInfo(struct addrinfo* info, IPAddress* out) {
   if (!info || !info->ai_addr) {
@@ -249,10 +283,12 @@ bool IPFromAddrInfo(struct addrinfo* info, IPAddress* out) {
     sockaddr_in* addr = reinterpret_cast<sockaddr_in*>(info->ai_addr);
     *out = IPAddress(addr->sin_addr);
     return true;
+#ifndef WEBRTC_NO_INET6
   } else if (info->ai_addr->sa_family == AF_INET6) {
     sockaddr_in6* addr = reinterpret_cast<sockaddr_in6*>(info->ai_addr);
     *out = IPAddress(addr->sin6_addr);
     return true;
+#endif
   }
   return false;
 }
@@ -263,12 +299,16 @@ bool IPFromString(const std::string& str, IPAddress* out) {
   }
   in_addr addr;
   if (rtc::inet_pton(AF_INET, str.c_str(), &addr) == 0) {
+#ifndef WEBRTC_NO_INET6
     in6_addr addr6;
     if (rtc::inet_pton(AF_INET6, str.c_str(), &addr6) == 0) {
+#endif
       *out = IPAddress();
       return false;
+#ifndef WEBRTC_NO_INET6
     }
     *out = IPAddress(addr6);
+#endif
   } else {
     *out = IPAddress(addr);
   }
@@ -289,8 +329,10 @@ bool IPIsAny(const IPAddress& ip) {
   switch (ip.family()) {
     case AF_INET:
       return ip == IPAddress(INADDR_ANY);
+#ifndef WEBRTC_NO_INET6
     case AF_INET6:
       return ip == IPAddress(in6addr_any) || ip == IPAddress(kV4MappedPrefix);
+#endif
     case AF_UNSPEC:
       return false;
   }
@@ -302,18 +344,22 @@ static bool IPIsLoopbackV4(const IPAddress& ip) {
   return ((ip_in_host_order >> 24) == 127);
 }
 
+#ifndef WEBRTC_NO_INET6
 static bool IPIsLoopbackV6(const IPAddress& ip) {
   return ip == IPAddress(in6addr_loopback);
 }
+#endif
 
 bool IPIsLoopback(const IPAddress& ip) {
   switch (ip.family()) {
     case AF_INET: {
       return IPIsLoopbackV4(ip);
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       return IPIsLoopbackV6(ip);
     }
+#endif
   }
   return false;
 }
@@ -331,12 +377,14 @@ size_t HashIP(const IPAddress& ip) {
     case AF_INET: {
       return ip.ipv4_address().s_addr;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       in6_addr v6addr = ip.ipv6_address();
       const uint32_t* v6_as_ints =
           reinterpret_cast<const uint32_t*>(&v6addr.s6_addr);
       return v6_as_ints[0] ^ v6_as_ints[1] ^ v6_as_ints[2] ^ v6_as_ints[3];
     }
+#endif
   }
   return 0;
 }
@@ -357,6 +405,7 @@ IPAddress TruncateIP(const IPAddress& ip, int length) {
     in_addr masked;
     masked.s_addr = HostToNetwork32(host_order_ip & mask);
     return IPAddress(masked);
+#ifndef WEBRTC_NO_INET6
   } else if (ip.family() == AF_INET6) {
     if (length > 127) {
       return ip;
@@ -379,6 +428,7 @@ IPAddress TruncateIP(const IPAddress& ip, int length) {
       }
     }
     return IPAddress(v6addr);
+#endif
   }
   return IPAddress();
 }
@@ -391,6 +441,7 @@ int CountIPMaskBits(IPAddress mask) {
       word_to_count = NetworkToHost32(mask.ipv4_address().s_addr);
       break;
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       in6_addr v6addr = mask.ipv6_address();
       const uint32_t* v6_as_ints =
@@ -407,6 +458,7 @@ int CountIPMaskBits(IPAddress mask) {
       bits = (i * 32);
       break;
     }
+#endif
     default: { return 0; }
   }
   if (word_to_count == 0) {
@@ -436,6 +488,7 @@ int CountIPMaskBits(IPAddress mask) {
   return bits + (32 - zeroes);
 }
 
+#ifndef WEBRTC_NO_INET6
 bool IPIsHelper(const IPAddress& ip, const in6_addr& tomatch, int length) {
   // Helper method for checking IP prefix matches (but only on whole byte
   // lengths). Length is in bits.
@@ -450,30 +503,36 @@ bool IPIs6Bone(const IPAddress& ip) {
 bool IPIs6To4(const IPAddress& ip) {
   return IPIsHelper(ip, k6To4Prefix, 16);
 }
+#endif
 
 static bool IPIsLinkLocalV4(const IPAddress& ip) {
   uint32_t ip_in_host_order = ip.v4AddressAsHostOrderInteger();
   return ((ip_in_host_order >> 16) == ((169 << 8) | 254));
 }
 
+#ifndef WEBRTC_NO_INET6
 static bool IPIsLinkLocalV6(const IPAddress& ip) {
   // Can't use the helper because the prefix is 10 bits.
   in6_addr addr = ip.ipv6_address();
   return (addr.s6_addr[0] == 0xFE) && ((addr.s6_addr[1] & 0xC0) == 0x80);
 }
+#endif
 
 bool IPIsLinkLocal(const IPAddress& ip) {
   switch (ip.family()) {
     case AF_INET: {
       return IPIsLinkLocalV4(ip);
     }
+#ifndef WEBRTC_NO_INET6
     case AF_INET6: {
       return IPIsLinkLocalV6(ip);
     }
+#endif
   }
   return false;
 }
 
+#ifndef WEBRTC_NO_INET6
 // According to http://www.ietf.org/rfc/rfc2373.txt, Appendix A, page 19.  An
 // address which contains MAC will have its 11th and 12th bytes as FF:FE as well
 // as the U/L bit as 1.
@@ -506,11 +565,13 @@ bool IPIsV4Compatibility(const IPAddress& ip) {
 bool IPIsV4Mapped(const IPAddress& ip) {
   return IPIsHelper(ip, kV4MappedPrefix, 96);
 }
+#endif
 
 int IPAddressPrecedence(const IPAddress& ip) {
   // Precedence values from RFC 3484-bis. Prefers native v4 over 6to4/Teredo.
   if (ip.family() == AF_INET) {
     return 30;
+#ifndef WEBRTC_NO_INET6
   } else if (ip.family() == AF_INET6) {
     if (IPIsLoopback(ip)) {
       return 60;
@@ -528,6 +589,7 @@ int IPAddressPrecedence(const IPAddress& ip) {
       // A 'normal' IPv6 address.
       return 40;
     }
+#endif
   }
   return 0;
 }
@@ -536,9 +598,11 @@ IPAddress GetLoopbackIP(int family) {
   if (family == AF_INET) {
     return rtc::IPAddress(INADDR_LOOPBACK);
   }
+#ifndef WEBRTC_NO_INET6
   if (family == AF_INET6) {
     return rtc::IPAddress(in6addr_loopback);
   }
+#endif
   return rtc::IPAddress();
 }
 
@@ -546,9 +610,11 @@ IPAddress GetAnyIP(int family) {
   if (family == AF_INET) {
     return rtc::IPAddress(INADDR_ANY);
   }
+#ifndef WEBRTC_NO_INET6
   if (family == AF_INET6) {
     return rtc::IPAddress(in6addr_any);
   }
+#endif
   return rtc::IPAddress();
 }
 

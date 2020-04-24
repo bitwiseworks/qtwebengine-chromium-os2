@@ -15,7 +15,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#if defined(OPENBSD)
+#if defined(OPENBSD) || defined(WEBRTC_OS2)
 #include <netinet/in_systm.h>
 #endif
 #if !defined(__native_client__)
@@ -278,13 +278,16 @@ static size_t ToSockAddrStorageHelper(sockaddr_storage* addr,
                                       int scope_id) {
   memset(addr, 0, sizeof(sockaddr_storage));
   addr->ss_family = static_cast<unsigned short>(ip.family());
+#ifndef WEBRTC_NO_INET6
   if (addr->ss_family == AF_INET6) {
     sockaddr_in6* saddr = reinterpret_cast<sockaddr_in6*>(addr);
     saddr->sin6_addr = ip.ipv6_address();
     saddr->sin6_port = HostToNetwork16(port);
     saddr->sin6_scope_id = scope_id;
     return sizeof(sockaddr_in6);
-  } else if (addr->ss_family == AF_INET) {
+  } else
+#endif
+  if (addr->ss_family == AF_INET) {
     sockaddr_in* saddr = reinterpret_cast<sockaddr_in*>(addr);
     saddr->sin_addr = ip.ipv4_address();
     saddr->sin_port = HostToNetwork16(port);
@@ -293,9 +296,11 @@ static size_t ToSockAddrStorageHelper(sockaddr_storage* addr,
   return 0;
 }
 
+#ifndef WEBRTC_NO_INET6
 size_t SocketAddress::ToDualStackSockAddrStorage(sockaddr_storage* addr) const {
   return ToSockAddrStorageHelper(addr, ip_.AsIPv6Address(), port_, scope_id_);
 }
+#endif
 
 size_t SocketAddress::ToSockAddrStorage(sockaddr_storage* addr) const {
   return ToSockAddrStorageHelper(addr, ip_, port_, scope_id_);
@@ -311,12 +316,14 @@ bool SocketAddressFromSockAddrStorage(const sockaddr_storage& addr,
     *out = SocketAddress(IPAddress(saddr->sin_addr),
                          NetworkToHost16(saddr->sin_port));
     return true;
+#ifndef WEBRTC_NO_INET6
   } else if (addr.ss_family == AF_INET6) {
     const sockaddr_in6* saddr = reinterpret_cast<const sockaddr_in6*>(&addr);
     *out = SocketAddress(IPAddress(saddr->sin6_addr),
                          NetworkToHost16(saddr->sin6_port));
     out->SetScopeID(saddr->sin6_scope_id);
     return true;
+#endif
   }
   return false;
 }
@@ -324,8 +331,10 @@ bool SocketAddressFromSockAddrStorage(const sockaddr_storage& addr,
 SocketAddress EmptySocketAddressWithFamily(int family) {
   if (family == AF_INET) {
     return SocketAddress(IPAddress(INADDR_ANY), 0);
+#ifndef WEBRTC_NO_INET6
   } else if (family == AF_INET6) {
     return SocketAddress(IPAddress(in6addr_any), 0);
+#endif
   }
   return SocketAddress();
 }

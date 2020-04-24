@@ -182,7 +182,9 @@ class SocketAddress {
   // v4 or mapped addresses, and AF_INET6 addresses for others.
   // Returns the size of the sockaddr_in or sockaddr_in6 structure that is
   // written to the sockaddr_storage, or zero on failure.
+#ifndef WEBRTC_NO_INET6
   size_t ToDualStackSockAddrStorage(sockaddr_storage* saddr) const;
+#endif
   size_t ToSockAddrStorage(sockaddr_storage* saddr) const;
 
  private:

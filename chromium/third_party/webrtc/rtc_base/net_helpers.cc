@@ -44,6 +44,10 @@ int ResolveHostname(const std::string& hostname,
   }
   addresses->clear();
   struct addrinfo* result = nullptr;
+#if defined(WEBRTC_OS2)
+  // No AI_ADDRCONFIG yet. Use nullptr as hints to get sane defaults.
+  int ret = getaddrinfo(hostname.c_str(), nullptr, nullptr, &result);
+#else
   struct addrinfo hints = {0};
   hints.ai_family = family;
   // |family| here will almost always be AF_UNSPEC, because |family| comes from
@@ -65,6 +69,7 @@ int ResolveHostname(const std::string& hostname,
   // 7e0bfb511e85834d7c6cb9631206b62f82701d60/libc/netbsd/net/getaddrinfo.c#1657
   hints.ai_flags = AI_ADDRCONFIG;
   int ret = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
+#endif
   if (ret != 0) {
     return ret;
   }
