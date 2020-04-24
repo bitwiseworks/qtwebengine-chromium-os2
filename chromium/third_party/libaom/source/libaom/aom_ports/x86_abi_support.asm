@@ -27,6 +27,8 @@
 %define ABI_IS_32BIT 1
 %elifidn __OUTPUT_FORMAT__,aout
 %define ABI_IS_32BIT 1
+%elifidn __OUTPUT_FORMAT__,obj
+%define ABI_IS_32BIT 1
 %else
 %define ABI_IS_32BIT 0
 %endif
@@ -128,6 +130,8 @@
     %define PRIVATE :hidden
   %elifidn __OUTPUT_FORMAT__,elfx32
     %define PRIVATE :hidden
+  %elifidn __OUTPUT_FORMAT__,obj
+    %define PRIVATE
   %elif LIBAOM_YASM_WIN64
     %define PRIVATE
   %else
@@ -372,6 +376,10 @@
 %ifidn __OUTPUT_FORMAT__,macho64
 %define SECTION_RODATA section .text
 %elifidn __OUTPUT_FORMAT__,macho32
+%macro SECTION_RODATA 0
+section .text
+%endmacro
+%elifidn __OUTPUT_FORMAT__,obj
 %macro SECTION_RODATA 0
 section .text
 %endmacro

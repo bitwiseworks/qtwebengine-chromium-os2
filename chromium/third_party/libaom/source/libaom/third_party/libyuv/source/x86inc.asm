@@ -67,6 +67,8 @@
         fakegot:
     %elifidn __OUTPUT_FORMAT__,aout
         section .text
+    %elifidn __OUTPUT_FORMAT__,obj
+        section .text
     %else
         SECTION .rodata align=%1
     %endif
@@ -75,6 +77,8 @@
 ; aout does not support align=
 %macro SECTION_TEXT 0-1 16
     %ifidn __OUTPUT_FORMAT__,aout
+        SECTION .text
+    %elifidn __OUTPUT_FORMAT__,obj
         SECTION .text
     %else
         SECTION .text align=%1
