@@ -515,7 +515,9 @@ Extra output files:
     if (depend_on_stamp):
       output_file = depfile + ".stamp"
       # Touch the stamp file before generating the depfile.
-      with open(output_file, 'a'):
+      with open(output_file, 'a') as f:
+        # Close the file before changing its timestamp (vital on DOS-like OSes).
+        f.close()
         os.utime(output_file, None)
     else:
       # Get the first output file relative to the depdir.
