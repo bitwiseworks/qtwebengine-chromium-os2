@@ -10,7 +10,8 @@
 #include "build/build_config.h"
 
 // Only enable leak tracking in non-uClibc debug builds.
-#if !defined(NDEBUG) && !defined(__UCLIBC__)
+// Disable it on OS/2 as StackTrace::OutputToStream isn't available there yet.
+#if !defined(NDEBUG) && !defined(__UCLIBC__) && !defined(OS_OS2)
 #define ENABLE_LEAK_TRACKER
 #endif
 
