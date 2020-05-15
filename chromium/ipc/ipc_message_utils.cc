@@ -1444,4 +1444,50 @@ void ParamTraits<MSG>::Log(const param_type& p, std::string* l) {
 
 #endif  // OS_WIN
 
+#if defined(OS_OS2)
+// Note that HWNDs/HANDLE/HCURSOR/HACCEL etc are always unsigned long (32 bits).
+void ParamTraits<LHANDLE>::Write(base::Pickle* m, const param_type& p) {
+  m->WriteUInt32(p);
+}
+
+bool ParamTraits<LHANDLE>::Read(const base::Pickle* m,
+                               base::PickleIterator* iter,
+                               param_type* r) {
+  uint32_t temp;
+  if (!iter->ReadUInt32(&temp))
+    return false;
+  *r = (param_type)temp;
+  return true;
+}
+
+void ParamTraits<LHANDLE>::Log(const param_type& p, std::string* l) {
+  l->append(base::StringPrintf("0x%lu", p));
+}
+
+void ParamTraits<QMSG>::Write(base::Pickle* m, const param_type& p) {
+  m->WriteData(reinterpret_cast<const char*>(&p), sizeof(QMSG));
+}
+
+bool ParamTraits<QMSG>::Read(const base::Pickle* m,
+                            base::PickleIterator* iter,
+                            param_type* r) {
+  const char *data;
+  int data_size = 0;
+  bool result = iter->ReadData(&data, &data_size);
+  if (result && data_size == sizeof(QMSG)) {
+    memcpy(r, data, sizeof(QMSG));
+  } else {
+    result = false;
+    NOTREACHED();
+  }
+
+  return result;
+}
+
+void ParamTraits<QMSG>::Log(const param_type& p, std::string* l) {
+  l->append("<QMSG>");
+}
+
+#endif  // OS_OS2
+
 }  // namespace IPC

@@ -39,6 +39,12 @@
 #include "ipc/ipc_param_traits.h"
 #include "ipc/ipc_sync_message.h"
 
+#if defined(OS_OS2)
+#define INCL_BASE
+#define INCL_PM
+#include <os2.h>
+#endif
+
 #if defined(OS_ANDROID)
 #include "base/android/scoped_hardware_buffer_handle.h"
 #endif
@@ -693,6 +699,13 @@ struct SimilarTypeTraits<HWND> {
 };
 #endif  // defined(OS_WIN)
 
+#if defined(OS_OS2)
+template <>
+struct SimilarTypeTraits<HWND> {
+  typedef LHANDLE Type;
+};
+#endif  // defined(OS_OS2)
+
 template <>
 struct COMPONENT_EXPORT(IPC) ParamTraits<base::Time> {
   typedef base::Time param_type;
@@ -1029,6 +1042,30 @@ struct COMPONENT_EXPORT(IPC) ParamTraits<MSG> {
   static void Log(const param_type& p, std::string* l);
 };
 #endif  // defined(OS_WIN)
+
+// OS/2 ParamTraits ---------------------------------------------------------
+
+#if defined(OS_OS2)
+template <>
+struct COMPONENT_EXPORT(IPC) ParamTraits<LHANDLE> {
+  typedef LHANDLE param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct COMPONENT_EXPORT(IPC) ParamTraits<QMSG> {
+  typedef QMSG param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+#endif  // defined(OS_OS2)
 
 //-----------------------------------------------------------------------------
 // Generic message subclasses
