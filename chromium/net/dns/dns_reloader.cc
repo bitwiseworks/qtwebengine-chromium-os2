@@ -5,7 +5,7 @@
 #include "net/dns/dns_reloader.h"
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) && \
-    !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+    !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_OS2)
 
 #include <resolv.h>
 
@@ -109,4 +109,4 @@ void DnsReloaderMaybeReload() {
 }  // namespace net
 
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) &&
-        // !defined(OS_ANDROID)
+        // !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_OS2)

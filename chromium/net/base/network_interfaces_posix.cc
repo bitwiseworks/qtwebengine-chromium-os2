@@ -4,6 +4,11 @@
 
 #include "net/base/network_interfaces_posix.h"
 
+#include "build/build_config.h"
+
+#if defined(OS_OS2)
+#include <sys/socket.h>
+#endif
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/types.h>
@@ -32,6 +37,7 @@ bool ShouldIgnoreInterface(const std::string& name, int policy) {
 
 // Check if the address is unspecified (i.e. made of zeroes) or loopback.
 bool IsLoopbackOrUnspecifiedAddress(const sockaddr* addr) {
+#if !defined(OS_OS2)
   if (addr->sa_family == AF_INET6) {
     const struct sockaddr_in6* addr_in6 =
         reinterpret_cast<const struct sockaddr_in6*>(addr);
@@ -39,7 +45,9 @@ bool IsLoopbackOrUnspecifiedAddress(const sockaddr* addr) {
     if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_UNSPECIFIED(sin6_addr)) {
       return true;
     }
-  } else if (addr->sa_family == AF_INET) {
+  } else
+#endif
+  if (addr->sa_family == AF_INET) {
     const struct sockaddr_in* addr_in =
         reinterpret_cast<const struct sockaddr_in*>(addr);
     if (addr_in->sin_addr.s_addr == INADDR_LOOPBACK ||

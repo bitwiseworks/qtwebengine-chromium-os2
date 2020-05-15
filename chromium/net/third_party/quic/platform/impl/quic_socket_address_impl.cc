@@ -23,10 +23,12 @@ QuicSocketAddressImpl::QuicSocketAddressImpl(
   if (saddr.ss_family == AF_INET) {
     CHECK(socket_address_.FromSockAddr(
         reinterpret_cast<const sockaddr*>(&saddr), sizeof(struct sockaddr_in)));
+#if !defined (OS_OS2)
   } else if (saddr.ss_family == AF_INET6) {
     CHECK(
         socket_address_.FromSockAddr(reinterpret_cast<const sockaddr*>(&saddr),
                                      sizeof(struct sockaddr_in6)));
+#endif
   }
 }
 

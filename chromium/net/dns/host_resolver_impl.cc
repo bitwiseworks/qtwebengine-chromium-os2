@@ -250,6 +250,7 @@ bool HaveOnlyLoopbackAddresses() {
     const struct sockaddr* addr = interface->ifa_addr;
     if (!addr)
       continue;
+#if !defined(OS_OS2)
     if (addr->sa_family == AF_INET6) {
       // Safe cast since this is AF_INET6.
       const struct sockaddr_in6* addr_in6 =
@@ -258,6 +259,7 @@ bool HaveOnlyLoopbackAddresses() {
       if (IN6_IS_ADDR_LOOPBACK(sin6_addr) || IN6_IS_ADDR_LINKLOCAL(sin6_addr))
         continue;
     }
+#endif
     if (addr->sa_family != AF_INET6 && addr->sa_family != AF_INET)
       continue;
 
@@ -2231,7 +2233,7 @@ HostResolverImpl::HostResolverImpl(const Options& options, NetLog* net_log)
   NetworkChangeNotifier::AddConnectionTypeObserver(this);
   NetworkChangeNotifier::AddDNSObserver(this);
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) && \
-    !defined(OS_ANDROID)
+    !defined(OS_ANDROID) && !defined(OS_OS2)
   EnsureDnsReloaderInit();
 #endif
 

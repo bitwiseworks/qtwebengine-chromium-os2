@@ -29,7 +29,9 @@ const uint8_t SOCKS5ClientSocket::kTunnelCommand = 0x01;
 const uint8_t SOCKS5ClientSocket::kNullByte = 0x00;
 
 static_assert(sizeof(struct in_addr) == 4, "incorrect system size of IPv4");
+#if !defined(OS_OS2)
 static_assert(sizeof(struct in6_addr) == 16, "incorrect system size of IPv6");
+#endif
 
 SOCKS5ClientSocket::SOCKS5ClientSocket(
     std::unique_ptr<ClientSocketHandle> transport_socket,
@@ -468,8 +470,10 @@ int SOCKS5ClientSocket::DoHandshakeReadComplete(int result) {
       read_header_size += static_cast<uint8_t>(buffer_[4]);
     else if (address_type == kEndPointResolvedIPv4)
       read_header_size += sizeof(struct in_addr) - 1;
+#if !defined(OS_OS2)
     else if (address_type == kEndPointResolvedIPv6)
       read_header_size += sizeof(struct in6_addr) - 1;
+#endif
     else {
       net_log_.AddEvent(NetLogEventType::SOCKS_UNKNOWN_ADDRESS_TYPE,
                         NetLog::IntCallback("address_type", buffer_[3]));

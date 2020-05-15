@@ -13,6 +13,9 @@
 #include <ws2bth.h>
 #elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include <netinet/in.h>
+#if defined(OS_OS2)
+#include <sys/socket.h>
+#endif
 #endif
 
 using std::string;

@@ -4,6 +4,12 @@
 
 #include "net/base/network_interfaces_getifaddrs.h"
 
+#include "build/build_config.h"
+
+#if defined(OS_OS2)
+#include <libcx/net.h>
+#include <sys/socket.h>
+#endif
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -180,9 +186,12 @@ bool IfaddrsToNetworkInterfaceList(int policy,
     IPEndPoint address;
 
     int addr_size = 0;
+#if !defined(OS_OS2)
     if (addr->sa_family == AF_INET6) {
       addr_size = sizeof(sockaddr_in6);
-    } else if (addr->sa_family == AF_INET) {
+    } else if (addr->sa_family == AF_INET)
+#endif
+    {
       addr_size = sizeof(sockaddr_in);
     }
 

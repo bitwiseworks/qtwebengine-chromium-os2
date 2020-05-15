@@ -30,7 +30,9 @@ namespace {
 
 // By definition, socklen_t is large enough to hold both sizes.
 const socklen_t kSockaddrInSize = sizeof(struct sockaddr_in);
+#if !defined(OS_OS2)
 const socklen_t kSockaddrIn6Size = sizeof(struct sockaddr_in6);
+#endif
 
 // Extracts the address and port portions of a sockaddr.
 bool GetIPAddressFromSockAddr(const struct sockaddr* sock_addr,
@@ -50,6 +52,7 @@ bool GetIPAddressFromSockAddr(const struct sockaddr* sock_addr,
     return true;
   }
 
+#if !defined(OS_OS2)
   if (sock_addr->sa_family == AF_INET6) {
     if (sock_addr_len < static_cast<socklen_t>(sizeof(struct sockaddr_in6)))
       return false;
@@ -61,6 +64,7 @@ bool GetIPAddressFromSockAddr(const struct sockaddr* sock_addr,
       *port = base::NetToHost16(addr->sin6_port);
     return true;
   }
+#endif
 
 #if defined(OS_WIN)
   if (sock_addr->sa_family == AF_BTH) {
@@ -125,6 +129,7 @@ bool IPEndPoint::ToSockAddr(struct sockaddr* address,
              IPAddress::kIPv4AddressSize);
       break;
     }
+#if !defined(OS_OS2)
     case IPAddress::kIPv6AddressSize: {
       if (*address_length < kSockaddrIn6Size)
         return false;
@@ -138,6 +143,7 @@ bool IPEndPoint::ToSockAddr(struct sockaddr* address,
              IPAddress::kIPv6AddressSize);
       break;
     }
+#endif
     default:
       return false;
   }

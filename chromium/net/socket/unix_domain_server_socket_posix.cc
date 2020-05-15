@@ -56,6 +56,13 @@ bool UnixDomainServerSocket::GetPeerCredentials(SocketDescriptor socket,
   credentials->user_id = user_cred.uid;
   credentials->group_id = user_cred.gid;
   return true;
+#elif defined(OS_OS2)
+  // OS/2 lacks getpeereid and friends. Assume the local connection always
+  // comes from the local user (which is always true as OS/2 is a single user
+  // system per se).
+  credentials->user_id = geteuid();
+  credentials->group_id = getegid();
+  return true;
 #else
   return getpeereid(
       socket, &credentials->user_id, &credentials->group_id) == 0;

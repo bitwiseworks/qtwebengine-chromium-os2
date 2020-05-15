@@ -26,6 +26,9 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#if defined(OS_OS2)
+#include <libcx/net.h>
+#endif
 #endif
 
 #endif  // NET_BASE_SYS_ADDRINFO_H_

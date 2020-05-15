@@ -15,7 +15,7 @@
 #include "net/dns/dns_reloader.h"
 #include "net/dns/dns_util.h"
 
-#if defined(OS_OPENBSD)
+#if defined(OS_OPENBSD) || defined(OS_OS2)
 #define AI_ADDRCONFIG 0
 #endif
 
@@ -38,6 +38,7 @@ bool IsAllLocalhostOfOneFamily(const struct addrinfo* ai) {
           return false;
         break;
       }
+#if !defined(OS_OS2)
       case AF_INET6: {
         const struct sockaddr_in6* addr_in6 =
             reinterpret_cast<struct sockaddr_in6*>(ai->ai_addr);
@@ -47,6 +48,7 @@ bool IsAllLocalhostOfOneFamily(const struct addrinfo* ai) {
           return false;
         break;
       }
+#endif
       default:
         NOTREACHED();
         return false;
@@ -196,7 +198,7 @@ int SystemHostResolverCall(const std::string& host,
   base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::WILL_BLOCK);
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_OPENBSD) && \
-    !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+    !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_OS2)
   DnsReloaderMaybeReload();
 #endif
   int err = getaddrinfo(host.c_str(), NULL, &hints, &ai);

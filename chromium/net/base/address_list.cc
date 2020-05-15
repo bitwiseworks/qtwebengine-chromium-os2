@@ -4,6 +4,10 @@
 
 #include "net/base/address_list.h"
 
+#if defined(OS_OS2)
+#include <libcx/net.h>
+#endif
+
 #include <utility>
 
 #include "base/bind.h"
