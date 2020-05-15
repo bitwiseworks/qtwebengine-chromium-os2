@@ -22,7 +22,7 @@ Study::Platform ClientFilterableState::GetCurrentPlatform() {
   return Study::PLATFORM_ANDROID;
 #elif defined(OS_FUCHSIA)
   return Study::PLATFORM_FUCHSIA;
-#elif defined(OS_LINUX) || defined(OS_BSD) || defined(OS_SOLARIS)
+#elif defined(OS_LINUX) || defined(OS_BSD) || defined(OS_SOLARIS) || defined(OS_OS2)
   // Default BSD and SOLARIS to Linux to not break those builds, although these
   // platforms are not officially supported by Chrome.
   return Study::PLATFORM_LINUX;
