@@ -16,7 +16,7 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/scoped_binders.h"
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && defined(USE_EGL)
 #include "base/macros.h"
 #include "ui/gl/gl_surface_egl.h"
 #endif
@@ -120,7 +120,7 @@ void GLImageSync::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
   // TODO(ericrk): Implement GLImage OnMemoryDump. crbug.com/514914
 }
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && defined(USE_EGL)
 class NativeImageBufferEGL : public NativeImageBuffer {
  public:
   static scoped_refptr<NativeImageBufferEGL> Create(GLuint texture_id);
@@ -200,6 +200,7 @@ NativeImageBufferEGL::~NativeImageBufferEGL() {
   DCHECK(client_infos_.empty());
   if (egl_image_ != EGL_NO_IMAGE_KHR)
     eglDestroyImageKHR(egl_display_, egl_image_);
+  LOG(ERROR) << "stub";
 }
 
 void NativeImageBufferEGL::AddClient(gl::GLImage* client) {
@@ -263,7 +264,7 @@ bool g_avoid_egl_target_texture_reuse = false;
 // static
 scoped_refptr<NativeImageBuffer> NativeImageBuffer::Create(GLuint texture_id) {
   switch (gl::GetGLImplementation()) {
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && defined(USE_EGL)
     case gl::kGLImplementationEGLGLES2:
       return NativeImageBufferEGL::Create(texture_id);
 #endif

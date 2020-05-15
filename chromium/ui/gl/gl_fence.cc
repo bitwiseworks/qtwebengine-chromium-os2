@@ -39,7 +39,7 @@ bool GLFence::IsSupported() {
          g_current_gl_version->is_desktop_core_profile ||
 #if defined(OS_MACOSX)
          g_current_gl_driver->ext.b_GL_APPLE_fence ||
-#else
+#elif defined(USE_EGL)
          g_driver_egl.ext.b_EGL_KHR_fence_sync ||
 #endif
          g_current_gl_driver->ext.b_GL_NV_fence;
@@ -50,7 +50,7 @@ std::unique_ptr<GLFence> GLFence::Create() {
       << "Trying to create fence with no context";
 
   std::unique_ptr<GLFence> fence;
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && defined(USE_EGL)
   if (g_driver_egl.ext.b_EGL_KHR_fence_sync &&
       g_driver_egl.ext.b_EGL_KHR_wait_sync) {
     // Prefer GLFenceEGL which doesn't require GL context switching.
@@ -66,7 +66,7 @@ std::unique_ptr<GLFence> GLFence::Create() {
 #if defined(OS_MACOSX)
   } else if (g_current_gl_driver->ext.b_GL_APPLE_fence) {
     fence.reset(new GLFenceAPPLE);
-#else
+#elif defined(USE_EGL)
   } else if (g_driver_egl.ext.b_EGL_KHR_fence_sync) {
     fence = GLFenceEGL::Create();
     DCHECK(fence);

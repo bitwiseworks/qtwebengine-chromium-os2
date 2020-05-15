@@ -10,7 +10,7 @@
 #include "build/build_config.h"
 
 #if (defined(OS_MACOSX) || defined(OS_WIN) || defined(USE_X11) || \
-     defined(USE_OZONE)) &&                                       \
+     defined(USE_OZONE) || defined(OS_OS2)) &&                    \
     !defined(OS_NACL)
 #include "ui/gfx/native_widget_types.h"
 #define GPU_SURFACE_HANDLE_IS_ACCELERATED_WINDOW
