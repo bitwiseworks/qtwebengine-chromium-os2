@@ -470,6 +470,8 @@ class Node(object):
         value = target_platform == 'darwin'
       elif name == 'is_win':
         value = target_platform in ('cygwin', 'win32')
+      elif name == 'is_os2':
+        value = target_platform.startswith('os2')
       elif name == 'is_android':
         value = target_platform == 'android'
       elif name == 'is_ios':
