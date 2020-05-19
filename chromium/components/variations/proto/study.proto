@@ -191,6 +191,7 @@ message Study {
     PLATFORM_IOS             = 5;
     PLATFORM_ANDROID_WEBVIEW = 6;
     PLATFORM_FUCHSIA         = 7;
+    PLATFORM_OS2             = 8;
   }
 
   // Possible form factors Chrome is running on.
