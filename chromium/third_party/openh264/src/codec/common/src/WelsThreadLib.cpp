@@ -244,7 +244,7 @@ WELS_THREAD_ERROR_CODE    WelsThreadCreate (WELS_THREAD_HANDLE* thread,  LPWELS_
   err = pthread_attr_init (&at);
   if (err)
     return err;
-#if !defined(__ANDROID__) && !defined(__Fuchsia__)
+#if !defined(__ANDROID__) && !defined(__Fuchsia__) && !defined(__OS2__)
   err = pthread_attr_setscope (&at, PTHREAD_SCOPE_SYSTEM);
   if (err)
     return err;
