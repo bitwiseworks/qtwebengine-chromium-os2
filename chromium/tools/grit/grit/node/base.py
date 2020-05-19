@@ -481,8 +481,8 @@ class Node(object):
       elif name == 'is_posix':
         value = (target_platform in ('darwin', 'linux2', 'linux3', 'sunos5',
                                      'android', 'ios')
-                 or 'bsd' in target_platform)
-
+                 or 'bsd' in target_platform
+                 or target_platform.startswith('os2'))
       elif name == 'pp_ifdef':
         def pp_ifdef(symbol):
           return symbol in defs
