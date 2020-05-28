@@ -24,12 +24,14 @@
 #define _FX_OS_MACOSX_ 7
 #define _FX_OS_ANDROID_ 12
 #define _FX_OS_WASM_ 13
+#define _FX_OS_OS2_ 20
 
 // _FX_PLATFORM_ values;
 #define _FX_PLATFORM_WINDOWS_ 1  // _FX_OS_WIN32_ or _FX_OS_WIN64_.
 #define _FX_PLATFORM_LINUX_ 2    // _FX_OS_LINUX_ or _FX_OS_WASM_.
 #define _FX_PLATFORM_APPLE_ 3    // _FX_OS_MACOSX_ always.
 #define _FX_PLATFORM_ANDROID_ 4  // _FX_OS_ANDROID_ always.
+#define _FX_PLATFORM_OS2_ 20  // _FX_OS_OS2_ always.
 
 #ifndef _FX_OS_
 #if defined(__ANDROID__)
@@ -50,6 +52,9 @@
 #elif defined(__asmjs__) || defined(__wasm__)
 #define _FX_OS_ _FX_OS_WASM_
 #define _FX_PLATFORM_ _FX_PLATFORM_LINUX_
+#elif defined(__OS2__)
+#define _FX_OS_ _FX_OS_OS2_
+#define _FX_PLATFORM_ _FX_PLATFORM_OS2_
 #endif
 #endif  // _FX_OS_
 

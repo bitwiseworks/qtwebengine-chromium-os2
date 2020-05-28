@@ -63,6 +63,41 @@ const JSMethodSpec CJS_PublicMethods::GlobalFunctionSpecs[] = {
 
 namespace {
 
+#if _FX_OS_ == _FX_OS_OS2_
+// kLIBC lacks fcvt, emulate it using snprintf.
+#define DBL_DECIMAL_DIG 17
+char *fcvt(double value, int ndigit, int *decpt, int *sign) {
+  static char buf[DBL_MAX_10_EXP + DBL_DECIMAL_DIG + 3];
+  char *ret = buf;
+  if (ndigit < 0)
+    ndigit = 0;
+  else if (ndigit > DBL_DECIMAL_DIG)
+    ndigit = DBL_DECIMAL_DIG;
+  if (snprintf(buf, sizeof(buf), "%#.*f", ndigit, value) <= 0)
+    *ret = '\0';
+  else {
+    *sign = 0;
+    if (*ret == '-') {
+      *sign = 1;
+      ++ret;
+    }
+    *decpt = 0;
+    char *pt = strchr(ret, '.');
+    if (pt) {
+      *decpt = pt - ret;
+      memmove(pt, pt + 1, strlen(pt + 1) + 1);
+      if (value != 0.0) {
+        while (*ret == '0') {
+          --(*decpt);
+          ++ret;
+        }
+      }
+    }
+  }
+  return ret;
+}
+#endif
+
 #if _FX_OS_ != _FX_OS_ANDROID_
 constexpr double kDoubleCorrect = 0.000000000000001;
 #endif

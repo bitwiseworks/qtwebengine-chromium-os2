@@ -9,7 +9,8 @@
 #include "core/fxcrt/fx_system.h"
 
 #if _FX_OS_ == _FX_OS_LINUX_ || _FX_OS_ == _FX_OS_ANDROID_ || \
-    _FX_OS_ == _FX_OS_MACOSX_ || _FX_OS_ == _FX_OS_WASM_
+    _FX_OS_ == _FX_OS_MACOSX_ || _FX_OS_ == _FX_OS_WASM_ || \
+    _FX_OS_ == _FX_OS_OS2_
 #include <sys/time.h>
 #include <time.h>
 #endif

@@ -12,7 +12,8 @@
 
 #if _FX_PLATFORM_ != _FX_PLATFORM_LINUX_ && \
     _FX_PLATFORM_ != _FX_PLATFORM_APPLE_ && \
-    _FX_PLATFORM_ != _FX_PLATFORM_ANDROID_
+    _FX_PLATFORM_ != _FX_PLATFORM_ANDROID_ && \
+    _FX_PLATFORM_ != _FX_PLATFORM_OS2_
 #error "Included on the wrong platform"
 #endif
 

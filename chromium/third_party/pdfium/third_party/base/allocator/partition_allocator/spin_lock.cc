@@ -9,6 +9,8 @@
 
 #if defined(OS_WIN)
 #include <windows.h>
+#elif defined(OS_OS2)
+#include <unistd.h>
 #elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include <sched.h>
 #endif
@@ -55,7 +57,12 @@
 #define YIELD_PROCESSOR ((void)0)
 #endif
 
+#if defined(OS_OS2)
+// This will effectively call DosSleep(0).
+#define YIELD_THREAD sleep(0)
+#else
 #define YIELD_THREAD sched_yield()
+#endif
 
 #else  // Other OS
 
