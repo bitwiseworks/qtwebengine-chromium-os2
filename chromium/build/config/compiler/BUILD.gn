@@ -587,7 +587,7 @@ config("compiler") {
 
   # C11/C++11 compiler flags setup.
   # ---------------------------
-  if (is_linux || is_android || (is_nacl && is_clang) || current_os == "aix") {
+  if (is_linux || is_android || (is_nacl && is_clang) || current_os == "aix" || is_os2) {
     if (target_os == "android") {
       cxx11_override = use_cxx11_on_android
     } else {
