@@ -91,7 +91,7 @@ class GamepadPose {
 enum class GamepadHand { kNone = 0, kLeft = 1, kRight = 2 };
 
 // UTF-16 character type
-#if defined(WIN32)
+#if defined(WIN32) || defined(__OS2__)
 using UChar = wchar_t;
 #else
 using UChar = unsigned short;
