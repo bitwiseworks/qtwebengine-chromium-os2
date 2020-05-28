@@ -52,6 +52,12 @@ typedef zx_arm64_general_regs_t zx_thread_state_general_regs_t;
 #endif
 #endif  // !defined(ZX_THREAD_STATE_GENERAL_REGS)
 
+#elif V8_OS_OS2
+
+#define INCL_BASE
+#include <os2.h>
+#include <InnoTekLIBC/FastInfoBlocks.h> // fibGetTid()
+
 #endif
 
 #include <algorithm>
@@ -299,6 +305,24 @@ class Sampler::PlatformData {
 
  private:
   zx_handle_t profiled_thread_ = ZX_HANDLE_INVALID;
+};
+
+#elif V8_OS_OS2
+
+// ----------------------------------------------------------------------------
+// OS/2 code is very similar to Win32.
+
+class Sampler::PlatformData {
+ public:
+  // Get an ID of the calling thread. This is the thread that we are
+  // going to profile.
+  PlatformData()
+    : profiled_thread_(fibGetTid()) {}
+
+  TID profiled_thread() { return profiled_thread_; }
+
+ private:
+  TID profiled_thread_;
 };
 
 #endif  // USE_SIGNALS
@@ -625,6 +649,28 @@ void Sampler::DoSample() {
 #if defined(ZX_THREAD_STATE_REGSET0)
 #undef ZX_THREAD_STATE_GENERAL_REGS
 #endif
+
+#elif V8_OS_OS2
+
+void Sampler::DoSample() {
+  TID profiled_thread = platform_data()->profiled_thread();
+
+  APIRET arc = DosSuspendThread(profiled_thread);
+  if (arc) return;
+
+  // Context used for sampling the register state of the profiled thread.
+  CONTEXTRECORD context;
+  memset(&context, 0, sizeof(context));
+  arc = DosQueryThreadContext(profiled_thread, CONTEXT_FULL, &context);
+  if (!arc) {
+    v8::RegisterState state;
+    state.pc = reinterpret_cast<void*>(context.ctx_RegEip);
+    state.sp = reinterpret_cast<void*>(context.ctx_RegEsp);
+    state.fp = reinterpret_cast<void*>(context.ctx_RegEbp);
+    SampleStack(state);
+  }
+  DosResumeThread(profiled_thread);
+}
 
 #endif  // USE_SIGNALS
 

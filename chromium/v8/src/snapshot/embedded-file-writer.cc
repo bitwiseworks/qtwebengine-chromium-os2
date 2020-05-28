@@ -515,20 +515,32 @@ int PlatformDependentEmbeddedFileWriter::IndentedDataDirective(
 #else
 
 void PlatformDependentEmbeddedFileWriter::SectionText() {
-#ifdef OS_CHROMEOS
+#if defined(OS_CHROMEOS)
   fprintf(fp_, ".section .text.hot.embedded\n");
+#elif defined(V8_OS_OS2)
+  // a.out doesn't support .section
+  fprintf(fp_, ".text\n");
 #else
   fprintf(fp_, ".section .text\n");
 #endif
 }
 
 void PlatformDependentEmbeddedFileWriter::SectionData() {
+#if defined(V8_OS_OS2)
+  // a.out doesn't support .section
+  fprintf(fp_, ".data\n");
+#else
   fprintf(fp_, ".section .data\n");
+#endif
 }
 
 void PlatformDependentEmbeddedFileWriter::SectionRoData() {
 #if defined(V8_OS_WIN)
   fprintf(fp_, ".section .rdata\n");
+#elif defined(V8_OS_OS2)
+  // a.out doesn't support .section and has no .rodata,
+  // use .text segment explicitly
+  fprintf(fp_, ".text\n");
 #else
   fprintf(fp_, ".section .rodata\n");
 #endif
@@ -579,7 +591,12 @@ void PlatformDependentEmbeddedFileWriter::DeclareLabel(const char* name) {
 }
 
 void PlatformDependentEmbeddedFileWriter::SourceInfo(int fileid, int line) {
+#if defined(V8_OS_OS2)
+  // a.out doesn't support .debug_line/.debug_info sections.
+  // TODO: use .stabs/.stabd instead.
+#else
   fprintf(fp_, ".loc %d %d\n", fileid, line);
+#endif
 }
 
 void PlatformDependentEmbeddedFileWriter::DeclareFunctionBegin(
