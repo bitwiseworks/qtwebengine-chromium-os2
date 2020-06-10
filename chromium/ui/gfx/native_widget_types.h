@@ -18,8 +18,7 @@
 #elif defined(OS_WIN)
 #include "base/win/windows_types.h"
 #elif defined(OS_OS2)
-#define INCL_PM
-#include <os2.h>
+#include "base/os2/os2_toolkit.h"
 #endif
 
 // This file provides cross platform typedefs for native widget types.

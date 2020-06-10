@@ -30,8 +30,7 @@
 #elif defined(OS_SOLARIS) || defined(OS_AIX)
 #include <stdlib.h>
 #elif defined(OS_OS2)
-#define INCL_BASE
-#include <os2.h>
+#include "base/os2/os2_toolkit.h"
 #endif
 
 namespace base {

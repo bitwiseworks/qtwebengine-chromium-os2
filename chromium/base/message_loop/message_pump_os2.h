@@ -5,10 +5,7 @@
 #ifndef BASE_MESSAGE_LOOP_MESSAGE_PUMP_OS2_H_
 #define BASE_MESSAGE_LOOP_MESSAGE_PUMP_OS2_H_
 
-#define OS2EMX_PLAIN_CHAR
-#define INCL_BASE
-#define INCL_PM
-#include <os2.h>
+#include "base/os2/os2_toolkit.h"
 
 #include <unordered_map>
 

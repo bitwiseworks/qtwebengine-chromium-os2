@@ -40,9 +40,7 @@
 #include "ipc/ipc_sync_message.h"
 
 #if defined(OS_OS2)
-#define INCL_BASE
-#define INCL_PM
-#include <os2.h>
+#include "base/os2/os2_toolkit.h"
 #endif
 
 #if defined(OS_ANDROID)
