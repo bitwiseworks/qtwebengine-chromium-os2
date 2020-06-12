@@ -223,7 +223,7 @@ FontCacheKey FontDescription::CacheKey(
       static_cast<unsigned>(fields_.orientation_) << 1 |       // bit 2-3
       static_cast<unsigned>(fields_.subpixel_text_position_);  // bit 1
 
-#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_OS2) || defined(OS_OS2)
+#if defined(OS_LINUX) || defined(OS_CHROMEOS) || defined(OS_OS2)
   float device_scale_factor_for_key = FontCache::DeviceScaleFactor();
 #else
   float device_scale_factor_for_key = 1.0f;
