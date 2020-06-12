@@ -72,6 +72,9 @@ class WTF_EXPORT String {
 #if (U_ICU_VERSION_MAJOR_NUM < 59) || !defined(USING_SYSTEM_ICU)
   String(const char16_t* chars, unsigned length)
       : String(reinterpret_cast<const UChar*>(chars), length) {}
+#elif defined(OS_OS2)
+  String(const wchar_t* chars, unsigned length)
+      : String(reinterpret_cast<const UChar*>(chars), length) {}
 #endif
 
   // Construct a string by copying the contents of a vector.
@@ -88,6 +91,9 @@ class WTF_EXPORT String {
   String(const UChar*);
 #if (U_ICU_VERSION_MAJOR_NUM < 59) || !defined(USING_SYSTEM_ICU)
   String(const char16_t* chars)
+      : String(reinterpret_cast<const UChar*>(chars)) {}
+#elif defined(OS_OS2)
+  String(const wchar_t* chars)
       : String(reinterpret_cast<const UChar*>(chars)) {}
 #else
   String(const uint16_t* chars)

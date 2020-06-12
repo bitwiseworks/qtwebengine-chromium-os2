@@ -25,6 +25,40 @@
 
 #ifndef VK_UNKNOWN
 
+#if defined(OS_OS2) && defined(VK_F1)
+// <os2.h> defines its own versions of these, remove them.
+#undef VK_F1
+#undef VK_F2
+#undef VK_F3
+#undef VK_F4
+#undef VK_F5
+#undef VK_F6
+#undef VK_F7
+#undef VK_F8
+#undef VK_F9
+#undef VK_F10
+#undef VK_F11
+#undef VK_F12
+#undef VK_F13
+#undef VK_F14
+#undef VK_F15
+#undef VK_F16
+#undef VK_F17
+#undef VK_F18
+#undef VK_F19
+#undef VK_F20
+#undef VK_F21
+#undef VK_F22
+#undef VK_F23
+#undef VK_F24
+#undef VK_NUMLOCK
+#undef VK_ATTN
+#undef VK_CRSEL
+#undef VK_EXSEL
+#undef VK_EREOF
+#undef VK_PA1
+#endif
+
 #define VK_UNKNOWN 0
 
 // Left mouse button
