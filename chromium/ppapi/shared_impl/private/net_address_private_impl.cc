@@ -418,6 +418,7 @@ bool NetAddressPrivateImpl::SockaddrToNetAddress(
       memcpy(net_addr->address, &addr4->sin_addr.s_addr, kIPv4AddressSize);
       break;
     }
+#if !defined(OS_OS2)
     case AF_INET6: {
       const struct sockaddr_in6* addr6 =
           reinterpret_cast<const struct sockaddr_in6*>(sa);
@@ -429,6 +430,7 @@ bool NetAddressPrivateImpl::SockaddrToNetAddress(
       memcpy(net_addr->address, addr6->sin6_addr.s6_addr, kIPv6AddressSize);
       break;
     }
+#endif
     default:
       // InitNetAddress sets net_addr->is_valid to false.
       return false;

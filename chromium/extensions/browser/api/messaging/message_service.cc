@@ -58,7 +58,8 @@ namespace {
 
 const char kReceivingEndDoesntExistError[] =
     "Could not establish connection. Receiving end does not exist.";
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
+    defined(OS_OS2)
 const char kMissingPermissionError[] =
     "Access to native messaging requires nativeMessaging permission.";
 const char kProhibitedByPoliciesError[] =
@@ -318,7 +319,11 @@ void MessageService::OpenChannelToNativeApp(
   if (!source)
     return;
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+  PortId receiver_port_id(source_port_id.context_id, source_port_id.port_number,
+                          false);
+
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
+    defined(OS_OS2)
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(source);
   ExtensionWebContentsObserver* extension_web_contents_observer =
@@ -334,8 +339,6 @@ void MessageService::OpenChannelToNativeApp(
                         extension->permissions_data()->HasAPIPermission(
                             APIPermission::kNativeMessaging);
 
-  PortId receiver_port_id(source_port_id.context_id, source_port_id.port_number,
-                          false);
   if (!has_permission) {
     DispatchOnDisconnect(source, receiver_port_id, kMissingPermissionError);
     return;
@@ -378,12 +381,14 @@ void MessageService::OpenChannelToNativeApp(
   channel->opener->IncrementLazyKeepaliveCount();
 
   AddChannel(std::move(channel), receiver_port_id);
-#else  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX))
+#else  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
+            defined(OS_OS2))
   const char kNativeMessagingNotSupportedError[] =
       "Native Messaging is not supported on this platform.";
   DispatchOnDisconnect(
       source, receiver_port_id, kNativeMessagingNotSupportedError);
-#endif  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX))
+#endif  // !(defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
+             defined(OS_OS2))
 }
 
 void MessageService::OpenChannelToTab(int source_process_id,

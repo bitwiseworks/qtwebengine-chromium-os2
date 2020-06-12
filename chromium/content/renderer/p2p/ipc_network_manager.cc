@@ -115,6 +115,7 @@ void IpcNetworkManager::OnNetworkListChanged(
     if (it->address.IsIPv4()) {
       use_default_ipv4_address |= (default_ipv4_local_address == it->address);
       iface_addr = rtc::InterfaceAddress(ip_address);
+#if !defined(OS_OS2)
     } else {
       DCHECK(it->address.IsIPv6());
       iface_addr = rtc::InterfaceAddress(ip_address, it->ip_address_attributes);
@@ -128,6 +129,7 @@ void IpcNetworkManager::OnNetworkListChanged(
       }
 
       use_default_ipv6_address |= (default_ipv6_local_address == it->address);
+#endif
     }
     network->AddIP(iface_addr);
     networks.push_back(network.release());
@@ -157,6 +159,7 @@ void IpcNetworkManager::OnNetworkListChanged(
     network_v4->AddIP(ip_address_v4);
     networks.push_back(network_v4);
 
+#if !defined(OS_OS2)
     rtc::IPAddress ipv6_default_address;
     // Only add IPv6 loopback if we can get default local address for IPv6. If
     // we can't, it means that we don't have IPv6 enabled on this machine and
@@ -172,6 +175,7 @@ void IpcNetworkManager::OnNetworkListChanged(
       network_v6->AddIP(ip_address_v6);
       networks.push_back(network_v6);
     }
+#endif
   }
 
   bool changed = false;
