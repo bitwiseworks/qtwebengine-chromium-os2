@@ -1677,6 +1677,7 @@ jumbo_component("base") {
   if (is_os2) {
     sources += [
       "base_paths_posix.cc",
+      "files/file_path_watcher_os2.cc",
       "nix/xdg_util.cc",
       "nix/xdg_util.h",
       "process/memory_os2.cc",

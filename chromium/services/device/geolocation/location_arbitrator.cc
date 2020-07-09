@@ -167,7 +167,7 @@ LocationArbitrator::NewNetworkLocationProvider(
 std::unique_ptr<LocationProvider>
 LocationArbitrator::NewSystemLocationProvider() {
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
-    defined(OS_FUCHSIA)
+    defined(OS_FUCHSIA) || defined(OS_OS2)
   return nullptr;
 #else
   return device::NewSystemLocationProvider();

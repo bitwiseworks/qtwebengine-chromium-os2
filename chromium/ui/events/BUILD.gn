@@ -207,6 +207,7 @@ jumbo_component("events") {
     "keycodes/platform_key_map_win.h",
     "mac/keyboard_hook_mac.mm",
     "null_event_targeter.cc",
+    "os2/keyboard_hook_os2.cc",
     "scoped_target_handler.cc",
     "system_input_injector.cc",
     "win/events_win.cc",

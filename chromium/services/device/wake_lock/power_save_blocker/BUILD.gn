@@ -31,6 +31,7 @@ source_set("power_save_blocker") {
     "power_save_blocker_android.cc",
     "power_save_blocker_chromeos.cc",
     "power_save_blocker_mac.cc",
+    "power_save_blocker_os2.cc",
     "power_save_blocker_ozone.cc",
     "power_save_blocker_win.cc",
     "power_save_blocker_x11.cc",

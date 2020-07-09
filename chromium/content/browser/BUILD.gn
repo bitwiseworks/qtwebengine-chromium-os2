@@ -1237,6 +1237,7 @@ jumbo_source_set("browser") {
     "memory/swap_metrics_driver_impl_linux.h",
     "memory/swap_metrics_driver_impl_mac.cc",
     "memory/swap_metrics_driver_impl_mac.h",
+    "memory/swap_metrics_driver_impl_os2.cc",
     "memory/swap_metrics_driver_impl_win.cc",
     "message_port_provider.cc",
     "mime_registry_impl.cc",
@@ -1936,6 +1937,10 @@ jumbo_source_set("browser") {
       "memory/memory_monitor_fuchsia.cc",
     ]
     deps += [ "//third_party/fuchsia-sdk/sdk:zx" ]
+  } else if (is_os2) {
+    sources += [
+      "child_process_launcher_helper_os2.cc",
+    ]
   } else if (is_posix) {
     sources += [
       "child_process_launcher_helper_posix.cc",

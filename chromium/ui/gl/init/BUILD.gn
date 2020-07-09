@@ -73,5 +73,10 @@ jumbo_component("init") {
     ]
 
     deps += [ "//ui/ozone" ]
+  } else if (is_os2) {
+    sources += [
+      "gl_factory_os2.cc",
+      "gl_initializer_os2.cc",
+    ]
   }
 }

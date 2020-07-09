@@ -303,6 +303,14 @@ bool Process::is_current() const {
   return process_ == GetCurrentProcessHandle();
 }
 
+#if defined(OS_OS2)
+Time Process::CreationTime() const {
+  // TODO: There is no syscall providing this data.
+  NOTIMPLEMENTED();
+  return Time();
+}
+#endif
+
 void Process::Close() {
   process_ = kNullProcessHandle;
   // if the process wasn't terminated (so we waited) or the state

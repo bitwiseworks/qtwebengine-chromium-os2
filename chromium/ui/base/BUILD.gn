@@ -141,6 +141,8 @@ jumbo_component("base") {
     "cursor/cursor.h",
     "cursor/cursor_android.cc",
     "cursor/cursor_loader.h",
+    "cursor/cursor_loader_os2.cc",
+    "cursor/cursor_os2.cc",
     "cursor/cursor_type.h",
     "cursor/cursor_win.cc",
     "default_style.h",
@@ -376,6 +378,12 @@ jumbo_component("base") {
       "idle/idle_fuchsia.cc",
       "l10n/l10n_util_posix.cc",
       "resource/resource_bundle_fuchsia.cc",
+    ]
+  }
+
+  if (is_os2) {
+    sources += [
+      "idle/idle_os2.cc",
     ]
   }
 

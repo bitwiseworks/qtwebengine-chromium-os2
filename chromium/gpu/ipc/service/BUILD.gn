@@ -148,6 +148,9 @@ jumbo_component("service") {
   if (is_fuchsia) {
     sources += [ "image_transport_surface_fuchsia.cc" ]
   }
+  if (is_os2) {
+    sources += [ "image_transport_surface_os2.cc" ]
+  }
   if (enable_vulkan) {
     deps += [ "//gpu/vulkan/init" ]
   }

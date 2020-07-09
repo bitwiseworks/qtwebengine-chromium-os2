@@ -36,6 +36,9 @@ component("memory_instrumentation") {
     sources -= [ "os_metrics_linux.cc" ]
     sources += [ "os_metrics_fuchsia.cc" ]
   }
+  if (is_os2) {
+    sources += [ "os_metrics_os2.cc" ]
+  }
 
   defines = [ "IS_RESOURCE_COORDINATOR_PUBLIC_MEMORY_INSTRUMENTATION_IMPL" ]
 

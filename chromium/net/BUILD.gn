@@ -2024,6 +2024,12 @@ component("net") {
         "cert/test_root_certs_fuchsia.cc",
       ]
     }
+
+    if (is_os2) {
+      sources += [
+        "base/platform_mime_util_os2.cc",
+      ]
+    }
   }
 
   if (enable_unix_sockets) {

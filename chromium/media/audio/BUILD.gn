@@ -302,6 +302,13 @@ source_set("audio") {
     deps += [ "//third_party/fuchsia-sdk/sdk:media" ]
   }
 
+  if (is_os2) {
+    sources += [
+      "os2/audio_manager_os2.cc",
+      "os2/audio_manager_os2.h",
+    ]
+  }
+
   if (enable_webrtc) {
     sources += [
       "audio_input_stream_data_interceptor.cc",

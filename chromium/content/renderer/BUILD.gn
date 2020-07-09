@@ -554,6 +554,13 @@ target(link_target_type, "renderer") {
     ]
   }
 
+  if (is_os2) {
+    sources += [
+      "render_view_os2.cc",
+      "renderer_main_platform_delegate_os2.cc",
+    ]
+  }
+
   if (enable_media_remoting) {
     deps += [ "//media/remoting" ]
   }

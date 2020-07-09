@@ -80,6 +80,10 @@ jumbo_component("shell_dialogs") {
   if (is_fuchsia) {
     sources += [ "select_file_dialog_fuchsia.cc" ]
   }
+
+  if (is_os2) {
+    sources += [ "select_file_dialog_os2.cc" ]
+  }
 }
 
 if (is_mac) {

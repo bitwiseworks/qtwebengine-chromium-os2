@@ -36,7 +36,7 @@ base::LazyInstance<base::queue<SyncTokenToFenceMap::iterator>>::DestructorAtExit
 #endif
 
 void CreateFenceLocked(const SyncToken& sync_token) {
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && !defined(OS_OS2)
   g_lock.Get().AssertAcquired();
   if (gl::GetGLImplementation() == gl::kGLImplementationMockGL ||
       gl::GetGLImplementation() == gl::kGLImplementationStubGL)

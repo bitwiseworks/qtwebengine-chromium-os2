@@ -143,6 +143,10 @@ jumbo_static_library("metrics") {
   if (is_fuchsia) {
     sources += [ "drive_metrics_provider_fuchsia.cc" ]
   }
+
+  if (is_os2) {
+    sources += [ "drive_metrics_provider_os2.cc" ]
+  }
 }
 
 # The component metrics provider is a separate target because it depends upon
