@@ -15,5 +15,5 @@ declare_args() {
   # enable_basic_printing within the same declare_args() block.
   enable_print_preview = !is_android && !is_chromecast && !is_ios && !is_fuchsia
 
-  use_cups = (is_desktop_linux || is_mac) && !is_chromecast && !is_fuchsia
+  use_cups = (is_desktop_linux || is_mac || is_os2) && !is_chromecast && !is_fuchsia
 }

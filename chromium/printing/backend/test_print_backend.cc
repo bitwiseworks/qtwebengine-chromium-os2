@@ -50,14 +50,14 @@ bool TestPrintBackend::GetPrinterSemanticCapsAndDefaults(
   return true;
 }
 
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS) && !defined(OS_OS2)
 bool TestPrintBackend::GetPrinterCapsAndDefaults(
     const std::string& printer_name,
     PrinterCapsAndDefaults* printer_info) {
   // not implemented
   return false;
 }
-#endif  // !defined(OS_CHROMEOS)
+#endif  // !defined(OS_CHROMEOS) && !defined(OS_OS2)
 
 std::string TestPrintBackend::GetPrinterDriverInfo(
     const std::string& printr_name) {
