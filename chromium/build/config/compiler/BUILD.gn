@@ -2390,7 +2390,14 @@ config("minimal_symbols") {
     # build-directory-independent output. pnacl and nacl-clang do support that
     # flag, so we can use use -g1 for pnacl and nacl-clang compiles.
     # gcc nacl is is_nacl && !is_clang, pnacl and nacl-clang are && is_clang.
-    if (!is_nacl || is_clang) {
+    if (is_os2) {
+      # -g1 is not supported by the OS/2 EMX toolchain yet and it has general
+      # problems with handling extremely large amounts of debug info, see
+      # https://github.com/bitwiseworks/libc/issues/82 and
+      # https://github.com/bitwiseworks/libc/issues/84 for more details.
+      # Stick with no debug info at all for release builds for now.
+      cflags += [ "-s" ]
+    } else if (!is_nacl || is_clang) {
       cflags += [ "-g1" ]
     }
     ldflags = []
