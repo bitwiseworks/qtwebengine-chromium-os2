@@ -266,7 +266,7 @@ class BASE_EXPORT MessageLoopCurrentForUI : public MessageLoopCurrent {
   void Abort();
 #endif
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
   void AddMessagePumpObserver(MessagePumpForUI::Observer* observer);
   void RemoveMessagePumpObserver(MessagePumpForUI::Observer* observer);
 #endif

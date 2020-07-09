@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Needed for defined(OS_WIN)
+// Needed for defined(OS_WIN) || defined(OS_OS2)
 #include "build/build_config.h"
 
 // Windows headers must come first.
@@ -20,7 +20,7 @@
 #include "ui/events/event.h"
 #endif
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
 #include "base/message_loop/message_loop_current.h"
 #endif
 
@@ -63,20 +63,29 @@ void NativeEventObserver::OnWindowEventDispatcherFinishedProcessingEvent(
 }
 #endif  // defined(OS_LINUX)
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
 void NativeEventObserver::RegisterObserver() {
   base::MessageLoopCurrentForUI::Get()->AddMessagePumpObserver(this);
 }
 void NativeEventObserver::DeregisterObserver() {
   base::MessageLoopCurrentForUI::Get()->RemoveMessagePumpObserver(this);
 }
+#if defined(OS_OS2)
+void NativeEventObserver::WillDispatchMSG(const QMSG& msg) {
+  will_run_event_callback_.Run(&msg);
+}
+void NativeEventObserver::DidDispatchMSG(const QMSG& msg) {
+  did_run_event_callback_.Run(&msg);
+}
+#else
 void NativeEventObserver::WillDispatchMSG(const MSG& msg) {
   will_run_event_callback_.Run(&msg);
 }
 void NativeEventObserver::DidDispatchMSG(const MSG& msg) {
   did_run_event_callback_.Run(&msg);
 }
-#endif  // defined(OS_WIN)
+#endif
+#endif  // defined(OS_WIN) || defined(OS_OS2)
 
 #if defined(OS_ANDROID) || defined(OS_FUCHSIA)
 void NativeEventObserver::RegisterObserver() {}

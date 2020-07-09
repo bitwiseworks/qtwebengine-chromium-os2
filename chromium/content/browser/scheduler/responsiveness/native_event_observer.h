@@ -22,6 +22,10 @@
 #include "base/message_loop/message_pump_win.h"
 #endif
 
+#if defined(OS_OS2)
+#include "base/message_loop/message_pump_os2.h"
+#endif
+
 namespace content {
 namespace responsiveness {
 
@@ -41,7 +45,7 @@ class CONTENT_EXPORT NativeEventObserver
     : public NativeEventProcessorObserver
 #elif defined(OS_LINUX)
     : public aura::WindowEventDispatcherObserver
-#elif defined(OS_WIN)
+#elif defined(OS_WIN) || defined(OS_OS2)
     : public base::MessagePumpForUI::Observer
 #endif
 {
@@ -79,6 +83,10 @@ class CONTENT_EXPORT NativeEventObserver
   // base::MessagePumpForUI::Observer overrides:
   void WillDispatchMSG(const MSG& msg) override;
   void DidDispatchMSG(const MSG& msg) override;
+#elif defined(OS_OS2)
+  // base::MessagePumpForUI::Observer overrides:
+  void WillDispatchMSG(const QMSG& msg) override;
+  void DidDispatchMSG(const QMSG& msg) override;
 #endif
 
  private:
