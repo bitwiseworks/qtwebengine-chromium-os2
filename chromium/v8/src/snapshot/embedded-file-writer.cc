@@ -41,8 +41,8 @@ namespace internal {
 
 // Name mangling.
 // Symbols are prefixed with an underscore on 32-bit architectures.
-#if defined(V8_OS_WIN) && !defined(V8_TARGET_ARCH_X64) && \
-    !defined(V8_TARGET_ARCH_ARM64)
+#if (defined(V8_OS_WIN) && !defined(V8_TARGET_ARCH_X64) && \
+    !defined(V8_TARGET_ARCH_ARM64)) || defined(V8_OS_OS2)
 #define SYMBOL_PREFIX "_"
 #else
 #define SYMBOL_PREFIX ""
@@ -624,7 +624,7 @@ void PlatformDependentEmbeddedFileWriter::DeclareFunctionBegin(
 #else
   // Other ELF Format binaries use ".type <function name>, @function"
   // to create a DWARF subprogram entry.
-  fprintf(fp_, ".type %s, @function\n", name);
+  fprintf(fp_, ".type %s%s, @function\n", SYMBOL_PREFIX, name);
 #endif
 }
 
