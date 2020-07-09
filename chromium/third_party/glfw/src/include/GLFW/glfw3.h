@@ -102,6 +102,8 @@ extern "C" {
 #ifndef APIENTRY
  #ifdef _WIN32
   #define APIENTRY __stdcall
+ #ifdef __OS2__
+  #define APIENTRY _System
  #else
   #define APIENTRY
  #endif

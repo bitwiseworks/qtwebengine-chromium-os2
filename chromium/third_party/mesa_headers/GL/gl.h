@@ -92,6 +92,10 @@
 #include <windows.h>
 #endif
 
+#if defined(__OS2__) && !defined(APIENTRY)
+#define APIENTRY _System
+#endif
+
 #if defined(macintosh) && PRAGMA_IMPORT_SUPPORTED
 #pragma import on
 #endif

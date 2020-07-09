@@ -37,6 +37,10 @@
 #include <windows.h>
 #endif
 
+#if defined(__OS2__) && !defined(APIENTRY)
+#define APIENTRY _System
+#endif
+
 #ifndef APIENTRY
 #define APIENTRY
 #endif
