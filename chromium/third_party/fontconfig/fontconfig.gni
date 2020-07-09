@@ -4,7 +4,7 @@
 
 import("//build/config/features.gni")
 
-assert(is_linux)
+assert(is_linux || is_os2)
 
 declare_args() {
   use_bundled_fontconfig = is_linux

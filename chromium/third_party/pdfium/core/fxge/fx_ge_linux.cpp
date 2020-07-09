@@ -14,7 +14,7 @@
 #include "core/fxge/systemfontinfo_iface.h"
 #include "third_party/base/ptr_util.h"
 
-#if _FX_PLATFORM_ == _FX_PLATFORM_LINUX_
+#if _FX_PLATFORM_ == _FX_PLATFORM_LINUX_ || _FX_PLATFORM_ == _FX_PLATFORM_OS2_
 namespace {
 
 const size_t kLinuxGpNameSize = 6;
@@ -146,10 +146,16 @@ std::unique_ptr<SystemFontInfoIface> SystemFontInfoIface::CreateDefault(
     const char** pUserPaths) {
   auto pInfo = pdfium::MakeUnique<CFX_LinuxFontInfo>();
   if (!pInfo->ParseFontCfg(pUserPaths)) {
+#if _FX_PLATFORM_ == _FX_PLATFORM_OS2_
+    pInfo->AddPath("/@system_drive/PSFONTS");
+    pInfo->AddPath("/@unixroot/usr/share/fonts");
+    pInfo->AddPath("/@unixroot/usr/local/share/fonts");
+#else
     pInfo->AddPath("/usr/share/fonts");
     pInfo->AddPath("/usr/share/X11/fonts/Type1");
     pInfo->AddPath("/usr/share/X11/fonts/TTF");
     pInfo->AddPath("/usr/local/share/fonts");
+#endif
   }
   return std::move(pInfo);
 }
@@ -160,4 +166,4 @@ void CFX_GEModule::InitPlatform() {
 }
 
 void CFX_GEModule::DestroyPlatform() {}
-#endif  // _FX_PLATFORM_ == _FX_PLATFORM_LINUX_
+#endif  // _FX_PLATFORM_ == _FX_PLATFORM_LINUX_ || _FX_PLATFORM_ == _FX_PLATFORM_OS2_

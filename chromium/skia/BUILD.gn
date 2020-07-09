@@ -455,7 +455,7 @@ component("skia") {
     set_sources_assignment_filter(sources_assignment_filter)
   }
 
-  if (is_linux) {
+  if (is_linux || is_os2) {
     sources += [
       "//third_party/skia/src/ports/SkFontConfigInterface.cpp",
       "//third_party/skia/src/ports/SkFontConfigInterface_direct.cpp",
@@ -496,6 +496,16 @@ component("skia") {
     ]
   }
 
+  if (is_os2) {
+    # OS/2 uses some Linux sources, put those back.
+    set_sources_assignment_filter([])
+    sources += [
+      "ext/fontmgr_default_linux.cc",
+      "ext/fontmgr_default_linux.h",
+    ]
+    set_sources_assignment_filter(sources_assignment_filter)
+  }
+
   if (is_clang && !is_nacl) {
     # Skia won't compile with some of the more strict clang warnings.
     # e.g. it does:
@@ -531,7 +541,7 @@ component("skia") {
     ]
   }
 
-  if (is_linux) {
+  if (is_linux || is_os2) {
     deps += [
       "//third_party/expat",
       "//third_party/fontconfig",

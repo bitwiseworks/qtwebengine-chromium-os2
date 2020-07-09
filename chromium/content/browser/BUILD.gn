@@ -2177,8 +2177,16 @@ jumbo_source_set("browser") {
     if (use_pangocairo) {
       sources += [ "renderer_host/pepper/pepper_truetype_font_list_pango.cc" ]
     }
-    if (is_linux) {
+    if (is_linux || is_os2) {
       deps += [ "//components/services/font:ppapi_fontconfig_matching" ]
+    }
+    if (is_os2) {
+      # OS/2 uses some Linux sources, put those back.
+      set_sources_assignment_filter([])
+      sources += [
+        "renderer_host/pepper/pepper_truetype_font_linux.cc",
+      ]
+      set_sources_assignment_filter(sources_assignment_filter)
     }
   }
 

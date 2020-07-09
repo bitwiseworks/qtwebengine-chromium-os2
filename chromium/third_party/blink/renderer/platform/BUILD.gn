@@ -1524,6 +1524,13 @@ jumbo_component("platform") {
     ]
   }
 
+  if (is_os2) {
+    sources += [
+      "fonts/os2/font_cache_os2.cc",
+      "text/os2/hyphenation_os2.cc",
+    ]
+  }
+
   if (use_minikin_hyphenation) {
     sources += [
       "text/hyphenation/hyphenation_minikin.cc",

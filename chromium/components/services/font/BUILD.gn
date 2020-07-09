@@ -32,7 +32,7 @@ source_set("lib") {
     "//skia",
   ]
 
-  if (is_linux && enable_plugins) {
+  if ((is_linux || is_os2) && enable_plugins) {
     deps += [ ":ppapi_fontconfig_matching" ]
   }
 
@@ -41,7 +41,7 @@ source_set("lib") {
   }
 }
 
-if (is_linux && enable_plugins) {
+if ((is_linux || is_os2) && enable_plugins) {
   source_set("ppapi_fontconfig_matching") {
     sources = [
       "ppapi_fontconfig_matching.cc",

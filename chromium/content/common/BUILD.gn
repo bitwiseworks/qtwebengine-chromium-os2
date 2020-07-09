@@ -460,6 +460,15 @@ source_set("common") {
     sources += [ "font_list_fuchsia.cc" ]
     deps += [ "//third_party/fuchsia-sdk/sdk:fdio" ]
   }
+
+  if (is_os2) {
+    # OS/2 uses some Linux sources, put those back.
+    set_sources_assignment_filter([])
+    sources += [
+      "common_sandbox_support_linux.cc",
+    ]
+    set_sources_assignment_filter(sources_assignment_filter)
+  }
 }
 
 # See comment at the top of //content/BUILD.gn for how this works.

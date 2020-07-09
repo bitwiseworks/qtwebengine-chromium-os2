@@ -262,7 +262,7 @@ jumbo_component("gfx") {
     "//third_party/zlib",
   ]
 
-  if (is_linux || is_android || is_fuchsia) {
+  if (is_linux || is_android || is_fuchsia || is_os2) {
     sources += [
       "platform_font_skia.cc",
       "platform_font_skia.h",
@@ -362,6 +362,13 @@ jumbo_component("gfx") {
     sources += [
       "font_fallback_fuchsia.cc",
       "font_render_params_fuchsia.cc",
+    ]
+  }
+
+  if (is_os2) {
+    sources += [
+      "font_fallback_os2.cc",
+      "font_render_params_os2.cc",
     ]
   }
 }
