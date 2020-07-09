@@ -77,6 +77,13 @@ if (is_mac) {
   ]
 }
 
+if (is_os2) {
+  angle_system_utils_sources += [
+    "src/common/system_utils_os2.cpp",
+    "src/common/system_utils_posix.cpp",
+  ]
+}
+
 if (is_win) {
   angle_system_utils_sources += [ "src/common/system_utils_win.cpp" ]
 }

@@ -8,6 +8,8 @@
 
 #include "system_utils.h"
 
+#include "common/platform.h"
+
 #include <array>
 
 #include <dlfcn.h>
@@ -49,7 +51,11 @@ std::string GetEnvironmentVar(const char *variableName)
 
 const char *GetPathSeparator()
 {
+#if defined(ANGLE_PLATFORM_OS2)
+    return ";";
+#else
     return ":";
+#endif
 }
 
 class PosixLibrary : public Library
