@@ -10,7 +10,7 @@
 #include "build/build_config.h"
 
 namespace base {
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
 static constexpr size_t kPageAllocationGranularityShift = 16;  // 64KB
 #elif defined(_MIPS_ARCH_LOONGSON)
 static constexpr size_t kPageAllocationGranularityShift = 14;  // 16KB

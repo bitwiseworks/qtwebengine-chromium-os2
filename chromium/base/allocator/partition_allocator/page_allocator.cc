@@ -21,8 +21,14 @@
 #include <windows.h>
 #endif
 
+#if defined(OS_OS2)
+#include "base/os2/os2_toolkit.h"
+#endif
+
 #if defined(OS_WIN)
 #include "base/allocator/partition_allocator/page_allocator_internals_win.h"
+#elif defined(OS_OS2)
+#include "base/allocator/partition_allocator/page_allocator_internals_os2.h"
 #elif defined(OS_POSIX) || defined(OS_FUCHSIA)
 #include "base/allocator/partition_allocator/page_allocator_internals_posix.h"
 #else
@@ -64,7 +70,8 @@ void* AllocPagesIncludingReserved(void* address,
 
 // Trims |base| to given |trim_length| and |alignment|.
 //
-// On failure, on Windows, this function returns nullptr and frees |base|.
+// On failure, on Windows and OS/2, this function returns nullptr and frees
+// |base|.
 void* TrimMapping(void* base,
                   size_t base_length,
                   size_t trim_length,
