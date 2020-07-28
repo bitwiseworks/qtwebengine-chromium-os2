@@ -19,18 +19,22 @@ APIRET MyDosSetMem(PVOID base, ULONG length, ULONG flags) {
   if (!(flags & (PAG_COMMIT | PAG_DECOMMIT)))
     return DosSetMem(base, length, flags);
 
-  // Query the current state of each range to skip already
-  // commited/decommitted pages.
+  // Query the current state of each range to avoid committing/decommitting
+  // already commited/decommitted pages.
   PVOID addr = base;
   APIRET arc;
   while (length) {
-    ULONG act_len = length, act_flags;
+    ULONG act_len = length, act_flags, new_flags = flags;
     arc = DosQueryMem(addr, &act_len, &act_flags);
     if (arc != NO_ERROR)
       break;
-    if (!(((flags & PAG_COMMIT) && (act_flags & PAG_COMMIT)) ||
-          ((flags & PAG_DECOMMIT) && !(act_flags & (PAG_COMMIT | PAG_FREE))))) {
-      arc = DosSetMem(addr, act_len, flags);
+    if ((new_flags & PAG_COMMIT) && (act_flags & PAG_COMMIT))
+      new_flags &= ~PAG_COMMIT;
+    if ((new_flags & PAG_DECOMMIT) && !(act_flags & (PAG_COMMIT | PAG_FREE)))
+      new_flags &= ~PAG_DECOMMIT;
+    if ((new_flags & (PAG_COMMIT | PAG_DECOMMIT)) ||
+        (new_flags & fPERM) != (act_flags & fPERM)) {
+      arc = DosSetMem(addr, act_len, new_flags);
       if (arc != NO_ERROR)
         break;
     }
@@ -149,10 +153,6 @@ void SetSystemPagesAccessInternal(
 
 void FreePagesInternal(void* address, size_t length) {
   APIRET arc = DosFreeMemEx(address);
-if (arc != NO_ERROR) {
-  int *p = nullptr;
-  *p = 0x123;
-}
   CHECK_EQ(static_cast<ULONG>(NO_ERROR), arc);
 }
 
