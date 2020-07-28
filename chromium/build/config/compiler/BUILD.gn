@@ -2164,7 +2164,16 @@ config("default_optimization") {
     # It gets optimized the same way regardless of the type of build.
     configs = [ "//build/config/nacl:irt_optimize" ]
   } else if (is_debug) {
-    configs = [ ":no_optimize" ]
+    if (is_os2) {
+      # OS/2 EMX toolchain has general problems with handling extremely large
+      # amounts of debug info, see
+      # https://github.com/bitwiseworks/libc/issues/82 and
+      # https://github.com/bitwiseworks/libc/issues/84 for more details. Stick
+      # with always optimized builds for now (as they reduce the # of symbols).
+      configs = [ ":optimize" ]
+    } else {
+      configs = [ ":no_optimize" ]
+    }
   } else if (optimize_for_fuzzing) {
     assert(!is_win, "Fuzzing optimize level not supported on Windows")
 
@@ -2321,7 +2330,14 @@ config("symbols") {
       # build-directory-independent output. pnacl and nacl-clang do support that
       # flag, so we can use use -g1 for pnacl and nacl-clang compiles.
       # gcc nacl is is_nacl && !is_clang, pnacl and nacl-clang are && is_clang.
-      if (!is_nacl || is_clang) {
+      if (is_os2) {
+        # -g2 isn't supported by the OS/2 EMX toolchain yet; also it has general
+        # problems with handling extremely large amounts of debug info, see
+        # https://github.com/bitwiseworks/libc/issues/82 and
+        # https://github.com/bitwiseworks/libc/issues/84 for more details.
+        # Stick with no debug info at all for now.
+        cflags += [ "-s" ]
+      } else if (!is_nacl || is_clang) {
         cflags += [ "-g2" ]
       }
     }
@@ -2391,11 +2407,11 @@ config("minimal_symbols") {
     # flag, so we can use use -g1 for pnacl and nacl-clang compiles.
     # gcc nacl is is_nacl && !is_clang, pnacl and nacl-clang are && is_clang.
     if (is_os2) {
-      # -g1 is not supported by the OS/2 EMX toolchain yet and it has general
+      # -g1 isn't supported by the OS/2 EMX toolchain yet; also it has general
       # problems with handling extremely large amounts of debug info, see
       # https://github.com/bitwiseworks/libc/issues/82 and
       # https://github.com/bitwiseworks/libc/issues/84 for more details.
-      # Stick with no debug info at all for release builds for now.
+      # Stick with no debug info at all for now.
       cflags += [ "-s" ]
     } else if (!is_nacl || is_clang) {
       cflags += [ "-g1" ]
