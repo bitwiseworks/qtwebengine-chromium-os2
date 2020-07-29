@@ -282,6 +282,13 @@ jumbo_component("capture_lib") {
       "video/fuchsia/video_capture_device_factory_fuchsia.h",
     ]
   }
+
+  if (is_os2) {
+    sources += [
+      "video/os2/video_capture_device_factory_os2.cc",
+      "video/os2/video_capture_device_factory_os2.h",
+    ]
+  }
 }
 
 source_set("test_support") {

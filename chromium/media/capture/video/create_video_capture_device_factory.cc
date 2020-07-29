@@ -24,6 +24,8 @@
 #include "media/capture/video/android/video_capture_device_factory_android.h"
 #elif defined(OS_FUCHSIA)
 #include "media/capture/video/fuchsia/video_capture_device_factory_fuchsia.h"
+#elif defined(OS_OS2)
+#include "media/capture/video/os2/video_capture_device_factory_os2.h"
 #endif
 
 namespace media {
@@ -58,6 +60,8 @@ CreatePlatformSpecificVideoCaptureDeviceFactory(
   return std::make_unique<VideoCaptureDeviceFactoryAndroid>();
 #elif defined(OS_FUCHSIA)
   return std::make_unique<VideoCaptureDeviceFactoryFuchsia>();
+#elif defined(OS_OS2)
+  return std::make_unique<VideoCaptureDeviceFactoryOS2>();
 #else
   NOTIMPLEMENTED();
   return nullptr;
