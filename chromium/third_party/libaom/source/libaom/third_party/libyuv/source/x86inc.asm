@@ -68,7 +68,7 @@
     %elifidn __OUTPUT_FORMAT__,aout
         section .text
     %elifidn __OUTPUT_FORMAT__,obj
-        section .text
+        SEGMENT TEXT32 CLASS=CODE USE32 ALIGN=%1
     %else
         SECTION .rodata align=%1
     %endif
@@ -79,7 +79,7 @@
     %ifidn __OUTPUT_FORMAT__,aout
         SECTION .text
     %elifidn __OUTPUT_FORMAT__,obj
-        SECTION .text
+        SEGMENT TEXT32 CLASS=CODE USE32 ALIGN=%1
     %else
         SECTION .text align=%1
     %endif

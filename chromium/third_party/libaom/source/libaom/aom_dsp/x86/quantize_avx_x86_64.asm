@@ -13,7 +13,7 @@
 
 %include "third_party/x86inc/x86inc.asm"
 
-SECTION .text
+SECTION_TEXT
 
 %macro QUANTIZE_FN 2
 cglobal quantize_%1, 0, %2, 15, coeff, ncoeff, zbin, round, quant, \

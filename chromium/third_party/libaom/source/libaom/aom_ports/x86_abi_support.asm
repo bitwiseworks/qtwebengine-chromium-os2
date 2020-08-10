@@ -381,13 +381,25 @@ section .text
 %endmacro
 %elifidn __OUTPUT_FORMAT__,obj
 %macro SECTION_RODATA 0
-section .text
+segment TEXT32 CLASS=CODE USE32 ALIGN=16
 %endmacro
 %elifidn __OUTPUT_FORMAT__,aout
 %define SECTION_RODATA section .data
 %else
 %define SECTION_RODATA section .rodata
 %endif
+
+; Name of the text section
+;
+; Needed on OS/2 where it is 16-bit by default.
+;
+%macro SECTION_TEXT 0
+    %ifidn __OUTPUT_FORMAT__,obj
+        SEGMENT TEXT32 CLASS=CODE USE32
+    %else
+        SECTION .text
+    %endif
+%endmacro
 
 
 ; Tell GNU ld that we don't require an executable stack.

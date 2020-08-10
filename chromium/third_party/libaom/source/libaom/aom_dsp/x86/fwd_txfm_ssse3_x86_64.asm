@@ -43,7 +43,7 @@ TRANSFORM_COEFFS  9102,  13623
   mova               [outputq + 4*%1 + 16], m12
 %endmacro
 
-SECTION .text
+SECTION_TEXT
 
 %if ARCH_X86_64
 INIT_XMM ssse3

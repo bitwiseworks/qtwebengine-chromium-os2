@@ -66,6 +66,11 @@
   %define PRIVATE :private_extern
 %endif
 
+; Force 32-bit code segment on OS/2 to override the default 16-bit one.
+%ifidn __OUTPUT_FORMAT__,obj
+  segment TEXT32 CLASS=CODE USE32 ALIGN=16
+%endif
+
 ;; typedef void (*PushAllRegistersCallback)(SafePointBarrier*, ThreadState*, intptr_t*);
 ;; extern "C" void PushAllRegisters(SafePointBarrier*, ThreadState*, PushAllRegistersCallback)
 

@@ -179,7 +179,7 @@
     movq        [rdi + %2], xmm0
 %endm
 
-SECTION .text
+SECTION_TEXT
 
 ;void aom_filter_block1d4_v8_sse2
 ;(

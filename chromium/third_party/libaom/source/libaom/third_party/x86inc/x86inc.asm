@@ -108,8 +108,19 @@
         fakegot:
     %elifidn __OUTPUT_FORMAT__,aout
         SECTION .text
+    %elifidn __OUTPUT_FORMAT__,obj
+        SEGMENT TEXT32 CLASS=CODE USE32 ALIGN=%1
     %else
         SECTION .rodata align=%1
+    %endif
+%endmacro
+
+; Needed on OS/2 where it is 16-bit by default.
+%macro SECTION_TEXT 0
+    %ifidn __OUTPUT_FORMAT__,obj
+        SEGMENT TEXT32 CLASS=CODE USE32
+    %else
+        SECTION .text
     %endif
 %endmacro
 
@@ -122,6 +133,8 @@
 %elifidn __OUTPUT_FORMAT__,win32
 %define ABI_IS_32BIT 1
 %elifidn __OUTPUT_FORMAT__,aout
+%define ABI_IS_32BIT 1
+%elifidn __OUTPUT_FORMAT__,obj
 %define ABI_IS_32BIT 1
 %else
 %define ABI_IS_32BIT 0

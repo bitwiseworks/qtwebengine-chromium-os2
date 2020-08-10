@@ -14,7 +14,7 @@
 
 %include "aom_ports/x86_abi_support.asm"
 
-section .text
+SECTION_TEXT
 global sym(aom_reset_mmx_state) PRIVATE
 sym(aom_reset_mmx_state):
     emms

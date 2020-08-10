@@ -108,7 +108,7 @@
     dec         rcx
 %endm
 
-SECTION .text
+SECTION_TEXT
 
 global sym(aom_filter_block1d4_v2_ssse3) PRIVATE
 sym(aom_filter_block1d4_v2_ssse3):

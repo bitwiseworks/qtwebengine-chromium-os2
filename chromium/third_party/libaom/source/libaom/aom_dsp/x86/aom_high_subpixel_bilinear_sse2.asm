@@ -175,7 +175,7 @@
     dec         rcx
 %endm
 
-SECTION .text
+SECTION_TEXT
 
 global sym(aom_highbd_filter_block1d4_v2_sse2) PRIVATE
 sym(aom_highbd_filter_block1d4_v2_sse2):

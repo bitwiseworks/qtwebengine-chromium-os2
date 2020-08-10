@@ -48,7 +48,7 @@
         SUM_ACROSS_Q    %1
 %endmacro
 
-SECTION .text
+SECTION_TEXT
 
 ;void ssim_parms_sse2(
 ;    unsigned char *s,

@@ -19,7 +19,7 @@ pw_8:  times 8 dw 8
 pw_16: times 4 dd 16
 pw_32: times 4 dd 32
 
-SECTION .text
+SECTION_TEXT
 INIT_XMM sse2
 cglobal highbd_dc_predictor_4x4, 4, 5, 4, dst, stride, above, left, goffset
   GET_GOT     goffsetq

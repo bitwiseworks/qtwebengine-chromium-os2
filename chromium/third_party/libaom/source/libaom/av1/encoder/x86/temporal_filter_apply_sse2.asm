@@ -14,7 +14,7 @@
 
 %include "aom_ports/x86_abi_support.asm"
 
-SECTION .text
+SECTION_TEXT
 
 ; TODO(yunqing) The following optimization is not used since the c code changes.
 ; void av1_temporal_filter_apply_sse2 | arg

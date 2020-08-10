@@ -14,7 +14,7 @@
 
 %include "aom_ports/x86_abi_support.asm"
 
-SECTION .text
+SECTION_TEXT
 
 ;unsigned int aom_highbd_calc16x16var_sse2
 ;(

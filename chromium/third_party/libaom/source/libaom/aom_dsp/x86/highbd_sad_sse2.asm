@@ -13,7 +13,7 @@
 
 %include "third_party/x86inc/x86inc.asm"
 
-SECTION .text
+SECTION_TEXT
 
 %macro HIGH_SAD_FN 4
 %if %4 == 0
