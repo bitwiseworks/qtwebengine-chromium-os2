@@ -19,6 +19,7 @@
 #include <openssl/rand.h>
 
 #if !defined(OPENSSL_WINDOWS) && !defined(OPENSSL_FUCHSIA) && \
+    !defined(OPENSSL_OS2) && \
     !defined(BORINGSSL_UNSAFE_DETERMINISTIC_MODE) && !defined(OPENSSL_TRUSTY)
 
 #include <assert.h>
@@ -332,4 +333,5 @@ void CRYPTO_sysrand(uint8_t *out, size_t requested) {
 }
 
 #endif /* !OPENSSL_WINDOWS && !defined(OPENSSL_FUCHSIA) && \
+          !defined(OPENSSL_OS2) && \
           !BORINGSSL_UNSAFE_DETERMINISTIC_MODE && !OPENSSL_TRUSTY */

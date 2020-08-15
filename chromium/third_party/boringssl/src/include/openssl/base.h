@@ -133,6 +133,10 @@ extern "C" {
 #define OPENSSL_WINDOWS
 #endif
 
+#if defined(__OS2__)
+#define OPENSSL_OS2
+#endif
+
 #if defined(__linux__)
 #define OPENSSL_LINUX
 #endif
@@ -183,7 +187,7 @@ extern "C" {
 
 #if defined(BORINGSSL_SHARED_LIBRARY)
 
-#if defined(OPENSSL_WINDOWS)
+#if defined(OPENSSL_WINDOWS) || defined(OPENSSL_OS2)
 
 #if defined(BORINGSSL_IMPLEMENTATION)
 #define OPENSSL_EXPORT __declspec(dllexport)

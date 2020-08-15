@@ -35,7 +35,7 @@ OPENSSL_EXPORT void RAND_cleanup(void);
 
 // Obscure functions.
 
-#if !defined(OPENSSL_WINDOWS)
+#if !defined(OPENSSL_WINDOWS) && !defined(OPENSSL_OS2)
 // RAND_set_urandom_fd causes the module to use a copy of |fd| for system
 // randomness rather opening /dev/urandom internally. The caller retains
 // ownership of |fd| and is at liberty to close it at any time. This is useful
