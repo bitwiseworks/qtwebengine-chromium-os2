@@ -33,7 +33,8 @@
 #if SQLITE_MAX_WORKER_THREADS>0
 
 /********************************* Unix Pthreads ****************************/
-#if SQLITE_OS_UNIX && defined(SQLITE_MUTEX_PTHREADS) && SQLITE_THREADSAFE>0
+#if SQLITE_OS_UNIX && defined(SQLITE_MUTEX_PTHREADS) && SQLITE_THREADSAFE>0 || \
+    SQLITE_OS_OS2 && defined(SQLITE_MUTEX_OS2) && SQLITE_THREADSAFE>0
 
 #define SQLITE_THREADS_IMPLEMENTED 1  /* Prevent the single-thread code below */
 #include <pthread.h>

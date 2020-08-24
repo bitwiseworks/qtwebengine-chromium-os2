@@ -11,7 +11,7 @@
 # This file implements regression tests for the session module.
 #
 
-package require Tcl 8.6
+#package require Tcl 8.6
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]

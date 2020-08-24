@@ -471,6 +471,9 @@ static const char * const sqlite3azCompileOpt[] = {
 #if SQLITE_MUTEX_PTHREADS
   "MUTEX_PTHREADS",
 #endif
+#if SQLITE_MUTEX_OS2
+  "MUTEX_OS2",
+#endif
 #if SQLITE_MUTEX_W32
   "MUTEX_W32",
 #endif

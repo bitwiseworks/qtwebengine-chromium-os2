@@ -160,6 +160,11 @@ VERSION_NUMBER=[`cat $srcdir/VERSION \
                 | awk '{printf "%d%03d%03d",$1,$2,$3}'`]
 AC_MSG_NOTICE(Version number set to $VERSION_NUMBER)
 AC_SUBST(VERSION_NUMBER)
+PATCH_LEVEL=[`cat $srcdir/VERSION \
+                           | sed 's/[^0-9]/ /g' \
+                | awk '{printf "%d",$3}'`]
+AC_MSG_NOTICE(Patch level set to $PATCH_LEVEL)
+AC_SUBST(PATCH_LEVEL)
 
 #########
 # Locate a compiler for the build machine.  This compiler should
@@ -270,18 +275,31 @@ else
   TARGET_EXEEXT=$config_TARGET_EXEEXT
 fi
 if test "$TARGET_EXEEXT" = ".exe"; then
+ case $build_os in
+ os2*)
+  SQLITE_OS_UNIX=0
+  SQLITE_OS_WIN=0
+  SQLITE_OS_OS2=1
+  CFLAGS="$CFLAGS -DSQLITE_OS_OS2=1"
+  ;;
+ *)
   SQLITE_OS_UNIX=0
   SQLITE_OS_WIN=1
+  SQLITE_OS_OS2=0
   CFLAGS="$CFLAGS -DSQLITE_OS_WIN=1"
+  ;;
+ esac
 else
   SQLITE_OS_UNIX=1
   SQLITE_OS_WIN=0
+  SQLITE_OS_OS2=0
   CFLAGS="$CFLAGS -DSQLITE_OS_UNIX=1"
 fi
 
 AC_SUBST(BUILD_EXEEXT)
 AC_SUBST(SQLITE_OS_UNIX)
 AC_SUBST(SQLITE_OS_WIN)
+AC_SUBST(SQLITE_OS_OS2)
 AC_SUBST(TARGET_EXEEXT)
 
 ##########
@@ -503,7 +521,7 @@ if test x"$with_readline" != xno; then
 	if test "x$with_readline_lib" = xauto; then
 		save_LIBS="$LIBS"
 		LIBS=""
-		AC_SEARCH_LIBS(tgetent, [readline ncurses curses termcap], [term_LIBS="$LIBS"], [term_LIBS=""])
+		AC_SEARCH_LIBS(tgetent, [readline ncurses tinfo curses termcap], [term_LIBS="$LIBS"], [term_LIBS=""])
 		AC_CHECK_LIB([readline], [readline], [TARGET_READLINE_LIBS="-lreadline"], [found="no"])
 		TARGET_READLINE_LIBS="$TARGET_READLINE_LIBS $term_LIBS"
 		LIBS="$save_LIBS"
@@ -519,7 +537,7 @@ if test x"$with_readline" != xno; then
 		AC_CHECK_HEADER(readline.h, [found="yes"], [
 			found="no"
 			if test "$cross_compiling" != yes; then
-				for dir in /usr /usr/local /usr/local/readline /usr/contrib /mingw; do
+				for dir in /@unixroot/usr /usr /usr/local /usr/local/readline /usr/contrib /mingw; do
 					for subdir in include include/readline; do
 						AC_CHECK_FILE($dir/$subdir/readline.h, found=yes)
 						if test "$found" = "yes"; then
@@ -569,7 +587,7 @@ AC_SUBST(TARGET_DEBUG)
 # See whether we should use the amalgamation to build
 AC_ARG_ENABLE(amalgamation, AC_HELP_STRING([--disable-amalgamation],
       [Disable the amalgamation and instead build all files separately]))
-if test "${enable_amalgamation}" == "no" ; then
+if test "${enable_amalgamation}" = "no" ; then
   USE_AMALGAMATION=0
 fi
 AC_SUBST(USE_AMALGAMATION)

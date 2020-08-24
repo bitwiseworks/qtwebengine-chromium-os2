@@ -46,7 +46,7 @@
 
 #include "os_setup.h"
 
-#if SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX || SQLITE_OS_OS2
 # include <unistd.h>
 #endif
 #if SQLITE_OS_WIN
@@ -1083,7 +1083,7 @@ int sqlite3_quota_fflush(quota_FILE *p, int doFsync){
   int rc;
   rc = fflush(p->f);
   if( rc==0 && doFsync ){
-#if SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX || SQLITE_OS_OS2
     rc = fsync(fileno(p->f));
 #endif
 #if SQLITE_OS_WIN
@@ -1139,7 +1139,7 @@ int sqlite3_quota_ftruncate(quota_FILE *p, sqlite3_int64 szNew){
     pGroup->iSize += szNew - pFile->iSize;
     quotaLeave();
   }
-#if SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX || SQLITE_OS_OS2
   rc = ftruncate(fileno(p->f), szNew);
 #endif
 #if SQLITE_OS_WIN
@@ -1168,7 +1168,7 @@ int sqlite3_quota_ftruncate(quota_FILE *p, sqlite3_int64 szNew){
 */
 int sqlite3_quota_file_mtime(quota_FILE *p, time_t *pTime){
   int rc;
-#if SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX || SQLITE_OS_OS2
   struct stat buf;
   rc = fstat(fileno(p->f), &buf);
 #endif
@@ -1186,7 +1186,7 @@ int sqlite3_quota_file_mtime(quota_FILE *p, time_t *pTime){
 */
 sqlite3_int64 sqlite3_quota_file_truesize(quota_FILE *p){
   int rc;
-#if SQLITE_OS_UNIX
+#if SQLITE_OS_UNIX || SQLITE_OS_OS2
   struct stat buf;
   rc = fstat(fileno(p->f), &buf);
 #endif

@@ -3397,6 +3397,10 @@ PRIVATE char *pathsearch(char *argv0, char *name, int modemask)
   cp = strrchr(argv0,'\\');
 #else
   cp = strrchr(argv0,'/');
+#ifdef __OS2__
+  if ( !cp )
+    cp = strrchr(argv0,'\\');
+#endif
 #endif
   if( cp ){
     c = *cp;
@@ -3413,7 +3417,11 @@ PRIVATE char *pathsearch(char *argv0, char *name, int modemask)
       pathbufptr = pathbuf;
       lemon_strcpy(pathbuf, pathlist);
       while( *pathbuf ){
+#ifdef __OS2__
+        cp = strchr(pathbuf,';');
+#else
         cp = strchr(pathbuf,':');
+#endif
         if( cp==0 ) cp = &pathbuf[lemonStrlen(pathbuf)];
         c = *cp;
         *cp = 0;

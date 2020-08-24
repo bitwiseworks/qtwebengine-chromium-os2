@@ -58,7 +58,7 @@
 #endif
 
 /* The directory separator character(s) */
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__OS2__)
 # define isDirSep(c) (((c) == '/') || ((c) == '\\'))
 #else
 # define isDirSep(c) ((c) == '/')

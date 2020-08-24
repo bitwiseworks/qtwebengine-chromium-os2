@@ -74,7 +74,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#if SQLITE_OS_UNIX || defined(__MINGW_H)
+#if SQLITE_OS_UNIX || defined(__MINGW_H) || SQLITE_OS_OS2
 # include <unistd.h>
 # include <dirent.h>
 # ifndef DIRENT

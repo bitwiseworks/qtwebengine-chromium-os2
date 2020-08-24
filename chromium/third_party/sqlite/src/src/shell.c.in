@@ -146,6 +146,9 @@ typedef unsigned char u8;
 # undef pclose
 # define pclose _pclose
 #else
+# ifdef __OS2__
+# include <fcntl.h>
+# endif
  /* Make sure isatty() has a prototype. */
  extern int isatty(int);
 
@@ -196,6 +199,15 @@ static void setBinaryMode(FILE *file, int isOutput){
 static void setTextMode(FILE *file, int isOutput){
   if( isOutput ) fflush(file);
   _setmode(_fileno(file), _O_TEXT);
+}
+#elif defined(__OS2__)
+static void setBinaryMode(FILE *file, int isOutput){
+  if( isOutput ) fflush(file);
+  setmode(fileno(file), O_BINARY);
+}
+static void setTextMode(FILE *file, int isOutput){
+  if( isOutput ) fflush(file);
+  setmode(fileno(file), O_TEXT);
 }
 #else
 # define setBinaryMode(X,Y)
