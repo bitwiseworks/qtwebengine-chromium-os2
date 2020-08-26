@@ -497,13 +497,11 @@ component("skia") {
   }
 
   if (is_os2) {
-    # OS/2 uses some Linux sources, put those back.
-    set_sources_assignment_filter([])
     sources += [
-      "ext/fontmgr_default_linux.cc",
-      "ext/fontmgr_default_linux.h",
+      "//third_party/skia/src/ports/SkFontMgr_fontconfig.cpp",
+      "ext/fontmgr_default_os2.cc",
+      "ext/fontmgr_default_os2.h",
     ]
-    set_sources_assignment_filter(sources_assignment_filter)
   }
 
   if (is_clang && !is_nacl) {
