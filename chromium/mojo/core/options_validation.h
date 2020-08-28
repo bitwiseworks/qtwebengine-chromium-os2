@@ -32,7 +32,13 @@ class UserOptionsReader {
   // Note: We initialize |options_reader_| without checking, since we do a check
   // in |GetSizeForReader()|.
   explicit UserOptionsReader(const Options* options) {
+    // TODD: Disable this check on OS/2 because alignas(8) seems to be broken
+    // in GCC (see https://github.com/bitwiseworks/gcc-os2/issues/29 and
+    // https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/20) and
+    // hope it doesn't blow things up somewhere.
+#if !defined(OS_OS2)
     CHECK(options && IsAligned<MOJO_ALIGNOF(Options)>(options));
+#endif
     options_ = GetSizeForReader(options) == 0 ? nullptr : options;
     static_assert(offsetof(Options, struct_size) == 0,
                   "struct_size not first member of Options");
