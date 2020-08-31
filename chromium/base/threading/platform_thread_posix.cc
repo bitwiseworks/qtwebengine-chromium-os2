@@ -190,6 +190,8 @@ PlatformThreadId PlatformThread::CurrentId() {
   return g_thread_id;
 #elif defined(OS_ANDROID)
   return gettid();
+#elif defined(OS_OS2)
+  return _gettid();
 #elif defined(OS_FUCHSIA)
   return zx_thread_self();
 #elif defined(OS_SOLARIS) || defined(OS_QNX)
