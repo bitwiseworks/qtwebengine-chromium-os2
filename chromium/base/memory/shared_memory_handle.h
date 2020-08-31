@@ -86,6 +86,19 @@ class BASE_EXPORT SharedMemoryHandle {
   // when trying to map the SharedMemoryHandle at a later point in time.
   SharedMemoryHandle(HANDLE h, size_t size, const base::UnguessableToken& guid);
   HANDLE GetHandle() const;
+#elif defined(OS_OS2)
+  // Takes implicit ownership of |h|.
+  // |guid| uniquely identifies the shared memory region pointed to by the
+  // underlying OS resource. If the void* is associated with another
+  // SharedMemoryHandle, the caller must pass the |guid| of that
+  // SharedMemoryHandle. Otherwise, the caller should generate a new
+  // UnguessableToken.
+  // Passing the wrong |size| has no immediate consequence, but may cause errors
+  // when trying to map the SharedMemoryHandle at a later point in time.
+  SharedMemoryHandle(void *h,
+                     size_t size,
+                     const base::UnguessableToken& guid);
+  void* GetHandle() const;
 #elif defined(OS_FUCHSIA)
   // Takes implicit ownership of |h|.
   // |guid| uniquely identifies the shared memory region pointed to by the
@@ -155,7 +168,8 @@ class BASE_EXPORT SharedMemoryHandle {
   bool SetRegionReadOnly() const;
 #endif
 
-#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS) && \
+    !defined(OS_OS2))
   // Constructs a SharedMemoryHandle backed by a FileDescriptor. The newly
   // created instance has the same ownership semantics as base::FileDescriptor.
   // This typically means that the SharedMemoryHandle takes ownership of the
@@ -184,6 +198,9 @@ class BASE_EXPORT SharedMemoryHandle {
   // behavior of the |auto_close| parameter of FileDescriptor. This member only
   // affects attachment-brokered SharedMemoryHandles.
   // Defaults to |false|.
+  bool ownership_passes_to_ipc_ = false;
+#elif defined(OS_OS2)
+  void* handle_ = nullptr;
   bool ownership_passes_to_ipc_ = false;
 #elif defined(OS_FUCHSIA)
   zx_handle_t handle_ = ZX_HANDLE_INVALID;

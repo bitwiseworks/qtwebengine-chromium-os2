@@ -538,6 +538,8 @@ jumbo_component("base") {
     "observer_list_threadsafe.cc",
     "observer_list_threadsafe.h",
     "optional.h",
+    "os2/os2_toolkit.h",
+    "os2/scoped_shared_mem_obj.h",
     "os_compat_android.cc",
     "os_compat_android.h",
     "os_compat_nacl.cc",
@@ -1678,6 +1680,9 @@ jumbo_component("base") {
     sources += [
       "base_paths_posix.cc",
       "files/file_path_watcher_os2.cc",
+      "memory/platform_shared_memory_region_os2.cc",
+      "memory/shared_memory_handle_os2.cc",
+      "memory/shared_memory_os2.cc",
       "nix/xdg_util.cc",
       "nix/xdg_util.h",
       "process/memory_os2.cc",
@@ -1861,14 +1866,14 @@ jumbo_component("base") {
 
   # Android and MacOS have their own custom shared memory handle
   # implementations. e.g. due to supporting both POSIX and native handles.
-  if (is_posix && !is_android && !is_mac) {
+  if (is_posix && !is_android && !is_mac && !is_os2) {
     sources += [
       "memory/platform_shared_memory_region_posix.cc",
       "memory/shared_memory_handle_posix.cc",
     ]
   }
 
-  if (is_posix && !is_mac && !is_nacl) {
+  if (is_posix && !is_mac && !is_nacl && !is_os2) {
     sources += [ "memory/shared_memory_posix.cc" ]
   }
 

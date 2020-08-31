@@ -697,7 +697,7 @@ class BASE_EXPORT FieldTrialList {
   // underlying OS resource - that must be done by the Process launcher.
   static std::string SerializeSharedMemoryHandleMetadata(
       const SharedMemoryHandle& shm);
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || \
+#if defined(OS_WIN) || defined(OS_OS2) || defined(OS_FUCHSIA) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
   static SharedMemoryHandle DeserializeSharedMemoryHandleMetadata(
       const std::string& switch_value);
@@ -707,7 +707,7 @@ class BASE_EXPORT FieldTrialList {
       const std::string& switch_value);
 #endif
 
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || \
+#if defined(OS_WIN) || defined(OS_OS2) || defined(OS_FUCHSIA) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
   // Takes in |handle_switch| from the command line which represents the shared
   // memory handle for field trials, parses it, and creates the field trials.

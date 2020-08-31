@@ -1063,6 +1063,21 @@ struct COMPONENT_EXPORT(IPC) ParamTraits<QMSG> {
                    param_type* r);
   static void Log(const param_type& p, std::string* l);
 };
+
+template <>
+struct COMPONENT_EXPORT(IPC) ParamTraits<void*> {
+  typedef void* param_type;
+  static void Write(base::Pickle* m, const param_type& p) {
+    m->WriteLong(reinterpret_cast<long>(p));
+  }
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r) {
+    return iter->ReadLong(reinterpret_cast<long*>(r));
+
+  }
+  static void Log(const param_type& p, std::string* l);
+};
 #endif  // defined(OS_OS2)
 
 //-----------------------------------------------------------------------------

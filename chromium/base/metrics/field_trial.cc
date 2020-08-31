@@ -817,7 +817,7 @@ void FieldTrialList::CreateTrialsFromCommandLine(
     int fd_key) {
   global_->create_trials_from_command_line_called_ = true;
 
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || \
+#if defined(OS_WIN) || defined(OS_OS2) || defined(OS_FUCHSIA) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
   if (cmd_line.HasSwitch(field_trial_handle_switch)) {
     std::string switch_value =
@@ -1190,6 +1190,10 @@ std::string FieldTrialList::SerializeSharedMemoryHandleMetadata(
   // Tell the child process the name of the inherited HANDLE.
   uintptr_t uintptr_handle = reinterpret_cast<uintptr_t>(shm.GetHandle());
   ss << uintptr_handle << ",";
+#elif defined(OS_OS2)
+  // Tell the child process the address of the shared memory object.
+  uintptr_t uintptr_handle = reinterpret_cast<uintptr_t>(shm.GetHandle());
+  ss << uintptr_handle << ",";
 #elif defined(OS_FUCHSIA)
   ss << shm.GetHandle() << ",";
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
@@ -1206,7 +1210,7 @@ std::string FieldTrialList::SerializeSharedMemoryHandleMetadata(
   return ss.str();
 }
 
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || \
+#if defined(OS_WIN) || defined(OS_OS2) || defined(OS_FUCHSIA) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
 
 // static
@@ -1223,6 +1227,8 @@ SharedMemoryHandle FieldTrialList::DeserializeSharedMemoryHandleMetadata(
     return SharedMemoryHandle();
 #if defined(OS_FUCHSIA)
   zx_handle_t handle = static_cast<zx_handle_t>(field_trial_handle);
+#elif defined(OS_OS2)
+  void* handle = reinterpret_cast<void*>(field_trial_handle);
 #elif defined(OS_WIN)
   HANDLE handle = reinterpret_cast<HANDLE>(field_trial_handle);
   if (base::IsCurrentProcessElevated()) {
@@ -1286,7 +1292,7 @@ SharedMemoryHandle FieldTrialList::DeserializeSharedMemoryHandleMetadata(
 
 #endif
 
-#if defined(OS_WIN) || defined(OS_FUCHSIA) || \
+#if defined(OS_WIN) || defined(OS_OS2) || defined(OS_FUCHSIA) || \
     (defined(OS_MACOSX) && !defined(OS_IOS))
 // static
 bool FieldTrialList::CreateTrialsFromSwitchValue(

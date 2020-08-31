@@ -17,6 +17,8 @@
 #include <lib/zx/handle.h>
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include "base/mac/scoped_mach_port.h"
+#elif defined(OS_OS2)
+#include "base/os2/scoped_shared_mem_obj.h"
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
@@ -47,6 +49,8 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
     kHandle,
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
     kMachPort,
+#elif defined(OS_OS2)
+    kSharedMemObj,
 #endif
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
     kFd,
@@ -62,6 +66,8 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   explicit PlatformHandle(zx::handle handle);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   explicit PlatformHandle(base::mac::ScopedMachSendRight mach_port);
+#elif defined(OS_OS2)
+  explicit PlatformHandle(base::os2::ScopedSharedMemObj shared_mem_obj);
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
@@ -144,6 +150,23 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
       type_ = Type::kNone;
     return mach_port_.release();
   }
+#elif defined(OS_OS2)
+  bool is_valid() const { return is_valid_fd() || is_valid_shared_mem_obj(); }
+  bool is_valid_shared_mem_obj() const { return shared_mem_obj_.is_valid(); }
+  bool is_shared_mem_obj() const { return type_ == Type::kSharedMemObj; }
+  const base::os2::ScopedSharedMemObj& GeSharedMemObj() const {
+    return shared_mem_obj_;
+  }
+  base::os2::ScopedSharedMemObj TakeSharedMemObj() {
+    if (type_ == Type::kSharedMemObj)
+      type_ = Type::kNone;
+    return std::move(shared_mem_obj_);
+  }
+  void* ReleaseSharedMemObj() WARN_UNUSED_RESULT {
+    if (type_ == Type::kSharedMemObj)
+      type_ = Type::kNone;
+    return shared_mem_obj_.release();
+  }
 #elif defined(OS_POSIX)
   bool is_valid() const { return is_valid_fd(); }
 #else
@@ -175,6 +198,8 @@ class COMPONENT_EXPORT(MOJO_CPP_PLATFORM) PlatformHandle {
   zx::handle handle_;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   base::mac::ScopedMachSendRight mach_port_;
+#elif defined(OS_OS2)
+  base::os2::ScopedSharedMemObj shared_mem_obj_;
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)

@@ -46,6 +46,10 @@
 #include "mojo/public/cpp/system/scope_to_message_pipe.h"
 #endif
 
+#if defined(OS_OS2)
+#include "base/os2/scoped_shared_mem_obj.h"
+#endif
+
 namespace IPC {
 
 namespace {
@@ -657,6 +661,8 @@ void ParamTraits<base::SharedMemoryHandle>::Write(base::Pickle* m,
 #if defined(OS_WIN)
   HandleWin handle_win(p.GetHandle());
   WriteParam(m, handle_win);
+#elif defined(OS_OS2)
+  WriteParam(m, p.GetHandle());
 #elif defined(OS_FUCHSIA)
   HandleFuchsia handle_fuchsia(p.GetHandle());
   WriteParam(m, handle_fuchsia);
@@ -713,6 +719,10 @@ bool ParamTraits<base::SharedMemoryHandle>::Read(const base::Pickle* m,
   HandleWin handle_win;
   if (!ReadParam(m, iter, &handle_win))
     return false;
+#elif defined(OS_OS2)
+  void* handle_os2;
+  if (!ReadParam(m, iter, &handle_os2))
+    return false;
 #elif defined(OS_FUCHSIA)
   HandleFuchsia handle_fuchsia;
   if (!ReadParam(m, iter, &handle_fuchsia))
@@ -747,6 +757,8 @@ bool ParamTraits<base::SharedMemoryHandle>::Read(const base::Pickle* m,
 #if defined(OS_WIN)
   *r = base::SharedMemoryHandle(handle_win.get_handle(),
                                 static_cast<size_t>(size), guid);
+#elif defined(OS_OS2)
+  *r = base::SharedMemoryHandle(handle_os2, static_cast<size_t>(size), guid);
 #elif defined(OS_FUCHSIA)
   *r = base::SharedMemoryHandle(handle_fuchsia.get_handle(),
                                 static_cast<size_t>(size), guid);
@@ -774,6 +786,9 @@ void ParamTraits<base::SharedMemoryHandle>::Log(const param_type& p,
                                                 std::string* l) {
 #if defined(OS_WIN)
   l->append("HANDLE: ");
+  LogParam(p.GetHandle(), l);
+#elif defined(OS_OS2)
+  l->append("Memory object: ");
   LogParam(p.GetHandle(), l);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   l->append("Mach port: ");
@@ -893,6 +908,9 @@ void ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Write(
   base::win::ScopedHandle h = const_cast<param_type&>(p).PassPlatformHandle();
   HandleWin handle_win(h.Get());
   WriteParam(m, handle_win);
+#elif defined(OS_OS2)
+  base::os2::ScopedSharedMemObj h = const_cast<param_type&>(p).PassPlatformHandle();
+  WriteParam(m, h.get());
 #elif defined(OS_FUCHSIA)
   zx::handle h = const_cast<param_type&>(p).PassPlatformHandle();
   HandleFuchsia handle_fuchsia(h.get());
@@ -945,6 +963,12 @@ bool ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Read(
     return false;
   *r = base::subtle::PlatformSharedMemoryRegion::Take(
       base::win::ScopedHandle(handle_win.get_handle()), mode, size, guid);
+#elif defined(OS_OS2)
+  void* handle_os2;
+  if (!ReadParam(m, iter, &handle_os2))
+    return false;
+  *r = base::subtle::PlatformSharedMemoryRegion::Take(
+      base::os2::ScopedSharedMemObj(handle_os2), mode, size, guid);
 #elif defined(OS_FUCHSIA)
   HandleFuchsia handle_fuchsia;
   if (!ReadParam(m, iter, &handle_fuchsia))
@@ -1010,6 +1034,9 @@ void ParamTraits<base::subtle::PlatformSharedMemoryRegion>::Log(
   LogParam(p.GetPlatformHandle()->get(), l);
 #elif defined(OS_WIN)
   l->append("Handle: ");
+  LogParam(p.GetPlatformHandle(), l);
+#elif defined(OS_OS2)
+  l->append("Memory object: ");
   LogParam(p.GetPlatformHandle(), l);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   l->append("Mach port: ");
@@ -1486,6 +1513,10 @@ bool ParamTraits<QMSG>::Read(const base::Pickle* m,
 
 void ParamTraits<QMSG>::Log(const param_type& p, std::string* l) {
   l->append("<QMSG>");
+}
+
+void ParamTraits<void*>::Log(const param_type& p, std::string* l) {
+  l->append(base::StringPrintf("0x%p", p));
 }
 
 #endif  // OS_OS2

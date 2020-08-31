@@ -42,6 +42,13 @@ const MojoPlatformHandleType kPlatformFileHandleType =
 const MojoPlatformHandleType kPlatformSharedBufferHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_WINDOWS_HANDLE;
 
+#elif defined(OS_OS2)
+const MojoPlatformHandleType kPlatformFileHandleType =
+    MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR;
+
+const MojoPlatformHandleType kPlatformSharedBufferHandleType =
+    MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ;
+
 #elif defined(OS_FUCHSIA)
 const MojoPlatformHandleType kPlatformFileHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR;

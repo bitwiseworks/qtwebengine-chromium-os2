@@ -65,6 +65,9 @@ ScopedSharedBufferHandle WrapPlatformSharedMemoryRegion(
 #elif defined(OS_FUCHSIA)
   platform_handles[0].type = MOJO_PLATFORM_HANDLE_TYPE_FUCHSIA_HANDLE;
   platform_handles[0].value = static_cast<uint64_t>(handle.release());
+#elif defined(OS_OS2)
+  platform_handles[0].type = MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ;
+  platform_handles[0].value = reinterpret_cast<uint64_t>(handle.release());
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   platform_handles[0].type = MOJO_PLATFORM_HANDLE_TYPE_MACH_PORT;
   platform_handles[0].value = static_cast<uint64_t>(handle.release());
@@ -139,6 +142,12 @@ base::subtle::PlatformSharedMemoryRegion UnwrapPlatformSharedMemoryRegion(
   if (platform_handles[0].type != MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR)
     return base::subtle::PlatformSharedMemoryRegion();
   region_handle.reset(static_cast<int>(platform_handles[0].value));
+#elif defined(OS_OS2)
+  if (num_platform_handles != 1)
+    return base::subtle::PlatformSharedMemoryRegion();
+  if (platform_handles[0].type != MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ)
+    return base::subtle::PlatformSharedMemoryRegion();
+  region_handle.reset(reinterpret_cast<void*>(platform_handles[0].value));
 #else
   if (access_mode == MOJO_PLATFORM_SHARED_MEMORY_REGION_ACCESS_MODE_WRITABLE) {
     if (num_platform_handles != 2)
@@ -246,6 +255,8 @@ ScopedSharedBufferHandle WrapSharedMemoryHandle(
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   platform_handle.value =
       static_cast<uint64_t>(memory_handle.GetMemoryObject());
+#elif defined(OS_OS2)
+  platform_handle.value = reinterpret_cast<uint64_t>(memory_handle.GetHandle());
 #else
   platform_handle.value =
       PlatformHandleValueFromPlatformFile(memory_handle.GetHandle());
@@ -325,6 +336,11 @@ MojoResult UnwrapSharedMemoryHandle(
   DCHECK_EQ(num_platform_handles, 1u);
   *memory_handle = base::SharedMemoryHandle(
       static_cast<zx_handle_t>(platform_handles[0].value), num_bytes, guid);
+#elif defined(OS_OS2)
+  DCHECK_EQ(platform_handles[0].type, MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ);
+  DCHECK_EQ(num_platform_handles, 1u);
+  *memory_handle = base::SharedMemoryHandle(
+      reinterpret_cast<void*>(platform_handles[0].value), num_bytes, guid);
 #elif defined(OS_POSIX)
   DCHECK_EQ(platform_handles[0].type,
             MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR);

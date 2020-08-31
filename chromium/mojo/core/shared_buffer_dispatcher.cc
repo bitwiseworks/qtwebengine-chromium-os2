@@ -251,7 +251,7 @@ MojoResult SharedBufferDispatcher::DuplicateBufferHandle(
     } else if (region_.GetMode() ==
                base::subtle::PlatformSharedMemoryRegion::Mode::kWritable) {
       auto handle = region_.PassPlatformHandle();
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && \
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_OS2) && \
     (!defined(OS_MACOSX) || defined(OS_IOS))
       // On POSIX systems excluding Android, Fuchsia, and OSX, we explicitly
       // wipe out the secondary (read-only) FD from the platform handle to

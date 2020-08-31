@@ -19,6 +19,10 @@
 #include <aclapi.h>
 #endif
 
+#if defined(OS_OS2)
+#include "base/os2/os2_toolkit.h"
+#endif
+
 #if defined(OS_MACOSX) && !defined(OS_IOS)
 #include <mach/mach_vm.h>
 #include "base/mac/mach_logging.h"
@@ -72,6 +76,19 @@ void SharedMemoryMapping::Unmap() {
 #if defined(OS_WIN)
   if (!UnmapViewOfFile(memory_))
     DPLOG(ERROR) << "UnmapViewOfFile";
+#elif defined(OS_OS2)
+  // Only free private aliases and not shared objects themselves as it will
+  // destroy the memory object if this process is holding the last reference but
+  // Unmap API expects that the object survives (TODO: OS/2 has no concept of
+  // handles to memory objects that could be held and passed along separately so
+  // in order to preserve the object we must preserve the allocation itself. A
+  // possible solution is to introduce our own inter-process reference counting
+  // but it's a job for LIBCn/LIBCx, not Chromium).
+  ULONG len = ~0, flags;
+  APIRET arc = DosQueryMem(memory_, &len, &flags);
+  if (!arc && !(flags & PAG_SHARED))
+    arc = DosFreeMem(memory_);
+  DCHECK_EQ(arc, 0U);
 #elif defined(OS_FUCHSIA)
   uintptr_t addr = reinterpret_cast<uintptr_t>(memory_);
   zx_status_t status = zx::vmar::root_self()->unmap(addr, mapped_size_);

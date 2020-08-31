@@ -22,6 +22,8 @@
 #elif defined(OS_WIN)
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_types.h"
+#elif defined(OS_OS2)
+#include "base/os2/scoped_shared_mem_obj.h"
 #elif defined(OS_POSIX)
 #include <sys/types.h>
 #include "base/file_descriptor_posix.h"
@@ -32,7 +34,7 @@ namespace base {
 namespace subtle {
 
 #if defined(OS_POSIX) && (!defined(OS_MACOSX) || defined(OS_IOS)) && \
-    !defined(OS_ANDROID)
+    !defined(OS_ANDROID) && !defined(OS_OS2)
 // Helper structs to keep two descriptors on POSIX. It's needed to support
 // ConvertToReadOnly().
 struct BASE_EXPORT FDPair {
@@ -121,6 +123,9 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
 #elif defined(OS_ANDROID)
   using PlatformHandle = int;
   using ScopedPlatformHandle = ScopedFD;
+#elif defined(OS_OS2)
+  using PlatformHandle = void *;
+  using ScopedPlatformHandle = os2::ScopedSharedMemObj;
 #else
   using PlatformHandle = FDPair;
   using ScopedPlatformHandle = ScopedFDPair;

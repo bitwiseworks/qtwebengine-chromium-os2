@@ -81,8 +81,8 @@ std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
   std::unique_ptr<PosixFileDescriptorInfo> files_to_register(
       PosixFileDescriptorInfoImpl::Create());
 
-// Mac shared memory doesn't use file descriptors.
-#if !defined(OS_MACOSX)
+// Mac and OS/2 shared memory doesn't use file descriptors.
+#if !defined(OS_MACOSX) && !defined(OS_OS2)
   base::SharedMemoryHandle shm = base::FieldTrialList::GetFieldTrialHandle();
   if (shm.IsValid()) {
     files_to_register->Share(

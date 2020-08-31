@@ -36,7 +36,7 @@ class FilePath;
 
 // Options for creating a shared memory object.
 struct BASE_EXPORT SharedMemoryCreateOptions {
-#if !defined(OS_FUCHSIA)
+#if !defined(OS_FUCHSIA) && !defined(OS_OS2)
   // DEPRECATED (crbug.com/345734):
   // If NULL, the object is anonymous.  This pointer is owned by the caller
   // and must live through the call to Create().
@@ -103,7 +103,8 @@ class BASE_EXPORT SharedMemory {
   // primitive.
   static SharedMemoryHandle DuplicateHandle(const SharedMemoryHandle& handle);
 
-#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS)) && \
+    !defined(OS_OS2)
   // This method requires that the SharedMemoryHandle is backed by a POSIX fd.
   static int GetFdFromSharedMemoryHandle(const SharedMemoryHandle& handle);
 #endif
@@ -124,7 +125,8 @@ class BASE_EXPORT SharedMemory {
     return Create(options);
   }
 
-#if (!defined(OS_MACOSX) || defined(OS_IOS)) && !defined(OS_FUCHSIA)
+#if (!defined(OS_MACOSX) || defined(OS_IOS)) && !defined(OS_FUCHSIA) && \
+    !defined(OS_OS2)
   // DEPRECATED (crbug.com/345734):
   // Creates or opens a shared memory segment based on a name.
   // If open_existing is true, and the shared memory already exists,
@@ -213,7 +215,7 @@ class BASE_EXPORT SharedMemory {
 
  private:
 #if defined(OS_POSIX) && !defined(OS_NACL) && !defined(OS_ANDROID) && \
-    (!defined(OS_MACOSX) || defined(OS_IOS))
+    (!defined(OS_MACOSX) || defined(OS_IOS)) &&  !defined(OS_OS2)
   bool FilePathForMemoryName(const std::string& mem_name, FilePath* path);
 #endif
 
@@ -222,7 +224,7 @@ class BASE_EXPORT SharedMemory {
   // before being mapped.
   bool external_section_ = false;
   string16 name_;
-#elif !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+#elif !defined(OS_ANDROID) && !defined(OS_FUCHSIA) && !defined(OS_OS2)
   // If valid, points to the same memory region as shm_, but with readonly
   // permissions.
   SharedMemoryHandle readonly_shm_;
