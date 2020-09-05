@@ -26,6 +26,17 @@ namespace {
 #define CKA_NSS_MOZILLA_CA_POLICY (CKA_NSS + 34)
 #endif
 
+#if defined(OS_OS2)
+// TODO: Remove once https://github.com/bitwiseworks/libc/issues/86 is done.
+void* dlsym2(const char* sym)
+{
+  // NOTE: NSS3.DLL is statically linked and loaded at startup so there is
+  // no need to dlclose it - dlopen is just to get its handle.
+  void* handle = dlopen("nss3.dll", 0);
+  return handle ? dlsym(handle, sym) : nullptr;
+}
+#endif
+
 using PK11HasAttributeSetFunction = CK_BBOOL (*)(PK11SlotInfo* slot,
                                                  CK_OBJECT_HANDLE id,
                                                  CK_ATTRIBUTE_TYPE type,
@@ -39,10 +50,20 @@ static PROTECTED_MEMORY_SECTION
 // pointer from being tampered with. See https://crbug.com/771365 for details.
 const base::ProtectedMemory<PK11HasAttributeSetFunction>&
 ResolvePK11HasAttributeSet() {
+#if defined(OS_OS2)
+  // TODO: We need to use dlopen + dlsym (and underscore) since RTLD_DEFAULT is
+  // not yet implemented in LIBCn (check
+  // https://github.com/bitwiseworks/libc/issues/86 for details).
+  static base::ProtectedMemory<PK11HasAttributeSetFunction>::Initializer init(
+      &g_pk11_has_attribute_set,
+      reinterpret_cast<PK11HasAttributeSetFunction>(
+          dlsym2("_PK11_HasAttributeSet")));
+#else
   static base::ProtectedMemory<PK11HasAttributeSetFunction>::Initializer init(
       &g_pk11_has_attribute_set,
       reinterpret_cast<PK11HasAttributeSetFunction>(
           dlsym(RTLD_DEFAULT, "PK11_HasAttributeSet")));
+#endif
   return g_pk11_has_attribute_set;
 }
 

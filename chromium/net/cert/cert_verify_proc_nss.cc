@@ -43,6 +43,17 @@ namespace net {
 
 namespace {
 
+#if defined(OS_OS2)
+// TODO: Remove once https://github.com/bitwiseworks/libc/issues/86 is done.
+void* dlsym2(const char* sym)
+{
+  // NOTE: NSS3.DLL is statically linked and loaded at startup so there is
+  // no need to dlclose it - dlopen is just to get its handle.
+  void* handle = dlopen("nss3.dll", 0);
+  return handle ? dlsym(handle, sym) : nullptr;
+}
+#endif
+
 using CacheOCSPResponseFunction = SECStatus (*)(CERTCertDBHandle* handle,
                                                 CERTCertificate* cert,
                                                 PRTime time,
@@ -58,10 +69,20 @@ static PROTECTED_MEMORY_SECTION base::ProtectedMemory<CacheOCSPResponseFunction>
 // details.
 const base::ProtectedMemory<CacheOCSPResponseFunction>&
 ResolveCacheOCSPResponse() {
+#if defined(OS_OS2)
+  // TODO: We need to use dlopen + dlsym (and underscore) since RTLD_DEFAULT is
+  // not yet implemented in LIBCn (check
+  // https://github.com/bitwiseworks/libc/issues/86 for details).
+  static base::ProtectedMemory<CacheOCSPResponseFunction>::Initializer init(
+      &g_cache_ocsp_response,
+      reinterpret_cast<CacheOCSPResponseFunction>(
+          dlsym2("_CERT_CacheOCSPResponseFromSideChannel")));
+#else
   static base::ProtectedMemory<CacheOCSPResponseFunction>::Initializer init(
       &g_cache_ocsp_response,
       reinterpret_cast<CacheOCSPResponseFunction>(
           dlsym(RTLD_DEFAULT, "CERT_CacheOCSPResponseFromSideChannel")));
+#endif
   return g_cache_ocsp_response;
 }
 

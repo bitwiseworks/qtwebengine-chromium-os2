@@ -58,6 +58,14 @@ static const base::FilePath::CharType kReadOnlyCertDB[] =
     FILE_PATH_LITERAL("/etc/fake_root_ca/nssdb");
 #endif  // defined(OS_CHROMEOS)
 
+#if defined(OS_OS2)
+const char kRootCertsModuleName[] = "Root Certs (OS/2)";
+const char kRootCertsPath[] = "nssckbi.dll";
+#else
+const char kRootCertsModuleName[] = "Root Certs";
+const char kRootCertsPath[] = "libnssckbi.so";
+#endif
+
 std::string GetNSSErrorMessage() {
   std::string result;
   if (PR_GetErrorTextLength()) {
@@ -715,7 +723,7 @@ class NSSInitSingleton {
 
   // Load nss's built-in root certs.
   SECMODModule* InitDefaultRootCerts() {
-    SECMODModule* root = LoadModule("Root Certs", "libnssckbi.so", nullptr);
+    SECMODModule* root = LoadModule(kRootCertsModuleName, kRootCertsPath, nullptr);
     if (root)
       return root;
 
