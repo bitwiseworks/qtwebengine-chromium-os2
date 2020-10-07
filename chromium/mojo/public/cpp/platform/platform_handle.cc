@@ -71,11 +71,17 @@ base::mac::ScopedMachSendRight CloneMachPort(
   return base::mac::ScopedMachSendRight(mach_port.get());
 }
 #elif defined(OS_OS2)
-base::os2::ScopedSharedMemObj CloneSharedMemObj(const
-  base::os2::ScopedSharedMemObj& shared_mem_obj) {
-  DCHECK(shared_mem_obj.is_valid());
+base::os2::ScopedShmemHandle CloneShmemHandle(const
+  base::os2::ScopedShmemHandle& handle) {
+  DCHECK(handle.is_valid());
 
-  return base::os2::ScopedSharedMemObj(shared_mem_obj.get());
+  SHMEM dupe = shmem_duplicate(handle.get(), 0);
+  if (dupe == SHMEM_INVALID) {
+    DPLOG(ERROR) << "shmem_duplicate";
+    return base::os2::ScopedShmemHandle();
+  }
+
+  return base::os2::ScopedShmemHandle(dupe);
 }
 #endif
 
@@ -104,8 +110,8 @@ PlatformHandle::PlatformHandle(zx::handle handle)
 PlatformHandle::PlatformHandle(base::mac::ScopedMachSendRight mach_port)
     : type_(Type::kMachPort), mach_port_(std::move(mach_port)) {}
 #elif defined(OS_OS2)
-PlatformHandle::PlatformHandle(base::os2::ScopedSharedMemObj shared_mem_obj)
-    : type_(Type::kSharedMemObj), shared_mem_obj_(std::move(shared_mem_obj)) {}
+PlatformHandle::PlatformHandle(base::os2::ScopedShmemHandle handle)
+    : type_(Type::kShmemHandle), handle_(std::move(handle)) {}
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
@@ -129,14 +135,12 @@ PlatformHandle& PlatformHandle::operator=(PlatformHandle&& other) {
   handle_ = std::move(other.handle_);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   mach_port_ = std::move(other.mach_port_);
+#elif defined(OS_OS2)
+  handle_ = std::move(other.handle_);
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
   fd_ = std::move(other.fd_);
-#endif
-
-#if defined(OS_OS2)
-  shared_mem_obj_ = std::move(other.shared_mem_obj_);
 #endif
 
   return *this;
@@ -173,10 +177,10 @@ void PlatformHandle::ToMojoPlatformHandle(PlatformHandle handle,
       break;
     }
 #elif defined(OS_OS2)
-    if (handle.is_shared_mem_obj()) {
-      out_handle->type = MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ;
+    if (handle.is_shmem_handle()) {
+      out_handle->type = MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE;
       out_handle->value =
-          reinterpret_cast<uint64_t>(handle.TakeSharedMemObj().release());
+          static_cast<uint64_t>(handle.TakeShmemHandle().release());
       break;
     }
 #endif
@@ -214,9 +218,9 @@ PlatformHandle PlatformHandle::FromMojoPlatformHandle(
         static_cast<mach_port_t>(handle->value)));
   }
 #elif defined(OS_OS2)
-  if (handle->type == MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ) {
-    return PlatformHandle(base::os2::ScopedSharedMemObj(
-        reinterpret_cast<void*>(handle->value)));
+  if (handle->type == MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE) {
+    return PlatformHandle(base::os2::ScopedShmemHandle(
+        static_cast<SHMEM>(handle->value)));
   }
 #endif
 
@@ -237,7 +241,7 @@ void PlatformHandle::reset() {
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   mach_port_.reset();
 #elif defined(OS_OS2)
-  shared_mem_obj_.reset();
+  handle_.reset();
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
@@ -255,7 +259,7 @@ void PlatformHandle::release() {
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
   ignore_result(mach_port_.release());
 #elif defined(OS_OS2)
-  ignore_result(shared_mem_obj_.release());
+  ignore_result(handle_.release());
 #endif
 
 #if defined(OS_POSIX) || defined(OS_FUCHSIA)
@@ -275,8 +279,8 @@ PlatformHandle PlatformHandle::Clone() const {
     return PlatformHandle(CloneMachPort(mach_port_));
   return PlatformHandle(CloneFD(fd_));
 #elif defined(OS_OS2)
-  if (is_valid_shared_mem_obj())
-    return PlatformHandle(CloneSharedMemObj(shared_mem_obj_));
+  if (is_valid_shmem_handle())
+    return PlatformHandle(CloneShmemHandle(handle_));
   return PlatformHandle(CloneFD(fd_));
 #elif defined(OS_POSIX)
   return PlatformHandle(CloneFD(fd_));

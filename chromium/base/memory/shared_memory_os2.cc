@@ -6,7 +6,7 @@
 
 #include <limits>
 
-#include "base/os2/os2_toolkit.h"
+#include <libcx/shmem.h>
 
 #include "base/bits.h"
 #include "base/logging.h"
@@ -37,11 +37,7 @@ void SharedMemory::CloseHandle(const SharedMemoryHandle& handle) {
 
 // static
 size_t SharedMemory::GetHandleLimit() {
-  // Since the handle is actually a virtual address of the memory object,
-  // there is no particular limit on the number of its copies. Use what
-  // Windows returns (8M). Note that this value is used e.g. for the maximum
-  // amount of "in-flight" HTTP requests (converted to int), so set with care.
-  return static_cast<size_t>(1 << 23);
+  return shmem_max_handles();
 }
 
 bool SharedMemory::CreateAndMapAnonymous(size_t size) {
@@ -49,32 +45,23 @@ bool SharedMemory::CreateAndMapAnonymous(size_t size) {
 }
 
 bool SharedMemory::Create(const SharedMemoryCreateOptions& options) {
-  // On OS/2 Warp, memory objects are allocated using 64K blocks.
-  static const size_t kSectionMask = 65536 - 1;
   DCHECK(!options.executable);
   DCHECK(!shm_.IsValid());
   if (options.size == 0) {
     return false;
   }
 
-  // Check maximum accounting for overflow.
-  if (options.size >
-      static_cast<size_t>(std::numeric_limits<int>::max()) - kSectionMask) {
+  if (options.size > static_cast<size_t>(std::numeric_limits<int>::max()))
     return false;
-  }
 
-  size_t rounded_size = (options.size + kSectionMask) & ~kSectionMask;
-
-  PVOID base;
-  ULONG flags = PAG_READ | PAG_EXECUTE | PAG_WRITE | OBJ_GETTABLE;
-  APIRET arc = DosAllocSharedMem(&base, nullptr, rounded_size, flags);
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
+  SHMEM handle = shmem_create(options.size, 0);
+  if (handle == SHMEM_INVALID) {
+    DPLOG(ERROR) << "shmem_create(" << options.size << ") failed";
     return false;
   }
 
   requested_size_ = options.size;
-  shm_ = SharedMemoryHandle(base, mapped_size_, UnguessableToken::Create());
+  shm_ = SharedMemoryHandle(handle, options.size, UnguessableToken::Create());
   return true;
 }
 
@@ -94,72 +81,16 @@ bool SharedMemory::MapAt(off_t offset, size_t bytes) {
     return false;
   }
 
-  // On OS/2, we always map the whole object so need to check the limits
-  // manually.
-  if (offset + bytes > shm_.GetSize()) {
-    DLOG(ERROR) << "Offset + bytes exceeds the SharedMemory size.";
+  SHMEM handle = shm_.GetHandle();
+
+  memory_ = shmem_map(handle, offset, bytes);
+  if (!memory_) {
+    DPLOG(ERROR) << "shmem_mmap(" << handle << ") failed";
     return false;
   }
 
-  PVOID mem = shm_.GetHandle();
-
-  ULONG len = ~0, flags;
-  APIRET arc = DosQueryMem(mem, &len, &flags);
-  if (arc || len < shm_.GetSize()) {
-    DCHECK_EQ(arc, 0U);
-    DCHECK_GE(len, shm_.GetSize());
-    return false;
-  }
-
-  if (flags & PAG_FREE) {
-    // Get access to the memory object.
-    flags = PAG_READ | PAG_EXECUTE;
-    if (!read_only_)
-      flags |= PAG_WRITE;
-    arc = DosGetSharedMem(mem, flags);
-    if (arc) {
-      DCHECK_EQ(arc, 0U);
-      return false;
-    }
-  } else {
-    // DCHECK(!(flags & PAG_COMMIT));
-    bool need_alias = false;
-    if (!(flags & PAG_COMMIT)) {
-      // Commit the memory object if not done so yet.
-      arc = DosSetMem(mem, len, PAG_COMMIT | PAG_DEFAULT);
-      if (arc) {
-        DCHECK_EQ(arc, 0U);
-        return false;
-      }
-    } else {
-      // This object is already mapped and committed into this process, a new
-      // mapping is requested. We have to use an alias so that when this mapping
-      // is freed, other mappings remain intact (TODO: Use a refcounter instead
-      // to save vritual address space. This also requires fixing assertions in
-      // SharedMemoryTracker::IncrementMemoryUsage as it expects that each map
-      // request returns a distinct address).
-      need_alias = true;
-    }
-    if (need_alias || bool(flags & PAG_WRITE) != (!read_only_)) {
-      // Access mode of the region and the underlying mapping disagree so we
-      // cannot use it directly and need an alias for this process.
-      arc = DosAliasMem(static_cast<char*>(mem) + offset, bytes,
-                        &mem, OBJ_SELMAPALL | SEL_USE32);
-      // Set the desired access mode.
-      if (!arc) {
-        flags = PAG_READ | PAG_EXECUTE;
-        if (!read_only_)
-          flags |= PAG_WRITE;
-        arc = DosSetMem(mem, bytes, flags);
-      }
-      if (arc) {
-        DCHECK_EQ(arc, 0U);
-        return false;
-      }
-    }
-  }
-
-  memory_ = static_cast<char*>(mem) + offset;
+  DCHECK_EQ(0U, reinterpret_cast<uintptr_t>(memory_) &
+                    (SharedMemory::MAP_MINIMUM_ALIGNMENT - 1));
   mapped_size_ = bytes;
   mapped_id_ = shm_.GetGUID();
   SharedMemoryTracker::GetInstance()->IncrementMemoryUsage(*this);
@@ -171,24 +102,7 @@ bool SharedMemory::Unmap() {
     return false;
 
   SharedMemoryTracker::GetInstance()->DecrementMemoryUsage(*this);
-
-  // Only free private aliases and not shared objects themselves as it will
-  // destroy the memory object if this process is holding the last reference but
-  // Unmap API expects that the object survives (TODO: OS/2 has no concept of
-  // handles to memory objects that could be held and passed along separately so
-  // in order to preserve the object we must preserve the allocation itself. A
-  // possible solution is to introduce our own inter-process reference counting
-  // but it's a job for LIBCn/LIBCx, not Chromium).
-  ULONG len = ~0, flags;
-  APIRET arc = DosQueryMem(memory_, &len, &flags);
-  if (!arc && !(flags & PAG_SHARED)) {
-    arc = DosFreeMem(memory_);
-  }
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
-    return false;
-  }
-
+  shmem_unmap(memory_);
   memory_ = nullptr;
   mapped_size_ = 0;
   mapped_id_ = UnguessableToken();
@@ -220,19 +134,13 @@ SharedMemoryHandle SharedMemory::DuplicateHandle(
 }
 
 SharedMemoryHandle SharedMemory::GetReadOnlyHandle() const {
-  // On OS/2, setting the memory object to read-only will affect all uses of it
-  // within the same process (as it's the same virtual address) but will not
-  // affect other processes that will gain write permission via DosGetSharedMem
-  // anyway (despite it's still the same virtal address) and will have to revoke
-  // it manually if needed.
-  ULONG flags = PAG_READ | PAG_EXECUTE;
-  APIRET arc = DosSetMem(shm_.GetHandle(), shm_.GetSize(), flags);
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
+  SHMEM duped_handle = shmem_duplicate(shm_.GetHandle(), SHMEM_READONLY);
+  if (duped_handle == -1) {
+    DPLOG(ERROR) << "shmem_duplicate(" << shm_.GetHandle() << ") failed";
     return SharedMemoryHandle();
   }
 
-  SharedMemoryHandle handle(shm_.GetHandle(), shm_.GetSize(), shm_.GetGUID());
+  SharedMemoryHandle handle(duped_handle, shm_.GetSize(), shm_.GetGUID());
   handle.SetOwnershipPassesToIPC(true);
   return handle;
 }

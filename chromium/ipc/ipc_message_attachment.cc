@@ -22,6 +22,10 @@
 #include "ipc/handle_attachment_win.h"
 #endif
 
+#if defined(OS_OS2)
+#include "ipc/shmem_handle_attachment_os2.h"
+#endif
+
 #if defined(OS_FUCHSIA)
 #include "ipc/handle_attachment_fuchsia.h"
 #endif
@@ -91,6 +95,19 @@ mojo::ScopedHandle MessageAttachment::TakeMojoHandle() {
       }
       return mojo::MakeScopedHandle(mojo::Handle(wrapped_handle));
     }
+#elif defined(OS_OS2)
+    case Type::OS2_SHMEM_HANDLE: {
+      auto* attachment = static_cast<internal::ShmemHandleAttachmentOS2*>(this);
+      MojoPlatformHandle platform_handle = {
+          sizeof(platform_handle), MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE,
+          static_cast<uint64_t>(attachment->Take())};
+      MojoHandle wrapped_handle;
+      if (MojoWrapPlatformHandle(&platform_handle, nullptr, &wrapped_handle) !=
+          MOJO_RESULT_OK) {
+        return mojo::ScopedHandle();
+      }
+      return mojo::MakeScopedHandle(mojo::Handle(wrapped_handle));
+    }
 #elif defined(OS_WIN)
     case Type::WIN_HANDLE:
       return mojo::WrapPlatformFile(
@@ -139,6 +156,14 @@ scoped_refptr<MessageAttachment> MessageAttachment::CreateFromMojoHandle(
     if (platform_handle.type == MOJO_PLATFORM_HANDLE_TYPE_FUCHSIA_HANDLE)
       handle.reset(static_cast<zx_handle_t>(platform_handle.value));
     return new internal::HandleAttachmentFuchsia(std::move(handle));
+  }
+#elif defined(OS_OS2)
+  if (type == Type::OS2_SHMEM_HANDLE) {
+    SHMEM handle;
+    if (platform_handle.type == MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE)
+      handle = static_cast<SHMEM>(platform_handle.value);
+    return new internal::ShmemHandleAttachmentOS2(
+        handle, internal::ShmemHandleAttachmentOS2::FROM_WIRE);
   }
 #elif defined(OS_WIN)
   if (type == Type::WIN_HANDLE) {

@@ -13,7 +13,7 @@
 #elif defined(OS_WIN)
 #include "base/win/scoped_handle.h"
 #elif defined(OS_OS2)
-#include "base/os2/scoped_shared_mem_obj.h"
+#include "base/os2/scoped_shmem_handle.h"
 #endif
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
@@ -39,7 +39,7 @@ void ExtractPlatformHandlesFromSharedMemoryRegionHandle(
   // This is a file descriptor. Same code as above, but separated for clarity.
   *extracted_handle = PlatformHandle(std::move(handle));
 #elif defined(OS_OS2)
-  // This is a shared memory object. Same code as above, but separated for
+  // This is a shared memory handle. Same code as above, but separated for
   // clarity.
   *extracted_handle = PlatformHandle(std::move(handle));
 #else
@@ -66,7 +66,7 @@ CreateSharedMemoryRegionHandleFromPlatformHandles(
   return handle.TakeFD();
 #elif defined(OS_OS2)
   DCHECK(!readonly_handle.is_valid());
-  return handle.TakeSharedMemObj();
+  return handle.TakeShmemHandle();
 #else
   return base::subtle::ScopedFDPair(handle.TakeFD(), readonly_handle.TakeFD());
 #endif

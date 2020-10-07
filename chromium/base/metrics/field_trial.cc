@@ -1192,7 +1192,7 @@ std::string FieldTrialList::SerializeSharedMemoryHandleMetadata(
   ss << uintptr_handle << ",";
 #elif defined(OS_OS2)
   // Tell the child process the address of the shared memory object.
-  uintptr_t uintptr_handle = reinterpret_cast<uintptr_t>(shm.GetHandle());
+  uintptr_t uintptr_handle = static_cast<uintptr_t>(shm.GetHandle());
   ss << uintptr_handle << ",";
 #elif defined(OS_FUCHSIA)
   ss << shm.GetHandle() << ",";
@@ -1228,7 +1228,7 @@ SharedMemoryHandle FieldTrialList::DeserializeSharedMemoryHandleMetadata(
 #if defined(OS_FUCHSIA)
   zx_handle_t handle = static_cast<zx_handle_t>(field_trial_handle);
 #elif defined(OS_OS2)
-  void* handle = reinterpret_cast<void*>(field_trial_handle);
+  SHMEM handle = static_cast<SHMEM>(field_trial_handle);
 #elif defined(OS_WIN)
   HANDLE handle = reinterpret_cast<HANDLE>(field_trial_handle);
   if (base::IsCurrentProcessElevated()) {

@@ -5,14 +5,13 @@
 #include "base/memory/platform_shared_memory_region.h"
 
 #include "base/bits.h"
-#include "base/os2/os2_toolkit.h"
 
 namespace base {
 namespace subtle {
 
 // static
 PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
-    os2::ScopedSharedMemObj handle,
+    os2::ScopedShmemHandle handle,
     Mode mode,
     size_t size,
     const UnguessableToken& guid) {
@@ -40,11 +39,11 @@ PlatformSharedMemoryRegion::TakeFromSharedMemoryHandle(
   if (!handle.IsValid())
     return {};
 
-  return Take(base::os2::ScopedSharedMemObj(handle.GetHandle()), mode, handle.GetSize(),
+  return Take(base::os2::ScopedShmemHandle(handle.GetHandle()), mode, handle.GetSize(),
               handle.GetGUID());
 }
 
-void * PlatformSharedMemoryRegion::GetPlatformHandle() const {
+SHMEM PlatformSharedMemoryRegion::GetPlatformHandle() const {
   return handle_.get();
 }
 
@@ -59,7 +58,13 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Duplicate() const {
   CHECK_NE(mode_, Mode::kWritable)
       << "Duplicating a writable shared memory region is prohibited";
 
-  return PlatformSharedMemoryRegion(os2::ScopedSharedMemObj(handle_.get()),
+  SHMEM duped_handle = shmem_duplicate(handle_.get(), 0);
+  if (duped_handle == -1) {
+    DPLOG(ERROR) << "shmem_duplicate(" << handle_.get() << ") failed";
+    return {};
+  }
+
+  return PlatformSharedMemoryRegion(os2::ScopedShmemHandle(duped_handle),
                                     mode_, size_, guid_);
 }
 
@@ -70,6 +75,13 @@ bool PlatformSharedMemoryRegion::ConvertToReadOnly() {
   CHECK_EQ(mode_, Mode::kWritable)
       << "Only writable shared memory region can be converted to read-only";
 
+  SHMEM duped_handle = shmem_duplicate(handle_.get(), SHMEM_READONLY);
+  if (duped_handle == SHMEM_INVALID) {
+    DPLOG(ERROR) << "shmem_duplicate(" << handle_.get() << ", RO) failed";
+    return false;
+  }
+
+  handle_.reset(duped_handle);
   mode_ = Mode::kReadOnly;
   return true;
 }
@@ -89,70 +101,14 @@ bool PlatformSharedMemoryRegion::MapAtInternal(off_t offset,
                                                size_t size,
                                                void** memory,
                                                size_t* mapped_size) const {
-  PVOID mem = handle_.get();
+  SHMEM handle = handle_.get();
 
-  ULONG len = ~0, flags;
-  APIRET arc = DosQueryMem(mem, &len, &flags);
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
+  *memory = shmem_map(handle, offset, size);
+  if (!*memory) {
+    DPLOG(ERROR) << "shmem_mmap(" << handle << ") failed";
     return false;
   }
 
-  // On OS/2, we always map the whole object so need to check the limits
-  // manually.
-  if (offset + size > len) {
-    DLOG(ERROR) << "Offset + size exceeds the PlatformSharedMemoryRegion size.";
-    return false;
-  }
-
-  if (flags & PAG_FREE) {
-    // Get access to the memory object allocated by another process.
-    flags = PAG_READ | PAG_EXECUTE;
-    if (mode_ != Mode::kReadOnly)
-      flags |= PAG_WRITE;
-    arc = DosGetSharedMem(mem, flags);
-    if (arc) {
-      DCHECK_EQ(arc, 0U);
-      return false;
-    }
-  } else {
-    bool need_alias = false;
-    if (!(flags & PAG_COMMIT)) {
-      // Commit the memory object if not done so yet.
-      arc = DosSetMem(mem, len, PAG_COMMIT | PAG_DEFAULT);
-      if (arc) {
-        DCHECK_EQ(arc, 0U);
-        return false;
-      }
-    } else {
-      // This object is already mapped and committed into this process, a new
-      // mapping is requested. We have to use an alias so that when this mapping
-      // is freed, other mappings remain intact (TODO: Use a refcounter instead
-      // to save vritual address space. This also requires fixing assertions in
-      // SharedMemoryTracker::IncrementMemoryUsage as it expects that each map
-      // request returns a distinct address).
-      need_alias = true;
-    }
-    if (need_alias || bool(flags & PAG_WRITE) != (mode_ != Mode::kReadOnly)) {
-      // Access mode of the region and the underlying mapping disagree so we
-      // cannot use it directly and need an alias for this process.
-      arc = DosAliasMem(static_cast<char*>(mem) + offset, size,
-                        &mem, OBJ_SELMAPALL | SEL_USE32);
-      // Set the desired access mode.
-      if (!arc) {
-        flags = PAG_READ | PAG_EXECUTE;
-        if (mode_ != Mode::kReadOnly)
-          flags |= PAG_WRITE;
-        arc = DosSetMem(mem, size, flags);
-      }
-      if (arc) {
-        DCHECK_EQ(arc, 0U);
-        return false;
-      }
-    }
-  }
-
-  *memory = static_cast<char*>(mem) + offset;
   *mapped_size = size;
   return true;
 }
@@ -160,29 +116,18 @@ bool PlatformSharedMemoryRegion::MapAtInternal(off_t offset,
 // static
 PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
                                                               size_t size) {
-  // On OS/2 Warp, memory objects are allocated using 64K blocks.
-  static const size_t kSectionSize = 65536;
   if (size == 0)
-    return {};
-
-  size_t rounded_size = bits::Align(size, kSectionSize);
-  if (rounded_size > static_cast<size_t>(std::numeric_limits<int>::max()))
     return {};
 
   CHECK_NE(mode, Mode::kReadOnly) << "Creating a region in read-only mode will "
                                      "lead to this region being non-modifiable";
 
-  PVOID base;
-  ULONG flags = PAG_READ | PAG_EXECUTE | OBJ_GETTABLE;
-  if (mode != Mode::kReadOnly)
-    flags |= PAG_WRITE;
-  APIRET arc = DosAllocSharedMem(&base, nullptr, size, flags);
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
+  SHMEM handle = shmem_create(size, 0);
+  if (handle == SHMEM_INVALID) {
+    DPLOG(ERROR) << "shmem_create(" << size << ") failed";
     return {};
   }
-
-  return PlatformSharedMemoryRegion(os2::ScopedSharedMemObj(base), mode, size,
+  return PlatformSharedMemoryRegion(os2::ScopedShmemHandle(handle), mode, size,
                                     UnguessableToken::Create());
 }
 
@@ -191,32 +136,28 @@ bool PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
     PlatformHandle handle,
     Mode mode,
     size_t size) {
-  ULONG len = size, flags;
-  APIRET arc = DosQueryMem(handle, &len, &flags);
-  if (arc) {
-    DCHECK_EQ(arc, 0U);
-    return false;
+  int flags;
+  int rc = shmem_get_info(handle, &flags, nullptr, nullptr);
+  if (rc == -1) {
+    DPLOG(ERROR) << "shmem_get_info(" << handle << ") failed";
+    return {};
   }
 
-  if (!(flags & PAG_BASE)) {
-    DLOG(ERROR) << "Memory object " << handle << " is not base";
+  const bool is_read_only = flags & SHMEM_READONLY;
+  const bool expected_read_only = mode == Mode::kReadOnly;
+
+  if (is_read_only != expected_read_only) {
+    DLOG(ERROR) << "Shared memory handle has wrong access rights: it is"
+                << (is_read_only ? " " : " not ") << "read-only but it should"
+                << (expected_read_only ? " " : " not ") << "be";
     return false;
   }
-
-  if (!(flags & PAG_SHARED)) {
-    DLOG(ERROR) << "Memory object " << handle << " is not shared";
-    return false;
-  }
-
-  // Note that we don't check if mode_ matches access permissions as it's a
-  // property of the process where this object is mapped to, not object itself.
-  // On OS/2, any shared memory object may be mapped as read-write.
 
   return true;
 }
 
 PlatformSharedMemoryRegion::PlatformSharedMemoryRegion(
-    os2::ScopedSharedMemObj handle,
+    os2::ScopedShmemHandle handle,
     Mode mode,
     size_t size,
     const UnguessableToken& guid)

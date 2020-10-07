@@ -143,6 +143,10 @@ component("message_support") {
     "mach_port_attachment_mac.h",
     "mach_port_mac.cc",
     "mach_port_mac.h",
+    "shmem_handle_attachment_os2.cc",
+    "shmem_handle_attachment_os2.h",
+    "shmem_handle_os2.cc",
+    "shmem_handle_os2.h",
   ]
 
   if (is_posix || is_fuchsia) {

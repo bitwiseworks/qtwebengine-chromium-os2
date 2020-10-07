@@ -42,9 +42,9 @@ typedef uint32_t MojoPlatformHandleType;
 // usable on Fuchsia hosts.
 #define MOJO_PLATFORM_HANDLE_TYPE_FUCHSIA_HANDLE ((MojoPlatformHandleType)4)
 
-// The |MojoPlatformHandle| value represents an OS/2 shared memory object. Only
+// The |MojoPlatformHandle| value represents an OS/2 shared memory handle. Only
 // usable on OS/2 hosts.
-#define MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ ((MojoPlatformHandleType)5)
+#define MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE ((MojoPlatformHandleType)5)
 
 // |MojoPlatformHandle|: A handle to a native platform object.
 //

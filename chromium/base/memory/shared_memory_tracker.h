@@ -76,6 +76,10 @@ class BASE_EXPORT SharedMemoryTracker : public trace_event::MemoryDumpProvider {
 
     size_t mapped_size;
     UnguessableToken mapped_id;
+#if defined(OS_OS2)
+    // On OS/2, different mappings may have the same address, count them.
+    size_t count = 1;
+#endif
   };
 
   // Used to lock when |usages_| is modified or read.

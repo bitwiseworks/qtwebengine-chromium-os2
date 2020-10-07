@@ -11,26 +11,31 @@ namespace base {
 
 SharedMemoryHandle::SharedMemoryHandle() {}
 
-SharedMemoryHandle::SharedMemoryHandle(void* h,
+SharedMemoryHandle::SharedMemoryHandle(SHMEM h,
                                        size_t size,
                                        const base::UnguessableToken& guid)
     : handle_(h), guid_(guid), size_(size) {}
 
 void SharedMemoryHandle::Close() const {
-  DCHECK(handle_ != nullptr);
+  DCHECK(handle_ != SHMEM_INVALID);
+  if (shmem_close(handle_) == -1)
+    PLOG(ERROR) << "shmem_close";
 }
 
 bool SharedMemoryHandle::IsValid() const {
-  return handle_ != nullptr;
+  return handle_ != SHMEM_INVALID;
 }
 
 SharedMemoryHandle SharedMemoryHandle::Duplicate() const {
-  base::SharedMemoryHandle handle(handle_, GetSize(), GetGUID());
+  SHMEM duped_handle = shmem_duplicate(handle_, 0);
+  if (duped_handle == -1)
+    return SharedMemoryHandle();
+  base::SharedMemoryHandle handle(duped_handle, GetSize(), GetGUID());
   handle.SetOwnershipPassesToIPC(true);
   return handle;
 }
 
-void* SharedMemoryHandle::GetHandle() const {
+SHMEM SharedMemoryHandle::GetHandle() const {
   return handle_;
 }
 

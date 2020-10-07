@@ -13,6 +13,8 @@
 #if defined(OS_WIN)
 #include "base/process/process_handle.h"
 #include "base/win/windows_types.h"
+#elif defined(OS_OS2)
+#include <libcx/shmem.h>
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
 #include <mach/mach.h>
 #include "base/base_export.h"
@@ -95,10 +97,10 @@ class BASE_EXPORT SharedMemoryHandle {
   // UnguessableToken.
   // Passing the wrong |size| has no immediate consequence, but may cause errors
   // when trying to map the SharedMemoryHandle at a later point in time.
-  SharedMemoryHandle(void *h,
+  SharedMemoryHandle(SHMEM h,
                      size_t size,
                      const base::UnguessableToken& guid);
-  void* GetHandle() const;
+  SHMEM GetHandle() const;
 #elif defined(OS_FUCHSIA)
   // Takes implicit ownership of |h|.
   // |guid| uniquely identifies the shared memory region pointed to by the
@@ -168,8 +170,8 @@ class BASE_EXPORT SharedMemoryHandle {
   bool SetRegionReadOnly() const;
 #endif
 
-#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS) && \
-    !defined(OS_OS2))
+#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS)) && \
+    !defined(OS_OS2)
   // Constructs a SharedMemoryHandle backed by a FileDescriptor. The newly
   // created instance has the same ownership semantics as base::FileDescriptor.
   // This typically means that the SharedMemoryHandle takes ownership of the
@@ -200,7 +202,7 @@ class BASE_EXPORT SharedMemoryHandle {
   // Defaults to |false|.
   bool ownership_passes_to_ipc_ = false;
 #elif defined(OS_OS2)
-  void* handle_ = nullptr;
+  SHMEM handle_ = SHMEM_INVALID;
   bool ownership_passes_to_ipc_ = false;
 #elif defined(OS_FUCHSIA)
   zx_handle_t handle_ = ZX_HANDLE_INVALID;

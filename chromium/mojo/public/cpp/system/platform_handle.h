@@ -47,7 +47,7 @@ const MojoPlatformHandleType kPlatformFileHandleType =
     MOJO_PLATFORM_HANDLE_TYPE_FILE_DESCRIPTOR;
 
 const MojoPlatformHandleType kPlatformSharedBufferHandleType =
-    MOJO_PLATFORM_HANDLE_TYPE_OS2_SHARED_MEM_OBJ;
+    MOJO_PLATFORM_HANDLE_TYPE_OS2_SHMEM_HANDLE;
 
 #elif defined(OS_FUCHSIA)
 const MojoPlatformHandleType kPlatformFileHandleType =
