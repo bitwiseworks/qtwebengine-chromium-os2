@@ -74,7 +74,7 @@ AudioOutputStream* AudioManagerOS2::MakeLowLatencyOutputStream(
   }
 
   // TODO: Implement it on OS/2.
-  NOTREACHED();
+  NOTIMPLEMENTED();
   return nullptr;
 }
 
