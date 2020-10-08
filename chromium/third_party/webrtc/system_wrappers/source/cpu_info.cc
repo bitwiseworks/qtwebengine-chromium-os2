@@ -12,7 +12,7 @@
 
 #if defined(WEBRTC_WIN)
 #include <windows.h>
-#elif defined(WEBRTC_LINUX)
+#elif defined(WEBRTC_LINUX) || defined(WEBRTC_OS2)
 #include <unistd.h>
 #elif defined(WEBRTC_MAC)
 #include <sys/sysctl.h>
@@ -31,7 +31,7 @@ static int DetectNumberOfCores() {
   SYSTEM_INFO si;
   GetNativeSystemInfo(&si);
   number_of_cores = static_cast<int>(si.dwNumberOfProcessors);
-#elif defined(WEBRTC_LINUX) || defined(WEBRTC_ANDROID)
+#elif defined(WEBRTC_LINUX) || defined(WEBRTC_ANDROID) || defined(WEBRTC_OS2)
   number_of_cores = static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN));
 #elif defined(WEBRTC_MAC) || defined(WEBRTC_IOS)
   int name[] = {CTL_HW, HW_AVAILCPU};
