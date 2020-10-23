@@ -317,11 +317,14 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
 #if defined(OS_NACL)
   NOTIMPLEMENTED();
 #else
-#if !defined(OS_OS2)
   if (internal::SetCurrentThreadPriorityForPlatform(priority))
     return;
-#endif
 
+#if defined(OS_OS2)
+  // setpriority on OS/2 is useless as it only changes the default priority, not
+  // what Chromium expects. Just bail out if the above fails (it should not).
+  NOTREACHED();
+#else
   // setpriority(2) should change the whole thread group's (i.e. process)
   // priority. However, as stated in the bugs section of
   // http://man7.org/linux/man-pages/man2/getpriority.2.html: "under the current
@@ -333,6 +336,7 @@ void PlatformThread::SetCurrentThreadPriorityImpl(ThreadPriority priority) {
     DVPLOG(1) << "Failed to set nice value of thread ("
               << PlatformThread::CurrentId() << ") to " << nice_setting;
   }
+#endif  // defined(OS_OS2)
 #endif  // defined(OS_NACL)
 }
 
@@ -342,14 +346,18 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
   NOTIMPLEMENTED();
   return ThreadPriority::NORMAL;
 #else
-#if !defined(OS_OS2)
   // Mirrors SetCurrentThreadPriority()'s implementation.
   auto platform_specific_priority =
       internal::GetCurrentThreadPriorityForPlatform();
   if (platform_specific_priority)
     return platform_specific_priority.value();
-#endif
 
+#if defined(OS_OS2)
+  // getpriority on OS/2 is useless as it only returns the default priority, not
+  // what Chromium expects. Just bail out if the above fails (it should not).
+  NOTREACHED();
+  return ThreadPriority::NORMAL;
+#else
   // Need to clear errno before calling getpriority():
   // http://man7.org/linux/man-pages/man2/getpriority.2.html
   errno = 0;
@@ -361,6 +369,7 @@ ThreadPriority PlatformThread::GetCurrentThreadPriority() {
   }
 
   return internal::NiceValueToThreadPriority(nice_value);
+#endif  // defined(OS_OS2)
 #endif  // !defined(OS_NACL)
 }
 

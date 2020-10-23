@@ -1692,6 +1692,7 @@ jumbo_component("base") {
     sources -= [
       "rand_util_posix.cc",
       "strings/string16.cc",
+      "threading/platform_thread_internal_posix.cc",
     ]
 
     defines += [ "_EMX_SOURCE" ] # Use EMX extensions.

@@ -343,7 +343,7 @@ TEST(PlatformThreadTest, CanIncreaseThreadPriority) {
 // This tests internal PlatformThread APIs used under some POSIX platforms,
 // with the exception of Mac OS X, iOS and Fuchsia.
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_IOS) && \
-    !defined(OS_FUCHSIA)
+    !defined(OS_FUCHSIA) && !defined(OS_OS2)
 TEST(PlatformThreadTest, GetNiceValueToThreadPriority) {
   using internal::NiceValueToThreadPriority;
   using internal::kThreadPriorityToNiceValueMap;

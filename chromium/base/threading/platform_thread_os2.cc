@@ -7,18 +7,55 @@
 #include "base/threading/platform_thread_internal_posix.h"
 #include "base/threading/thread_id_name_manager.h"
 
+#include "base/os2/os2_toolkit.h"
+
 namespace base {
 
 namespace internal {
 
-// kLIBC maps nice values to OS/2 priorities in __libc_back_priorityOS2FromUnix,
-// consult it for details.
-const ThreadPriorityToNiceValuePair kThreadPriorityToNiceValueMap[4] = {
-    {ThreadPriority::BACKGROUND, 20}, // PRTYC_IDLETIME + 0
-    {ThreadPriority::NORMAL, 0}, // PRTYC_REGULAR + 0
-    {ThreadPriority::DISPLAY, -10}, // PRTYC_FOREGROUNDSERVER + 0
-    {ThreadPriority::REALTIME_AUDIO, -18}, // PRTYC_TIMECRITICAL + 0
-};
+bool SetCurrentThreadPriorityForPlatform(ThreadPriority priority) {
+  ULONG cls = 0;
+  switch (priority) {
+    case ThreadPriority::BACKGROUND:
+      cls = PRTYC_IDLETIME;
+      break;
+    case ThreadPriority::NORMAL:
+      cls = PRTYC_REGULAR;
+      break;
+    case ThreadPriority::DISPLAY:
+      cls = PRTYC_FOREGROUNDSERVER;
+      break;
+    case ThreadPriority::REALTIME_AUDIO:
+      cls = PRTYC_TIMECRITICAL;
+      break;
+  }
+  return DosSetPriority(PRTYS_THREAD, cls, 0, _gettid()) == NO_ERROR;
+}
+
+Optional<ThreadPriority> GetCurrentThreadPriorityForPlatform() {
+  Optional<ThreadPriority> prio = base::nullopt;
+  PTIB ptib;
+  APIRET arc = DosGetInfoBlocks(&ptib, NULL);
+  if (arc == NO_ERROR) {
+    // The priority class is packed into the high byte of the low word.
+    ULONG cls = (ptib->tib_ptib2->tib2_ulpri >> 8) & 0xFF;
+    switch (cls) {
+      case PRTYC_IDLETIME:
+        prio = base::make_optional(ThreadPriority::BACKGROUND);
+        break;
+      case PRTYC_REGULAR:
+        prio = base::make_optional(ThreadPriority::NORMAL);
+        break;
+      case PRTYC_FOREGROUNDSERVER:
+        prio = base::make_optional(ThreadPriority::DISPLAY);
+        break;
+      case PRTYC_TIMECRITICAL:
+        prio = base::make_optional(ThreadPriority::REALTIME_AUDIO);
+        break;
+    }
+  }
+  return prio;
+}
 
 }  // namespace internal
 
