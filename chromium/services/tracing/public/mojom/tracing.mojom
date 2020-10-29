@@ -10,7 +10,11 @@ import "mojo/public/mojom/base/values.mojom";
 import "services/tracing/public/mojom/perfetto_service.mojom";
 
 struct ConnectToTracingRequest {
-  PerfettoService perfetto_service;
+  // This triggers a fatal assertion like this in !PERFETTO_AVAILABLE mode:
+  // [37739:5:1029/203040.657000:FATAL:tracing.mojom-shared.h(633)] The outgoing message will trigger VALIDATION_ERROR_UNEXPECTED_INVALID_HANDLE at the receiving side (invalid perfetto_service in ConnectToTracingRequest struct).
+  // Sinse Mojom doesn't support conditional defines, we have to comment that out for now...
+  // See also https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/26#issuecomment-718928009.
+//  PerfettoService perfetto_service;
   AgentRegistry agent_registry;
 };
 
