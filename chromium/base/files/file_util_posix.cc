@@ -63,6 +63,10 @@
 extern "C" char* mkdtemp(char* path);
 #endif
 
+#if !defined(O_BINARY)
+#define O_BINARY 0
+#endif
+
 namespace base {
 
 namespace {
@@ -281,7 +285,7 @@ bool DoCopyDirectory(const FilePath& from_path,
       continue;
     }
 
-    int open_flags = O_WRONLY | O_CREAT;
+    int open_flags = O_WRONLY | O_CREAT | O_BINARY;
     // If |open_exclusive| is set then we should always create the destination
     // file, so O_NONBLOCK is not necessary to ensure we don't block on the
     // open call for the target file below, and since the destination will

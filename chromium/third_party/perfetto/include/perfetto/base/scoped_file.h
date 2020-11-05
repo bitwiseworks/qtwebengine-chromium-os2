@@ -28,6 +28,9 @@ typedef int mode_t;
 #else
 #include <dirent.h>
 #include <unistd.h>
+#if !defined(O_BINARY)
+#define O_BINARY 0
+#endif
 #endif
 
 #include <string>
@@ -90,7 +93,7 @@ inline static ScopedFile OpenFile(const std::string& path,
   ScopedFile fd(open(path.c_str(), flags, mode));
 #else
   // Always open a ScopedFile with O_CLOEXEC so we can safely fork and exec.
-  ScopedFile fd(open(path.c_str(), flags | O_CLOEXEC, mode));
+  ScopedFile fd(open(path.c_str(), flags | O_CLOEXEC | O_BINARY, mode));
 #endif
   return fd;
 }

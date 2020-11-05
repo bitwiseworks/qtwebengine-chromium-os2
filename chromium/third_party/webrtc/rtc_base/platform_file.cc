@@ -18,6 +18,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if !defined(O_BINARY)
+#define O_BINARY 0
+#endif
 #endif
 
 namespace rtc {
@@ -67,7 +70,11 @@ PlatformFile CreatePlatformFile(const std::string& path) {
 const PlatformFile kInvalidPlatformFileValue = -1;
 
 FILE* FdopenPlatformFile(PlatformFile file, const char* modes) {
-  return fdopen(file, modes);
+  FILE* f = fdopen(file, modes);
+#if O_BINARY != 0
+  _fsetmode(f, "b");
+#endif
+  return f;
 }
 
 bool ClosePlatformFile(PlatformFile file) {
@@ -79,15 +86,15 @@ bool RemoveFile(const std::string& path) {
 }
 
 PlatformFile OpenPlatformFile(const std::string& path) {
-  return ::open(path.c_str(), O_RDWR);
+  return ::open(path.c_str(), O_RDWR | O_BINARY);
 }
 
 PlatformFile OpenPlatformFileReadOnly(const std::string& path) {
-  return ::open(path.c_str(), O_RDONLY);
+  return ::open(path.c_str(), O_RDONLY | O_BINARY);
 }
 
 PlatformFile CreatePlatformFile(const std::string& path) {
-  return ::open(path.c_str(), O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+  return ::open(path.c_str(), O_CREAT | O_TRUNC | O_RDWR | O_BINARY, S_IRUSR | S_IWUSR);
 }
 
 #endif
