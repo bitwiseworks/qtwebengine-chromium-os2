@@ -306,7 +306,12 @@ source_set("audio") {
     sources += [
       "os2/audio_manager_os2.cc",
       "os2/audio_manager_os2.h",
+      "os2/audio_output_stream_os2.cc",
+      "os2/audio_output_stream_os2.h",
     ]
+
+    cflags = [ "-idirafter", "/@unixroot/usr/include/os2tk45" ]
+    libs += [ "kai" ]
   }
 
   if (enable_webrtc) {

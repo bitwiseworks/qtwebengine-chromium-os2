@@ -4,6 +4,10 @@
 
 #include "media/audio/os2/audio_manager_os2.h"
 
+#include "media/audio/os2/audio_output_stream_os2.h"
+
+#include <kai.h>
+
 #include <memory>
 
 namespace media {
@@ -11,7 +15,12 @@ namespace media {
 AudioManagerOS2::AudioManagerOS2(
     std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(std::move(audio_thread), audio_log_factory) {}
+    : AudioManagerBase(std::move(audio_thread), audio_log_factory) {
+  // Initialize the KAI subsystem.
+  APIRET arc = kaiInit(KAIM_AUTO);
+  if (arc)
+    LOG(ERROR) << "kaiInit() returned " << (LONG)arc;
+}
 
 AudioManagerOS2::~AudioManagerOS2() = default;
 
@@ -46,9 +55,50 @@ AudioParameters AudioManagerOS2::GetInputStreamParameters(
 AudioParameters AudioManagerOS2::GetPreferredOutputStreamParameters(
     const std::string& output_device_id,
     const AudioParameters& input_params) {
-  // TODO: Request real configuration from the device.
+  KAICAPS caps;
+  APIRET arc = kaiCaps(&caps);
+  if (arc) {
+    LOG(ERROR) << "kaiCaps() returned " << (LONG)arc;
+    return AudioParameters();
+  }
+  VLOG(1) << "input_params rate " << input_params.sample_rate()
+          << ", layout " << input_params.channel_layout()
+          << ", channels " << input_params.channels()
+          << ", frames per buf " << input_params.frames_per_buffer();
+  VLOG(1) << "kai mode " << (caps.ulMode == KAIM_DART ? "DART" : "UniAud")
+          << ", max channels " << caps.ulMaxChannels
+          << ", name " << caps.szPDDName;
+
+  // Try to open the device to get the optimal frequency and buffer size.
+  HKAI handle;
+  KAISPEC wanted, obtained;
+  memset(&wanted, 0, sizeof(wanted));
+  wanted.ulType = KAIT_PLAY;
+  wanted.ulBitsPerSample = kOS2BitsPerSample;
+  wanted.ulSamplingRate = input_params.sample_rate();
+  wanted.ulChannels = input_params.channels() >= kOS2MaxChannels ? 2 : 1;
+  wanted.pfnCallBack = (PFNKAICB)this; // Any valid pointer, won't be used anyway.
+
+  arc = kaiOpen(&wanted, &obtained, &handle);
+  if (arc) {
+    LOG(ERROR) << "kaiOpen returned " << (LONG)arc << " for sampling rate "
+               << wanted.ulSamplingRate << " and channels "
+               << wanted.ulChannels;
+  }
+  kaiClose(handle);
+
+  int frames_per_buffer =
+      obtained.ulBufferSize / obtained.ulChannels / (kOS2BitsPerSample / 8);
+
+  VLOG(1) << "optimal rate " << obtained.ulSamplingRate
+          << ", channels " << obtained.ulChannels
+          << ", bufsize " << obtained.ulBufferSize
+          << ", frames per buf " << frames_per_buffer;
+
   return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                         CHANNEL_LAYOUT_STEREO, 48000, 480);
+                         obtained.ulChannels == 2 ?
+                             CHANNEL_LAYOUT_STEREO : CHANNEL_LAYOUT_MONO,
+                         obtained.ulSamplingRate, frames_per_buffer);
 }
 
 const char* AudioManagerOS2::GetName() {
@@ -58,6 +108,10 @@ const char* AudioManagerOS2::GetName() {
 AudioOutputStream* AudioManagerOS2::MakeLinearOutputStream(
     const AudioParameters& params,
     const LogCallback& log_callback) {
+  DCHECK_EQ(AudioParameters::AUDIO_PCM_LINEAR, params.format());
+  if (params.channels() > kOS2MaxChannels)
+    return nullptr;
+
   NOTREACHED();
   return nullptr;
 }
@@ -67,15 +121,15 @@ AudioOutputStream* AudioManagerOS2::MakeLowLatencyOutputStream(
     const std::string& device_id,
     const LogCallback& log_callback) {
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
+  if (params.channels() > kOS2MaxChannels)
+    return nullptr;
 
   if (!device_id.empty() &&
       device_id != AudioDeviceDescription::kDefaultDeviceId) {
     return nullptr;
   }
 
-  // TODO: Implement it on OS/2.
-  NOTIMPLEMENTED();
-  return nullptr;
+  return new AudioOutputStreamOS2(this, params);
 }
 
 AudioInputStream* AudioManagerOS2::MakeLinearInputStream(
