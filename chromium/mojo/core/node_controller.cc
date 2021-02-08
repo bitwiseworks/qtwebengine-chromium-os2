@@ -206,7 +206,8 @@ void NodeController::SendBrokerClientInvitation(
 void NodeController::AcceptBrokerClientInvitation(
     ConnectionParams connection_params) {
   DCHECK(!GetConfiguration().is_broker_process);
-#if !defined(OS_MACOSX) && !defined(OS_NACL_SFI) && !defined(OS_FUCHSIA)
+#if !defined(OS_MACOSX) && !defined(OS_NACL_SFI) && !defined(OS_FUCHSIA) && \
+    !defined(OS_OS2)
   // Use the bootstrap channel for the broker and receive the node's channel
   // synchronously as the first message from the broker.
   DCHECK(connection_params.endpoint().is_valid());
@@ -294,7 +295,8 @@ int NodeController::MergeLocalPorts(const ports::PortRef& port0,
 
 base::WritableSharedMemoryRegion NodeController::CreateSharedBuffer(
     size_t num_bytes) {
-#if !defined(OS_MACOSX) && !defined(OS_NACL_SFI) && !defined(OS_FUCHSIA)
+#if !defined(OS_MACOSX) && !defined(OS_NACL_SFI) && !defined(OS_FUCHSIA) && \
+    !defined(OS_OS2)
   // Shared buffer creation failure is fatal, so always use the broker when we
   // have one; unless of course the embedder forces us not to.
   if (!GetConfiguration().force_direct_shared_memory_allocation && broker_)
@@ -343,17 +345,24 @@ void NodeController::SendBrokerClientInvitationOnIOThread(
     const ProcessErrorCallback& process_error_callback) {
   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
 
-#if !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA)
+#if !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA) && \
+    !defined(OS_OS2)
   PlatformChannel node_channel;
   ConnectionParams node_connection_params(node_channel.TakeLocalEndpoint());
   // BrokerHost owns itself.
   BrokerHost* broker_host =
       new BrokerHost(target_process.get(), std::move(connection_params),
                      process_error_callback);
+#if defined(OS_OS2)
+  // BrokerHost::SendChannel will use SendmsgWithHandles which does not work
+  // on OS/2. Fallback to named pipes.
+  bool channel_ok = false;
+#else
   bool channel_ok = broker_host->SendChannel(
       node_channel.TakeRemoteEndpoint().TakePlatformHandle());
+#endif
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) || defined(OS_OS2)
   if (!channel_ok) {
     // On Windows the above operation may fail if the channel is crossing a
     // session boundary. In that case we fall back to a named pipe.
@@ -372,11 +381,13 @@ void NodeController::SendBrokerClientInvitationOnIOThread(
                           Channel::HandlePolicy::kAcceptHandles,
                           io_task_runner_, process_error_callback);
 
-#else   // !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA)
+#else   // !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA) && \
+        // !defined(OS_OS2)
   scoped_refptr<NodeChannel> channel = NodeChannel::Create(
       this, std::move(connection_params), Channel::HandlePolicy::kAcceptHandles,
       io_task_runner_, process_error_callback);
-#endif  // !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA)
+#endif  // !defined(OS_MACOSX) && !defined(OS_NACL) && !defined(OS_FUCHSIA) && \
+        // !defined(OS_OS2)
 
   // We set up the invitee channel with a temporary name so it can be identified
   // as a pending invitee if it writes any messages to the channel. We may start

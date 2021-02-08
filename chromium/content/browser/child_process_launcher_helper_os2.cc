@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 
 #include "content/browser/child_process_launcher_helper.h"
+#include "content/browser/child_process_launcher_helper_posix.h"
 
 #include "base/command_line.h"
+#include "base/posix/global_descriptors.h"
 #include "base/process/launch.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/public/browser/child_process_launcher_utils.h"
@@ -64,13 +66,21 @@ ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
 std::unique_ptr<FileMappedForLaunch>
 ChildProcessLauncherHelper::GetFilesToMap() {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  return std::unique_ptr<FileMappedForLaunch>();
+  return CreateDefaultPosixFilesToMap(
+      child_process_id(), mojo_channel_->remote_endpoint(),
+      false /* include_service_required_files */, GetProcessType(),
+      command_line());
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
     const PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
+  // Convert FD mapping to FileHandleMappingVector
+  options->fds_to_remap = files_to_register.GetMappingWithIDAdjustment(
+      base::GlobalDescriptors::kBaseDescriptor);
+
+  options->environ = delegate_->GetEnvironment();
 
   return true;
 }
@@ -82,13 +92,14 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     bool* is_synchronous_launch,
     int* launch_result) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  DCHECK(mojo_channel_);
-  DCHECK(mojo_channel_->remote_endpoint().is_valid());
+  *is_synchronous_launch = true;
 
   // TODO: Implement sandboxed/isolated subprocess launching on OS/2.
-  Process child_process;
-  child_process.process = base::LaunchProcess(*command_line(), options);
-  return child_process;
+  Process process;
+  process.process = base::LaunchProcess(*command_line(), options);
+  *launch_result = process.process.IsValid() ? LAUNCH_RESULT_SUCCESS
+                                             : LAUNCH_RESULT_FAILURE;
+  return process;
 }
 
 void ChildProcessLauncherHelper::AfterLaunchOnLauncherThread(
@@ -100,7 +111,16 @@ void ChildProcessLauncherHelper::AfterLaunchOnLauncherThread(
 void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
     ChildProcessLauncherHelper::Process process) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  process.process.Terminate(service_manager::RESULT_CODE_NORMAL_EXIT, true);
+  process.process.Terminate(service_manager::RESULT_CODE_NORMAL_EXIT, false);
+}
+
+// static
+base::File OpenFileToShare(const base::FilePath& path,
+                           base::MemoryMappedFile::Region* region) {
+  // Not used yet (until required files are described in the service manifest on
+  // OS/2).
+  NOTREACHED();
+  return base::File();
 }
 
 }  // namespace internal

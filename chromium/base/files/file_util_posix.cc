@@ -57,6 +57,11 @@
 #include <grp.h>
 #endif
 
+#if defined(OS_OS2)
+#include <sys/socket.h>
+#define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
+#endif
+
 // We need to do this on AIX due to some inconsistencies in how AIX
 // handles XOPEN_SOURCE and ALL_SOURCE.
 #if defined(OS_AIX)

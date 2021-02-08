@@ -93,6 +93,9 @@ Channel::Message::Message(size_t capacity,
 #if defined(OS_WIN)
   // On Windows we serialize HANDLEs into the extra header space.
   extra_header_size = max_handles_ * sizeof(HandleEntry);
+#elif defined(OS_OS2)
+  // On OS/2 we serialize handles into the extra header space.
+  extra_header_size = max_handles_ * sizeof(HandleEntry);
 #elif defined(OS_FUCHSIA)
   // On Fuchsia we serialize handle types into the extra header space.
   extra_header_size = max_handles_ * sizeof(HandleInfoEntry);
@@ -147,6 +150,9 @@ Channel::Message::Message(size_t capacity,
     // Initialize all handles to invalid values.
     for (size_t i = 0; i < max_handles_; ++i)
       handles_[i].handle = base::win::HandleToUint32(INVALID_HANDLE_VALUE);
+#elif defined(OS_OS2)
+    handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
+    // All handle data is already initialized to zeroes in memset above.
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
     mach_ports_header_ =
         reinterpret_cast<MachPortsExtraHeader*>(mutable_extra_header());
@@ -226,6 +232,8 @@ Channel::MessagePtr Channel::Message::Deserialize(
 
 #if defined(OS_WIN)
   uint32_t max_handles = extra_header_size / sizeof(HandleEntry);
+#elif defined(OS_OS2)
+  uint32_t max_handles = extra_header_size / sizeof(HandleEntry);
 #elif defined(OS_FUCHSIA)
   uint32_t max_handles = extra_header_size / sizeof(HandleInfoEntry);
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
@@ -289,6 +297,18 @@ Channel::MessagePtr Channel::Message::Deserialize(
     }
   }
   message->SetHandles(std::move(handles));
+#elif defined(OS_OS2)
+  std::vector<PlatformHandleInTransit> handles(num_handles);
+  if (from_process != base::kNullProcessHandle) {
+    int rc = libcx_take_handles(message->handles_, num_handles, from_process,
+        LIBCX_HANDLE_CLOSE);
+    DPCHECK(rc == 0);
+  }
+  for (size_t i = 0; i < num_handles; i++) {
+    handles[i] = PlatformHandleInTransit(
+        PlatformHandleInTransit::CreateFromLIBCxHandle(message->handles_[i]));
+  }
+  message->SetHandles(std::move(handles));
 #endif
 
   return message;
@@ -316,6 +336,8 @@ void Channel::Message::ExtendPayload(size_t new_payload_size) {
 // We also need to update the cached extra header addresses in case the
 // payload buffer has been relocated.
 #if defined(OS_WIN)
+      handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
+#elif defined(OS_OS2)
       handles_ = reinterpret_cast<HandleEntry*>(mutable_extra_header());
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
       mach_ports_header_ =
@@ -436,6 +458,13 @@ void Channel::Message::SetHandles(
   }
 #endif  // defined(OS_WIN)
 
+#if defined(OS_OS2)
+  memset(handles_, 0, extra_header_size());
+  for (size_t i = 0; i < handle_vector_.size(); i++) {
+    handle_vector_[i].to_libcx_handle(handles_[i]);
+  }
+#endif  // defined(OS_OS2)
+
 #if defined(OS_MACOSX) && !defined(OS_IOS)
   size_t mach_port_index = 0;
   if (mach_ports_header_) {
@@ -479,6 +508,10 @@ std::vector<PlatformHandleInTransit>
 Channel::Message::TakeHandlesForTransport() {
 #if defined(OS_WIN)
   // Not necessary on Windows.
+  NOTREACHED();
+  return std::vector<PlatformHandleInTransit>();
+#elif defined(OS_OS2)
+  // Not necessary on OS/2.
   NOTREACHED();
   return std::vector<PlatformHandleInTransit>();
 #elif defined(OS_MACOSX) && !defined(OS_IOS)

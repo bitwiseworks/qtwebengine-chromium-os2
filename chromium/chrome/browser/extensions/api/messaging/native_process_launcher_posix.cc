@@ -16,6 +16,11 @@
 #include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 
+#if defined(OS_OS2)
+#include <sys/socket.h>
+#define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
+#endif
+
 namespace extensions {
 
 namespace {

@@ -35,6 +35,7 @@ ssize_t SocketWritev(base::PlatformFile socket,
                      struct iovec* iov,
                      size_t num_iov);
 
+#if !defined(OS_OS2)
 // Wrapper around |sendmsg()| which makes it convenient to send attached file
 // descriptors. All entries in |descriptors| must be valid and |descriptors|
 // must be non-empty.
@@ -50,13 +51,16 @@ ssize_t SendmsgWithHandles(base::PlatformFile socket,
                            struct iovec* iov,
                            size_t num_iov,
                            const std::vector<base::ScopedFD>& descriptors);
+#endif  // !defined(OS_OS2)
 
 // Like |recvmsg()|, but handles |EINTR|.
 COMPONENT_EXPORT(MOJO_CPP_PLATFORM)
 ssize_t SocketRecvmsg(base::PlatformFile socket,
                       void* buf,
                       size_t num_bytes,
+#if !defined(OS_OS2)
                       std::vector<base::ScopedFD>* descriptors,
+#endif
                       bool block = false);
 
 // Treats |server_fd| as a socket listening for new connections. Returns |false|

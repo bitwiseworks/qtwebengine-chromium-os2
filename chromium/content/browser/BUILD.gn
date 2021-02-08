@@ -597,6 +597,7 @@ jumbo_source_set("browser") {
     "child_process_launcher_helper_android.cc",
     "child_process_launcher_helper_linux.cc",
     "child_process_launcher_helper_mac.cc",
+    "child_process_launcher_helper_os2.cc",
     "child_process_launcher_helper_win.cc",
     "child_process_security_policy_impl.cc",
     "child_process_security_policy_impl.h",
@@ -1937,10 +1938,6 @@ jumbo_source_set("browser") {
       "memory/memory_monitor_fuchsia.cc",
     ]
     deps += [ "//third_party/fuchsia-sdk/sdk:zx" ]
-  } else if (is_os2) {
-    sources += [
-      "child_process_launcher_helper_os2.cc",
-    ]
   } else if (is_posix) {
     sources += [
       "child_process_launcher_helper_posix.cc",

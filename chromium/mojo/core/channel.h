@@ -18,6 +18,10 @@
 #include "mojo/core/scoped_process_handle.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
 
+#if defined(OS_OS2)
+#include <libcx/handles.h>
+#endif
+
 namespace mojo {
 namespace core {
 
@@ -140,6 +144,9 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
     };
     static_assert(sizeof(HandleEntry) == 4,
                   "sizeof(HandleEntry) must be 4 bytes");
+#elif defined(OS_OS2)
+    // OS/2 uses LIBCx transfer handle API.
+    typedef LIBCX_HANDLE HandleEntry;
 #endif
 #pragma pack(pop)
 
@@ -191,6 +198,9 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 #if defined(OS_MACOSX) && !defined(OS_IOS)
     bool has_mach_ports() const;
 #endif
+#if defined(OS_OS2)
+    HandleEntry* mutable_handles() { return handles_; }
+#endif
 
     bool is_legacy_message() const;
     LegacyHeader* legacy_header() const;
@@ -230,6 +240,9 @@ class MOJO_SYSTEM_IMPL_EXPORT Channel
 
 #if defined(OS_WIN)
     // On Windows, handles are serialised into the extra header section.
+    HandleEntry* handles_ = nullptr;
+#elif defined(OS_OS2)
+    // On OS/2, handles are serialised into the extra header section.
     HandleEntry* handles_ = nullptr;
 #elif defined(OS_MACOSX) && !defined(OS_IOS)
     // On OSX, handles are serialised into the extra header section.
