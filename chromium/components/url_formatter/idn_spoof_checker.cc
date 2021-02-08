@@ -255,7 +255,7 @@ bool IDNSpoofChecker::SafeToDisplayAsUnicode(base::StringPiece16 label,
   if (U_FAILURE(status) || (result & USPOOF_ALL_CHECKS))
     return false;
 
-  icu::UnicodeString label_string(FALSE, (const UChar*)label.data(),
+  icu::UnicodeString label_string(false, (const UChar*)label.data(),
                                   base::checked_cast<int32_t>(label.size()));
 
   // A punycode label with 'xn--' prefix is not subject to the URL
@@ -364,7 +364,7 @@ std::string IDNSpoofChecker::GetSimilarTopDomain(base::StringPiece16 hostname) {
 Skeletons IDNSpoofChecker::GetSkeletons(base::StringPiece16 hostname) {
   Skeletons skeletons;
   size_t hostname_length = hostname.length() - (hostname.back() == '.' ? 1 : 0);
-  icu::UnicodeString host(FALSE, hostname.data(), hostname_length);
+  icu::UnicodeString host(false, hostname.data(), hostname_length);
   // If input has any characters outside Latin-Greek-Cyrillic and [0-9._-],
   // there is no point in getting rid of diacritics because combining marks
   // attached to non-LGC characters are already blocked.
