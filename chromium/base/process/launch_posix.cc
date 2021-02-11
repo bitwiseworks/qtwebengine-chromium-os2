@@ -27,6 +27,7 @@
 #if defined(OS_OS2)
 #include <libcx/spawn2.h>
 #include <sys/socket.h>
+#include <sys/fmutex.h>
 #define pipe(A) socketpair(AF_UNIX, SOCK_STREAM, 0, A)
 #endif
 
@@ -72,6 +73,10 @@
 
 #if defined(OS_MACOSX)
 #error "macOS should use launch_mac.cc"
+#endif
+
+#if defined(OS_OS2)
+static _fmutex spawn2_mutex = _FMUTEX_INITIALIZER;
 #endif
 
 extern char** environ;
@@ -379,9 +384,26 @@ Process LaunchProcess(const std::vector<std::string>& argv,
 
   *pfd++ = -1;
 
-  pid = spawn2(P_NOWAIT | P_2_THREADSAFE | P_2_XREDIR,
-               executable_path, argv_cstr.data(),
+  // Use a mutex instead of P_2_THREADSAFE, this implies that no other Chromium
+  // code calls spawn2 or fiddles with the current directory or standard file
+  // descriptors (0,1,2) redirection.
+  _fmutex_request(&spawn2_mutex, _FMR_IGNINT);
+
+  VLOG(1) << "spawn2: executable [" << executable_path << "]";
+  VLOG_IF(1, current_directory) << "spawn2: curdir [" << current_directory << "]";
+  if (VLOG_IS_ON(1)) {
+    for (size_t i = 0; i < argv_cstr.size(); ++i)
+      VLOG(1) << "spawn2: arg[" << i << "] [" << argv_cstr[i] << "]";
+    for (int *p = stdfds; *p != -1; p += 2)
+      VLOG(1) << "spawn2: map fd " << p[0] << " -> " << p[1];
+  }
+
+  pid = spawn2(P_NOWAIT | P_2_XREDIR, executable_path, argv_cstr.data(),
                current_directory, new_environ.get(), stdfds);
+
+  VLOG(1) << "spawn2: pid " << pid << ", errno " << errno;
+
+  _fmutex_release(&spawn2_mutex);
 
   if (null_fd != -1)
     close(null_fd);
@@ -645,9 +667,25 @@ static bool GetAppOutputInternal(
   stdfds[0] = dev_null;
   stdfds[1] = pipe_fd[1];
   stdfds[2] = include_stderr ? pipe_fd[1] : dev_null;
-  pid_t pid = spawn2(P_NOWAIT | P_2_THREADSAFE | P_2_NOINHERIT,
-                     argv_cstr[0], argv_cstr.data(),
+
+  // Use a mutex instead of P_2_THREADSAFE, this implies that no other Chromium
+  // code calls spawn2 or fiddles with the current directory or standard file
+  // descriptors (0,1,2) redirection.
+  _fmutex_request(&spawn2_mutex, _FMR_IGNINT);
+
+  if (VLOG_IS_ON(1)) {
+    for (size_t i = 0; i < argv_cstr.size(); ++i)
+      VLOG(1) << "spawn2: arg[" << i << "] [" << argv_cstr[i] << "]";
+    for (int *p = stdfds; *p != -1; p += 2)
+      VLOG(1) << "spawn2: map fd " << p[0] << " -> " << p[1];
+  }
+
+  pid_t pid = spawn2(P_NOWAIT, argv_cstr[0], argv_cstr.data(),
                      nullptr, envp, stdfds);
+
+  VLOG(1) << "spawn2: pid " << pid << ", errno " << errno;
+
+  _fmutex_release(&spawn2_mutex);
 
   close(dev_null);
 #else
