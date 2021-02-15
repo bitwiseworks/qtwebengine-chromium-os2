@@ -20,8 +20,8 @@ void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
     base::Process process,
     const ChildProcessLauncherPriority& priority) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
-  // TODO: Implement this on OS/2.
-  NOTIMPLEMENTED();
+  if (process.CanBackgroundProcesses())
+    process.SetProcessBackgrounded(priority.is_background());
 }
 
 ChildProcessTerminationInfo ChildProcessLauncherHelper::GetTerminationInfo(

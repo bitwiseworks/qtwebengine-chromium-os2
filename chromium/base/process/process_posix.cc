@@ -26,6 +26,11 @@
 
 namespace {
 
+#if defined(OS_OS2)
+const int kForegroundPriority = 0;
+const int kBackgroundPriority = 5;
+#endif
+
 #if !defined(OS_NACL_NONSFI)
 
 bool WaitpidWithTimeout(base::ProcessHandle handle,
@@ -267,7 +272,11 @@ Process Process::DeprecatedGetProcessFromHandle(ProcessHandle handle) {
 #if !defined(OS_LINUX) && !defined(OS_MACOSX) && !defined(OS_AIX)
 // static
 bool Process::CanBackgroundProcesses() {
+#if defined(OS_OS2)
+  return true;
+#else
   return false;
+#endif
 }
 #endif  // !defined(OS_LINUX) && !defined(OS_MACOSX) && !defined(OS_AIX)
 
@@ -371,15 +380,29 @@ void Process::Exited(int exit_code) const {}
 bool Process::IsProcessBackgrounded() const {
   // See SetProcessBackgrounded().
   DCHECK(IsValid());
+#if defined(OS_OS2)
+  return GetPriority() == kBackgroundPriority;
+#else
   return false;
+#endif
 }
 
-bool Process::SetProcessBackgrounded(bool value) {
+bool Process::SetProcessBackgrounded(bool background) {
+#if defined(OS_OS2)
+  if (!CanBackgroundProcesses())
+    return false;
+
+  int priority = background ? kBackgroundPriority : kForegroundPriority;
+  int result = setpriority(PRIO_PROCESS, process_, priority);
+  DPCHECK(result == 0);
+  return result == 0;
+#else
   // Not implemented for POSIX systems other than Linux and Mac. With POSIX, if
   // we were to lower the process priority we wouldn't be able to raise it back
   // to its initial priority.
   NOTIMPLEMENTED();
   return false;
+#endif
 }
 #endif  // !defined(OS_LINUX) && !defined(OS_MACOSX) && !defined(OS_AIX)
 
