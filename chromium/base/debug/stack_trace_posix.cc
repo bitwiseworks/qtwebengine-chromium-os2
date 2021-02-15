@@ -768,6 +768,13 @@ class SandboxSymbolizeHelper {
 }  // namespace
 
 bool EnableInProcessStackDumping() {
+#if defined(OS_OS2)
+  // On OS/2, there is no ready-to-use API to print a stack dump. Let LIBC
+  // handle crashes (and generate a very useful .TRP file via EXCEPTQ with
+  // a stack dump and a lot of useful info).
+  return false;
+#endif
+
 #if defined(USE_SYMBOLIZE)
   SandboxSymbolizeHelper::GetInstance();
 #endif  // USE_SYMBOLIZE
