@@ -314,8 +314,9 @@ bool Process::is_current() const {
 
 #if defined(OS_OS2)
 Time Process::CreationTime() const {
-  // TODO: There is no syscall providing this data.
-  NOTIMPLEMENTED();
+  // There doesn't seem to be a way to get this information from the system.
+  // TODO: Implement it in LIBC/LIBCx by recording process creation time.
+  NOTIMPLEMENTED_LOG_ONCE();
   return Time();
 }
 #endif

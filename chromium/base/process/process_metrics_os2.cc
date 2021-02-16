@@ -8,7 +8,7 @@ namespace base {
 
 size_t GetSystemCommitCharge() {
   // TODO https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/8
-  NOTIMPLEMENTED();
+  NOTIMPLEMENTED_LOG_ONCE();
   return 0;
 }
 
@@ -16,19 +16,19 @@ size_t GetSystemCommitCharge() {
 std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateProcessMetrics(
     ProcessHandle process) {
   // TODO https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/8
-  NOTIMPLEMENTED();
+  NOTIMPLEMENTED_LOG_ONCE();
   return nullptr;
 }
 
 TimeDelta ProcessMetrics::GetCumulativeCPUUsage() {
   // TODO https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/8
-  NOTIMPLEMENTED();
+  NOTIMPLEMENTED_LOG_ONCE();
   return TimeDelta();
 }
 
 bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
   // TODO https://github.com/bitwiseworks/qtwebengine-chromium-os2/issues/8
-  NOTIMPLEMENTED();
+  NOTIMPLEMENTED_LOG_ONCE();
   return false;
 }
 

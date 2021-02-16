@@ -48,7 +48,7 @@ void AudioManagerOS2::GetAudioOutputDeviceNames(
 
 AudioParameters AudioManagerOS2::GetInputStreamParameters(
     const std::string& device_id) {
-  NOTREACHED();
+  NOTIMPLEMENTED();
   return AudioParameters();
 }
 
