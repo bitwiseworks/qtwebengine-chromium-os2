@@ -37,7 +37,7 @@ void TimeZoneMonitor::NotifyClients() {
 #if defined(OS_ANDROID)
   base::string16 timezone_id = base::android::GetDefaultTimeZoneId();
   std::unique_ptr<icu::TimeZone> new_zone(icu::TimeZone::createTimeZone(
-      icu::UnicodeString(FALSE, timezone_id.data(), timezone_id.length())));
+      icu::UnicodeString(false, timezone_id.data(), timezone_id.length())));
 #else
   std::unique_ptr<icu::TimeZone> new_zone(icu::TimeZone::detectHostTimeZone());
 #endif

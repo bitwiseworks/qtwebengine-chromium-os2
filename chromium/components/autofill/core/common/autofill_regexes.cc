@@ -61,7 +61,7 @@ AutofillRegexes::~AutofillRegexes() {
 icu::RegexMatcher* AutofillRegexes::GetMatcher(const base::string16& pattern) {
   auto it = matchers_.find(pattern);
   if (it == matchers_.end()) {
-    const icu::UnicodeString icu_pattern(FALSE, pattern.data(),
+    const icu::UnicodeString icu_pattern(false, pattern.data(),
                                          pattern.length());
 
     UErrorCode status = U_ZERO_ERROR;
@@ -84,13 +84,13 @@ bool MatchesPattern(const base::string16& input,
                     const base::string16& pattern) {
   icu::RegexMatcher* matcher =
       AutofillRegexes::ThreadSpecificInstance()->GetMatcher(pattern);
-  icu::UnicodeString icu_input(FALSE, input.data(), input.length());
+  icu::UnicodeString icu_input(false, input.data(), input.length());
   matcher->reset(icu_input);
 
   UErrorCode status = U_ZERO_ERROR;
   UBool match = matcher->find(0, status);
   DCHECK(U_SUCCESS(status));
-  return match == TRUE;
+  return match;
 }
 
 }  // namespace autofill
