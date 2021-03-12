@@ -174,7 +174,7 @@ Handle<JSObject> JSNumberFormat::ResolvedOptions(
   }
   CHECK(JSReceiver::CreateDataProperty(
             isolate, options, factory->useGrouping_string(),
-            factory->ToBoolean((number_format->isGroupingUsed() == TRUE)),
+            factory->ToBoolean((number_format->isGroupingUsed() == true)),
             kDontThrow)
             .FromJust());
   return options;
@@ -409,7 +409,7 @@ MaybeHandle<JSNumberFormat> JSNumberFormat::Initialize(
       isolate, options, "useGrouping", service, &use_grouping);
   MAYBE_RETURN(found_use_grouping, MaybeHandle<JSNumberFormat>());
   // 24. Set numberFormat.[[UseGrouping]] to useGrouping.
-  icu_number_format->setGroupingUsed(use_grouping ? TRUE : FALSE);
+  icu_number_format->setGroupingUsed(use_grouping ? true : false);
 
   // 25. Let dataLocaleData be localeData.[[<dataLocale>]].
   //
