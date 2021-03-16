@@ -13,6 +13,11 @@ namespace switches {
 // have an effect. 0 disables MSAA.
 const char kAcceleratedCanvas2dMSAASampleCount[] = "canvas-msaa-sample-count";
 
+// Allows processing of input before a frame has been committed.
+// TODO(schenney): crbug.com/987626. Used by headless. Look for a way not
+// involving a command line switch.
+const char kAllowPreCommitInput[] = "allow-pre-commit-input";
+
 // By default, file:// URIs cannot read other file:// URIs. This is an
 // override for developers who need the old behavior for testing.
 const char kAllowFileAccessFromFiles[]      = "allow-file-access-from-files";
@@ -24,6 +29,14 @@ const char kAllowInsecureLocalhost[] = "allow-insecure-localhost";
 // Allows loopback interface to be added in network list for peer connection.
 const char kAllowLoopbackInPeerConnection[] =
     "allow-loopback-in-peer-connection";
+
+// Allow a page to show popups during its unloading.
+// TODO(https://crbug.com/937569): Remove this in Chrome 88.
+const char kAllowPopupsDuringPageUnload[] = "allow-popups-during-page-unload";
+
+// Allow a page to send synchronus XHR during its unloading.
+// TODO(https://crbug.com/1003101): Remove this in Chrome 88.
+const char kAllowSyncXHRInPageDismissal[] = "allow-sync-xhr-in-page-dimissal";
 
 // Uses the android SkFontManager on linux. The specified directory should
 // include the configuration xml file with the name "fonts.xml".
@@ -53,6 +66,9 @@ const char kBrowserTest[] = "browser-test";
 // Sets the tile size used by composited layers.
 const char kDefaultTileWidth[]              = "default-tile-width";
 const char kDefaultTileHeight[]             = "default-tile-height";
+
+// Sets the min tile height for GPU raster.
+const char kMinHeightForGpuRasterTile[] = "min-height-for-gpu-raster-tile";
 
 // Disable antialiasing on 2d canvas.
 const char kDisable2dCanvasAntialiasing[]   = "disable-canvas-aa";
@@ -95,15 +111,6 @@ const char kDisableBackgroundTimerThrottling[] =
 // Applied after kEnableBlinkFeatures, and after other flags that change these
 // features.
 const char kDisableBlinkFeatures[]          = "disable-blink-features";
-
-// Enable Web Bluetooth Scanning
-// This switch enables Web Bluetooth Scanning without any
-// permission prompt for testing.
-const char kEnableWebBluetoothScanning[] = "enable-web-bluetooth-scanning";
-
-// Disables compositor Ukm recording in browser tests.
-// TODO(khushalsagar): Remove once crbug.com/761524 is resolved.
-const char kDisableCompositorUkmForTests[] = "disable-compositor-ukm-for-tests";
 
 // Disables HTML5 DB support.
 const char kDisableDatabases[]              = "disable-databases";
@@ -153,6 +160,11 @@ const char kDisableGpuMemoryBufferVideoFrames[] =
 // For tests, to disable the limit on the number of times the GPU process may be
 // restarted.
 const char kDisableGpuProcessCrashLimit[] = "disable-gpu-process-crash-limit";
+
+// For tests, to disable falling back to software compositing if the GPU Process
+// has crashed, and reached the GPU Process crash limit.
+const char kDisableSoftwareCompositingFallback[] =
+    "disable-software-compositing-fallback";
 
 // When using CPU rasterizing disable low resolution tiling. This uses
 // less power, particularly during animations, but more white may be seen
@@ -210,9 +222,6 @@ const char kDisableNotifications[]          = "disable-notifications";
 // Disable partial raster in the renderer. Disabling this switch also disables
 // the use of persistent gpu memory buffers.
 const char kDisablePartialRaster[] = "disable-partial-raster";
-
-// Enable partial raster in the renderer.
-const char kEnablePartialRaster[] = "enable-partial-raster";
 
 // Disable Pepper3D.
 const char kDisablePepper3d[]               = "disable-pepper-3d";
@@ -296,9 +305,6 @@ const char kDisableWebGLImageChromium[]     = "disable-webgl-image-chromium";
 // Don't enforce the same-origin policy. (Used by people testing their sites.)
 const char kDisableWebSecurity[]            = "disable-web-security";
 
-// Disables Blink's XSSAuditor. The XSSAuditor mitigates reflective XSS.
-const char kDisableXSSAuditor[]             = "disable-xss-auditor";
-
 // Disable rasterizer that writes directly to GPU memory associated with tiles.
 const char kDisableZeroCopy[]                = "disable-zero-copy";
 
@@ -314,11 +320,9 @@ const char kDomAutomationController[]       = "dom-automation";
 // Disable antialiasing on 2d canvas clips
 const char kDisable2dCanvasClipAntialiasing[] = "disable-2d-canvas-clip-aa";
 
-// Disable partially decoding jpeg images using the GPU.
-// At least YUV decoding will be accelerated when not using this flag.
+// Disable YUV image decoding for those formats and cases where it's supported.
 // Has no effect unless GPU rasterization is enabled.
-const char kDisableAcceleratedJpegDecoding[] =
-    "disable-accelerated-jpeg-decoding";
+const char kDisableYUVImageDecoding[] = "disable-yuv-image-decoding";
 
 // Logs Runtime Call Stats for Blink. --single-process also needs to be
 // used along with this for the stats to be logged.
@@ -337,9 +341,21 @@ const char kEnablePreferCompositingToLCDText[] =
 // features.
 const char kEnableBlinkFeatures[]           = "enable-blink-features";
 
+// Enable native caret browsing, in which a moveable cursor is placed on a web
+// page, allowing a user to select and navigate through non-editable text using
+// just a keyboard. See https://crbug.com/977390 for links to i2i.
+const char kEnableCaretBrowsing[] = "enable-caret-browsing";
+
+// Enables experimental WebAssembly features.
+const char kEnableExperimentalWebAssemblyFeatures[] =
+    "enable-experimental-webassembly-features";
+
 // Enables Web Platform features that are in development.
 const char kEnableExperimentalWebPlatformFeatures[] =
     "enable-experimental-web-platform-features";
+
+// Enables support for FTP URLs. See https://crbug.com/333943.
+const char kEnableFtp[] = "enable-ftp";
 
 // Disables all RuntimeEnabledFeatures that can be enabled via OriginTrials.
 const char kDisableOriginTrialControlledBlinkFeatures[] =
@@ -370,9 +386,6 @@ const char kEnableNetworkInformationDownlinkMax[] =
 // Disables the video decoder from drawing to an NV12 textures instead of ARGB.
 const char kDisableNv12DxgiVideo[] = "disable-nv12-dxgi-video";
 
-// Enables compositor-accelerated touch-screen pinch gestures.
-const char kEnablePinch[]                   = "enable-pinch";
-
 // Enables testing features of the Plugin Placeholder. For internal use only.
 const char kEnablePluginPlaceholderTesting[] =
     "enable-plugin-placeholder-testing";
@@ -382,9 +395,6 @@ const char kEnablePluginPlaceholderTesting[] =
 // still available, but it is bucketized and updated less frequently. This flag
 // also applys to workers.
 const char kEnablePreciseMemoryInfo[] = "enable-precise-memory-info";
-
-// Enables PrintBrowser mode, in which everything renders as though printed.
-const char kEnablePrintBrowser[] = "enable-print-browser";
 
 // Enables RGBA_4444 textures.
 const char kEnableRGBA4444Textures[] = "enable-rgba-4444-textures";
@@ -397,7 +407,7 @@ const char kV8CacheOptions[] = "v8-cache-options";
 // is only useful for tests.
 const char kEnableServiceBinaryLauncher[] = "enable-service-binary-launcher";
 
-// Enables the Skia benchmarking extension
+// Enables the Skia benchmarking extension.
 const char kEnableSkiaBenchmarking[]        = "enable-skia-benchmarking";
 
 // On platforms that support it, enables smooth scroll animation.
@@ -440,13 +450,6 @@ const char kEnableViewport[]                = "enable-viewport";
 // Enable the Vtune profiler support.
 const char kEnableVtune[]                   = "enable-vtune-support";
 
-// Enable Vulkan support, must also have ENABLE_VULKAN defined.
-const char kEnableVulkan[] = "enable-vulkan";
-
-// Enable the Web Authentication Testing API.
-// https://w3c.github.io/webauthn
-const char kEnableWebAuthTestingAPI[] = "enable-web-authentication-testing-api";
-
 // Enable WebGL2 Compute context.
 const char kEnableWebGL2ComputeContext[] = "enable-webgl2-compute-context";
 
@@ -455,9 +458,6 @@ const char kEnableWebGLDraftExtensions[] = "enable-webgl-draft-extensions";
 
 // Enables WebGL rendering into a scanout buffer for overlay support.
 const char kEnableWebGLImageChromium[] = "enable-webgl-image-chromium";
-
-// Enables interaction with virtual reality devices.
-const char kEnableWebVR[] = "enable-webvr";
 
 // Enable rasterizer that writes directly to GPU memory associated with tiles.
 const char kEnableZeroCopy[]                = "enable-zero-copy";
@@ -473,11 +473,6 @@ const char kFieldTrialHandle[] = "field-trial-handle";
 // file:///alias/some/path.html into file:///replacement/some/path.html.
 const char kFileUrlPathAlias[] = "file-url-path-alias";
 
-// Always use the Skia GPU backend for drawing layer tiles. Only valid with GPU
-// accelerated compositing + impl-side painting. Overrides the
-// kEnableGpuRasterization flag.
-const char kForceGpuRasterization[] = "force-gpu-rasterization";
-
 // Disables OOP rasterization.  Takes precedence over the enable flag.
 const char kDisableOopRasterization[] = "disable-oop-rasterization";
 
@@ -487,6 +482,13 @@ const char kEnableOopRasterization[] = "enable-oop-rasterization";
 
 // Turns on skia deferred display list for out of process raster.
 const char kEnableOopRasterizationDDL[] = "enable-oop-rasterization-ddl";
+
+// Pins the default referrer policy to the pre-M80 value of
+// no-referrer-when-downgrade.
+// TODO(crbug.com/1016541): After M82, remove when the corresponding
+// enterprise policy has been deleted.
+const char kForceLegacyDefaultReferrerPolicy[] =
+    "force-legacy-default-referrer-policy";
 
 // The number of multisample antialiasing samples for GPU rasterization.
 // Requires MSAA support on GPU to have an effect. 0 disables MSAA.
@@ -527,11 +529,6 @@ const char kGpuSandboxStartEarly[] = "gpu-sandbox-start-early";
 // Causes the GPU process to display a dialog on launch.
 const char kGpuStartupDialog[]              = "gpu-startup-dialog";
 
-// Don't allow content to arbitrarily append to the back/forward list.
-// The page must prcoess a user gesture before an entry can be added.
-const char kHistoryEntryRequiresUserGesture[] =
-    "history-entry-requires-user-gesture";
-
 // Start the renderer with an initial virtual time override specified in
 // seconds since the epoch.
 const char kInitialVirtualTime[] = "initial-virtual-time";
@@ -555,8 +552,11 @@ const char kDisableJavaScriptHarmonyShipping[] =
 // Enables experimental Harmony (ECMAScript 6) features.
 const char kJavaScriptHarmony[]             = "javascript-harmony";
 
-// Specifies the flags passed to JS engine
+// Specifies the flags passed to JS engine.
 const char kJavaScriptFlags[]               = "js-flags";
+
+// Flag to launch tests in the browser process.
+const char kLaunchAsBrowser[] = "as-browser";
 
 // Logs GPU control list decisions when enforcing blacklist rules.
 const char kLogGpuControlListDecisions[]    = "log-gpu-control-list-decisions";
@@ -574,16 +574,9 @@ const char kLogFile[] = "log-file";
 const char kMainFrameResizesAreOrientationChanges[] =
     "main-frame-resizes-are-orientation-changes";
 
-// Specifies the maximum disk cache size for the ApplicationCache. The default
-// value is 250MB.
-// TODO(crbug.com/895825): Remove this flag in Feb 2019.
-const char kMaxAppCacheDiskCacheSizeMb[] = "max-appcache-disk-cache-size-mb";
-
-// Specifies the maximum cache size per an origin for the ApplicationCache.
-// The default value is 5MB.
-// TODO(crbug.com/895825): Remove this flag in Feb 2019.
-const char kMaxAppCacheOriginCacheSizeMb[] =
-    "max-appcache-origin-cache-size-mb";
+// Allows user to override maximum number of active WebGL contexts per
+// renderer process.
+const char kMaxActiveWebGLContexts[] = "max-active-webgl-contexts";
 
 // Sets the maximium decoded image size limitation.
 const char kMaxDecodedImageSizeMb[] = "max-decoded-image-size-mb";
@@ -595,12 +588,9 @@ const char kMaxUntiledLayerWidth[]          = "max-untiled-layer-width";
 // Indicates the utility process should run with a message loop type of UI.
 const char kMessageLoopTypeUi[] = "message-loop-type-ui";
 
-// Sets options for MHTML generator to skip no-store resources:
-//   "skip-nostore-main" - fails to save a page if main frame is 'no-store'
-//   "skip-nostore-all" - also skips no-store subresources.
-const char kMHTMLGeneratorOption[]          = "mhtml-generator-option";
-const char kMHTMLSkipNostoreMain[]          = "skip-nostore-main";
-const char kMHTMLSkipNostoreAll[]           = "skip-nostore-all";
+// Set the default result for MockCertVerifier. This only works in test code.
+const char kMockCertVerifierDefaultResultForTesting[] =
+    "mock-cert-verifier-default-result-for-testing";
 
 // Use a Mojo-based LocalStorage implementation.
 const char kMojoLocalStorage[]              = "mojo-local-storage";
@@ -630,12 +620,6 @@ const char kNumRasterThreads[]              = "num-raster-threads";
 // value to 'never' to disable throttling.
 const char kOverridePluginPowerSaverForTesting[] =
     "override-plugin-power-saver-for-testing";
-
-// Controls the value of the threshold to start horizontal overscroll relative
-// to the default value.
-// E.g. set the value to '133' to have the overscroll start threshold be 133%
-// of the default threshold.
-const char kOverscrollStartThreshold[] = "overscroll-start-threshold";
 
 // Override the default value for the 'passive' field in javascript
 // addEventListener calls. Values are defined as:
@@ -708,6 +692,8 @@ const char kPullToRefresh[] = "pull-to-refresh";
 const char kRegisterPepperPlugins[]         = "register-pepper-plugins";
 
 // Enables remote debug over stdio pipes [in=3, out=4].
+// Optionally, specifies the format for the protocol messages, can be either
+// "JSON" (the default) or "CBOR".
 const char kRemoteDebuggingPipe[] = "remote-debugging-pipe";
 
 // Enables remote debug over HTTP on the specified port.
@@ -732,15 +718,18 @@ const char kRendererProcessLimit[]          = "renderer-process-limit";
 // that's needed to show a dialog.
 const char kRendererStartupDialog[]         = "renderer-startup-dialog";
 
-// Reduce the default `referer` header's granularity.
-const char kReducedReferrerGranularity[] =
-  "reduced-referrer-granularity";
-
-// Enables native memory sampling profiler with a given rate (default 128 KiB).
-const char kSamplingHeapProfiler[]          = "sampling-heap-profiler";
+// Manual tests only run when --run-manual is specified. This allows writing
+// tests that don't run automatically but are still in the same test binary.
+// This is useful so that a team that wants to run a few tests doesn't have to
+// add a new binary that must be compiled on all builds.
+const char kRunManualTestsFlag[] = "run-manual";
 
 // Causes the process to run as a sandbox IPC subprocess.
 const char kSandboxIPCProcess[]             = "sandbox-ipc";
+
+// Visibly render a border around layout shift rects in the web page to help
+// debug and study layout shifts.
+const char kShowLayoutShiftRegions[] = "show-layout-shift-regions";
 
 // Visibly render a border around paint rects in the web page to help debug
 // and study painting behavior.
@@ -778,11 +767,6 @@ const char kSitePerProcess[]                = "site-per-process";
 // on desktop since M67.  The name of the switch is preserved for
 // backcompatibility of chrome://flags.
 const char kDisableSiteIsolation[] = "disable-site-isolation-trials";
-
-// Just like kDisableSiteIsolation, but doesn't show the "stability and security
-// will suffer" butter bar warning.
-const char kDisableSiteIsolationForPolicy[] =
-    "disable-site-isolation-for-policy";
 
 // Specifies if the browser should start in fullscreen mode, like if the user
 // had pressed F11 right after startup.
@@ -824,6 +808,15 @@ const char kTouchEventFeatureDetectionDisabled[] = "disabled";
 // the platform default is used.
 const char kTouchTextSelectionStrategy[]    = "touch-selection-strategy";
 
+// Accepts specified file URL of a trustable WebBundle file. This flag
+// should be used only for testing purpose.
+const char kTrustableWebBundleFileUrl[] = "trustable-web-bundles-file-url";
+
+// Replaces the existing codecs supported in peer connection with a single fake
+// codec entry that create a fake video encoder and decoder.
+const char kUseFakeCodecForPeerConnection[] =
+    "use-fake-codec-for-peer-connection";
+
 // Bypass the media stream infobar by selecting the default device for media
 // streams (e.g. WebRTC). Works with --use-fake-device-for-media-stream.
 const char kUseFakeUIForMediaStream[]     = "use-fake-ui-for-media-stream";
@@ -856,6 +849,25 @@ const char kValidateInputEventStream[] = "validate-input-event-stream";
 // kWaitForDebugger flag passed on or not.
 const char kWaitForDebuggerChildren[]       = "wait-for-debugger-children";
 
+// Flag used by WebUI test runners to wait for debugger to be attached.
+const char kWaitForDebuggerWebUI[] = "wait-for-debugger-webui";
+
+// Set the antialiasing method used for webgl. (none, explicit, implicit)
+const char kWebglAntialiasingMode[] = "webgl-antialiasing-mode";
+
+// Set a default sample count for webgl if msaa is enabled.
+const char kWebglMSAASampleCount[] = "webgl-msaa-sample-count";
+
+// Enables specified backend for the Web OTP API.
+const char kWebOtpBackend[] = "web-otp-backend";
+
+// Enables Sms Verification backend for Web OTP API which requires app hash in
+// SMS body.
+const char kWebOtpBackendSmsVerification[] = "web-otp-backend-sms-verification";
+
+// Enables User Consent backend for Web OTP API.
+const char kWebOtpBackendUserConsent[] = "web-otp-backend-user-consent";
+
 #if BUILDFLAG(ENABLE_WEBRTC)
 // Disables encryption of RTP Media for WebRTC. When Chrome embeds Content, it
 // ignores this switch on its stable and beta channels.
@@ -874,6 +886,7 @@ const char kEnableWebRtcSrtpAesGcm[] = "enable-webrtc-srtp-aes-gcm";
 // Enables negotiation of encrypted header extensions from RFC 6904 for SRTP
 // in WebRTC.
 // See https://tools.ietf.org/html/rfc6904 for further information.
+// TODO(https://crbug.com/954201): Remove this.
 const char kEnableWebRtcSrtpEncryptedHeaders[] =
     "enable-webrtc-srtp-encrypted-headers";
 
@@ -903,13 +916,42 @@ const char kWebRtcMaxCpuConsumptionPercentage[] =
 // interval. Please see SetupStunProbeTrial in
 // chrome_browser_field_trials_desktop.cc for more detail.
 const char kWebRtcStunProbeTrialParameter[] = "webrtc-stun-probe-trial";
-#endif
+#endif // BUILDFLAG(ENABLE_WEBRTC)
 
 // Enable capture and local storage of WebRTC event logs without visiting
 // chrome://webrtc-internals. This is useful for automated testing. It accepts
 // the path to which the local logs would be stored. Disabling is not possible
 // without restarting the browser and relaunching without this flag.
 const char kWebRtcLocalEventLogging[] = "webrtc-event-logging";
+
+// Forcibly enable and select the specified runtime for webxr.
+// Note that this provides an alternative means of enabling a runtime, and will
+// also functionally disable all other runtimes.
+const char kWebXrForceRuntime[] = "force-webxr-runtime";
+
+// Tell WebXr to assume that it does not support any runtimes.
+const char kWebXrRuntimeNone[] = "no-vr-runtime";
+
+const char kWebXrRuntimeOrientationSensors[] = "orientation-sensors";
+
+// The following are the runtimes that WebXr supports.
+const char kWebXrRuntimeOculus[] = "oculus";
+const char kWebXrRuntimeOpenVr[] = "openvr";
+const char kWebXrRuntimeOpenXr[] = "openxr";
+const char kWebXrRuntimeWMR[] = "windows-mixed-reality";
+
+// This switch allows the Web Components v0 APIs to be re-enabled temporarily
+// from M80 through M84.
+// TODO(937746): Remove this after M84.
+const char kWebComponentsV0Enabled[] = "web-components-v0-enabled";
+
+// This switch allows the FormControlsRefresh feature to be disabled temporarily
+// from M81 through M84.
+// TODO(1034611): Remove this after M84.
+const char kUseLegacyFormControls[] = "use-legacy-form-controls";
+
+// This switch disables the ScrollToTextFragment feature.
+const char kDisableScrollToTextFragment[] = "disable-scroll-to-text-fragment";
 
 #if defined(OS_ANDROID)
 // Disable Media Session API
@@ -923,6 +965,11 @@ const char kDisablePullToRefreshEffect[]   = "disable-pull-to-refresh-effect";
 
 // Disable the locking feature of the screen orientation API.
 const char kDisableScreenOrientationLock[]  = "disable-screen-orientation-lock";
+
+// Just like kDisableSiteIsolation, but doesn't show the "stability and security
+// will suffer" butter bar warning.
+const char kDisableSiteIsolationForPolicy[] =
+    "disable-site-isolation-for-policy";
 
 // Disable timeouts that may cause the browser to die when running slowly. This
 // is useful if running with profiling (such as debug malloc).
@@ -945,9 +992,6 @@ const char kRemoteDebuggingSocketName[]     = "remote-debugging-socket-name";
 // Block ChildProcessMain thread of the renderer's ChildProcessService until a
 // Java debugger is attached.
 const char kRendererWaitForJavaDebugger[] = "renderer-wait-for-java-debugger";
-
-// Enables overscrolling for the OSK on Android.
-const char kEnableOSKOverscroll[]               = "enable-osk-overscroll";
 #endif
 
 // Enable the experimental Accessibility Object Model APIs in development.
@@ -960,15 +1004,6 @@ const char kEnableAggressiveDOMStorageFlushing[] =
 
 // Enable indication that browser is controlled by automation.
 const char kEnableAutomation[] = "enable-automation";
-
-// Enable audio for desktop share.
-const char kDisableAudioSupportForDesktopShare[] =
-    "disable-audio-support-for-desktop-share";
-
-#if defined(OS_CHROMEOS)
-// Disables panel fitting (used for mirror mode).
-const char kDisablePanelFitting[]           = "disable-panel-fitting";
-#endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
 // Allows sending text-to-speech requests to speech-dispatcher, a common
@@ -1008,10 +1043,6 @@ const char kDeviceScaleFactor[]     = "device-scale-factor";
 // Disable the Legacy Window which corresponds to the size of the WebContents.
 const char kDisableLegacyIntermediateWindow[] = "disable-legacy-window";
 
-// Enables experimental hardware acceleration for VP8/VP9 video decoding.
-// Bitmask - 0x1=Microsoft, 0x2=AMD, 0x03=Try all.
-const char kEnableAcceleratedVpxDecode[] = "enable-accelerated-vpx-decode";
-
 // Enables H264 HW decode acceleration for WebRtc on Win 7.
 const char kEnableWin7WebRtcHWH264Decoding[] =
     "enable-win7-webrtc-hw-h264-decoding";
@@ -1019,12 +1050,6 @@ const char kEnableWin7WebRtcHWH264Decoding[] =
 // DirectWrite FontCache is shared by browser to renderers using shared memory.
 // This switch allows us to pass the shared memory handle to the renderer.
 const char kFontCacheSharedHandle[] = "font-cache-shared-handle";
-
-// Sets the free memory thresholds below which the system is considered to be
-// under moderate and critical memory pressure. Used in the browser process,
-// and ignored if invalid. Specified as a pair of comma separated integers.
-// See base/win/memory_pressure_monitor.cc for defaults.
-const char kMemoryPressureThresholdsMb[] = "memory-pressure-thresholds-mb";
 
 // The boolean value (0/1) of FontRenderParams::antialiasing to be passed to
 // Ppapi processes.
@@ -1035,9 +1060,9 @@ const char kPpapiAntialiasedTextEnabled[] = "ppapi-antialiased-text-enabled";
 const char kPpapiSubpixelRenderingSetting[] =
     "ppapi-subpixel-rendering-setting";
 
-// Enables the exporting of the tracing events to ETW. This is only supported on
-// Windows Vista and later.
-const char kTraceExportEventsToETW[] = "trace-export-events-to-etw";
+// Causes the second GPU process used for gpu info collection to display a
+// dialog on launch.
+const char kGpu2StartupDialog[] = "gpu2-startup-dialog";
 #endif
 
 #if defined(ENABLE_IPC_FUZZER)

@@ -8,7 +8,9 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/no_destructor.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/sequence_local_storage_slot.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/device/battery/battery_monitor_impl.h"
 #include "services/device/battery/battery_status_manager.h"
@@ -17,20 +19,20 @@ namespace device {
 
 BatteryStatusService::BatteryStatusService()
     : main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      update_callback_(base::Bind(&BatteryStatusService::NotifyConsumers,
-                                  base::Unretained(this))),
+      update_callback_(
+          base::BindRepeating(&BatteryStatusService::NotifyConsumers,
+                              base::Unretained(this))),
       status_updated_(false),
       is_shutdown_(false) {
-  callback_list_.set_removal_callback(base::Bind(
+  callback_list_.set_removal_callback(base::BindRepeating(
       &BatteryStatusService::ConsumersChanged, base::Unretained(this)));
 }
 
-BatteryStatusService::~BatteryStatusService() {}
+BatteryStatusService::~BatteryStatusService() = default;
 
 BatteryStatusService* BatteryStatusService::GetInstance() {
-  return base::Singleton<
-      BatteryStatusService,
-      base::LeakySingletonTraits<BatteryStatusService>>::get();
+  static base::NoDestructor<BatteryStatusService> service_wrapper;
+  return service_wrapper.get();
 }
 
 std::unique_ptr<BatteryStatusService::BatteryUpdateSubscription>
@@ -70,8 +72,9 @@ void BatteryStatusService::NotifyConsumers(const mojom::BatteryStatus& status) {
   DCHECK(!is_shutdown_);
 
   main_thread_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&BatteryStatusService::NotifyConsumersOnMainThread,
-                            base::Unretained(this), status));
+      FROM_HERE,
+      base::BindOnce(&BatteryStatusService::NotifyConsumersOnMainThread,
+                     base::Unretained(this), status));
 }
 
 void BatteryStatusService::NotifyConsumersOnMainThread(

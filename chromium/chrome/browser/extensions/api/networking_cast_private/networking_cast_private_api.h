@@ -18,11 +18,11 @@ class DictionaryValue;
 namespace extensions {
 
 class NetworkingCastPrivateVerifyDestinationFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   NetworkingCastPrivateVerifyDestinationFunction() {}
   DECLARE_EXTENSION_FUNCTION("networking.castPrivate.verifyDestination",
-                             NETWORKINGCASTPRIVATE_VERIFYDESTINATION);
+                             NETWORKINGCASTPRIVATE_VERIFYDESTINATION)
 
  protected:
   ~NetworkingCastPrivateVerifyDestinationFunction() override;
@@ -38,11 +38,11 @@ class NetworkingCastPrivateVerifyDestinationFunction
 };
 
 class NetworkingCastPrivateVerifyAndEncryptDataFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   NetworkingCastPrivateVerifyAndEncryptDataFunction() {}
   DECLARE_EXTENSION_FUNCTION("networking.castPrivate.verifyAndEncryptData",
-                             NETWORKINGCASTPRIVATE_VERIFYANDENCRYPTDATA);
+                             NETWORKINGCASTPRIVATE_VERIFYANDENCRYPTDATA)
 
  protected:
   ~NetworkingCastPrivateVerifyAndEncryptDataFunction() override;
@@ -58,11 +58,11 @@ class NetworkingCastPrivateVerifyAndEncryptDataFunction
 };
 
 class NetworkingCastPrivateSetWifiTDLSEnabledStateFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   NetworkingCastPrivateSetWifiTDLSEnabledStateFunction() {}
   DECLARE_EXTENSION_FUNCTION("networking.castPrivate.setWifiTDLSEnabledState",
-                             NETWORKINGCASTPRIVATE_SETWIFITDLSENABLEDSTATE);
+                             NETWORKINGCASTPRIVATE_SETWIFITDLSENABLEDSTATE)
 
  protected:
   ~NetworkingCastPrivateSetWifiTDLSEnabledStateFunction() override;
@@ -82,11 +82,11 @@ class NetworkingCastPrivateSetWifiTDLSEnabledStateFunction
 };
 
 class NetworkingCastPrivateGetWifiTDLSStatusFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   NetworkingCastPrivateGetWifiTDLSStatusFunction() {}
   DECLARE_EXTENSION_FUNCTION("networking.castPrivate.getWifiTDLSStatus",
-                             NETWORKINGCASTPRIVATE_GETWIFITDLSSTATUS);
+                             NETWORKINGCASTPRIVATE_GETWIFITDLSSTATUS)
 
  protected:
   ~NetworkingCastPrivateGetWifiTDLSStatusFunction() override;

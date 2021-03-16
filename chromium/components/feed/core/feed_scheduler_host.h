@@ -13,11 +13,11 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "components/feed/core/refresh_throttler.h"
-#include "components/feed/core/user_classifier.h"
+#include "components/feed/core/common/enums.h"
+#include "components/feed/core/common/refresh_throttler.h"
+#include "components/feed/core/common/user_classifier.h"
 #include "components/web_resource/eula_accepted_notifier.h"
 
-class PrefRegistrySimple;
 class PrefService;
 
 namespace base {
@@ -50,15 +50,6 @@ enum NativeRequestBehavior {
 // content.
 class FeedSchedulerHost : web_resource::EulaAcceptedNotifier::Observer {
  public:
-  // The TriggerType enum specifies values for the events that can trigger
-  // refreshing articles. When adding values, be certain to also update the
-  // corresponding definition in enums.xml.
-  enum class TriggerType {
-    kNtpShown = 0,
-    kForegrounded = 1,
-    kFixedTimer = 2,
-    kMaxValue = kFixedTimer
-  };
 
   FeedSchedulerHost(PrefService* profile_prefs,
                     PrefService* local_state,
@@ -67,8 +58,6 @@ class FeedSchedulerHost : web_resource::EulaAcceptedNotifier::Observer {
 
   using ScheduleBackgroundTaskCallback =
       base::RepeatingCallback<void(base::TimeDelta)>;
-
-  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
   // Provide dependent pieces of functionality the scheduler relies on. Should
   // be called exactly once before other public methods are called. This is
@@ -116,6 +105,20 @@ class FeedSchedulerHost : web_resource::EulaAcceptedNotifier::Observer {
   // the return value, and if true, the caller should start a refresh.
   bool OnArticlesCleared(bool suppress_refreshes);
 
+  // Surface user_classifier_ for internals debugging page.
+  UserClassifier* GetUserClassifierForDebugging();
+
+  // Surface suppress_refreshes_until_ for internals debugging page.
+  base::Time GetSuppressRefreshesUntilForDebugging() const;
+
+  // Surface last_fetch_status_ for internals debugging page.
+  int GetLastFetchStatusForDebugging() const;
+
+  // Surface the TriggerType for the last ShouldRefresh check that resulted in
+  // kShouldRefresh. Callers of ShouldRefresh are presumed to follow with the
+  // actual refresh.
+  TriggerType* GetLastFetchTriggerTypeForDebugging() const;
+
  private:
   FRIEND_TEST_ALL_PREFIXES(FeedSchedulerHostTest, GetTriggerThreshold);
 
@@ -123,10 +126,10 @@ class FeedSchedulerHost : web_resource::EulaAcceptedNotifier::Observer {
   void OnEulaAccepted() override;
 
   // Determines whether a refresh should be performed for the given |trigger|.
-  // If this method is called and returns true we presume the refresh will
-  // happen, therefore we report metrics respectively and update
+  // If this method is called and returns kShouldRefresh we presume the refresh
+  // will happen, therefore we report metrics respectively and update
   // |tracking_oustanding_request_|.
-  bool ShouldRefresh(TriggerType trigger);
+  ShouldRefreshResult ShouldRefresh(TriggerType trigger);
 
   // Decides if content whose age is the difference between now and
   // |content_creation_date_time| is old enough to be considered stale.
@@ -195,8 +198,13 @@ class FeedSchedulerHost : web_resource::EulaAcceptedNotifier::Observer {
 
   // In the case the user transitions between user classes, hold onto a
   // throttler for any situation.
-  base::flat_map<UserClassifier::UserClass, std::unique_ptr<RefreshThrottler>>
-      throttlers_;
+  base::flat_map<UserClass, std::unique_ptr<RefreshThrottler>> throttlers_;
+
+  // Status of the last fetch for debugging.
+  int last_fetch_status_ = 0;
+
+  // Reason for last fetch for debugging.
+  std::unique_ptr<TriggerType> last_fetch_trigger_type_;
 
   DISALLOW_COPY_AND_ASSIGN(FeedSchedulerHost);
 };

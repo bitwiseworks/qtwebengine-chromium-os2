@@ -13,24 +13,23 @@
 #include <cstdint>
 #include <memory>
 
-#include "base/macros.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_decoder.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_decoder_listener.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_decoder_tables.h"
 #include "net/third_party/quiche/src/http2/hpack/hpack_string.h"
 #include "net/third_party/quiche/src/http2/hpack/http2_hpack_constants.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_header_table.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_headers_handler_interface.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_export.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
 
 namespace spdy {
 namespace test {
 class HpackDecoderAdapterPeer;
 }  // namespace test
 
-class SPDY_EXPORT_PRIVATE HpackDecoderAdapter {
+class QUICHE_EXPORT_PRIVATE HpackDecoderAdapter {
  public:
   friend test::HpackDecoderAdapterPeer;
   HpackDecoderAdapter();
@@ -80,10 +79,17 @@ class SPDY_EXPORT_PRIVATE HpackDecoderAdapter {
   // of individual transport buffers.
   void set_max_decode_buffer_size_bytes(size_t max_decode_buffer_size_bytes);
 
+  // Specifies the maximum size of an on-the-wire header block that will be
+  // accepted.
+  void set_max_header_block_bytes(size_t max_header_block_bytes);
+
   size_t EstimateMemoryUsage() const;
 
+  // Error code if an error has occurred, Error::kOk otherwise.
+  http2::HpackDecodingError error() const { return error_; }
+
  private:
-  class SPDY_EXPORT_PRIVATE ListenerAdapter
+  class QUICHE_EXPORT_PRIVATE ListenerAdapter
       : public http2::HpackDecoderListener,
         public http2::HpackDecoderTablesDebugListener {
    public:
@@ -102,18 +108,18 @@ class SPDY_EXPORT_PRIVATE HpackDecoderAdapter {
 
     // Override the HpackDecoderListener methods:
     void OnHeaderListStart() override;
-    void OnHeader(http2::HpackEntryType entry_type,
-                  const http2::HpackString& name,
+    void OnHeader(const http2::HpackString& name,
                   const http2::HpackString& value) override;
     void OnHeaderListEnd() override;
-    void OnHeaderErrorDetected(SpdyStringPiece error_message) override;
+    void OnHeaderErrorDetected(
+        quiche::QuicheStringPiece error_message) override;
 
     // Override the HpackDecoderTablesDebugListener methods:
     int64_t OnEntryInserted(const http2::HpackStringPair& entry,
                             size_t insert_count) override;
     void OnUseEntry(const http2::HpackStringPair& entry,
                     size_t insert_count,
-                    int64_t insert_time) override;
+                    int64_t time_added) override;
 
     void AddToTotalHpackBytes(size_t delta) { total_hpack_bytes_ += delta; }
     size_t total_hpack_bytes() const { return total_hpack_bytes_; }
@@ -148,10 +154,16 @@ class SPDY_EXPORT_PRIVATE HpackDecoderAdapter {
   // How much encoded data this decoder is willing to buffer.
   size_t max_decode_buffer_size_bytes_;
 
+  // How much encoded data this decoder is willing to process.
+  size_t max_header_block_bytes_;
+
   // Flag to keep track of having seen the header block start. Needed at the
   // moment because HandleControlFrameHeadersStart won't be called if a handler
   // is not being provided by the caller.
   bool header_block_started_;
+
+  // Error code if an error has occurred, Error::kOk otherwise.
+  http2::HpackDecodingError error_;
 };
 
 }  // namespace spdy

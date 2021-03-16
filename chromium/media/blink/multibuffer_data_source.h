@@ -37,7 +37,7 @@ class MultiBufferReader;
 // with the |task_runner| passed in the constructor.
 class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
  public:
-  typedef base::Callback<void(bool)> DownloadingCB;
+  using DownloadingCB = base::RepeatingCallback<void(bool)>;
 
   // Used to specify video preload states. They are "hints" to the browser about
   // how aggressively the browser should load and buffer data.
@@ -60,14 +60,14 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
       scoped_refptr<UrlData> url_data,
       MediaLog* media_log,
       BufferedDataSourceHost* host,
-      const DownloadingCB& downloading_cb);
+      DownloadingCB downloading_cb);
   ~MultibufferDataSource() override;
 
   // Executes |init_cb| with the result of initialization when it has completed.
   //
   // Method called on the render thread.
-  typedef base::Callback<void(bool)> InitializeCB;
-  void Initialize(const InitializeCB& init_cb);
+  using InitializeCB = base::OnceCallback<void(bool)>;
+  void Initialize(InitializeCB init_cb);
 
   // Adjusts the buffering algorithm based on the given preload value.
   void SetPreload(Preload preload);
@@ -81,6 +81,10 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // https://html.spec.whatwg.org/#cors-cross-origin
   // This must be called after the response arrives.
   bool IsCorsCrossOrigin() const;
+
+  // Returns true if the response includes an Access-Control-Allow-Origin
+  // header (that is not "null").
+  bool HasAccessControl() const;
 
   // Returns the CorsMode of the underlying UrlData.
   UrlData::CorsMode cors_mode() const;
@@ -113,13 +117,15 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   void Read(int64_t position,
             int size,
             uint8_t* data,
-            const DataSource::ReadCB& read_cb) override;
+            DataSource::ReadCB read_cb) override;
   bool GetSize(int64_t* size_out) override;
   bool IsStreaming() override;
   void SetBitrate(int bitrate) override;
   void SetIsClientAudioElement(bool is_client_audio_element) {
     is_client_audio_element_ = is_client_audio_element;
   }
+
+  bool cancel_on_defer_for_testing() const { return cancel_on_defer_; }
 
  protected:
   void OnRedirect(const scoped_refptr<UrlData>& destination);
@@ -265,7 +271,7 @@ class MEDIA_BLINK_EXPORT MultibufferDataSource : public DataSource {
   // a persistent reference. This avoids problems with the thread-safety of
   // reaching into this class from multiple threads to attain a WeakPtr.
   base::WeakPtr<MultibufferDataSource> weak_ptr_;
-  base::WeakPtrFactory<MultibufferDataSource> weak_factory_;
+  base::WeakPtrFactory<MultibufferDataSource> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MultibufferDataSource);
 };

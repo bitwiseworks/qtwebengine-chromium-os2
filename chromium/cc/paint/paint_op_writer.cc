@@ -19,6 +19,10 @@
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/skia_util.h"
 
+#ifndef OS_ANDROID
+#include "cc/paint/skottie_transfer_cache_entry.h"
+#endif
+
 namespace cc {
 namespace {
 const size_t kSkiaAlignment = 4u;
@@ -39,7 +43,7 @@ SkIRect MakeSrcRect(const PaintImage& image) {
 size_t PaintOpWriter::GetFlattenableSize(const SkFlattenable* flattenable) {
   // The first bit is always written to indicate the serialized size of the
   // flattenable, or zero if it doesn't exist.
-  size_t total_size = sizeof(uint64_t) + alignof(uint64_t);
+  size_t total_size = sizeof(uint64_t) + sizeof(uint64_t) /* alignment */;
   if (!flattenable)
     return total_size;
 
@@ -60,7 +64,7 @@ size_t PaintOpWriter::GetImageSize(const PaintImage& image) {
     image_size += sizeof(info.colorType());
     image_size += sizeof(info.width());
     image_size += sizeof(info.height());
-    image_size += sizeof(uint64_t) + alignof(uint64_t);
+    image_size += sizeof(uint64_t) + sizeof(uint64_t) /* alignment */;
     image_size += info.computeMinByteSize();
   }
   return image_size;
@@ -173,18 +177,27 @@ void PaintOpWriter::Write(const SkPath& path) {
   auto id = path.getGenerationID();
   Write(id);
 
+  if (options_.paint_cache->Get(PaintCacheDataType::kPath, id)) {
+    Write(static_cast<uint32_t>(PaintCacheEntryState::kCached));
+    return;
+  }
+
+  // The SkPath may fail to serialize if the bytes required would overflow.
+  uint64_t bytes_required = path.writeToMemory(nullptr);
+  if (bytes_required == 0u) {
+    Write(static_cast<uint32_t>(PaintCacheEntryState::kEmpty));
+    return;
+  }
+
+  Write(static_cast<uint32_t>(PaintCacheEntryState::kInlined));
   uint64_t* bytes_to_skip = WriteSize(0u);
   if (!valid_)
     return;
 
-  if (options_.paint_cache->Get(PaintCacheDataType::kPath, id))
-    return;
-  uint64_t bytes_required = path.writeToMemory(nullptr);
   if (bytes_required > remaining_bytes_) {
     valid_ = false;
     return;
   }
-
   size_t bytes_written = path.writeToMemory(memory_);
   DCHECK_EQ(bytes_written, bytes_required);
   options_.paint_cache->Put(PaintCacheDataType::kPath, id, bytes_written);
@@ -247,7 +260,7 @@ void PaintOpWriter::Write(const DrawImage& draw_image,
   }
 
   // Default mode uses the transfer cache.
-  auto decoded_image = options_.image_provider->GetDecodedDrawImage(draw_image);
+  auto decoded_image = options_.image_provider->GetRasterContent(draw_image);
   DCHECK(!decoded_image.decoded_image().image())
       << "Use transfer cache for image serialization";
   const DecodedDrawImage& decoded_draw_image = decoded_image.decoded_image();
@@ -260,6 +273,35 @@ void PaintOpWriter::Write(const DrawImage& draw_image,
   WriteImage(id.value_or(kInvalidImageTransferCacheEntryId),
              decoded_draw_image.transfer_cache_entry_needs_mips());
 }
+
+// Android does not use skottie. Remove below section to keep binary size to a
+// minimum.
+#ifndef OS_ANDROID
+void PaintOpWriter::Write(scoped_refptr<SkottieWrapper> skottie) {
+  uint32_t id = skottie->id();
+  Write(id);
+
+  uint64_t* bytes_to_skip = WriteSize(0u);
+  if (!valid_)
+    return;
+
+  bool locked =
+      options_.transfer_cache->LockEntry(TransferCacheEntryType::kSkottie, id);
+
+  // Add a cache entry for the skottie animation.
+  uint64_t bytes_written = 0u;
+  if (!locked) {
+    bytes_written = options_.transfer_cache->CreateEntry(
+        ClientSkottieTransferCacheEntry(skottie), memory_);
+    options_.transfer_cache->AssertLocked(TransferCacheEntryType::kSkottie, id);
+  }
+
+  DCHECK_LE(bytes_written, remaining_bytes_);
+  *bytes_to_skip = bytes_written;
+  memory_ += bytes_written;
+  remaining_bytes_ -= bytes_written;
+}
+#endif  // OS_ANDROID
 
 void PaintOpWriter::WriteImage(uint32_t transfer_cache_entry_id,
                                bool needs_mips) {
@@ -354,13 +396,23 @@ sk_sp<PaintShader> PaintOpWriter::TransformShaderIfNecessary(
   const auto& ctm = options_.canvas->getTotalMatrix();
 
   if (type == PaintShader::Type::kImage) {
-    return original->CreateDecodedImage(ctm, quality, options_.image_provider,
-                                        paint_image_transfer_cache_entry_id,
-                                        &quality, paint_image_needs_mips);
+    if (!original->paint_image().IsPaintWorklet()) {
+      return original->CreateDecodedImage(ctm, quality, options_.image_provider,
+                                          paint_image_transfer_cache_entry_id,
+                                          &quality, paint_image_needs_mips);
+    }
+    sk_sp<PaintShader> record_shader =
+        original->CreatePaintWorkletRecord(options_.image_provider);
+    if (!record_shader)
+      return nullptr;
+    return record_shader->CreateScaledPaintRecord(
+        ctm, options_.max_texture_size, paint_record_post_scale);
   }
 
-  if (type == PaintShader::Type::kPaintRecord)
-    return original->CreateScaledPaintRecord(ctm, paint_record_post_scale);
+  if (type == PaintShader::Type::kPaintRecord) {
+    return original->CreateScaledPaintRecord(ctm, options_.max_texture_size,
+                                             paint_record_post_scale);
+  }
 
   return sk_ref_sp<PaintShader>(original);
 }
@@ -397,8 +449,10 @@ void PaintOpWriter::Write(const PaintShader* shader, SkFilterQuality quality) {
   WriteSimple(shader->flags_);
   WriteSimple(shader->end_radius_);
   WriteSimple(shader->start_radius_);
-  WriteSimple(shader->tx_);
-  WriteSimple(shader->ty_);
+  // SkTileMode does not have an explicitly defined backing type, so
+  // write a consistently sized value.
+  Write(static_cast<int32_t>(shader->tx_));
+  Write(static_cast<int32_t>(shader->ty_));
   WriteSimple(shader->fallback_color_);
   WriteSimple(shader->scaling_behavior_);
   if (shader->local_matrix_) {
@@ -451,6 +505,10 @@ void PaintOpWriter::Write(const PaintShader* shader, SkFilterQuality quality) {
 
 void PaintOpWriter::Write(SkColorType color_type) {
   WriteSimple(static_cast<uint32_t>(color_type));
+}
+
+void PaintOpWriter::Write(SkYUVColorSpace yuv_color_space) {
+  WriteSimple(static_cast<uint32_t>(yuv_color_space));
 }
 
 void PaintOpWriter::WriteData(size_t bytes, const void* input) {
@@ -669,8 +727,22 @@ void PaintOpWriter::Write(const ImagePaintFilter& filter) {
 
 void PaintOpWriter::Write(const RecordPaintFilter& filter) {
   WriteSimple(filter.record_bounds());
-  Write(filter.record().get(), gfx::Rect(), gfx::SizeF(1.f, 1.f),
-        options_.canvas ? options_.canvas->getTotalMatrix() : SkMatrix::I());
+  if (!options_.canvas) {
+    Write(filter.record().get(), gfx::Rect(), gfx::SizeF(1.f, 1.f),
+          SkMatrix::I());
+    return;
+  }
+
+  // The logic here to only use the scale component of the matrix during
+  // analysis is for consistency with the rasterization of the filter later in
+  // pipeline in skia. For every draw with a filter, SkCanvas creates a layer
+  // for the draw and modifies the scale for these filters.
+  // See SkCanvas::internalSaveLayer.
+  SkMatrix mat = options_.canvas->getTotalMatrix();
+  SkSize scale;
+  if (!mat.isScaleTranslate() && mat.decomposeScale(&scale))
+    mat = SkMatrix::MakeScale(scale.width(), scale.height());
+  Write(filter.record().get(), gfx::Rect(), gfx::SizeF(1.f, 1.f), mat);
 }
 
 void PaintOpWriter::Write(const MergePaintFilter& filter) {
@@ -781,8 +853,7 @@ void PaintOpWriter::Write(const PaintRecord* record,
       memory_, remaining_bytes_, options_.image_provider,
       options_.transfer_cache, options_.paint_cache, options_.strike_server,
       options_.color_space, can_use_lcd_text,
-      options_.context_supports_distance_field_text, options_.max_texture_size,
-      options_.max_texture_bytes);
+      options_.context_supports_distance_field_text, options_.max_texture_size);
   serializer.Serialize(record, playback_rect, post_scale,
                        post_matrix_for_analysis);
 

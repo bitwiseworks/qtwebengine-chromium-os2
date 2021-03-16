@@ -4,6 +4,7 @@
 
 #include "src/compiler/raw-machine-assembler.h"
 
+#include "src/base/small-vector.h"
 #include "src/compiler/compiler-source-position-table.h"
 #include "src/compiler/node-properties.h"
 #include "src/compiler/pipeline.h"
@@ -68,12 +69,15 @@ Node* RawMachineAssembler::RelocatableIntPtrConstant(intptr_t value,
              : RelocatableInt32Constant(static_cast<int>(value), rmode);
 }
 
-Node* RawMachineAssembler::OptimizedAllocate(Node* size,
-                                             PretenureFlag pretenure) {
-  return AddNode(simplified()->AllocateRaw(Type::Any(), pretenure), size);
+Node* RawMachineAssembler::OptimizedAllocate(
+    Node* size, AllocationType allocation,
+    AllowLargeObjects allow_large_objects) {
+  return AddNode(
+      simplified()->AllocateRaw(Type::Any(), allocation, allow_large_objects),
+      size);
 }
 
-Schedule* RawMachineAssembler::Export() {
+Schedule* RawMachineAssembler::ExportForTest() {
   // Compute the correct codegen order.
   DCHECK(schedule_->rpo_order()->empty());
   if (FLAG_trace_turbo_scheduler) {
@@ -102,6 +106,7 @@ Graph* RawMachineAssembler::ExportForOptimization() {
     StdoutStream{} << *schedule_;
   }
   schedule_->EnsureCFGWellFormedness();
+  OptimizeControlFlow(schedule_, graph(), common());
   Scheduler::ComputeSpecialRPO(zone(), schedule_);
   if (FLAG_trace_turbo_scheduler) {
     PrintF("--- SCHEDULE BEFORE GRAPH CREATION -------------------------\n");
@@ -111,6 +116,99 @@ Graph* RawMachineAssembler::ExportForOptimization() {
   // Invalidate RawMachineAssembler.
   schedule_ = nullptr;
   return graph();
+}
+
+void RawMachineAssembler::OptimizeControlFlow(Schedule* schedule, Graph* graph,
+                                              CommonOperatorBuilder* common) {
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (size_t i = 0; i < schedule->all_blocks()->size(); ++i) {
+      BasicBlock* block = (*schedule->all_blocks())[i];
+      if (block == nullptr) continue;
+
+      // Short-circuit a goto if the succeeding block is not a control-flow
+      // merge. This is not really useful on it's own since graph construction
+      // has the same effect, but combining blocks improves the pattern-match on
+      // their structure below.
+      if (block->control() == BasicBlock::kGoto) {
+        DCHECK_EQ(block->SuccessorCount(), 1);
+        BasicBlock* successor = block->SuccessorAt(0);
+        if (successor->PredecessorCount() == 1) {
+          DCHECK_EQ(successor->PredecessorAt(0), block);
+          for (Node* node : *successor) {
+            schedule->SetBlockForNode(nullptr, node);
+            schedule->AddNode(block, node);
+          }
+          block->set_control(successor->control());
+          Node* control_input = successor->control_input();
+          block->set_control_input(control_input);
+          if (control_input) {
+            schedule->SetBlockForNode(block, control_input);
+          }
+          if (successor->deferred()) block->set_deferred(true);
+          block->ClearSuccessors();
+          schedule->MoveSuccessors(successor, block);
+          schedule->ClearBlockById(successor->id());
+          changed = true;
+          --i;
+          continue;
+        }
+      }
+      // Block-cloning in the simple case where a block consists only of a phi
+      // node and a branch on that phi. This just duplicates the branch block
+      // for each predecessor, replacing the phi node with the corresponding phi
+      // input.
+      if (block->control() == BasicBlock::kBranch && block->NodeCount() == 1) {
+        Node* phi = block->NodeAt(0);
+        if (phi->opcode() != IrOpcode::kPhi) continue;
+        Node* branch = block->control_input();
+        DCHECK_EQ(branch->opcode(), IrOpcode::kBranch);
+        if (NodeProperties::GetValueInput(branch, 0) != phi) continue;
+        if (phi->UseCount() != 1) continue;
+        DCHECK_EQ(phi->op()->ValueInputCount(), block->PredecessorCount());
+
+        // Turn projection blocks into normal blocks.
+        DCHECK_EQ(block->SuccessorCount(), 2);
+        BasicBlock* true_block = block->SuccessorAt(0);
+        BasicBlock* false_block = block->SuccessorAt(1);
+        DCHECK_EQ(true_block->NodeAt(0)->opcode(), IrOpcode::kIfTrue);
+        DCHECK_EQ(false_block->NodeAt(0)->opcode(), IrOpcode::kIfFalse);
+        (*true_block->begin())->Kill();
+        true_block->RemoveNode(true_block->begin());
+        (*false_block->begin())->Kill();
+        false_block->RemoveNode(false_block->begin());
+        true_block->ClearPredecessors();
+        false_block->ClearPredecessors();
+
+        size_t arity = block->PredecessorCount();
+        for (size_t i = 0; i < arity; ++i) {
+          BasicBlock* predecessor = block->PredecessorAt(i);
+          predecessor->ClearSuccessors();
+          if (block->deferred()) predecessor->set_deferred(true);
+          Node* branch_clone = graph->CloneNode(branch);
+          int phi_input = static_cast<int>(i);
+          NodeProperties::ReplaceValueInput(
+              branch_clone, NodeProperties::GetValueInput(phi, phi_input), 0);
+          BasicBlock* new_true_block = schedule->NewBasicBlock();
+          BasicBlock* new_false_block = schedule->NewBasicBlock();
+          new_true_block->AddNode(
+              graph->NewNode(common->IfTrue(), branch_clone));
+          new_false_block->AddNode(
+              graph->NewNode(common->IfFalse(), branch_clone));
+          schedule->AddGoto(new_true_block, true_block);
+          schedule->AddGoto(new_false_block, false_block);
+          DCHECK_EQ(predecessor->control(), BasicBlock::kGoto);
+          predecessor->set_control(BasicBlock::kNone);
+          schedule->AddBranch(predecessor, branch_clone, new_true_block,
+                              new_false_block);
+        }
+        branch->Kill();
+        schedule->ClearBlockById(block->id());
+        changed = true;
+        continue;
+      }
+    }
+  }
 }
 
 void RawMachineAssembler::MakeReschedulable() {
@@ -512,7 +610,7 @@ void RawMachineAssembler::Return(Node* v1, Node* v2, Node* v3, Node* v4) {
 }
 
 void RawMachineAssembler::Return(int count, Node* vs[]) {
-  typedef Node* Node_ptr;
+  using Node_ptr = Node*;
   Node** values = new Node_ptr[count + 1];
   values[0] = Int32Constant(0);
   for (int i = 0; i < count; ++i) values[i + 1] = vs[i];
@@ -552,8 +650,8 @@ void RawMachineAssembler::PopAndReturn(Node* pop, Node* v1, Node* v2, Node* v3,
   current_block_ = nullptr;
 }
 
-void RawMachineAssembler::DebugAbort(Node* message) {
-  AddNode(machine()->DebugAbort(), message);
+void RawMachineAssembler::AbortCSAAssert(Node* message) {
+  AddNode(machine()->AbortCSAAssert(), message);
 }
 
 void RawMachineAssembler::DebugBreak() { AddNode(machine()->DebugBreak()); }
@@ -564,11 +662,15 @@ void RawMachineAssembler::Unreachable() {
   current_block_ = nullptr;
 }
 
-void RawMachineAssembler::Comment(std::string msg) {
+void RawMachineAssembler::Comment(const std::string& msg) {
   size_t length = msg.length() + 1;
   char* zone_buffer = zone()->NewArray<char>(length);
   MemCopy(zone_buffer, msg.c_str(), length);
   AddNode(machine()->Comment(zone_buffer));
+}
+
+void RawMachineAssembler::StaticAssert(Node* value) {
+  AddNode(common()->StaticAssert(), value);
 }
 
 Node* RawMachineAssembler::CallN(CallDescriptor* call_descriptor,
@@ -588,203 +690,71 @@ Node* RawMachineAssembler::CallNWithFrameState(CallDescriptor* call_descriptor,
   return AddNode(common()->Call(call_descriptor), input_count, inputs);
 }
 
-Node* RawMachineAssembler::TailCallN(CallDescriptor* call_descriptor,
-                                     int input_count, Node* const* inputs) {
+void RawMachineAssembler::TailCallN(CallDescriptor* call_descriptor,
+                                    int input_count, Node* const* inputs) {
   // +1 is for target.
   DCHECK_EQ(input_count, call_descriptor->ParameterCount() + 1);
   Node* tail_call =
       MakeNode(common()->TailCall(call_descriptor), input_count, inputs);
   schedule()->AddTailCall(CurrentBlock(), tail_call);
   current_block_ = nullptr;
-  return tail_call;
 }
 
-Node* RawMachineAssembler::CallCFunction0(MachineType return_type,
-                                          Node* function) {
-  MachineSignature::Builder builder(zone(), 1, 0);
-  builder.AddReturn(return_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
+namespace {
 
-  return AddNode(common()->Call(call_descriptor), function);
+enum FunctionDescriptorMode { kHasFunctionDescriptor, kNoFunctionDescriptor };
+
+Node* CallCFunctionImpl(
+    RawMachineAssembler* rasm, Node* function, MachineType return_type,
+    std::initializer_list<RawMachineAssembler::CFunctionArg> args,
+    bool caller_saved_regs, SaveFPRegsMode mode,
+    FunctionDescriptorMode no_function_descriptor) {
+  static constexpr std::size_t kNumCArgs = 10;
+
+  MachineSignature::Builder builder(rasm->zone(), 1, args.size());
+  builder.AddReturn(return_type);
+  for (const auto& arg : args) builder.AddParam(arg.first);
+
+  bool caller_saved_fp_regs = caller_saved_regs && (mode == kSaveFPRegs);
+  CallDescriptor::Flags flags = CallDescriptor::kNoFlags;
+  if (caller_saved_regs) flags |= CallDescriptor::kCallerSavedRegisters;
+  if (caller_saved_fp_regs) flags |= CallDescriptor::kCallerSavedFPRegisters;
+  if (no_function_descriptor) flags |= CallDescriptor::kNoFunctionDescriptor;
+  auto call_descriptor =
+      Linkage::GetSimplifiedCDescriptor(rasm->zone(), builder.Build(), flags);
+
+  base::SmallVector<Node*, kNumCArgs> nodes(args.size() + 1);
+  nodes[0] = function;
+  std::transform(
+      args.begin(), args.end(), std::next(nodes.begin()),
+      [](const RawMachineAssembler::CFunctionArg& arg) { return arg.second; });
+
+  auto common = rasm->common();
+  return rasm->AddNode(common->Call(call_descriptor),
+                       static_cast<int>(nodes.size()), nodes.begin());
 }
 
+}  // namespace
 
-Node* RawMachineAssembler::CallCFunction1(MachineType return_type,
-                                          MachineType arg0_type, Node* function,
-                                          Node* arg0) {
-  MachineSignature::Builder builder(zone(), 1, 1);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0);
+Node* RawMachineAssembler::CallCFunction(
+    Node* function, MachineType return_type,
+    std::initializer_list<RawMachineAssembler::CFunctionArg> args) {
+  return CallCFunctionImpl(this, function, return_type, args, false,
+                           kDontSaveFPRegs, kHasFunctionDescriptor);
 }
 
-Node* RawMachineAssembler::CallCFunction1WithCallerSavedRegisters(
-    MachineType return_type, MachineType arg0_type, Node* function, Node* arg0,
-    SaveFPRegsMode mode) {
-  MachineSignature::Builder builder(zone(), 1, 1);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  call_descriptor->set_save_fp_mode(mode);
-
-  return AddNode(common()->CallWithCallerSavedRegisters(call_descriptor),
-                 function, arg0);
+Node* RawMachineAssembler::CallCFunctionWithoutFunctionDescriptor(
+    Node* function, MachineType return_type,
+    std::initializer_list<RawMachineAssembler::CFunctionArg> args) {
+  return CallCFunctionImpl(this, function, return_type, args, false,
+                           kDontSaveFPRegs, kNoFunctionDescriptor);
 }
 
-Node* RawMachineAssembler::CallCFunction2(MachineType return_type,
-                                          MachineType arg0_type,
-                                          MachineType arg1_type, Node* function,
-                                          Node* arg0, Node* arg1) {
-  MachineSignature::Builder builder(zone(), 1, 2);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0, arg1);
-}
-
-Node* RawMachineAssembler::CallCFunction3(MachineType return_type,
-                                          MachineType arg0_type,
-                                          MachineType arg1_type,
-                                          MachineType arg2_type, Node* function,
-                                          Node* arg0, Node* arg1, Node* arg2) {
-  MachineSignature::Builder builder(zone(), 1, 3);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0, arg1, arg2);
-}
-
-Node* RawMachineAssembler::CallCFunction3WithCallerSavedRegisters(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, Node* function, Node* arg0, Node* arg1, Node* arg2,
-    SaveFPRegsMode mode) {
-  MachineSignature::Builder builder(zone(), 1, 3);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  call_descriptor->set_save_fp_mode(mode);
-
-  return AddNode(common()->CallWithCallerSavedRegisters(call_descriptor),
-                 function, arg0, arg1, arg2);
-}
-
-Node* RawMachineAssembler::CallCFunction4(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, MachineType arg3_type, Node* function, Node* arg0,
-    Node* arg1, Node* arg2, Node* arg3) {
-  MachineSignature::Builder builder(zone(), 1, 4);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  builder.AddParam(arg3_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0, arg1, arg2,
-                 arg3);
-}
-
-Node* RawMachineAssembler::CallCFunction5(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, MachineType arg3_type, MachineType arg4_type,
-    Node* function, Node* arg0, Node* arg1, Node* arg2, Node* arg3,
-    Node* arg4) {
-  MachineSignature::Builder builder(zone(), 1, 5);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  builder.AddParam(arg3_type);
-  builder.AddParam(arg4_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0, arg1, arg2,
-                 arg3, arg4);
-}
-
-Node* RawMachineAssembler::CallCFunction6(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, MachineType arg3_type, MachineType arg4_type,
-    MachineType arg5_type, Node* function, Node* arg0, Node* arg1, Node* arg2,
-    Node* arg3, Node* arg4, Node* arg5) {
-  MachineSignature::Builder builder(zone(), 1, 6);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  builder.AddParam(arg3_type);
-  builder.AddParam(arg4_type);
-  builder.AddParam(arg5_type);
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-
-  return AddNode(common()->Call(call_descriptor), function, arg0, arg1, arg2,
-                 arg3, arg4, arg5);
-}
-
-Node* RawMachineAssembler::CallCFunction8(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, MachineType arg3_type, MachineType arg4_type,
-    MachineType arg5_type, MachineType arg6_type, MachineType arg7_type,
-    Node* function, Node* arg0, Node* arg1, Node* arg2, Node* arg3, Node* arg4,
-    Node* arg5, Node* arg6, Node* arg7) {
-  MachineSignature::Builder builder(zone(), 1, 8);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  builder.AddParam(arg3_type);
-  builder.AddParam(arg4_type);
-  builder.AddParam(arg5_type);
-  builder.AddParam(arg6_type);
-  builder.AddParam(arg7_type);
-  Node* args[] = {function, arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7};
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-  return AddNode(common()->Call(call_descriptor), arraysize(args), args);
-}
-
-Node* RawMachineAssembler::CallCFunction9(
-    MachineType return_type, MachineType arg0_type, MachineType arg1_type,
-    MachineType arg2_type, MachineType arg3_type, MachineType arg4_type,
-    MachineType arg5_type, MachineType arg6_type, MachineType arg7_type,
-    MachineType arg8_type, Node* function, Node* arg0, Node* arg1, Node* arg2,
-    Node* arg3, Node* arg4, Node* arg5, Node* arg6, Node* arg7, Node* arg8) {
-  MachineSignature::Builder builder(zone(), 1, 9);
-  builder.AddReturn(return_type);
-  builder.AddParam(arg0_type);
-  builder.AddParam(arg1_type);
-  builder.AddParam(arg2_type);
-  builder.AddParam(arg3_type);
-  builder.AddParam(arg4_type);
-  builder.AddParam(arg5_type);
-  builder.AddParam(arg6_type);
-  builder.AddParam(arg7_type);
-  builder.AddParam(arg8_type);
-  Node* args[] = {function, arg0, arg1, arg2, arg3,
-                  arg4,     arg5, arg6, arg7, arg8};
-  auto call_descriptor =
-      Linkage::GetSimplifiedCDescriptor(zone(), builder.Build());
-  return AddNode(common()->Call(call_descriptor), arraysize(args), args);
+Node* RawMachineAssembler::CallCFunctionWithCallerSavedRegisters(
+    Node* function, MachineType return_type, SaveFPRegsMode mode,
+    std::initializer_list<RawMachineAssembler::CFunctionArg> args) {
+  return CallCFunctionImpl(this, function, return_type, args, true, mode,
+                           kHasFunctionDescriptor);
 }
 
 BasicBlock* RawMachineAssembler::Use(RawMachineLabel* label) {

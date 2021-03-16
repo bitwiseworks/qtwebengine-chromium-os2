@@ -19,7 +19,7 @@
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/lazy_task_runner.h"
+#include "base/task/lazy_thread_pool_task_runner.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
 
@@ -44,8 +44,8 @@ using std::set;
 base::SequencedTaskRunner* impl_task_runner() {
   constexpr base::TaskTraits kBlockingTraits = {
       base::MayBlock(), base::TaskPriority::BEST_EFFORT};
-  static base::LazySequencedTaskRunner s_sequenced_task_task_runner =
-      LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(kBlockingTraits);
+  static base::LazyThreadPoolSequencedTaskRunner s_sequenced_task_task_runner =
+      LAZY_THREAD_POOL_SEQUENCED_TASK_RUNNER_INITIALIZER(kBlockingTraits);
   return s_sequenced_task_task_runner.Get().get();
 }
 
@@ -162,7 +162,7 @@ void Index::Reset() {
 }
 
 void Index::EnsureInitialized() {
-  if (index_.size() != 0)
+  if (!index_.empty())
     return;
   index_.resize(kTrigramCount);
   is_normalized_.resize(kTrigramCount);
@@ -230,8 +230,7 @@ vector<FilePath> Index::Search(const string& query) {
   vector<FilePath> result;
   FileIdsMap::const_iterator ids_it = file_ids_.begin();
   for (; ids_it != file_ids_.end(); ++ids_it) {
-    if (trigrams.size() == 0 ||
-        file_ids.find(ids_it->second) != file_ids.end()) {
+    if (trigrams.empty() || file_ids.find(ids_it->second) != file_ids.end()) {
       result.push_back(ids_it->first);
     }
   }
@@ -323,9 +322,8 @@ void DevToolsFileSystemIndexer::FileSystemIndexingJob::CollectFilesToIndex() {
   }
 
   if (file_path.empty()) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        BindOnce(total_work_callback_, file_path_times_.size()));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   BindOnce(total_work_callback_, file_path_times_.size()));
     indexing_it_ = file_path_times_.begin();
     IndexFiles();
     return;
@@ -361,7 +359,7 @@ void DevToolsFileSystemIndexer::FileSystemIndexingJob::IndexFiles() {
     return;
   if (indexing_it_ == file_path_times_.end()) {
     g_trigram_index.Get().NormalizeVectors();
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, done_callback_);
+    base::PostTask(FROM_HERE, {BrowserThread::UI}, done_callback_);
     return;
   }
   FilePath file_path = indexing_it_->first;
@@ -453,8 +451,8 @@ void DevToolsFileSystemIndexer::FileSystemIndexingJob::ReportWorked() {
   ++files_indexed_;
   if (should_send_worked_nitification) {
     last_worked_notification_time_ = current_time;
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             BindOnce(worked_callback_, files_indexed_));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   BindOnce(worked_callback_, files_indexed_));
     files_indexed_ = 0;
   }
 }
@@ -517,6 +515,6 @@ void DevToolsFileSystemIndexer::SearchInPathOnImplSequence(
     if (path.IsParent(*it))
       result.push_back(it->AsUTF8Unsafe());
   }
-  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                           BindOnce(callback, std::move(result)));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 BindOnce(callback, std::move(result)));
 }

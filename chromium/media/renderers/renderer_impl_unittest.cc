@@ -10,17 +10,22 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/optional.h"
 #include "base/run_loop.h"
+#include "base/test/gmock_callback_support.h"
+#include "base/test/gmock_move_support.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "media/base/gmock_callback_support.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
 #include "media/renderers/renderer_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using ::base::test::RunCallback;
+using ::base::test::RunClosure;
+using ::base::test::RunOnceCallback;
+using ::base::test::RunOnceClosure;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -39,8 +44,8 @@ ACTION_P2(SetBool, var, value) {
   *var = value;
 }
 
-ACTION_P2(SetBufferingState, renderer_client, buffering_state) {
-  (*renderer_client)->OnBufferingStateChange(buffering_state);
+ACTION_P3(SetBufferingState, renderer_client, buffering_state, reason) {
+  (*renderer_client)->OnBufferingStateChange(buffering_state, reason);
 }
 
 ACTION_P2(SetError, renderer_client, error) {
@@ -58,8 +63,6 @@ ACTION(PostQuitWhenIdle) {
 
 class RendererImplTest : public ::testing::Test {
  public:
-  // Used for setting expectations on pipeline callbacks. Using a StrictMock
-  // also lets us test for missing callbacks.
   class CallbackHelper : public MockRendererClient {
    public:
     CallbackHelper() = default;
@@ -82,7 +85,7 @@ class RendererImplTest : public ::testing::Test {
         video_renderer_(new StrictMock<MockVideoRenderer>()),
         audio_renderer_(new StrictMock<MockAudioRenderer>()),
         renderer_impl_(
-            new RendererImpl(message_loop_.task_runner(),
+            new RendererImpl(task_environment_.GetMainThreadTaskRunner(),
                              std::unique_ptr<AudioRenderer>(audio_renderer_),
                              std::unique_ptr<VideoRenderer>(video_renderer_))),
         cdm_context_(new StrictMock<MockCdmContext>()),
@@ -111,22 +114,23 @@ class RendererImplTest : public ::testing::Test {
 
   // Sets up expectations to allow the audio renderer to initialize.
   void SetAudioRendererInitializeExpectations(PipelineStatus status) {
-    EXPECT_CALL(*audio_renderer_, Initialize(audio_stream_.get(), _, _, _))
-        .WillOnce(
-            DoAll(SaveArg<2>(&audio_renderer_client_), RunCallback<3>(status)));
+    EXPECT_CALL(*audio_renderer_, OnInitialize(audio_stream_.get(), _, _, _))
+        .WillOnce(DoAll(SaveArg<2>(&audio_renderer_client_),
+                        RunOnceCallback<3>(status)));
   }
 
   // Sets up expectations to allow the video renderer to initialize.
   void SetVideoRendererInitializeExpectations(PipelineStatus status) {
-    EXPECT_CALL(*video_renderer_, Initialize(video_stream_.get(), _, _, _, _))
-        .WillOnce(
-            DoAll(SaveArg<2>(&video_renderer_client_), RunCallback<4>(status)));
+    EXPECT_CALL(*video_renderer_, OnInitialize(video_stream_.get(), _, _, _, _))
+        .WillOnce(DoAll(SaveArg<2>(&video_renderer_client_),
+                        RunOnceCallback<4>(status)));
   }
 
   void InitializeAndExpect(PipelineStatus start_status) {
     EXPECT_CALL(callbacks_, OnInitialize(start_status))
         .WillOnce(SaveArg<0>(&initialization_status_));
-    EXPECT_CALL(callbacks_, OnWaiting(_)).Times(0);
+    if (is_encrypted_ && !is_cdm_set_)
+      EXPECT_CALL(callbacks_, OnWaiting(WaitingReason::kNoCdm));
 
     if (start_status == PIPELINE_OK && audio_stream_) {
       EXPECT_CALL(*audio_renderer_, GetTimeSource())
@@ -136,27 +140,33 @@ class RendererImplTest : public ::testing::Test {
     }
 
     renderer_impl_->Initialize(demuxer_.get(), &callbacks_,
-                               base::Bind(&CallbackHelper::OnInitialize,
-                                          base::Unretained(&callbacks_)));
+                               base::BindOnce(&CallbackHelper::OnInitialize,
+                                              base::Unretained(&callbacks_)));
     base::RunLoop().RunUntilIdle();
 
     if (start_status == PIPELINE_OK && audio_stream_) {
       ON_CALL(*audio_renderer_, Flush(_))
-          .WillByDefault(DoAll(SetBufferingState(&audio_renderer_client_,
-                                                 BUFFERING_HAVE_NOTHING),
-                               RunClosure<0>()));
+          .WillByDefault([this](base::OnceClosure on_done) {
+            audio_renderer_client_->OnBufferingStateChange(
+                BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+            std::move(on_done).Run();
+          });
       ON_CALL(*audio_renderer_, StartPlaying())
           .WillByDefault(SetBufferingState(&audio_renderer_client_,
-                                           BUFFERING_HAVE_ENOUGH));
+                                           BUFFERING_HAVE_ENOUGH,
+                                           BUFFERING_CHANGE_REASON_UNKNOWN));
     }
     if (start_status == PIPELINE_OK && video_stream_) {
       ON_CALL(*video_renderer_, Flush(_))
-          .WillByDefault(DoAll(SetBufferingState(&video_renderer_client_,
-                                                 BUFFERING_HAVE_NOTHING),
-                               RunClosure<0>()));
+          .WillByDefault([this](base::OnceClosure on_done) {
+            video_renderer_client_->OnBufferingStateChange(
+                BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+            std::move(on_done).Run();
+          });
       ON_CALL(*video_renderer_, StartPlayingFrom(_))
           .WillByDefault(SetBufferingState(&video_renderer_client_,
-                                           BUFFERING_HAVE_ENOUGH));
+                                           BUFFERING_HAVE_ENOUGH,
+                                           BUFFERING_CHANGE_REASON_UNKNOWN));
     }
   }
 
@@ -167,6 +177,7 @@ class RendererImplTest : public ::testing::Test {
   }
 
   void CreateVideoStream(bool is_encrypted = false) {
+    is_encrypted_ = is_encrypted;
     video_stream_ = CreateStream(DemuxerStream::VIDEO);
     video_stream_->set_video_decoder_config(
         is_encrypted ? TestVideoConfig::NormalEncrypted()
@@ -229,7 +240,9 @@ class RendererImplTest : public ::testing::Test {
 
   void Play() {
     DCHECK(audio_stream_ || video_stream_);
-    EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+    EXPECT_CALL(callbacks_,
+                OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                       BUFFERING_CHANGE_REASON_UNKNOWN));
 
     base::TimeDelta start_time(
         base::TimeDelta::FromMilliseconds(kStartPlayingTimeInMs));
@@ -263,8 +276,8 @@ class RendererImplTest : public ::testing::Test {
     SetFlushExpectationsForAVRenderers();
     EXPECT_CALL(callbacks_, OnFlushed());
 
-    renderer_impl_->Flush(
-        base::Bind(&CallbackHelper::OnFlushed, base::Unretained(&callbacks_)));
+    renderer_impl_->Flush(base::BindOnce(&CallbackHelper::OnFlushed,
+                                         base::Unretained(&callbacks_)));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -297,10 +310,11 @@ class RendererImplTest : public ::testing::Test {
   }
 
   void SetCdmAndExpect(bool expected_result) {
-    EXPECT_CALL(callbacks_, OnCdmAttached(expected_result));
+    EXPECT_CALL(callbacks_, OnCdmAttached(expected_result))
+        .WillOnce(SaveArg<0>(&is_cdm_set_));
     renderer_impl_->SetCdm(cdm_context_.get(),
-                           base::Bind(&CallbackHelper::OnCdmAttached,
-                                      base::Unretained(&callbacks_)));
+                           base::BindOnce(&CallbackHelper::OnCdmAttached,
+                                          base::Unretained(&callbacks_)));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -318,7 +332,9 @@ class RendererImplTest : public ::testing::Test {
 
     // Callback into OnBufferingStateChange
     EXPECT_CALL(time_source_, StartTicking());
-    EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+    EXPECT_CALL(callbacks_,
+                OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                       BUFFERING_CHANGE_REASON_UNKNOWN));
   }
 
   void SetVideoTrackSwitchExpectations() {
@@ -332,11 +348,13 @@ class RendererImplTest : public ::testing::Test {
     EXPECT_CALL(*video_renderer_, StartPlayingFrom(_));
 
     // Callback into OnBufferingStateChange
-    EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+    EXPECT_CALL(callbacks_,
+                OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                       BUFFERING_CHANGE_REASON_UNKNOWN));
   }
 
   // Fixture members.
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   StrictMock<CallbackHelper> callbacks_;
   base::SimpleTestTickClock test_tick_clock_;
 
@@ -354,6 +372,8 @@ class RendererImplTest : public ::testing::Test {
   RendererClient* audio_renderer_client_;
   VideoDecoderConfig video_decoder_config_;
   PipelineStatus initialization_status_;
+  bool is_encrypted_ = false;
+  bool is_cdm_set_ = false;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RendererImplTest);
@@ -368,7 +388,7 @@ TEST_F(RendererImplTest, Destroy_PendingInitialize) {
 
   SetAudioRendererInitializeExpectations(PIPELINE_OK);
   // Not returning the video initialization callback.
-  EXPECT_CALL(*video_renderer_, Initialize(video_stream_.get(), _, _, _, _));
+  EXPECT_CALL(*video_renderer_, OnInitialize(video_stream_.get(), _, _, _, _));
 
   InitializeAndExpect(PIPELINE_ERROR_ABORT);
   EXPECT_EQ(PIPELINE_OK, initialization_status_);
@@ -402,7 +422,7 @@ TEST_F(RendererImplTest, Destroy_PendingInitializeAfterSetCdm) {
   SetAudioRendererInitializeExpectations(PIPELINE_OK);
   // Not returning the video initialization callback. So initialization will
   // be pending.
-  EXPECT_CALL(*video_renderer_, Initialize(video_stream_.get(), _, _, _, _));
+  EXPECT_CALL(*video_renderer_, OnInitialize(video_stream_.get(), _, _, _, _));
 
   // SetCdm() will trigger the initialization to start. But it will not complete
   // because the |video_renderer_| is not returning the initialization callback.
@@ -541,8 +561,8 @@ TEST_F(RendererImplTest, StartPlayingFromWithPlaybackRate) {
 TEST_F(RendererImplTest, FlushAfterInitialization) {
   InitializeWithAudioAndVideo();
   EXPECT_CALL(callbacks_, OnFlushed());
-  renderer_impl_->Flush(
-      base::Bind(&CallbackHelper::OnFlushed, base::Unretained(&callbacks_)));
+  renderer_impl_->Flush(base::BindOnce(&CallbackHelper::OnFlushed,
+                                       base::Unretained(&callbacks_)));
   base::RunLoop().RunUntilIdle();
 }
 
@@ -558,8 +578,11 @@ TEST_F(RendererImplTest, FlushAfterUnderflow) {
 
   // Simulate underflow.
   EXPECT_CALL(time_source_, StopTicking());
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 
   // Flush while underflowed. We shouldn't call StopTicking() again.
   Flush(true);
@@ -639,12 +662,14 @@ TEST_F(RendererImplTest, ErrorDuringFlush) {
   InSequence s;
   EXPECT_CALL(time_source_, StopTicking());
   EXPECT_CALL(*audio_renderer_, Flush(_))
-      .WillOnce(DoAll(SetError(&audio_renderer_client_, PIPELINE_ERROR_DECODE),
-                      RunClosure<0>()));
+      .WillOnce([this](base::OnceClosure on_done) {
+        audio_renderer_client_->OnError(PIPELINE_ERROR_DECODE);
+        std::move(on_done).Run();
+      });
   EXPECT_CALL(callbacks_, OnError(PIPELINE_ERROR_DECODE));
   EXPECT_CALL(callbacks_, OnFlushed());
-  renderer_impl_->Flush(
-      base::Bind(&CallbackHelper::OnFlushed, base::Unretained(&callbacks_)));
+  renderer_impl_->Flush(base::BindOnce(&CallbackHelper::OnFlushed,
+                                       base::Unretained(&callbacks_)));
   base::RunLoop().RunUntilIdle();
 }
 
@@ -663,10 +688,10 @@ TEST_F(RendererImplTest, ErrorDuringInitialize) {
   SetAudioRendererInitializeExpectations(PIPELINE_OK);
 
   // Force an audio error to occur during video renderer initialization.
-  EXPECT_CALL(*video_renderer_, Initialize(video_stream_.get(), _, _, _, _))
+  EXPECT_CALL(*video_renderer_, OnInitialize(video_stream_.get(), _, _, _, _))
       .WillOnce(DoAll(SetError(&audio_renderer_client_, PIPELINE_ERROR_DECODE),
                       SaveArg<2>(&video_renderer_client_),
-                      RunCallback<4>(PIPELINE_OK)));
+                      RunOnceCallback<4>(PIPELINE_OK)));
 
   InitializeAndExpect(PIPELINE_ERROR_DECODE);
 }
@@ -677,8 +702,11 @@ TEST_F(RendererImplTest, AudioUnderflow) {
 
   // Underflow should occur immediately with a single audio track.
   EXPECT_CALL(time_source_, StopTicking());
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 }
 
 TEST_F(RendererImplTest, AudioUnderflowWithVideo) {
@@ -688,8 +716,11 @@ TEST_F(RendererImplTest, AudioUnderflowWithVideo) {
   // Underflow should be immediate when both audio and video are present and
   // audio underflows.
   EXPECT_CALL(time_source_, StopTicking());
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 }
 
 TEST_F(RendererImplTest, VideoUnderflow) {
@@ -698,8 +729,11 @@ TEST_F(RendererImplTest, VideoUnderflow) {
 
   // Underflow should occur immediately with a single video track.
   EXPECT_CALL(time_source_, StopTicking());
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 }
 
 TEST_F(RendererImplTest, VideoUnderflowWithAudio) {
@@ -712,8 +746,11 @@ TEST_F(RendererImplTest, VideoUnderflowWithAudio) {
 
   // Underflow should be delayed when both audio and video are present and video
   // underflows.
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   Mock::VerifyAndClearExpectations(&time_source_);
 
   EXPECT_CALL(time_source_, StopTicking());
@@ -730,13 +767,17 @@ TEST_F(RendererImplTest, VideoUnderflowWithAudioVideoRecovers) {
 
   // Underflow should be delayed when both audio and video are present and video
   // underflows.
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING))
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN))
       .Times(0);
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   Mock::VerifyAndClearExpectations(&time_source_);
 
   // If video recovers, the underflow should never occur.
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_ENOUGH);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_ENOUGH, BUFFERING_CHANGE_REASON_UNKNOWN);
   base::RunLoop().RunUntilIdle();
 }
 
@@ -750,14 +791,20 @@ TEST_F(RendererImplTest, VideoAndAudioUnderflow) {
 
   // Underflow should be delayed when both audio and video are present and video
   // underflows.
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING))
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN))
       .Times(0);
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   Mock::VerifyAndClearExpectations(&time_source_);
 
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
   EXPECT_CALL(time_source_, StopTicking());
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 
   // Nothing else should primed on the message loop.
   base::RunLoop().RunUntilIdle();
@@ -773,19 +820,23 @@ TEST_F(RendererImplTest, VideoUnderflowWithAudioFlush) {
 
   // Simulate the cases where audio underflows and then video underflows.
   EXPECT_CALL(time_source_, StopTicking());
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   Mock::VerifyAndClearExpectations(&time_source_);
 
   // Flush the audio and video renderers, both think they're in an underflow
   // state, but if the video renderer underflow was deferred, RendererImpl would
   // think it still has enough data.
-  EXPECT_CALL(*audio_renderer_, Flush(_)).WillOnce(RunClosure<0>());
-  EXPECT_CALL(*video_renderer_, Flush(_)).WillOnce(RunClosure<0>());
+  EXPECT_CALL(*audio_renderer_, Flush(_)).WillOnce(RunOnceClosure<0>());
+  EXPECT_CALL(*video_renderer_, Flush(_)).WillOnce(RunOnceClosure<0>());
   EXPECT_CALL(callbacks_, OnFlushed());
-  renderer_impl_->Flush(
-      base::Bind(&CallbackHelper::OnFlushed, base::Unretained(&callbacks_)));
+  renderer_impl_->Flush(base::BindOnce(&CallbackHelper::OnFlushed,
+                                       base::Unretained(&callbacks_)));
   base::RunLoop().RunUntilIdle();
 
   // Start playback after the flush, but never return BUFFERING_HAVE_ENOUGH from
@@ -795,7 +846,9 @@ TEST_F(RendererImplTest, VideoUnderflowWithAudioFlush) {
   EXPECT_CALL(time_source_, StartTicking());
   EXPECT_CALL(*audio_renderer_, StartPlaying());
   EXPECT_CALL(*video_renderer_, StartPlayingFrom(kStartTime));
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
   renderer_impl_->StartPlayingFrom(kStartTime);
 
   // Nothing else should primed on the message loop.
@@ -848,20 +901,23 @@ TEST_F(RendererImplTest, AudioUnderflowDuringAudioTrackChange) {
   EXPECT_CALL(time_source_, StopTicking());
 
   // Capture the callback from the audio renderer flush.
-  base::Closure audio_renderer_flush_cb;
+  base::OnceClosure audio_renderer_flush_cb;
   EXPECT_CALL(*audio_renderer_, Flush(_))
-      .WillOnce(SaveArg<0>(&audio_renderer_flush_cb));
+      .WillOnce(MoveArg(&audio_renderer_flush_cb));
 
   EXPECT_CALL(time_source_, CurrentMediaTime()).Times(2);
   std::vector<DemuxerStream*> tracks;
   renderer_impl_->OnEnabledAudioTracksChanged({}, loop.QuitClosure());
 
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
 
   EXPECT_CALL(time_source_, StartTicking());
   EXPECT_CALL(*audio_renderer_, StartPlaying());
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
-  audio_renderer_flush_cb.Run();
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+  std::move(audio_renderer_flush_cb).Run();
   loop.Run();
 }
 
@@ -872,20 +928,23 @@ TEST_F(RendererImplTest, VideoUnderflowDuringVideoTrackChange) {
   base::RunLoop loop;
 
   // Capture the callback from the video renderer flush.
-  base::Closure video_renderer_flush_cb;
+  base::OnceClosure video_renderer_flush_cb;
   {
     InSequence track_switch_seq;
     EXPECT_CALL(time_source_, CurrentMediaTime());
     EXPECT_CALL(*video_renderer_, Flush(_))
-        .WillOnce(SaveArg<0>(&video_renderer_flush_cb));
+        .WillOnce(MoveArg(&video_renderer_flush_cb));
     EXPECT_CALL(*video_renderer_, StartPlayingFrom(_));
-    EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_ENOUGH));
+    EXPECT_CALL(callbacks_,
+                OnBufferingStateChange(BUFFERING_HAVE_ENOUGH,
+                                       BUFFERING_CHANGE_REASON_UNKNOWN));
   }
 
   renderer_impl_->OnSelectedVideoTracksChanged({}, loop.QuitClosure());
 
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
-  video_renderer_flush_cb.Run();
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+  std::move(video_renderer_flush_cb).Run();
   loop.Run();
 }
 
@@ -896,17 +955,18 @@ TEST_F(RendererImplTest, VideoUnderflowDuringAudioTrackChange) {
   base::RunLoop loop;
 
   // Capture the callback from the audio renderer flush.
-  base::Closure audio_renderer_flush_cb;
+  base::OnceClosure audio_renderer_flush_cb;
   EXPECT_CALL(*audio_renderer_, Flush(_))
-      .WillOnce(SaveArg<0>(&audio_renderer_flush_cb));
+      .WillOnce(MoveArg(&audio_renderer_flush_cb));
 
   EXPECT_CALL(time_source_, CurrentMediaTime()).Times(2);
   EXPECT_CALL(time_source_, StopTicking());
   renderer_impl_->OnEnabledAudioTracksChanged({}, loop.QuitClosure());
 
   EXPECT_CALL(*audio_renderer_, StartPlaying());
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
-  audio_renderer_flush_cb.Run();
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
+  std::move(audio_renderer_flush_cb).Run();
   loop.Run();
 }
 
@@ -915,22 +975,25 @@ TEST_F(RendererImplTest, AudioUnderflowDuringVideoTrackChange) {
   Play();
 
   base::RunLoop loop;
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING));
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN));
   EXPECT_CALL(time_source_, CurrentMediaTime());
 
   // Capture the callback from the audio renderer flush.
-  base::Closure video_renderer_flush_cb;
+  base::OnceClosure video_renderer_flush_cb;
   EXPECT_CALL(*video_renderer_, Flush(_))
-      .WillOnce(SaveArg<0>(&video_renderer_flush_cb));
+      .WillOnce(MoveArg(&video_renderer_flush_cb));
 
   renderer_impl_->OnSelectedVideoTracksChanged({}, loop.QuitClosure());
 
   EXPECT_CALL(time_source_, StopTicking());
   EXPECT_CALL(*video_renderer_, StartPlayingFrom(_));
 
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
 
-  video_renderer_flush_cb.Run();
+  std::move(video_renderer_flush_cb).Run();
   loop.Run();
 }
 
@@ -940,32 +1003,36 @@ TEST_F(RendererImplTest, VideoResumedFromUnderflowDuringAudioTrackChange) {
 
   // Underflow the renderer.
   base::RunLoop underflow_wait;
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING))
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN))
       .WillOnce(RunClosure(underflow_wait.QuitClosure()));
   EXPECT_CALL(time_source_, StopTicking());
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   underflow_wait.Run();
 
   // Start a track change.
-  base::Closure audio_renderer_flush_cb;
+  base::OnceClosure audio_renderer_flush_cb;
   base::RunLoop track_change;
   {
     InSequence track_switch_seq;
     EXPECT_CALL(time_source_, CurrentMediaTime()).Times(2);
     EXPECT_CALL(*audio_renderer_, Flush(_))
-        .WillOnce(SaveArg<0>(&audio_renderer_flush_cb));
+        .WillOnce(MoveArg(&audio_renderer_flush_cb));
   }
   renderer_impl_->OnEnabledAudioTracksChanged({}, track_change.QuitClosure());
 
   // Signal that the renderer has enough data to resume from underflow.
   // Nothing should bubble up, since we are pending audio track change.
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(_)).Times(0);
+  EXPECT_CALL(callbacks_, OnBufferingStateChange(_, _)).Times(0);
   EXPECT_CALL(time_source_, StartTicking()).Times(0);
-  video_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_ENOUGH);
+  video_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_ENOUGH, BUFFERING_CHANGE_REASON_UNKNOWN);
 
   // Finish the track change.
   EXPECT_CALL(*audio_renderer_, StartPlaying());
-  audio_renderer_flush_cb.Run();
+  std::move(audio_renderer_flush_cb).Run();
   track_change.Run();
 }
 
@@ -975,32 +1042,36 @@ TEST_F(RendererImplTest, AudioResumedFromUnderflowDuringVideoTrackChange) {
 
   // Underflow the renderer.
   base::RunLoop underflow_wait;
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(BUFFERING_HAVE_NOTHING))
+  EXPECT_CALL(callbacks_,
+              OnBufferingStateChange(BUFFERING_HAVE_NOTHING,
+                                     BUFFERING_CHANGE_REASON_UNKNOWN))
       .WillOnce(RunClosure(underflow_wait.QuitClosure()));
   EXPECT_CALL(time_source_, StopTicking());
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_NOTHING);
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_NOTHING, BUFFERING_CHANGE_REASON_UNKNOWN);
   underflow_wait.Run();
 
   // Start a track change.
-  base::Closure video_renderer_flush_cb;
+  base::OnceClosure video_renderer_flush_cb;
   base::RunLoop track_change;
   {
     InSequence track_switch_seq;
     EXPECT_CALL(time_source_, CurrentMediaTime());
     EXPECT_CALL(*video_renderer_, Flush(_))
-        .WillOnce(SaveArg<0>(&video_renderer_flush_cb));
+        .WillOnce(MoveArg(&video_renderer_flush_cb));
   }
   renderer_impl_->OnSelectedVideoTracksChanged({}, track_change.QuitClosure());
 
   // Signal that the renderer has enough data to resume from underflow.
   // Nothing should bubble up, since we are pending audio track change.
-  EXPECT_CALL(callbacks_, OnBufferingStateChange(_)).Times(0);
+  EXPECT_CALL(callbacks_, OnBufferingStateChange(_, _)).Times(0);
   EXPECT_CALL(time_source_, StartTicking()).Times(0);
-  audio_renderer_client_->OnBufferingStateChange(BUFFERING_HAVE_ENOUGH);
+  audio_renderer_client_->OnBufferingStateChange(
+      BUFFERING_HAVE_ENOUGH, BUFFERING_CHANGE_REASON_UNKNOWN);
 
   // Finish the track change.
   EXPECT_CALL(*video_renderer_, StartPlayingFrom(_));
-  video_renderer_flush_cb.Run();
+  std::move(video_renderer_flush_cb).Run();
   track_change.Run();
 }
 

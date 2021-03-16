@@ -4,11 +4,11 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#include "SkOpSegment.h"
-#include "SkOpSpan.h"
-#include "SkPathOpsPoint.h"
-#include "SkPathWriter.h"
-#include "SkTSort.h"
+#include "src/core/SkTSort.h"
+#include "src/pathops/SkOpSegment.h"
+#include "src/pathops/SkOpSpan.h"
+#include "src/pathops/SkPathOpsPoint.h"
+#include "src/pathops/SkPathWriter.h"
 
 // wrap path to keep track of whether the contour is initialized and non-empty
 SkPathWriter::SkPathWriter(SkPath& path)
@@ -199,9 +199,6 @@ public:
         reassemble contour pieces into new path
     */
 void SkPathWriter::assemble() {
-#if DEBUG_SHOW_TEST_NAME
-    SkDebugf("</div>\n");
-#endif
     if (!this->someAssemblyRequired()) {
         return;
     }

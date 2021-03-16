@@ -12,9 +12,8 @@
 
 namespace blink {
 
-class MockScriptElementBase
-    : public GarbageCollectedFinalized<MockScriptElementBase>,
-      public ScriptElementBase {
+class MockScriptElementBase : public GarbageCollected<MockScriptElementBase>,
+                              public ScriptElementBase {
   USING_GARBAGE_COLLECTED_MIXIN(MockScriptElementBase);
 
  public:
@@ -38,27 +37,27 @@ class MockScriptElementBase
   MOCK_CONST_METHOD0(NomoduleAttributeValue, bool());
   MOCK_CONST_METHOD0(SourceAttributeValue, String());
   MOCK_CONST_METHOD0(TypeAttributeValue, String());
-
-  MOCK_METHOD0(TextFromChildren, String());
+  MOCK_METHOD0(ChildTextContent, String());
+  MOCK_CONST_METHOD0(ScriptTextInternalSlot, String());
   MOCK_CONST_METHOD0(HasSourceAttribute, bool());
   MOCK_CONST_METHOD0(IsConnected, bool());
   MOCK_CONST_METHOD0(HasChildren, bool());
   MOCK_CONST_METHOD0(GetNonceForElement, const AtomicString&());
   MOCK_CONST_METHOD0(ElementHasDuplicateAttributes, bool());
   MOCK_CONST_METHOD0(InitiatorName, AtomicString());
-  MOCK_METHOD4(AllowInlineScriptForCSP,
+  MOCK_METHOD3(AllowInlineScriptForCSP,
                bool(const AtomicString&,
                     const WTF::OrdinalNumber&,
-                    const String&,
-                    ContentSecurityPolicy::InlineType));
+                    const String&));
   MOCK_CONST_METHOD0(GetDocument, Document&());
   MOCK_METHOD1(SetScriptElementForBinding,
                void(HTMLScriptElementOrSVGScriptElement&));
   MOCK_CONST_METHOD0(Loader, ScriptLoader*());
 
-  void Trace(blink::Visitor* visitor) override {
-    ScriptElementBase::Trace(visitor);
+  ScriptElementBase::Type GetScriptElementType() override {
+    return ScriptElementBase::Type::kHTMLScriptElement;
   }
+  void Trace(Visitor* visitor) override { ScriptElementBase::Trace(visitor); }
 };
 
 }  // namespace blink

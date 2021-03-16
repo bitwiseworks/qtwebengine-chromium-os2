@@ -5,11 +5,12 @@
 #include "third_party/blink/renderer/modules/manifest/image_resource_type_converters.h"
 
 #include "third_party/blink/public/common/mime_util/mime_util.h"
+#include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
 #include "third_party/blink/public/platform/web_icon_sizes_parser.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
-#include "third_party/blink/renderer/modules/manifest/image_resource.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_image_resource.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -25,18 +26,18 @@ using blink::WebString;
 using blink::WebVector;
 
 // https://w3c.github.io/manifest/#sizes-member.
-WTF::Vector<WebSize> ParseSizes(const WTF::String& sizes) {
-  WebVector<WebSize> parsed_sizes = blink::WebIconSizesParser::ParseIconSizes(
-      WebString::FromASCII(sizes.Ascii().data()));
+WTF::Vector<gfx::Size> ParseSizes(const WTF::String& sizes) {
+  WebVector<gfx::Size> parsed_sizes = blink::WebIconSizesParser::ParseIconSizes(
+      WebString::FromASCII(sizes.Ascii()));
   WTF::HashSet<std::pair<int, int>, WTF::PairHash<int, int>,
                WTF::PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<int>,
                                    WTF::UnsignedWithZeroKeyHashTraits<int>>>
       unique_sizes;
 
-  WTF::Vector<WebSize> results;
+  WTF::Vector<gfx::Size> results;
   for (const auto& size : parsed_sizes) {
     auto add_result =
-        unique_sizes.insert(std::make_pair(size.width, size.height));
+        unique_sizes.insert(std::make_pair(size.width(), size.height()));
     if (add_result.is_new_entry) {
       results.push_back(size);
     }
@@ -86,7 +87,7 @@ WTF::String ParseType(const WTF::String& type) {
   if (type.IsNull() || type.IsEmpty())
     return "";
 
-  if (!blink::IsSupportedMimeType(type.Ascii().data())) {
+  if (!blink::IsSupportedMimeType(type.Ascii())) {
     // TODO(rayankans): Issue developer warning.
     return "";
   }
@@ -137,9 +138,9 @@ Manifest::ImageResource ConvertManifestImageResource(
     }
   }
   // Parse 'sizes'.
-  WTF::Vector<WebSize> sizes = mojo::ParseSizes(icon->sizes());
+  WTF::Vector<gfx::Size> sizes = mojo::ParseSizes(icon->sizes());
   for (const auto& size : sizes) {
-    manifest_icon.sizes.emplace_back(gfx::Size(size.height, size.width));
+    manifest_icon.sizes.emplace_back(size);
   }
 
   return manifest_icon;

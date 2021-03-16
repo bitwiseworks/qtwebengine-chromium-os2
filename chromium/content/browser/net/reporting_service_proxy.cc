@@ -15,14 +15,13 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/reporting/reporting_report.h"
 #include "net/reporting/reporting_service.h"
-#include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "services/network/public/mojom/network_context.mojom.h"
-#include "third_party/blink/public/platform/reporting.mojom.h"
+#include "third_party/blink/public/mojom/reporting/reporting.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -37,11 +36,13 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
   // blink::mojom::ReportingServiceProxy:
 
   void QueueInterventionReport(const GURL& url,
+                               const std::string& id,
                                const std::string& message,
                                const base::Optional<std::string>& source_file,
                                int line_number,
                                int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
+    body->SetString("id", id);
     body->SetString("message", message);
     if (source_file)
       body->SetString("sourceFile", *source_file);
@@ -54,15 +55,16 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
 
   void QueueDeprecationReport(const GURL& url,
                               const std::string& id,
-                              base::Optional<base::Time> anticipatedRemoval,
+                              base::Optional<base::Time> anticipated_removal,
                               const std::string& message,
                               const base::Optional<std::string>& source_file,
                               int line_number,
                               int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
     body->SetString("id", id);
-    if (anticipatedRemoval)
-      body->SetDouble("anticipatedRemoval", anticipatedRemoval->ToDoubleT());
+    if (anticipated_removal)
+      body->SetDouble("anticipatedRemoval",
+                      anticipated_removal->ToJsTimeIgnoringNull());
     body->SetString("message", message);
     if (source_file)
       body->SetString("sourceFile", *source_file);
@@ -75,36 +77,36 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
 
   void QueueCspViolationReport(const GURL& url,
                                const std::string& group,
-                               const std::string& document_uri,
-                               const std::string& referrer,
-                               const std::string& violated_directive,
+                               const std::string& document_url,
+                               const base::Optional<std::string>& referrer,
+                               const base::Optional<std::string>& blocked_url,
                                const std::string& effective_directive,
                                const std::string& original_policy,
-                               const std::string& disposition,
-                               const std::string& blocked_uri,
-                               int line_number,
-                               int column_number,
                                const base::Optional<std::string>& source_file,
-                               int status_code,
-                               const std::string& script_sample) override {
+                               const base::Optional<std::string>& script_sample,
+                               const std::string& disposition,
+                               uint16_t status_code,
+                               int line_number,
+                               int column_number) override {
     auto body = std::make_unique<base::DictionaryValue>();
-    body->SetString("document-uri", document_uri);
-    body->SetString("referrer", referrer);
-    body->SetString("violated-directive", violated_directive);
-    body->SetString("effective-directive", effective_directive);
-    body->SetString("original-policy", original_policy);
-    body->SetString("disposition", disposition);
-    body->SetString("blocked-uri", blocked_uri);
-    if (line_number)
-      body->SetInteger("line-number", line_number);
-    if (column_number)
-      body->SetInteger("column-number", column_number);
+    body->SetString("documentURL", document_url);
+    if (referrer)
+      body->SetString("referrer", *referrer);
+    if (blocked_url)
+      body->SetString("blockedURL", *blocked_url);
+    body->SetString("effectiveDirective", effective_directive);
+    body->SetString("originalPolicy", original_policy);
     if (source_file)
       body->SetString("sourceFile", *source_file);
-    if (status_code)
-      body->SetInteger("status-code", status_code);
-    body->SetString("script-sample", script_sample);
-    QueueReport(url, group, "csp", std::move(body));
+    if (script_sample)
+      body->SetString("sample", *script_sample);
+    body->SetString("disposition", disposition);
+    body->SetInteger("statusCode", status_code);
+    if (line_number)
+      body->SetInteger("lineNumber", line_number);
+    if (column_number)
+      body->SetInteger("columnNumber", column_number);
+    QueueReport(url, group, "csp-violation", std::move(body));
   }
 
   void QueueFeaturePolicyViolationReport(
@@ -129,6 +131,29 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
     QueueReport(url, "default", "feature-policy-violation", std::move(body));
   }
 
+  void QueueDocumentPolicyViolationReport(
+      const GURL& url,
+      const std::string& group,
+      const std::string& policy_id,
+      const std::string& disposition,
+      const base::Optional<std::string>& message,
+      const base::Optional<std::string>& source_file,
+      int line_number,
+      int column_number) override {
+    auto body = std::make_unique<base::DictionaryValue>();
+    body->SetString("policyId", policy_id);
+    body->SetString("disposition", disposition);
+    if (message)
+      body->SetString("message", *message);
+    if (source_file)
+      body->SetString("sourceFile", *source_file);
+    if (line_number)
+      body->SetInteger("lineNumber", line_number);
+    if (column_number)
+      body->SetInteger("columnNumber", column_number);
+    QueueReport(url, group, "document-policy-violation", std::move(body));
+  }
+
  private:
   void QueueReport(const GURL& url,
                    const std::string& group,
@@ -151,12 +176,12 @@ class ReportingServiceProxyImpl : public blink::mojom::ReportingServiceProxy {
 // static
 void CreateReportingServiceProxy(
     int render_process_id,
-    blink::mojom::ReportingServiceProxyRequest request) {
+    mojo::PendingReceiver<blink::mojom::ReportingServiceProxy> receiver) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  mojo::MakeStrongBinding(
+  mojo::MakeSelfOwnedReceiver(
       std::make_unique<ReportingServiceProxyImpl>(render_process_id),
-      std::move(request));
+      std::move(receiver));
 }
 
 }  // namespace content

@@ -5,7 +5,6 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -22,7 +21,6 @@
 #include "gpu/config/gpu_switches.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/ui_base_features.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_switches.h"
@@ -37,16 +35,7 @@ class OOPBrowserTest : public ContentBrowserTest {
     command_line->AppendSwitch(switches::kEnableGpuRasterization);
     command_line->AppendSwitch(switches::kEnablePixelOutputInTests);
     command_line->AppendSwitch(switches::kEnableOopRasterization);
-
-    const bool use_gpu_in_tests = !features::IsMultiProcessMash();
-    if (use_gpu_in_tests)
-      command_line->AppendSwitch(switches::kUseGpuInTests);
-  }
-
-  void VerifyVisualStateUpdated(const base::Closure& done_cb,
-                                bool visual_state_updated) {
-    ASSERT_TRUE(visual_state_updated);
-    done_cb.Run();
+    command_line->AppendSwitch(switches::kUseGpuInTests);
   }
 
   SkBitmap snapshot_;
@@ -54,13 +43,7 @@ class OOPBrowserTest : public ContentBrowserTest {
 
 // This test calls into system GL which is not instrumented with MSAN.
 #if !defined(MEMORY_SANITIZER)
-// TODO(crbug.com/880948) Disabled for crashes on Linux CFI, see bug.
-#if defined(OS_LINUX)
-#define MAYBE_Basic DISABLED_Basic
-#else
-#define MAYBE_Basic Basic
-#endif
-IN_PROC_BROWSER_TEST_F(OOPBrowserTest, MAYBE_Basic) {
+IN_PROC_BROWSER_TEST_F(OOPBrowserTest, Basic) {
   // Create a div to ensure we don't use solid color quads.
   GURL url = GURL(
       "data:text/html,"
@@ -96,7 +79,7 @@ IN_PROC_BROWSER_TEST_F(OOPBrowserTest, MAYBE_Basic) {
       ASSERT_EQ(snapshot.getColor(i, j), SK_ColorBLUE);
     }
   }
-};
+}
 #endif
 
 }  // namespace

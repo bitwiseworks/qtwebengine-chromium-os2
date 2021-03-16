@@ -32,16 +32,14 @@ class SVGAnimateTransformElement final : public SVGAnimateElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGAnimateTransformElement);
-
   explicit SVGAnimateTransformElement(Document&);
 
  private:
-  bool HasValidTarget() override;
+  bool HasValidAnimation() const override;
+  void ResolveTargetProperty() override;
 
   void ParseAttribute(const AttributeModificationParams&) override;
 
-  void ResolveTargetProperty() override;
   SVGPropertyBase* CreatePropertyForAnimation(const String&) const override;
 
   SVGTransformType transform_type_;

@@ -5,6 +5,7 @@
 #include "components/ui_devtools/ui_devtools_unittest_utils.h"
 
 #include "base/strings/string_util.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
 
 namespace ui_devtools {
 
@@ -29,10 +30,14 @@ int FakeFrontendChannel::CountProtocolNotificationMessage(
                     protocol_notification_messages_.end(), message);
 }
 
-void FakeFrontendChannel::sendProtocolNotification(
+void FakeFrontendChannel::SendProtocolNotification(
     std::unique_ptr<protocol::Serializable> message) {
   EXPECT_TRUE(allow_notifications_);
-  protocol_notification_messages_.push_back(message->serialize());
+  std::string json;
+  crdtp::Status status = crdtp::json::ConvertCBORToJSON(
+      crdtp::SpanFrom(message->Serialize()), &json);
+  DCHECK(status.ok()) << status.ToASCIIString();
+  protocol_notification_messages_.push_back(std::move(json));
 }
 
 }  // namespace ui_devtools

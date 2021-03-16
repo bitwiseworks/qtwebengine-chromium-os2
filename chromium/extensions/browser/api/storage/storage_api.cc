@@ -51,6 +51,15 @@ ExtensionFunction::ResponseAction SettingsFunction::Run() {
   EXTENSION_FUNCTION_VALIDATE(settings_namespace_ !=
                               settings_namespace::INVALID);
 
+  if (extension()->is_login_screen_extension() &&
+      settings_namespace_ != settings_namespace::MANAGED) {
+    // Login screen extensions are not allowed to use local/sync storage for
+    // security reasons (see crbug.com/978443).
+    return RespondNow(Error(base::StringPrintf(
+        "\"%s\" is not available for login screen extensions",
+        settings_namespace_string.c_str())));
+  }
+
   StorageFrontend* frontend = StorageFrontend::Get(browser_context());
   if (!frontend->IsStorageEnabled(settings_namespace_)) {
     return RespondNow(Error(
@@ -68,9 +77,9 @@ ExtensionFunction::ResponseAction SettingsFunction::Run() {
 
 void SettingsFunction::AsyncRunWithStorage(ValueStore* storage) {
   ResponseValue response = RunWithStorage(storage);
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
-      base::Bind(&SettingsFunction::Respond, this, base::Passed(&response)));
+      base::BindOnce(&SettingsFunction::Respond, this, std::move(response)));
 }
 
 ExtensionFunction::ResponseValue SettingsFunction::UseReadResult(
@@ -132,10 +141,12 @@ void GetModificationQuotaLimitHeuristics(QuotaLimitHeuristics* heuristics) {
       api::storage::sync::MAX_WRITE_OPERATIONS_PER_HOUR,
       base::TimeDelta::FromHours(1)};
   heuristics->push_back(std::make_unique<QuotaService::TimedLimit>(
-      short_limit_config, new QuotaLimitHeuristic::SingletonBucketMapper(),
+      short_limit_config,
+      std::make_unique<QuotaLimitHeuristic::SingletonBucketMapper>(),
       "MAX_WRITE_OPERATIONS_PER_MINUTE"));
   heuristics->push_back(std::make_unique<QuotaService::TimedLimit>(
-      long_limit_config, new QuotaLimitHeuristic::SingletonBucketMapper(),
+      long_limit_config,
+      std::make_unique<QuotaLimitHeuristic::SingletonBucketMapper>(),
       "MAX_WRITE_OPERATIONS_PER_HOUR"));
 }
 

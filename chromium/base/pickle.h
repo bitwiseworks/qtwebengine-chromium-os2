@@ -18,10 +18,6 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 
-#if defined(OS_POSIX)
-#include "base/files/file.h"
-#endif
-
 namespace base {
 
 class Pickle;
@@ -78,6 +74,8 @@ class BASE_EXPORT PickleIterator {
   bool SkipBytes(int num_bytes) WARN_UNUSED_RESULT {
     return !!GetReadPointerAndAdvance(num_bytes);
   }
+
+  bool ReachedEnd() const { return read_index_ == end_index_; }
 
  private:
   // Read Type from Pickle.

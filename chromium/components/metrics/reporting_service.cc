@@ -31,8 +31,7 @@ ReportingService::ReportingService(MetricsServiceClient* client,
       max_retransmit_size_(max_retransmit_size),
       reporting_active_(false),
       log_upload_in_progress_(false),
-      data_use_tracker_(DataUseTracker::Create(local_state)),
-      self_ptr_factory_(this) {
+      data_use_tracker_(DataUseTracker::Create(local_state)) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(client_);
   DCHECK(local_state);
@@ -46,9 +45,11 @@ void ReportingService::Initialize() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!upload_scheduler_);
   log_store()->LoadPersistedUnsentLogs();
-  base::Closure send_next_log_callback = base::Bind(
+  base::RepeatingClosure send_next_log_callback = base::BindRepeating(
       &ReportingService::SendNextLog, self_ptr_factory_.GetWeakPtr());
-  upload_scheduler_.reset(new MetricsUploadScheduler(send_next_log_callback));
+  bool fast_startup_for_testing = client_->ShouldStartUpFastForTesting();
+  upload_scheduler_.reset(new MetricsUploadScheduler(send_next_log_callback,
+                                                     fast_startup_for_testing));
 }
 
 void ReportingService::Start() {
@@ -142,8 +143,8 @@ void ReportingService::SendStagedLog() {
     log_uploader_ = client_->CreateUploader(
         GetUploadUrl(), GetInsecureUploadUrl(), upload_mime_type(),
         service_type(),
-        base::Bind(&ReportingService::OnLogUploadComplete,
-                   self_ptr_factory_.GetWeakPtr()));
+        base::BindRepeating(&ReportingService::OnLogUploadComplete,
+                            self_ptr_factory_.GetWeakPtr()));
   }
 
   reporting_info_.set_attempt_count(reporting_info_.attempt_count() + 1);

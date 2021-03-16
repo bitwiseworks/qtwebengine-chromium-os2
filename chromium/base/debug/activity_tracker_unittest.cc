@@ -5,6 +5,7 @@
 #include "base/debug/activity_tracker.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -17,7 +18,7 @@
 #include "base/rand_util.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
-#include "base/synchronization/spin_wait.h"
+#include "base/test/spin_wait.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
 #include "base/time/time.h"
@@ -219,6 +220,7 @@ TEST_F(ActivityTrackerTest, ScopedTaskTest) {
     ScopedTaskRunActivity activity1(task1);
     ActivityUserData& user_data1 = activity1.user_data();
     (void)user_data1;  // Tell compiler it's been used.
+    EXPECT_TRUE(activity1.IsRecorded());
 
     ASSERT_TRUE(tracker->CreateSnapshot(&snapshot));
     ASSERT_EQ(1U, snapshot.activity_stack_depth);
@@ -275,7 +277,7 @@ class SimpleLockThread : public SimpleThread {
 
   bool IsRunning() { return is_running_.load(std::memory_order_relaxed); }
 
-  bool WasDataChanged() { return data_changed_; };
+  bool WasDataChanged() { return data_changed_; }
 
  private:
   Lock* lock_;
@@ -301,6 +303,7 @@ TEST_F(ActivityTrackerTest, LockTest) {
   // Check no activity when only "trying" a lock.
   EXPECT_TRUE(lock.Try());
   EXPECT_EQ(pre_version, tracker->GetDataVersionForTesting());
+  lock.AssertAcquired();
   lock.Release();
   EXPECT_EQ(pre_version, tracker->GetDataVersionForTesting());
 
@@ -487,7 +490,7 @@ TEST_F(ActivityTrackerTest, ProcessDeathTest) {
 
   // Get callbacks for process exit.
   global->SetProcessExitCallback(
-      Bind(&ActivityTrackerTest::HandleProcessExit, Unretained(this)));
+      BindRepeating(&ActivityTrackerTest::HandleProcessExit, Unretained(this)));
 
   // Pretend than another process has started.
   global->RecordProcessLaunch(other_process_id, FILE_PATH_LITERAL("foo --bar"));

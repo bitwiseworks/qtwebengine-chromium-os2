@@ -6,7 +6,6 @@
 #define GPU_COMMAND_BUFFER_SERVICE_COMMAND_BUFFER_DIRECT_H_
 
 #include "base/callback.h"
-#include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
 #include "gpu/command_buffer/service/decoder_client.h"
@@ -15,17 +14,16 @@
 namespace gpu {
 
 class AsyncAPIInterface;
-class TransferBufferManager;
 
 class GPU_EXPORT CommandBufferDirect : public CommandBuffer,
                                        public CommandBufferServiceClient,
                                        public DecoderClient {
  public:
-  explicit CommandBufferDirect(TransferBufferManager* transfer_buffer_manager);
+  CommandBufferDirect();
   ~CommandBufferDirect() override;
 
   void set_handler(AsyncAPIInterface* handler) { handler_ = handler; }
-  CommandBufferServiceBase* service() { return &service_; }
+  CommandBufferService* service() { return &service_; }
 
   // CommandBuffer implementation:
   CommandBuffer::State GetLastState() override;
@@ -40,7 +38,7 @@ class GPU_EXPORT CommandBufferDirect : public CommandBuffer,
                                              int32_t* id) override;
   void DestroyTransferBuffer(int32_t id) override;
 
-  // CommandBufferServiceBase implementation:
+  // CommandBufferServiceClient implementation:
   CommandBatchProcessedResult OnCommandBatchProcessed() override;
   void OnParseError() override;
 
@@ -52,6 +50,7 @@ class GPU_EXPORT CommandBufferDirect : public CommandBuffer,
   void OnRescheduleAfterFinished() override;
   void OnSwapBuffers(uint64_t swap_id, uint32_t flags) override;
   void ScheduleGrContextCleanup() override {}
+  void HandleReturnData(base::span<const uint8_t> data) override;
 
   scoped_refptr<Buffer> CreateTransferBufferWithId(uint32_t size, int32_t id);
 
@@ -62,7 +61,6 @@ class GPU_EXPORT CommandBufferDirect : public CommandBuffer,
  private:
   CommandBufferService service_;
   AsyncAPIInterface* handler_ = nullptr;
-  const CommandBufferId command_buffer_id_;
 };
 
 }  // namespace gpu

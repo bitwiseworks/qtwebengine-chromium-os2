@@ -9,10 +9,10 @@
 #include <limits>
 #include <new>
 
-#include "base/logging.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/spdy/core/zero_copy_output_buffer.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_bug_tracker.h"
+#include "net/third_party/quiche/src/spdy/platform/api/spdy_logging.h"
 
 namespace spdy {
 
@@ -120,7 +120,8 @@ bool SpdyFrameBuilder::BeginNewFrameInternal(uint8_t raw_frame_type,
   return success;
 }
 
-bool SpdyFrameBuilder::WriteStringPiece32(const SpdyStringPiece value) {
+bool SpdyFrameBuilder::WriteStringPiece32(
+    const quiche::QuicheStringPiece value) {
   if (!WriteUInt32(value.size())) {
     return false;
   }
@@ -167,8 +168,8 @@ bool SpdyFrameBuilder::CanWrite(size_t length) const {
 
   if (output_ == nullptr) {
     if (offset_ + length_ + length > capacity_) {
-      DLOG(FATAL) << "Requested: " << length << " capacity: " << capacity_
-                  << " used: " << offset_ + length_;
+      SPDY_DLOG(FATAL) << "Requested: " << length << " capacity: " << capacity_
+                       << " used: " << offset_ + length_;
       return false;
     }
   } else {

@@ -4,18 +4,17 @@
 
 #include "device/fido/hid/fido_hid_discovery.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
+#include <vector>
 
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "device/fido/fido_authenticator.h"
 #include "device/fido/hid/fake_hid_impl_for_testing.h"
 #include "device/fido/hid/fido_hid_device.h"
 #include "device/fido/mock_fido_discovery_observer.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/hid.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/mojom/connector.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -42,29 +41,29 @@ MATCHER_P(IdMatches, id, "") {
 
 class FidoHidDiscoveryTest : public ::testing::Test {
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-  ScopedFakeHidManager fake_hid_manager_;
+  base::test::TaskEnvironment task_environment_;
+  ScopedFakeFidoHidManager fake_hid_manager_;
 };
 
 TEST_F(FidoHidDiscoveryTest, TestAddRemoveDevice) {
-  FidoHidDiscovery discovery(fake_hid_manager_.service_manager_connector());
+  FidoHidDiscovery discovery;
   MockFidoDiscoveryObserver observer;
 
   fake_hid_manager_.AddFidoHidDevice("known");
 
-  EXPECT_CALL(observer, DiscoveryStarted(&discovery, true));
-  discovery.set_observer(&observer);
-  discovery.Start();
-
   // Devices initially known to the service before discovery started should be
   // reported as KNOWN.
-  EXPECT_CALL(observer, AuthenticatorAdded(&discovery, IdMatches("known")));
-  scoped_task_environment_.RunUntilIdle();
+  EXPECT_CALL(observer,
+              DiscoveryStarted(&discovery, true,
+                               testing::ElementsAre(IdMatches("known"))));
+  discovery.set_observer(&observer);
+  discovery.Start();
+  task_environment_.RunUntilIdle();
 
   // Devices added during the discovery should be reported as ADDED.
   EXPECT_CALL(observer, AuthenticatorAdded(&discovery, IdMatches("added")));
   fake_hid_manager_.AddFidoHidDevice("added");
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   // Added non-U2F devices should not be reported at all.
   EXPECT_CALL(observer, AuthenticatorAdded(_, _)).Times(0);
@@ -73,14 +72,14 @@ TEST_F(FidoHidDiscoveryTest, TestAddRemoveDevice) {
   // Removed non-U2F devices should not be reported at all.
   EXPECT_CALL(observer, AuthenticatorRemoved(_, _)).Times(0);
   fake_hid_manager_.RemoveDevice("other");
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   // Removed U2F devices should be reported as REMOVED.
   EXPECT_CALL(observer, AuthenticatorRemoved(&discovery, IdMatches("known")));
   EXPECT_CALL(observer, AuthenticatorRemoved(&discovery, IdMatches("added")));
   fake_hid_manager_.RemoveDevice("known");
   fake_hid_manager_.RemoveDevice("added");
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 }  // namespace device

@@ -13,7 +13,7 @@
 ** This file contains an implementation of the "sqlite_dbpage" virtual table.
 **
 ** The sqlite_dbpage virtual table is used to read or write whole raw
-** pages of the database file.  The pager interface is used so that
+** pages of the database file.  The pager interface is used so that 
 ** uncommitted changes and changes recorded in the WAL file are correctly
 ** retrieved.
 **
@@ -73,7 +73,8 @@ static int dbpageConnect(
   DbpageTable *pTab = 0;
   int rc = SQLITE_OK;
 
-  rc = sqlite3_declare_vtab(db,
+  sqlite3_vtab_config(db, SQLITE_VTAB_DIRECTONLY);
+  rc = sqlite3_declare_vtab(db, 
           "CREATE TABLE x(pgno INTEGER PRIMARY KEY, data BLOB, schema HIDDEN)");
   if( rc==SQLITE_OK ){
     pTab = (DbpageTable *)sqlite3_malloc64(sizeof(DbpageTable));
@@ -213,7 +214,7 @@ static int dbpageEof(sqlite3_vtab_cursor *pCursor){
 ** idxStr is not used
 */
 static int dbpageFilter(
-  sqlite3_vtab_cursor *pCursor,
+  sqlite3_vtab_cursor *pCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -224,7 +225,7 @@ static int dbpageFilter(
   Btree *pBt;
 
   /* Default setting is no rows of result */
-  pCsr->pgno = 1;
+  pCsr->pgno = 1; 
   pCsr->mxPgno = 0;
 
   if( idxNum & 2 ){
@@ -259,8 +260,8 @@ static int dbpageFilter(
 }
 
 static int dbpageColumn(
-  sqlite3_vtab_cursor *pCursor,
-  sqlite3_context *ctx,
+  sqlite3_vtab_cursor *pCursor, 
+  sqlite3_context *ctx, 
   int i
 ){
   DbpageCursor *pCsr = (DbpageCursor *)pCursor;
@@ -337,7 +338,7 @@ static int dbpageUpdate(
     goto update_fail;
   }
   szPage = sqlite3BtreeGetPageSize(pBt);
-  if( sqlite3_value_type(argv[3])!=SQLITE_BLOB
+  if( sqlite3_value_type(argv[3])!=SQLITE_BLOB 
    || sqlite3_value_bytes(argv[3])!=szPage
   ){
     zErr = "bad page value";

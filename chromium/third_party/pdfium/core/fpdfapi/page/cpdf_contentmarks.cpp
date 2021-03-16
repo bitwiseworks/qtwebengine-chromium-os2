@@ -109,8 +109,8 @@ size_t CPDF_ContentMarks::MarkData::CountItems() const {
 
 bool CPDF_ContentMarks::MarkData::ContainsItem(
     const CPDF_ContentMarkItem* pItem) const {
-  for (const auto pMark : m_Marks) {
-    if (pMark.Get() == pItem)
+  for (const auto& pMark : m_Marks) {
+    if (pMark == pItem)
       return true;
   }
   return false;
@@ -126,7 +126,7 @@ const CPDF_ContentMarkItem* CPDF_ContentMarks::MarkData::GetItem(
 }
 
 int CPDF_ContentMarks::MarkData::GetMarkedContentID() const {
-  for (const auto pMark : m_Marks) {
+  for (const auto& pMark : m_Marks) {
     const CPDF_Dictionary* pDict = pMark->GetParam();
     if (pDict && pDict->KeyExist("MCID"))
       return pDict->GetIntegerFor("MCID");
@@ -151,14 +151,14 @@ void CPDF_ContentMarks::MarkData::AddMarkWithPropertiesHolder(
     const ByteString& name,
     CPDF_Dictionary* pDict,
     const ByteString& property_name) {
-  auto pItem = pdfium::MakeRetain<CPDF_ContentMarkItem>(std::move(name));
+  auto pItem = pdfium::MakeRetain<CPDF_ContentMarkItem>(name);
   pItem->SetPropertiesHolder(pDict, property_name);
   m_Marks.push_back(pItem);
 }
 
 bool CPDF_ContentMarks::MarkData::RemoveMark(CPDF_ContentMarkItem* pMarkItem) {
   for (auto it = m_Marks.begin(); it != m_Marks.end(); ++it) {
-    if (it->Get() == pMarkItem) {
+    if (*it == pMarkItem) {
       m_Marks.erase(it);
       return true;
     }

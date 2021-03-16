@@ -10,7 +10,7 @@
 #***********************************************************************
 #
 # This file contains tests of multiple RBU operations running
-# concurrently within the same process.
+# concurrently within the same process. 
 #
 
 source [file join [file dirname [info script]] rbu_common.tcl]
@@ -29,7 +29,7 @@ proc build_db {db} {
     CREATE INDEX i2 ON t1(c);
 
     WITH s(i) AS ( SELECT 1 UNION ALL SELECT i+1 FROM s WHERE i<500 )
-    INSERT INTO t1
+    INSERT INTO t1 
     SELECT randomblob(10), randomblob(100), randomblob(100) FROM s;
   }
 }
@@ -38,7 +38,7 @@ proc build_rbu {db} {
   $db eval {
     CREATE TABLE data_t1(a, b, c, rbu_control);
     WITH s(i) AS ( SELECT 1 UNION ALL SELECT i+1 FROM s WHERE i<100 )
-    INSERT INTO data_t1
+    INSERT INTO data_t1 
     SELECT randomblob(10), randomblob(100), randomblob(100), 0 FROM s;
   }
 }
@@ -50,8 +50,8 @@ proc step_rbu2 {bOpenClose openr1 openr2} {
 
   if {$bOpenClose!=0 && $bOpenClose!=1} { error $bOpenClose }
   if {$bOpenClose==0} {
-    eval $openr1
-    eval $openr2
+    eval $openr1 
+    eval $openr2 
   }
 
   set b1 0
@@ -94,26 +94,26 @@ for {set i 0} {$i<=3} {incr i} {
   forcedelete test.db2
   forcedelete rbu.db
   forcedelete rbu.db2
-
+  
   do_test 1.$i.0 {
     sqlite3 db test.db
     sqlite3 db2 test.db2
     build_db db
     build_db db2
-
+  
     sqlite3 rbu1 rbu.db
     sqlite3 rbu2 rbu.db2
-
+  
     build_rbu rbu1
     build_rbu rbu2
-
+  
     rbu1 close
     rbu2 close
   } {}
 
   set m1 [db eval {SELECT md5sum(a, b, c) FROM t1}]
   set m2 [db2 eval {SELECT md5sum(a, b, c) FROM t1}]
-
+  
   do_test 1.$i.1 {
     step_rbu2 $bOpenClose {
       sqlite3rbu r1 test.db rbu.db
@@ -121,20 +121,20 @@ for {set i 0} {$i<=3} {incr i} {
       sqlite3rbu r2 test.db2 rbu.db2
     }
   } {SQLITE_DONE SQLITE_DONE}
-
+  
   do_execsql_test -db db  1.$i.2.1 { PRAGMA integrity_check } ok
   do_execsql_test -db db2 1.$i.2.2 { PRAGMA integrity_check } ok
 
   do_execsql_test -db db  1.$i.3.1 { SELECT md5sum(a, b, c)==$m1 FROM t1 } 0
   do_execsql_test -db db2 1.$i.3.2 { SELECT md5sum(a, b, c)==$m2 FROM t1 } 0
-
+  
   catch { db close }
   catch { db2 close }
   #-----------------------------------------------------------------------
   forcedelete test.db2
   forcedelete test.db
   forcedelete rbu.db2
-
+  
   do_test 1.$i.4 {
     sqlite3 db test.db
     sqlite3 db2 test.db2

@@ -5,11 +5,13 @@
 #include "ui/views/focus/focus_manager.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include "base/auto_reset.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
@@ -19,7 +21,7 @@
 #include "ui/views/focus/focus_search.h"
 #include "ui/views/focus/widget_focus_manager.h"
 #include "ui/views/view.h"
-#include "ui/views/view_properties.h"
+#include "ui/views/view_class_properties.h"
 #include "ui/views/view_tracker.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
@@ -93,7 +95,8 @@ bool FocusManager::OnKeyEvent(const ui::KeyEvent& event) {
         index = views.size() - 1;
       else
         index += next ? 1 : -1;
-      SetFocusedViewWithReason(views[index], kReasonFocusTraversal);
+      SetFocusedViewWithReason(views[index],
+                               FocusChangeReason::kFocusTraversal);
       return false;
     }
   }
@@ -135,7 +138,7 @@ void FocusManager::AdvanceFocus(bool reverse) {
     // FocusManager.
     DCHECK(v->GetWidget());
     v->GetWidget()->GetFocusManager()->SetFocusedViewWithReason(
-        v, kReasonFocusTraversal);
+        v, FocusChangeReason::kFocusTraversal);
 
     // When moving focus from a child widget to a top-level widget,
     // the top-level widget may report IsActive()==true because it's
@@ -152,16 +155,16 @@ void FocusManager::ClearNativeFocus() {
 }
 
 bool FocusManager::RotatePaneFocus(Direction direction,
-                                   FocusCycleWrappingBehavior wrap) {
+                                   FocusCycleWrapping wrapping) {
   // Get the list of all accessible panes.
   std::vector<View*> panes;
   widget_->widget_delegate()->GetAccessiblePanes(&panes);
 
   // Count the number of panes and set the default index if no pane
   // is initially focused.
-  int count = static_cast<int>(panes.size());
-  if (count == 0)
+  if (panes.empty())
     return false;
+  int count = int{panes.size()};
 
   // Initialize |index| to an appropriate starting index if nothing is
   // focused initially.
@@ -170,12 +173,12 @@ bool FocusManager::RotatePaneFocus(Direction direction,
   // Check to see if a pane already has focus and update the index accordingly.
   const views::View* focused_view = GetFocusedView();
   if (focused_view) {
-    for (int i = 0; i < count; i++) {
-      if (panes[i] && panes[i]->Contains(focused_view)) {
-        index = i;
-        break;
-      }
-    }
+    const auto i = std::find_if(panes.cbegin(), panes.cend(),
+                                [focused_view](const auto* pane) {
+                                  return pane && pane->Contains(focused_view);
+                                });
+    if (i != panes.cend())
+      index = i - panes.cbegin();
   }
 
   // Rotate focus.
@@ -186,7 +189,8 @@ bool FocusManager::RotatePaneFocus(Direction direction,
     else
       index++;
 
-    if (wrap == kNoWrap && (index >= count || index < 0))
+    if (wrapping == FocusCycleWrapping::kDisabled &&
+        (index >= count || index < 0))
       return false;
     index = (index + count) % count;
 
@@ -197,7 +201,7 @@ bool FocusManager::RotatePaneFocus(Direction direction,
     views::View* pane = panes[index];
     DCHECK(pane);
 
-    if (!pane->visible())
+    if (!pane->GetVisible())
       continue;
 
     pane->RequestFocus();
@@ -375,6 +379,14 @@ void FocusManager::SetFocusedViewWithReason(View* view,
     delegate_->OnDidChangeFocus(old_focused_view, focused_view_);
 }
 
+void FocusManager::SetFocusedView(View* view) {
+  FocusChangeReason reason = FocusChangeReason::kDirectFocusChange;
+  if (in_restoring_focused_view_)
+    reason = FocusChangeReason::kFocusRestore;
+
+  SetFocusedViewWithReason(view, reason);
+}
+
 void FocusManager::ClearFocus() {
   // SetFocusedView(nullptr) is going to clear out the stored view to. We need
   // to persist it in this case.
@@ -432,16 +444,12 @@ bool FocusManager::RestoreFocusedView() {
       if (!view->IsFocusable() && view->IsAccessibilityFocusable()) {
         // RequestFocus would fail, but we want to restore focus to controls
         // that had focus in accessibility mode.
-        SetFocusedViewWithReason(view, kReasonFocusRestore);
+        SetFocusedViewWithReason(view, FocusChangeReason::kFocusRestore);
       } else {
         // This usually just sets the focus if this view is focusable, but
         // let the view override RequestFocus if necessary.
+        base::AutoReset<bool> in_restore_bit(&in_restoring_focused_view_, true);
         view->RequestFocus();
-
-        // If it succeeded, the reason would be incorrect; set it to
-        // focus restore.
-        if (focused_view_ == view)
-          focus_change_reason_ = kReasonFocusRestore;
       }
     }
     // The |keyboard_accessible_| mode may have changed while the widget was
@@ -547,7 +555,8 @@ void FocusManager::RemoveFocusChangeListener(FocusChangeListener* listener) {
 }
 
 bool FocusManager::ProcessArrowKeyTraversal(const ui::KeyEvent& event) {
-  if (event.IsShiftDown() || event.IsControlDown() || event.IsAltDown())
+  if (event.IsShiftDown() || event.IsControlDown() || event.IsAltDown() ||
+      event.IsAltGrDown())
     return false;
 
   const ui::KeyboardCode key = event.key_code();

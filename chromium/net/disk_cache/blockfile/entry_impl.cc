@@ -6,7 +6,7 @@
 
 #include <limits>
 
-#include "base/hash.h"
+#include "base/hash/hash.h"
 #include "base/macros.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_util.h"
@@ -71,12 +71,12 @@ void SyncCallback::OnFileIOComplete(int bytes_copied) {
   entry_->DecrementIoCount();
   if (!callback_.is_null()) {
     if (entry_->net_log().IsCapturing()) {
-      entry_->net_log().EndEvent(
-          end_event_type_,
-          disk_cache::CreateNetLogReadWriteCompleteCallback(bytes_copied));
+      disk_cache::NetLogReadWriteComplete(entry_->net_log(), end_event_type_,
+                                          net::NetLogEventPhase::END,
+                                          bytes_copied);
     }
     entry_->ReportIOTime(disk_cache::EntryImpl::kAsyncIO, start_);
-    buf_ = NULL;  // Release the buffer before invoking the callback.
+    buf_ = nullptr;  // Release the buffer before invoking the callback.
     std::move(callback_).Run(bytes_copied);
   }
   delete this;
@@ -84,7 +84,7 @@ void SyncCallback::OnFileIOComplete(int bytes_copied) {
 
 void SyncCallback::Discard() {
   callback_.Reset();
-  buf_ = NULL;
+  buf_ = nullptr;
   OnFileIOComplete(0);
 }
 
@@ -131,7 +131,7 @@ class EntryImpl::UserBuffer {
   // Prepare this buffer for reuse.
   void Reset();
 
-  char* Data() { return buffer_.size() ? &buffer_[0] : NULL; }
+  char* Data() { return buffer_.data(); }
   int Size() { return static_cast<int>(buffer_.size()); }
   int Start() { return offset_; }
   int End() { return offset_ + Size(); }
@@ -183,6 +183,12 @@ void EntryImpl::UserBuffer::Write(int offset, IOBuffer* buf, int len) {
   DCHECK_GE(offset, 0);
   DCHECK_GE(len, 0);
   DCHECK_GE(offset + len, 0);
+
+  // 0-length writes that don't extend can just be ignored here, and are safe
+  // even if they're are before offset_, as truncates are handled elsewhere.
+  if (len == 0 && offset < End())
+    return;
+
   DCHECK_GE(offset, offset_);
   DVLOG(3) << "Buffer write at " << offset << " current " << offset_;
 
@@ -303,8 +309,11 @@ bool EntryImpl::UserBuffer::GrowBuffer(int required, int limit) {
 // ------------------------------------------------------------------------
 
 EntryImpl::EntryImpl(BackendImpl* backend, Addr address, bool read_only)
-    : entry_(NULL, Addr(0)), node_(NULL, Addr(0)),
-      backend_(backend->GetWeakPtr()), doomed_(false), read_only_(read_only),
+    : entry_(nullptr, Addr(0)),
+      node_(nullptr, Addr(0)),
+      backend_(backend->GetWeakPtr()),
+      doomed_(false),
+      read_only_(read_only),
       dirty_(false) {
   entry_.LazyInit(backend->File(address), address);
   for (int i = 0; i < kNumStreams; i++) {
@@ -326,17 +335,17 @@ int EntryImpl::ReadDataImpl(int index,
                             int buf_len,
                             CompletionOnceCallback callback) {
   if (net_log_.IsCapturing()) {
-    net_log_.BeginEvent(
-        net::NetLogEventType::ENTRY_READ_DATA,
-        CreateNetLogReadWriteDataCallback(index, offset, buf_len, false));
+    NetLogReadWriteData(net_log_, net::NetLogEventType::ENTRY_READ_DATA,
+                        net::NetLogEventPhase::BEGIN, index, offset, buf_len,
+                        false);
   }
 
   int result =
       InternalReadData(index, offset, buf, buf_len, std::move(callback));
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(net::NetLogEventType::ENTRY_READ_DATA,
-                      CreateNetLogReadWriteCompleteCallback(result));
+    NetLogReadWriteComplete(net_log_, net::NetLogEventType::ENTRY_READ_DATA,
+                            net::NetLogEventPhase::END, result);
   }
   return result;
 }
@@ -348,17 +357,17 @@ int EntryImpl::WriteDataImpl(int index,
                              CompletionOnceCallback callback,
                              bool truncate) {
   if (net_log_.IsCapturing()) {
-    net_log_.BeginEvent(
-        net::NetLogEventType::ENTRY_WRITE_DATA,
-        CreateNetLogReadWriteDataCallback(index, offset, buf_len, truncate));
+    NetLogReadWriteData(net_log_, net::NetLogEventType::ENTRY_WRITE_DATA,
+                        net::NetLogEventPhase::BEGIN, index, offset, buf_len,
+                        truncate);
   }
 
   int result = InternalWriteData(index, offset, buf, buf_len,
                                  std::move(callback), truncate);
 
   if (result != net::ERR_IO_PENDING && net_log_.IsCapturing()) {
-    net_log_.EndEvent(net::NetLogEventType::ENTRY_WRITE_DATA,
-                      CreateNetLogReadWriteCompleteCallback(result));
+    NetLogReadWriteComplete(net_log_, net::NetLogEventType::ENTRY_WRITE_DATA,
+                            net::NetLogEventPhase::END, result);
   }
   return result;
 }
@@ -422,7 +431,6 @@ uint32_t EntryImpl::GetHash() {
 bool EntryImpl::CreateEntry(Addr node_address,
                             const std::string& key,
                             uint32_t hash) {
-  Trace("Create entry In");
   EntryStore* entry_store = entry_.Data();
   RankingsNode* node = node_.Data();
   memset(entry_store, 0, sizeof(EntryStore) * entry_.address().num_blocks());
@@ -449,7 +457,7 @@ bool EntryImpl::CreateEntry(Addr node_address,
     if (address.is_block_file())
       offset = address.start_block() * address.BlockSize() + kBlockHeaderSize;
 
-    if (!key_file || !key_file->Write(key.data(), key.size(), offset)) {
+    if (!key_file || !key_file->Write(key.data(), key.size() + 1, offset)) {
       DeleteData(address, kKeyFileIndex);
       return false;
     }
@@ -463,7 +471,6 @@ bool EntryImpl::CreateEntry(Addr node_address,
   backend_->ModifyStorageSize(0, static_cast<int32_t>(key.size()));
   CACHE_UMA(COUNTS, "KeySize", 0, static_cast<int32_t>(key.size()));
   node->dirty = backend_->GetCurrentEntryId();
-  Log("Create Entry ");
   return true;
 }
 
@@ -639,7 +646,7 @@ bool EntryImpl::DataSanityCheck() {
   if (!key_addr.is_initialized() && stored->key[stored->key_len])
     return false;
 
-  if (stored->hash != base::Hash(GetKey()))
+  if (stored->hash != base::PersistentHash(GetKey()))
     return false;
 
   for (int i = 0; i < kNumStreams; i++) {
@@ -743,9 +750,9 @@ void EntryImpl::BeginLogging(net::NetLog* net_log, bool created) {
   DCHECK(!net_log_.net_log());
   net_log_ = net::NetLogWithSource::Make(
       net_log, net::NetLogSourceType::DISK_CACHE_ENTRY);
-  net_log_.BeginEvent(
-      net::NetLogEventType::DISK_CACHE_ENTRY_IMPL,
-      CreateNetLogParametersEntryCreationCallback(this, created));
+  net_log_.BeginEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL, [&] {
+    return CreateNetLogParametersEntryCreationParams(this, created);
+  });
 }
 
 const net::NetLogWithSource& EntryImpl::net_log() const {
@@ -780,7 +787,7 @@ std::string EntryImpl::GetKey() const {
   CacheEntryBlock* entry = const_cast<CacheEntryBlock*>(&entry_);
   int key_len = entry->Data()->key_len;
   if (key_len <= kMaxInternalKeyLength)
-    return std::string(entry->Data()->key);
+    return std::string(entry->Data()->key, key_len);
 
   // We keep a copy of the key so that we can always return it, even if the
   // backend is disabled.
@@ -799,12 +806,18 @@ std::string EntryImpl::GetKey() const {
   if (!key_file)
     return std::string();
 
-  ++key_len;  // We store a trailing \0 on disk that we read back below.
+  ++key_len;  // We store a trailing \0 on disk.
   if (!offset && key_file->GetLength() != static_cast<size_t>(key_len))
     return std::string();
 
-  if (!key_file->Read(base::WriteInto(&key_, key_len), key_len, offset))
+  // WriteInto will ensure that key_.length() == key_len - 1, and so
+  // key_.c_str()[key_len] will be '\0'. Taking advantage of this, do not
+  // attempt read up to the expected on-disk '\0' --- which would be |key_len|
+  // bytes total --- as if due to a corrupt file it isn't |key_| would get its
+  // internal nul messed up.
+  if (!key_file->Read(base::WriteInto(&key_, key_len), key_len - 1, offset))
     key_.clear();
+  DCHECK_LE(strlen(key_.data()), static_cast<size_t>(key_len));
   return key_;
 }
 
@@ -961,7 +974,6 @@ EntryImpl::~EntryImpl() {
     node_.clear_modified();
     return;
   }
-  Log("~EntryImpl in");
 
   // Save the sparse info to disk. This will generate IO for this entry and
   // maybe for a child entry, so it is important to do it before deleting this
@@ -1003,7 +1015,6 @@ EntryImpl::~EntryImpl() {
     }
   }
 
-  Trace("~EntryImpl out 0x%p", reinterpret_cast<void*>(this));
   net_log_.EndEvent(net::NetLogEventType::DISK_CACHE_ENTRY_IMPL);
   backend_->OnEntryDestroyEnd();
 }
@@ -1073,7 +1084,7 @@ int EntryImpl::InternalReadData(int index,
                    kBlockHeaderSize;
   }
 
-  SyncCallback* io_callback = NULL;
+  SyncCallback* io_callback = nullptr;
   bool null_callback = callback.is_null();
   if (!null_callback) {
     io_callback =
@@ -1136,11 +1147,9 @@ int EntryImpl::InternalWriteData(int index,
   int entry_size = entry_.Data()->data_size[index];
   bool extending = entry_size < offset + buf_len;
   truncate = truncate && entry_size > offset + buf_len;
-  Trace("To PrepareTarget 0x%x", entry_.address().value());
   if (!PrepareTarget(index, offset, buf_len, truncate))
     return net::ERR_FAILED;
 
-  Trace("From PrepareTarget 0x%x", entry_.address().value());
   if (extending || truncate)
     UpdateSize(index, entry_size, offset + buf_len);
 
@@ -1181,7 +1190,7 @@ int EntryImpl::InternalWriteData(int index,
   if (!buf_len)
     return 0;
 
-  SyncCallback* io_callback = NULL;
+  SyncCallback* io_callback = nullptr;
   bool null_callback = callback.is_null();
   if (!null_callback) {
     io_callback = new SyncCallback(this, buf, std::move(callback),
@@ -1260,7 +1269,7 @@ void EntryImpl::DeleteData(Addr address, int index) {
           backend_->GetFileName(address).value() << " from the cache.";
     }
     if (files_[index].get())
-      files_[index] = NULL;  // Releases the object.
+      files_[index] = nullptr;  // Releases the object.
   } else {
     backend_->DeleteBlock(address, true);
   }
@@ -1285,7 +1294,7 @@ void EntryImpl::UpdateRank(bool modified) {
 
 File* EntryImpl::GetBackingFile(Addr address, int index) {
   if (!backend_.get())
-    return NULL;
+    return nullptr;
 
   File* file;
   if (address.is_separate_file())
@@ -1355,7 +1364,11 @@ bool EntryImpl::HandleTruncation(int index, int offset, int buf_len) {
   int current_size = entry_.Data()->data_size[index];
   int new_size = offset + buf_len;
 
-  if (!new_size) {
+  // This is only called when actually truncating the file, not simply when
+  // truncate = true is passed to WriteData(), which could be growing the file.
+  DCHECK_LT(new_size, current_size);
+
+  if (new_size == 0) {
     // This is by far the most common scenario.
     backend_->ModifyStorageSize(current_size - unreported_size_[index], 0);
     entry_.Data()->data_addr[index] = 0;
@@ -1375,13 +1388,24 @@ bool EntryImpl::HandleTruncation(int index, int offset, int buf_len) {
     if (!address.is_initialized()) {
       // There is no overlap between the buffer and disk.
       if (new_size > user_buffers_[index]->Start()) {
-        // Just truncate our buffer.
+        // Truncate our buffer.
         DCHECK_LT(new_size, user_buffers_[index]->End());
         user_buffers_[index]->Truncate(new_size);
-        return true;
+
+        if (offset < user_buffers_[index]->Start()) {
+          // Request to write before the current buffer's start, so flush it to
+          // disk and re-init.
+          UpdateSize(index, current_size, new_size);
+          if (!Flush(index, 0))
+            return false;
+          return PrepareBuffer(index, offset, buf_len);
+        } else {
+          // Can just stick to using the memory buffer.
+          return true;
+        }
       }
 
-      // Just discard our buffer.
+      // Truncated to before the current buffer, so can just discard it.
       user_buffers_[index]->Reset();
       return PrepareBuffer(index, offset, buf_len);
     }
@@ -1413,7 +1437,7 @@ bool EntryImpl::CopyToLocalBuffer(int index) {
 
   int len = std::min(entry_.Data()->data_size[index], kMaxBlockSize);
   user_buffers_[index].reset(new UserBuffer(backend_.get()));
-  user_buffers_[index]->Write(len, NULL, 0);
+  user_buffers_[index]->Write(len, nullptr, 0);
 
   File* file = GetBackingFile(address, index);
   int offset = 0;
@@ -1421,8 +1445,8 @@ bool EntryImpl::CopyToLocalBuffer(int index) {
   if (address.is_block_file())
     offset = address.start_block() * address.BlockSize() + kBlockHeaderSize;
 
-  if (!file ||
-      !file->Read(user_buffers_[index]->Data(), len, offset, NULL, NULL)) {
+  if (!file || !file->Read(user_buffers_[index]->Data(), len, offset, nullptr,
+                           nullptr)) {
     user_buffers_[index].reset();
     return false;
   }
@@ -1519,7 +1543,7 @@ bool EntryImpl::Flush(int index, int min_len) {
   if (!file)
     return false;
 
-  if (!file->Write(user_buffers_[index]->Data(), len, offset, NULL, NULL))
+  if (!file->Write(user_buffers_[index]->Data(), len, offset, nullptr, nullptr))
     return false;
   user_buffers_[index]->Reset();
 
@@ -1573,7 +1597,7 @@ void EntryImpl::GetData(int index, char** buffer, Addr* address) {
 
   // Bad news: we'd have to read the info from disk so instead we'll just tell
   // the caller where to read from.
-  *buffer = NULL;
+  *buffer = nullptr;
   address->set_value(entry_.Data()->data_addr[index]);
   if (address->is_initialized()) {
     // Prevent us from deleting the block from the backing store.
@@ -1582,21 +1606,6 @@ void EntryImpl::GetData(int index, char** buffer, Addr* address) {
     entry_.Data()->data_addr[index] = 0;
     entry_.Data()->data_size[index] = 0;
   }
-}
-
-void EntryImpl::Log(const char* msg) {
-  int dirty = 0;
-  if (node_.HasData()) {
-    dirty = node_.Data()->dirty;
-  }
-
-  Trace("%s 0x%p 0x%x 0x%x", msg, reinterpret_cast<void*>(this),
-        entry_.address().value(), node_.address().value());
-
-  Trace("  data: 0x%x 0x%x 0x%x", entry_.Data()->data_addr[0],
-        entry_.Data()->data_addr[1], entry_.Data()->long_key);
-
-  Trace("  doomed: %d 0x%x", doomed_, dirty);
 }
 
 }  // namespace disk_cache

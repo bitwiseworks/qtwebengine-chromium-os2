@@ -12,7 +12,7 @@
 
 namespace printing {
 
-TestPrintBackend::TestPrintBackend() = default;
+TestPrintBackend::TestPrintBackend() : PrintBackend(/*locale=*/std::string()) {}
 
 TestPrintBackend::~TestPrintBackend() = default;
 
@@ -50,14 +50,12 @@ bool TestPrintBackend::GetPrinterSemanticCapsAndDefaults(
   return true;
 }
 
-#if !defined(OS_CHROMEOS)
 bool TestPrintBackend::GetPrinterCapsAndDefaults(
     const std::string& printer_name,
     PrinterCapsAndDefaults* printer_info) {
   // not implemented
   return false;
 }
-#endif  // !defined(OS_CHROMEOS)
 
 std::string TestPrintBackend::GetPrinterDriverInfo(
     const std::string& printr_name) {
@@ -66,7 +64,7 @@ std::string TestPrintBackend::GetPrinterDriverInfo(
 }
 
 bool TestPrintBackend::IsValidPrinter(const std::string& printer_name) {
-  return base::ContainsKey(valid_printers_, printer_name);
+  return base::Contains(valid_printers_, printer_name);
 }
 
 void TestPrintBackend::PopulatePrinterList(const PrinterList& printer_list) {

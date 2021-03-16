@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -47,8 +48,7 @@ HttpCacheDataRemover::HttpCacheDataRemover(
     : delete_begin_(delete_begin),
       delete_end_(delete_end),
       done_callback_(std::move(done_callback)),
-      backend_(nullptr),
-      weak_factory_(this) {
+      backend_(nullptr) {
   DCHECK(!done_callback_.is_null());
 
   if (!url_filter)
@@ -129,13 +129,13 @@ void HttpCacheDataRemover::CacheRetrieved(int rv) {
   }
 
   if (delete_begin_.is_null() && delete_end_.is_max()) {
-    rv = backend_->DoomAllEntries(base::Bind(
+    rv = backend_->DoomAllEntries(base::BindOnce(
         &HttpCacheDataRemover::ClearHttpCacheDone, weak_factory_.GetWeakPtr()));
   } else {
     rv = backend_->DoomEntriesBetween(
         delete_begin_, delete_end_,
-        base::Bind(&HttpCacheDataRemover::ClearHttpCacheDone,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&HttpCacheDataRemover::ClearHttpCacheDone,
+                       weak_factory_.GetWeakPtr()));
   }
   if (rv != net::ERR_IO_PENDING) {
     // Notify by posting a task to avoid reentrency.

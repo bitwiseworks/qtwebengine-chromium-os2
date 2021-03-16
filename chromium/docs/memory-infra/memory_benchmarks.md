@@ -34,15 +34,12 @@ System health memory benchmarks are:
 *   [system_health.memory_desktop][system_health] -
     user stories running on desktop platforms.
 
-These benchmarks are run continuously on the [chromium.perf][] waterfall,
+These benchmarks are run continuously on the [chrome.perf][] waterfall,
 collecting and reporting results on the
 [Chrome Performance Dashboard][chromeperf].
 
-Other benchmarks maintained by the memory-infra team are discussed in the
-[appendix](#Other-benchmarks).
-
 [system_health]: https://chromium.googlesource.com/chromium/src/+/master/tools/perf/page_sets/system_health/
-[chromium.perf]: https://build.chromium.org/p/chromium.perf/waterfall
+[chrome.perf]: https://ci.chromium.org/p/chrome/g/chrome.perf/console
 [chromeperf]: https://chromeperf.appspot.com/report
 
 ### User stories
@@ -59,20 +56,26 @@ perform with the browser:
     browser to the background).
 *   `long_running` stories interact with a page for a longer period
     of time (~5 mins).
-*   `blank` has a single story that just navigates to **about:blank**.
+*   `multitab` loads different web sites in several tabs, then cycles through
+    them.
+*   `play` loads a web site and plays some media (e.g. a song).
 
-The full name of a story has the form `{interaction}:{category}:{site}` where:
+The full name of a story has the form `{interaction}:{category}:{site}[:{year}]`
+where:
 
 *   `interaction` is one the labels given above;
 *   `category` is used to group together sites with a similar purpose,
     e.g. `news`, `social`, `tools`;
 *   `site` is a short name identifying the website in which the story mostly
     takes place, e.g. `cnn`, `facebook`, `gmail`.
+*   `year` indicates the year in which the web page recording for the story
+    was most recently updated.
 
-For example `browse:news:cnn` and `background:social:facebook` are two system
-health user stories.
+For example `browse:news:cnn:2018` and `background:social:facebook` are two
+system health user stories. The list of all current stories can be found at
+[bit.ly/csh-stories](http://bit.ly/csh-stories).
 
-Today, for most stories a garbage collection is forced at the end of the
+Today, for most stories, a garbage collection is forced at the end of the
 story and a memory dump is then triggered. Metrics report the values
 obtained from this single measurement.
 
@@ -92,14 +95,56 @@ To view data from one of the benchmarks on the
 *   **Subtest (3):** The name of a *[user story](#User-stories)*
     (with `:` replaced by `_`).
 
-If you are investigating a Perf dashboard alert and would like to see the
-details, you can click on any point of the graph. It gives you the commit range,
-buildbot output and a link to the trace file taken during the buildbot run.
-(More information about reading trace files [here][memory-infra])
+Clicking on any point of the graph will give you the commit range, links to the
+builder that ran the benchmark, and a trace file collected during the story
+run. See below for details on how to interpret these traces when
+[debugging memory related issues](#debugging-memory-regressions).
 
-[memory-infra]: /docs/memory-infra/README.md
+Many of the high level memory measurements are automatically tracked and the
+Performance Dashboard will generate alerts when a memory regression is detected.
+These are triaged by [perf sheriffs][] who create bugs and start bisect jobs
+to find the root cause of regressions.
+
+[perf sheriffs]: /docs/speed/perf_regression_sheriffing.md
 
 ![Chrome Performance Dashboard Alert](https://storage.googleapis.com/chromium-docs.appspot.com/perfdashboard_alert.png)
+
+## Debugging memory regressions
+
+If you are investigating a memory regression, chances are, a [pinpoint][]
+job identified one of your CLs as a possible culprit.
+
+![Pinpoint Regression](https://storage.googleapis.com/chromium-docs.appspot.com/pinpoint_regression.png)
+
+Note the "chart" argument identifies the memory metric that regressed. The
+pinpoint results page also gives you easy access to traces before and after
+your commit landed. It's useful to look at both and compare them to identify what
+changed. The documentation on [memory-infra][memory-infra] explains how to dig
+down into details and interpret memory measurements. Also note that pinpoint
+runs each commit multiple times, so you can access more traces by clicking on
+a different "repeat" of either commit.
+
+Sometimes it's also useful to follow the link to "Analyze benchmark results"
+which will bring up the [Metrics Results UI][results-ui] to compare all
+measurements (not just the one caught by the alert) before and after your
+CL landed. Make sure to select the "before" commit as reference column, show
+absolute changes (i.e. "Δavg") instead of relative, and sort by the column
+with changes on the "after" commit to visualize them more easily. This can be
+useful to find a more specific source of the regression, e.g.
+`renderer_processes:reported_by_chrome:v8:heap:code_space:effective_size`
+rather than just `all_processes:reported_by_chrome:effective_size`, and help
+you pin down the source of the regression.
+
+To confirm whether a revert of your CL would fix the regression you can run
+a [pinpoint try job](#How-to-run-a-pinpoint-try-job) with a patch containing
+the revert. Finally, **do not close the bug** even if you suspect that your CL
+may not be the cause of the regression; instead follow the more general
+guidance on how to [address performance regressions][addressing-regressions].
+Bugs should only be closed if the regression has been fixed or justified.
+
+[results-ui]: https://chromium.googlesource.com/catapult.git/+/HEAD/docs/metrics-results-ui.md
+[memory-infra]: /docs/memory-infra/README.md
+[addressing-regressions]: /docs/speed/addressing_performance_regressions.md
 
 ## How to run the benchmarks
 
@@ -128,8 +173,9 @@ create a new job, and fill in the required details:
 * **Benchmark**: The name of the benchmark to run. If you are interested in
   memory try `system_health.memory_mobile` or `system_health.memory_desktop`
   as appropriate.
-* **Story** (optional): A pattern passed to Telemetry's `--story-filter`
-  option to only run stories that match the pattern.
+* **Story** (optional): A pattern (Python regular expression) passed to
+  Telemetry's `--story-filter` option to only run stories that match the
+  pattern.
 * **Extra Test Arguments** (optional): Additional command line arguments for
   Telemetry's `run_benchmark`. Of note, if you are interested in running a
   small but representative sample of system health stories you can pass
@@ -138,7 +184,7 @@ create a new job, and fill in the required details:
 If you have more specific needs, or need to automate the creation of jobs, you
 can also consider using [pinpoint_cli][].
 
-[pinpoint_cli]: https://cs.chromium.org/chromium/src/third_party/catapult/experimental/soundwave/bin/pinpoint_cli
+[pinpoint_cli]: https://cs.chromium.org/chromium/src/tools/perf/pinpoint_cli
 
 ### How to run locally
 
@@ -203,62 +249,6 @@ where:
     `proportional_resident_size` (others are `peak_resident_size` and
     `private_dirty_size`).
 
+Read the [memory-infra documentation][memory-infra] for more details on them.
+
 [memory-infra]: /docs/memory-infra/README.md
-
-## Appendix
-
-There are a few other benchmarks maintained by the memory-infra team.
-These also use the same set of metrics as system health, but have differences
-on the kind of stories that they run.
-
-### memory.top_10_mobile
-
-The [memory.top_10_mobile][memory_py] benchmark is in the process of being deprecated
-in favor of system health benchmarks. This process, however, hasn't been
-finalized and currently they are still the reference benchmark used for
-decision making in the Android release process. Therefore, **it is important
-to diagnose and fix regressions caught by this benchmark**.
-
-The benchmark's work flow is:
-
-- Cycle between:
-
-  - load a page on Chrome, wait for it to load, [force garbage collection
-    and measure memory][measure];
-  - push Chrome to the background, force garbage collection and measure
-    memory again.
-
-- Repeat for each of 10 pages *without closing the browser*.
-
-- Close the browser, re-open and repeat the full page set a total of 5 times.
-
-- Story groups are either `foreground` or `background` depending on the state
-  of the browser at the time of measurement.
-
-The main difference to watch out between this and system health benchmarks is
-that, since a single browser instance is kept open and shared by many
-individual stories, they are not independent of each other. In particular, **do
-not use the `--story-filter` argument when trying to reproduce regressions**
-on these benchmarks, as doing so will affect the results.
-
-[memory_py]: https://cs.chromium.org/chromium/src/tools/perf/benchmarks/memory.py
-[measure]: https://github.com/catapult-project/catapult/blob/master/telemetry/telemetry/internal/actions/action_runner.py#L133
-
-### Dual browser benchmarks
-
-Dual browser benchmarks are intended to assess the memory implications of
-shared resources between Chrome and WebView.
-
-*   [memory.dual_browser_test][memory_extra_py] - cycle between doing Google
-    searches on a WebView-based browser (a stand-in for the Google Search app)
-    and loading pages on Chrome. Runs on Android devices only.
-
-    Story groups are either `on_chrome` or `on_webview`, indicating the browser
-    in foreground at the moment when the memory measurement was made.
-
-*   [memory.long_running_dual_browser_test][memory_extra_py] - same as above,
-    but the test is run for 60 iterations keeping both browsers alive for the
-    whole duration of the test and without forcing garbage collection. Intended
-    as a last-resort net to catch memory leaks not apparent on shorter tests.
-
-[memory_extra_py]: https://cs.chromium.org/chromium/src/tools/perf/contrib/memory_extras/memory_extras.py

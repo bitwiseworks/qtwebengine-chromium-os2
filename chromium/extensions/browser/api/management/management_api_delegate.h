@@ -8,6 +8,7 @@
 #include "base/callback.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/common/api/management.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
@@ -43,24 +44,31 @@ class UninstallDialogDelegate {
 class AppForLinkDelegate {
  public:
   virtual ~AppForLinkDelegate() {}
+
+  virtual extensions::api::management::ExtensionInfo
+  CreateExtensionInfoFromWebApp(const std::string& app_id,
+                                content::BrowserContext* context) = 0;
 };
 
 class ManagementAPIDelegate {
  public:
   virtual ~ManagementAPIDelegate() {}
 
+  using AndroidAppInstallStatusCallback = base::OnceCallback<void(bool)>;
+  using InstallAndroidAppCallback = base::OnceCallback<void(bool)>;
+
+  enum class InstallOrLaunchWebAppResult {
+    kSuccess,
+    kInvalidWebApp,
+    kUnknownError
+  };
+  using InstallOrLaunchWebAppCallback =
+      base::OnceCallback<void(InstallOrLaunchWebAppResult)>;
+
   // Launches the app |extension|.
   virtual void LaunchAppFunctionDelegate(
       const Extension* extension,
       content::BrowserContext* context) const = 0;
-
-  // Forwards the call to extensions::util::IsNewBookmarkAppsEnabled in
-  // chrome.
-  virtual bool IsNewBookmarkAppsEnabled() const = 0;
-
-  // Forwards the call to extensions::util::CanHostedAppsOpenInWindows in
-  // chrome.
-  virtual bool CanHostedAppsOpenInWindows() const = 0;
 
   // Forwards the call to AppLaunchInfo::GetFullLaunchURL in chrome.
   virtual GURL GetFullLaunchURL(const Extension* extension) const = 0;
@@ -125,6 +133,30 @@ class ManagementAPIDelegate {
       content::BrowserContext* context,
       const std::string& title,
       const GURL& launch_url) const = 0;
+
+  // Returns whether the current user type can install web apps.
+  virtual bool CanContextInstallWebApps(
+      content::BrowserContext* context) const = 0;
+
+  // Installs a web app for |web_app_url| or launches if already installed.
+  virtual void InstallOrLaunchReplacementWebApp(
+      content::BrowserContext* context,
+      const GURL& web_app_url,
+      InstallOrLaunchWebAppCallback callback) const = 0;
+
+  // Returns whether arc apps can be installed in the given |context|.
+  virtual bool CanContextInstallAndroidApps(
+      content::BrowserContext* context) const = 0;
+
+  // Checks the installation status of |package_name|.
+  virtual void CheckAndroidAppInstallStatus(
+      const std::string& package_name,
+      AndroidAppInstallStatusCallback callback) const = 0;
+
+  // Installs an Arc app for |package_name|.
+  virtual void InstallReplacementAndroidApp(
+      const std::string& package_name,
+      InstallAndroidAppCallback callback) const = 0;
 
   // Forwards the call to ExtensionIconSource::GetIconURL in chrome.
   virtual GURL GetIconURL(const Extension* extension,

@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/html/canvas/text_metrics.h"
-#include "third_party/blink/renderer/core/html/canvas/baselines.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_baselines.h"
 #include "third_party/blink/renderer/platform/fonts/character_range.h"
 
 namespace blink {
@@ -44,6 +44,15 @@ void TextMetrics::Trace(Visitor* visitor) {
 }
 
 TextMetrics::TextMetrics() : baselines_(Baselines::Create()) {}
+
+TextMetrics::TextMetrics(const Font& font,
+                         const TextDirection& direction,
+                         const TextBaseline& baseline,
+                         const TextAlign& align,
+                         const String& text)
+    : TextMetrics() {
+  Update(font, direction, baseline, align, text);
+}
 
 void TextMetrics::Update(const Font& font,
                          const TextDirection& direction,

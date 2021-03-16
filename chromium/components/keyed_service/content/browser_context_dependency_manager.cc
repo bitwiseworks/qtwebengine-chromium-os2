@@ -19,12 +19,11 @@ const char kDumpBrowserContextDependencyGraphFlag[] =
 #endif  // NDEBUG
 
 void BrowserContextDependencyManager::RegisterProfilePrefsForServices(
-    content::BrowserContext* context,
     user_prefs::PrefRegistrySyncable* pref_registry) {
   TRACE_EVENT0(
      "browser",
      "BrowserContextDependencyManager::RegisterProfilePrefsForServices");
-  RegisterPrefsForServices(context, pref_registry);
+  RegisterPrefsForServices(pref_registry);
 }
 
 void BrowserContextDependencyManager::CreateBrowserContextServices(
@@ -56,7 +55,8 @@ std::unique_ptr<
     base::CallbackList<void(content::BrowserContext*)>::Subscription>
 BrowserContextDependencyManager::
     RegisterWillCreateBrowserContextServicesCallbackForTesting(
-        const base::Callback<void(content::BrowserContext*)>& callback) {
+        const base::RepeatingCallback<void(content::BrowserContext*)>&
+            callback) {
   return will_create_browser_context_services_callbacks_.Add(callback);
 }
 
@@ -85,15 +85,14 @@ BrowserContextDependencyManager::~BrowserContextDependencyManager() {
 
 #ifndef NDEBUG
 void BrowserContextDependencyManager::DumpContextDependencies(
-    base::SupportsUserData* context) const {
+    void* context) const {
   // Whenever we try to build a destruction ordering, we should also dump a
   // dependency graph to "/path/to/context/context-dependencies.dot".
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           kDumpBrowserContextDependencyGraphFlag)) {
     base::FilePath dot_file =
-        static_cast<const content::BrowserContext*>(context)
-            ->GetPath()
-            .AppendASCII("browser-context-dependencies.dot");
+        static_cast<content::BrowserContext*>(context)->GetPath().AppendASCII(
+            "browser-context-dependencies.dot");
     DumpDependenciesAsGraphviz("BrowserContext", dot_file);
   }
 }

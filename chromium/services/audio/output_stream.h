@@ -15,10 +15,14 @@
 #include "base/strings/string_piece.h"
 #include "base/sync_socket.h"
 #include "base/timer/timer.h"
-#include "media/mojo/interfaces/audio_data_pipe.mojom.h"
-#include "media/mojo/interfaces/audio_logging.mojom.h"
-#include "media/mojo/interfaces/audio_output_stream.mojom.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "media/mojo/mojom/audio_data_pipe.mojom.h"
+#include "media/mojo/mojom/audio_logging.mojom.h"
+#include "media/mojo/mojom/audio_output_stream.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/shared_remote.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "mojo/public/cpp/system/handle.h"
 #include "mojo/public/cpp/system/platform_handle.h"
@@ -45,24 +49,27 @@ class OutputStream final : public media::mojom::AudioOutputStream,
   using CreatedCallback =
       base::OnceCallback<void(media::mojom::ReadWriteAudioDataPipePtr)>;
 
-  OutputStream(CreatedCallback created_callback,
-               DeleteCallback delete_callback,
-               media::mojom::AudioOutputStreamRequest stream_request,
-               media::mojom::AudioOutputStreamObserverAssociatedPtr observer,
-               media::mojom::AudioLogPtr log,
-               media::AudioManager* audio_manager,
-               const std::string& output_device_id,
-               const media::AudioParameters& params,
-               LoopbackCoordinator* coordinator,
-               const base::UnguessableToken& loopback_group_id,
-               StreamMonitorCoordinator* stream_monitor_coordinator,
-               const base::UnguessableToken& processing_id);
+  OutputStream(
+      CreatedCallback created_callback,
+      DeleteCallback delete_callback,
+      mojo::PendingReceiver<media::mojom::AudioOutputStream> stream_receiver,
+      mojo::PendingAssociatedRemote<media::mojom::AudioOutputStreamObserver>
+          observer,
+      mojo::PendingRemote<media::mojom::AudioLog> log,
+      media::AudioManager* audio_manager,
+      const std::string& output_device_id,
+      const media::AudioParameters& params,
+      LoopbackCoordinator* coordinator,
+      const base::UnguessableToken& loopback_group_id,
+      StreamMonitorCoordinator* stream_monitor_coordinator,
+      const base::UnguessableToken& processing_id);
 
   ~OutputStream() final;
 
   // media::mojom::AudioOutputStream implementation.
   void Play() final;
   void Pause() final;
+  void Flush() final;
   void SetVolume(double volume) final;
 
   // OutputController::EventHandler implementation.
@@ -78,13 +85,23 @@ class OutputStream final : public media::mojom::AudioOutputStream,
   void PollAudioLevel();
   bool IsAudible();
 
+  // Internal helper method for sending logs related  to this class to clients
+  // registered to receive these logs. Prepends each log with "audio::OS" to
+  // point out its origin. Compare with OutputController::EventHandler::OnLog()
+  // which only will be called by the |controller_| object. These logs are
+  // prepended with "AOC::" where AOC corresponds to AudioOutputController.
+  void SendLogMessage(const char* format, ...) PRINTF_FORMAT(2, 3);
+  base::UnguessableToken processing_id() const {
+    return controller_.processing_id();
+  }
+
   SEQUENCE_CHECKER(owning_sequence_);
 
   base::CancelableSyncSocket foreign_socket_;
   DeleteCallback delete_callback_;
-  mojo::Binding<AudioOutputStream> binding_;
-  media::mojom::AudioOutputStreamObserverAssociatedPtr observer_;
-  const scoped_refptr<media::mojom::ThreadSafeAudioLogPtr> log_;
+  mojo::Receiver<AudioOutputStream> receiver_;
+  mojo::AssociatedRemote<media::mojom::AudioOutputStreamObserver> observer_;
+  const mojo::SharedRemote<media::mojom::AudioLog> log_;
   LoopbackCoordinator* const coordinator_;
 
   SyncReader reader_;
@@ -100,7 +117,7 @@ class OutputStream final : public media::mojom::AudioOutputStream,
   base::RepeatingTimer poll_timer_;
   bool is_audible_ = false;
 
-  base::WeakPtrFactory<OutputStream> weak_factory_;
+  base::WeakPtrFactory<OutputStream> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OutputStream);
 };

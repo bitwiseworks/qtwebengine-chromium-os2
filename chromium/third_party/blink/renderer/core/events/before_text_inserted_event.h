@@ -35,17 +35,13 @@ class BeforeTextInsertedEvent final : public Event {
   explicit BeforeTextInsertedEvent(const String&);
   ~BeforeTextInsertedEvent() override;
 
-  static BeforeTextInsertedEvent* Create(const String& text) {
-    return MakeGarbageCollected<BeforeTextInsertedEvent>(text);
-  }
-
   const AtomicString& InterfaceName() const override;
   bool IsBeforeTextInsertedEvent() const override { return true; }
 
   const String& GetText() const { return text_; }
   void SetText(const String& s) { text_ = s; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   String text_;

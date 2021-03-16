@@ -15,17 +15,14 @@ namespace views {
 class ScopedTestWidget {
  public:
   explicit ScopedTestWidget(internal::NativeWidgetPrivate* native_widget)
-      : native_widget_(native_widget) {
-  }
+      : native_widget_(native_widget) {}
   ~ScopedTestWidget() {
     // |CloseNow| deletes both |native_widget_| and its associated
     // |Widget|.
     native_widget_->GetWidget()->CloseNow();
   }
 
-  internal::NativeWidgetPrivate* operator->() const  {
-    return native_widget_;
-  }
+  internal::NativeWidgetPrivate* operator->() const { return native_widget_; }
   internal::NativeWidgetPrivate* get() const { return native_widget_; }
 
  private:
@@ -35,8 +32,8 @@ class ScopedTestWidget {
 
 class NativeWidgetTest : public ViewsTestBase {
  public:
-  NativeWidgetTest() {}
-  ~NativeWidgetTest() override {}
+  NativeWidgetTest() = default;
+  ~NativeWidgetTest() override = default;
 
   internal::NativeWidgetPrivate* CreateNativeWidgetOfType(
       Widget::InitParams::Type type) {
@@ -44,7 +41,7 @@ class NativeWidgetTest : public ViewsTestBase {
     Widget::InitParams params = CreateParams(type);
     params.ownership = views::Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET;
     params.bounds = gfx::Rect(10, 10, 200, 200);
-    widget->Init(params);
+    widget->Init(std::move(params));
     return widget->native_widget_private();
   }
 

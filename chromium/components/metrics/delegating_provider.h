@@ -28,13 +28,16 @@ class DelegatingProvider final : public MetricsProvider {
 
   // MetricsProvider:
   void Init() override;
-  void AsyncInit(const base::Closure& done_callback) override;
+  void AsyncInit(base::OnceClosure done_callback) override;
   void OnDidCreateMetricsLog() override;
   void OnRecordingEnabled() override;
   void OnRecordingDisabled() override;
   void OnAppEnterBackground() override;
   bool HasIndependentMetrics() override;
   void ProvideSystemProfileMetrics(
+      SystemProfileProto* system_profile_proto) override;
+  void ProvideSystemProfileMetricsWithLogCreationTime(
+      base::TimeTicks log_creation_time,
       SystemProfileProto* system_profile_proto) override;
   bool HasPreviousSessionData() override;
   void ProvidePreviousSessionData(

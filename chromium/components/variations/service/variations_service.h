@@ -28,7 +28,7 @@
 #include "components/version_info/version_info.h"
 #include "components/web_resource/resource_request_allowed_notifier.h"
 #include "net/url_request/redirect_info.h"
-#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "url/gurl.h"
 
 class PrefService;
@@ -56,6 +56,10 @@ class VariationsSeed;
 }
 
 namespace variations {
+
+#if defined(OS_CHROMEOS)
+class DeviceVariationsRestrictionByPolicyApplicator;
+#endif
 
 // If enabled, seed fetches will be retried over HTTP after an HTTPS request
 // fails.
@@ -120,6 +124,10 @@ class VariationsService
   // should happen in that case.
   GURL GetVariationsServerURL(HttpOptions http_options);
 
+  // Returns the permanent overridden country code stored for this client. This
+  // value will not be updated on Chrome updates.
+  std::string GetOverriddenPermanentCountry();
+
   // Returns the permanent country code stored for this client. Country code is
   // in the format of lowercase ISO 3166-1 alpha-2. Example: us, br, in
   std::string GetStoredPermanentCountry();
@@ -176,19 +184,39 @@ class VariationsService
   // Exposed for testing.
   void GetClientFilterableStateForVersionCalledForTesting();
 
+  web_resource::ResourceRequestAllowedNotifier*
+  GetResourceRequestAllowedNotifierForTesting() {
+    return resource_request_allowed_notifier_.get();
+  }
+
   // Wrapper around VariationsFieldTrialCreator::SetupFieldTrials().
-  bool SetupFieldTrials(const char* kEnableGpuBenchmarking,
-                        const char* kEnableFeatures,
-                        const char* kDisableFeatures,
-                        const std::set<std::string>& unforceable_field_trials,
-                        const std::vector<std::string>& variation_ids,
-                        std::unique_ptr<base::FeatureList> feature_list,
-                        variations::PlatformFieldTrials* platform_field_trials);
+  bool SetupFieldTrials(
+      const char* kEnableGpuBenchmarking,
+      const char* kEnableFeatures,
+      const char* kDisableFeatures,
+      const std::set<std::string>& unforceable_field_trials,
+      const std::vector<std::string>& variation_ids,
+      const std::vector<base::FeatureList::FeatureOverrideInfo>&
+          extra_overrides,
+      std::unique_ptr<base::FeatureList> feature_list,
+      variations::PlatformFieldTrials* platform_field_trials);
 
   // Overrides cached UI strings on the resource bundle once it is initialized.
   void OverrideCachedUIStrings();
 
   int request_count() const { return request_count_; }
+
+  // Cancels the currently pending fetch request.
+  void CancelCurrentRequestForTesting();
+
+  // Exposes StartRepeatedVariationsSeedFetch for testing.
+  void StartRepeatedVariationsSeedFetchForTesting();
+
+  // Allows the embedder to override the platform and override the OS name in
+  // the variations server url. This is useful for android webview and weblayer
+  // which are distinct from regular android chrome.
+  void OverridePlatform(Study::Platform platform,
+                        const std::string& osname_server_param_override);
 
  protected:
   // Starts the fetching process once, where |OnURLFetchComplete| is called with
@@ -279,23 +307,6 @@ class VariationsService
   FRIEND_TEST_ALL_PREFIXES(VariationsServiceTest,
                            DoNotRetryIfInsecureURLIsHTTPS);
 
-  // Set of different possible values to report for the
-  // Variations.LoadPermanentConsistencyCountryResult histogram. This enum must
-  // be kept consistent with its counterpart in histograms.xml.
-  enum LoadPermanentConsistencyCountryResult {
-    LOAD_COUNTRY_NO_PREF_NO_SEED = 0,
-    LOAD_COUNTRY_NO_PREF_HAS_SEED,
-    LOAD_COUNTRY_INVALID_PREF_NO_SEED,
-    LOAD_COUNTRY_INVALID_PREF_HAS_SEED,
-    LOAD_COUNTRY_HAS_PREF_NO_SEED_VERSION_EQ,
-    LOAD_COUNTRY_HAS_PREF_NO_SEED_VERSION_NEQ,
-    LOAD_COUNTRY_HAS_BOTH_VERSION_EQ_COUNTRY_EQ,
-    LOAD_COUNTRY_HAS_BOTH_VERSION_EQ_COUNTRY_NEQ,
-    LOAD_COUNTRY_HAS_BOTH_VERSION_NEQ_COUNTRY_EQ,
-    LOAD_COUNTRY_HAS_BOTH_VERSION_NEQ_COUNTRY_NEQ,
-    LOAD_COUNTRY_MAX,
-  };
-
   void InitResourceRequestedAllowedNotifier();
 
   // Calls FetchVariationsSeed once and repeats this periodically. See
@@ -316,7 +327,7 @@ class VariationsService
   // Called by SimpleURLLoader when |pending_seed_request_| load is redirected.
   void OnSimpleLoaderRedirect(
       const net::RedirectInfo& redirect_info,
-      const network::ResourceResponseHead& response_head,
+      const network::mojom::URLResponseHead& response_head,
       std::vector<std::string>* to_be_removed_headers);
 
   // Handles post-fetch events.
@@ -419,9 +430,18 @@ class VariationsService
   // True if the last request was a retry over http.
   bool last_request_was_http_retry_;
 
+  // When not empty, contains an override for the os name in the variations
+  // server url.
+  std::string osname_server_param_override_;
+
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<DeviceVariationsRestrictionByPolicyApplicator>
+      device_variations_restrictions_by_policy_applicator_;
+#endif
+
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<VariationsService> weak_ptr_factory_;
+  base::WeakPtrFactory<VariationsService> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VariationsService);
 };

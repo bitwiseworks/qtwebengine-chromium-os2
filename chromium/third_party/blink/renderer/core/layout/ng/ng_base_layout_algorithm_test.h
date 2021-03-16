@@ -6,18 +6,19 @@
 #define NG_BASE_LAYOUT_ALGORITHM_TEST_H_
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/core/layout/ng/geometry/ng_logical_size.h"
+#include "third_party/blink/renderer/core/layout/geometry/logical_size.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_constraint_space.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_test.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 class Element;
 class LayoutNGBlockFlow;
+class NGBlockNode;
 class NGPhysicalBoxFragment;
 
 // Base class for all LayoutNG Algorithms unit test classes.
@@ -32,8 +33,18 @@ class NGBaseLayoutAlgorithmTest
   // RunBlockLayoutAlgorithmForElement.
   void AdvanceToLayoutPhase();
 
+  scoped_refptr<const NGPhysicalBoxFragment> RunBlockLayoutAlgorithm(
+      NGBlockNode node,
+      const NGConstraintSpace& space,
+      const NGBreakToken* break_token = nullptr);
+
   std::pair<scoped_refptr<const NGPhysicalBoxFragment>, NGConstraintSpace>
   RunBlockLayoutAlgorithmForElement(Element* element);
+
+  scoped_refptr<const NGPhysicalBoxFragment> RunFieldsetLayoutAlgorithm(
+      NGBlockNode node,
+      const NGConstraintSpace& space,
+      const NGBreakToken* break_token = nullptr);
 
   scoped_refptr<const NGPhysicalBoxFragment> GetBoxFragmentByElementId(
       const char*);
@@ -55,7 +66,7 @@ class FragmentChildIterator {
   }
 
   const NGPhysicalBoxFragment* NextChild(
-      NGPhysicalOffset* fragment_offset = nullptr);
+      PhysicalOffset* fragment_offset = nullptr);
 
  private:
   const NGPhysicalBoxFragment* parent_;
@@ -65,10 +76,10 @@ class FragmentChildIterator {
 NGConstraintSpace ConstructBlockLayoutTestConstraintSpace(
     WritingMode writing_mode,
     TextDirection direction,
-    NGLogicalSize size,
+    LogicalSize size,
     bool shrink_to_fit = false,
     bool is_new_formatting_context = false,
-    LayoutUnit fragmentainer_space_available = LayoutUnit());
+    LayoutUnit fragmentainer_space_available = kIndefiniteSize);
 
 }  // namespace blink
 

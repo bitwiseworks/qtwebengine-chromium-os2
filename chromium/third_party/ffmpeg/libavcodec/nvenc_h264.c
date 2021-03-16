@@ -138,6 +138,8 @@ static const AVOption options[] = {
     { "middle",       "",                                   0,                    AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0,       VE, "b_ref_mode" },
 #endif
     { "a53cc",        "Use A53 Closed Captions (if available)", OFFSET(a53_cc),   AV_OPT_TYPE_BOOL,  { .i64 = 1 }, 0, 1, VE },
+    { "dpb_size",     "Specifies the DPB size used for encoding (0 means automatic)",
+                                                            OFFSET(dpb_size),     AV_OPT_TYPE_INT,   { .i64 = 0 }, 0, INT_MAX, VE },
     { NULL }
 };
 
@@ -238,6 +240,7 @@ AVCodec ff_h264_nvenc_encoder = {
     .receive_packet = ff_nvenc_receive_packet,
     .encode2        = ff_nvenc_encode_frame,
     .close          = ff_nvenc_encode_close,
+    .flush          = ff_nvenc_encode_flush,
     .priv_data_size = sizeof(NvencContext),
     .priv_class     = &h264_nvenc_class,
     .defaults       = defaults,

@@ -4,9 +4,11 @@
 
 #include "ui/snapshot/snapshot_async.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
@@ -17,9 +19,9 @@ namespace ui {
 
 namespace {
 
-void OnFrameScalingFinished(const GrabWindowSnapshotAsyncCallback& callback,
+void OnFrameScalingFinished(GrabWindowSnapshotAsyncCallback callback,
                             const SkBitmap& scaled_bitmap) {
-  callback.Run(gfx::Image::CreateFrom1xBitmap(scaled_bitmap));
+  std::move(callback).Run(gfx::Image::CreateFrom1xBitmap(scaled_bitmap));
 }
 
 SkBitmap ScaleBitmap(const SkBitmap& input_bitmap,
@@ -34,12 +36,12 @@ SkBitmap ScaleBitmap(const SkBitmap& input_bitmap,
 }  // namespace
 
 void SnapshotAsync::ScaleCopyOutputResult(
-    const GrabWindowSnapshotAsyncCallback& callback,
+    GrabWindowSnapshotAsyncCallback callback,
     const gfx::Size& target_size,
     std::unique_ptr<viz::CopyOutputResult> result) {
   const SkBitmap bitmap = result->AsSkBitmap();
   if (!bitmap.readyToDraw()) {
-    callback.Run(gfx::Image());
+    std::move(callback).Run(gfx::Image());
     return;
   }
 
@@ -47,21 +49,21 @@ void SnapshotAsync::ScaleCopyOutputResult(
   // from GPU. Image scaling is implemented in content::GlHelper, but it's can't
   // be used here because it's not in content/public. Move the scaling code
   // somewhere so that it can be reused here.
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(ScaleBitmap, bitmap, target_size),
-      base::Bind(&OnFrameScalingFinished, callback));
+      base::BindOnce(ScaleBitmap, bitmap, target_size),
+      base::BindOnce(&OnFrameScalingFinished, std::move(callback)));
 }
 
 void SnapshotAsync::RunCallbackWithCopyOutputResult(
-    const GrabWindowSnapshotAsyncCallback& callback,
+    GrabWindowSnapshotAsyncCallback callback,
     std::unique_ptr<viz::CopyOutputResult> result) {
   const SkBitmap bitmap = result->AsSkBitmap();
   if (!bitmap.readyToDraw()) {
-    callback.Run(gfx::Image());
+    std::move(callback).Run(gfx::Image());
     return;
   }
-  callback.Run(gfx::Image::CreateFrom1xBitmap(bitmap));
+  std::move(callback).Run(gfx::Image::CreateFrom1xBitmap(bitmap));
 }
 
 }  // namespace ui

@@ -33,7 +33,7 @@ BUILD_CFLAGS=
 AC_SUBST(BUILD_CFLAGS)
 
 #-------------------------------------------------------------------------
-# Two options to enable readline compatible libraries:
+# Two options to enable readline compatible libraries: 
 #
 #   --enable-editline
 #   --enable-readline
@@ -44,7 +44,7 @@ AC_SUBST(BUILD_CFLAGS)
 # user must pass "--disable-editline". To disable command line editing
 # support altogether, "--disable-editline --disable-readline".
 #
-# When searching for either library, check for headers before libraries
+# When searching for either library, check for headers before libraries 
 # as some distros supply packages that contain libraries but not header
 # files, which come as a separate development package.
 #
@@ -85,7 +85,7 @@ AC_SUBST(READLINE_LIBS)
 #   --enable-threadsafe
 #
 AC_ARG_ENABLE(threadsafe, [AS_HELP_STRING(
-  [--enable-threadsafe], [build a thread-safe library [default=yes]])],
+  [--enable-threadsafe], [build a thread-safe library [default=yes]])], 
   [], [enable_threadsafe=yes])
 if test x"$enable_threadsafe" != "xno"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -D_REENTRANT=1 -DSQLITE_THREADSAFE=1"
@@ -98,7 +98,7 @@ fi
 #   --enable-dynamic-extensions
 #
 AC_ARG_ENABLE(dynamic-extensions, [AS_HELP_STRING(
-  [--enable-dynamic-extensions], [support loadable extensions [default=yes]])],
+  [--enable-dynamic-extensions], [support loadable extensions [default=yes]])], 
   [], [enable_dynamic_extensions=yes])
 if test x"$enable_dynamic_extensions" != "xno"; then
   AC_SEARCH_LIBS(dlopen, dl)
@@ -113,7 +113,7 @@ AC_MSG_RESULT($enable_dynamic_extensions)
 #   --enable-fts4
 #
 AC_ARG_ENABLE(fts4, [AS_HELP_STRING(
-  [--enable-fts4], [include fts4 support [default=yes]])],
+  [--enable-fts4], [include fts4 support [default=yes]])], 
   [], [enable_fts4=yes])
 if test x"$enable_fts4" = "xyes"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_FTS4"
@@ -124,7 +124,7 @@ fi
 #   --enable-fts3
 #
 AC_ARG_ENABLE(fts3, [AS_HELP_STRING(
-  [--enable-fts3], [include fts3 support [default=no]])],
+  [--enable-fts3], [include fts3 support [default=no]])], 
   [], [])
 if test x"$enable_fts3" = "xyes" -a x"$enable_fts4" = "xno"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_FTS3"
@@ -135,7 +135,7 @@ fi
 #   --enable-fts5
 #
 AC_ARG_ENABLE(fts5, [AS_HELP_STRING(
-  [--enable-fts5], [include fts5 support [default=yes]])],
+  [--enable-fts5], [include fts5 support [default=yes]])], 
   [], [enable_fts5=yes])
 if test x"$enable_fts5" = "xyes"; then
   AC_SEARCH_LIBS(log, m)
@@ -147,7 +147,7 @@ fi
 #   --enable-json1
 #
 AC_ARG_ENABLE(json1, [AS_HELP_STRING(
-  [--enable-json1], [include json1 support [default=yes]])],
+  [--enable-json1], [include json1 support [default=yes]])], 
   [],[enable_json1=yes])
 if test x"$enable_json1" = "xyes"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_JSON1"
@@ -158,10 +158,10 @@ fi
 #   --enable-rtree
 #
 AC_ARG_ENABLE(rtree, [AS_HELP_STRING(
-  [--enable-rtree], [include rtree support [default=yes]])],
+  [--enable-rtree], [include rtree support [default=yes]])], 
   [], [enable_rtree=yes])
 if test x"$enable_rtree" = "xyes"; then
-  BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_RTREE"
+  BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_RTREE -DSQLITE_ENABLE_GEOPOLY"
 fi
 #-----------------------------------------------------------------------
 
@@ -169,7 +169,7 @@ fi
 #   --enable-session
 #
 AC_ARG_ENABLE(session, [AS_HELP_STRING(
-  [--enable-session], [enable the session extension [default=no]])],
+  [--enable-session], [enable the session extension [default=no]])], 
   [], [])
 if test x"$enable_session" = "xyes"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_ENABLE_SESSION -DSQLITE_ENABLE_PREUPDATE_HOOK"
@@ -180,7 +180,7 @@ fi
 #   --enable-debug
 #
 AC_ARG_ENABLE(debug, [AS_HELP_STRING(
-  [--enable-debug], [build with debugging features enabled [default=no]])],
+  [--enable-debug], [build with debugging features enabled [default=no]])], 
   [], [])
 if test x"$enable_debug" = "xyes"; then
   BUILD_CFLAGS="$BUILD_CFLAGS -DSQLITE_DEBUG -DSQLITE_ENABLE_SELECTTRACE -DSQLITE_ENABLE_WHERETRACE"
@@ -192,8 +192,8 @@ fi
 #   --enable-static-shell
 #
 AC_ARG_ENABLE(static-shell, [AS_HELP_STRING(
-  [--enable-static-shell],
-  [statically link libsqlite3 into shell tool [default=yes]])],
+  [--enable-static-shell], 
+  [statically link libsqlite3 into shell tool [default=yes]])], 
   [], [enable_static_shell=yes])
 if test x"$enable_static_shell" = "xyes"; then
   EXTRA_SHELL_OBJ=sqlite3-sqlite3.$OBJEXT
@@ -218,8 +218,8 @@ AC_SUBST(SHELL_CFLAGS)
 #   --enable-tempstore
 #
 # AC_ARG_ENABLE(tempstore, [AS_HELP_STRING(
-#   [--enable-tempstore],
-#   [in-memory temporary tables (never, no, yes, always) [default=no]])],
+#   [--enable-tempstore], 
+#   [in-memory temporary tables (never, no, yes, always) [default=no]])], 
 #   [], [enable_tempstore=no])
 # AC_MSG_CHECKING([for whether or not to store temp tables in-memory])
 # case "$enable_tempstore" in

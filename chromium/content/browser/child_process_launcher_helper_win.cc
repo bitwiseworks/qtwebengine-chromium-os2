@@ -24,12 +24,12 @@ namespace content {
 namespace internal {
 
 void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
 }
 
 base::Optional<mojo::NamedPlatformChannel>
 ChildProcessLauncherHelper::CreateNamedPlatformChannelOnClientThread() {
-  DCHECK_CURRENTLY_ON(client_thread_id_);
+  DCHECK(client_task_runner_->RunsTasksInCurrentSequence());
 
   if (!delegate_->ShouldLaunchElevated())
     return base::nullopt;
@@ -46,7 +46,7 @@ ChildProcessLauncherHelper::GetFilesToMap() {
 }
 
 bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const FileMappedForLaunch& files_to_register,
+    FileMappedForLaunch& files_to_register,
     base::LaunchOptions* options) {
   DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   return true;
@@ -117,17 +117,6 @@ void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
   if (process.CanBackgroundProcesses())
     process.SetProcessBackgrounded(priority.is_background());
 }
-
-// static
-void ChildProcessLauncherHelper::SetRegisteredFilesForService(
-    const std::string& service_name,
-    std::map<std::string, base::FilePath> required_files) {
-  // No file passing from the manifest on Windows yet.
-  DCHECK(required_files.empty());
-}
-
-// static
-void ChildProcessLauncherHelper::ResetRegisteredFilesForTesting() {}
 
 }  // namespace internal
 }  // namespace content

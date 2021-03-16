@@ -14,7 +14,6 @@
 #include "src/base/base-export.h"
 #include "src/base/bits.h"
 #include "src/base/macros.h"
-#include "src/base/safe_math.h"
 #if V8_OS_WIN
 #include "src/base/win32-headers.h"
 #endif
@@ -268,6 +267,16 @@ class TimeBase : public TimeConstants {
   // use this and do arithmetic on it, as it is more error prone than using the
   // provided operators.
   int64_t ToInternalValue() const { return us_; }
+
+  // The amount of time since the origin (or "zero") point. This is a syntactic
+  // convenience to aid in code readability, mainly for debugging/testing use
+  // cases.
+  //
+  // Warning: While the Time subclass has a fixed origin point, the origin for
+  // the other subclasses can vary each time the application is restarted.
+  constexpr TimeDelta since_origin() const {
+    return TimeDelta::FromMicroseconds(us_);
+  }
 
   TimeClass& operator=(TimeClass other) {
     us_ = other.us_;

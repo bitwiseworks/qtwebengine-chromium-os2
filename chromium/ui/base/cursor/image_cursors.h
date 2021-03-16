@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/cursor_size.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/display/display.h"
 #include "ui/gfx/native_widget_types.h"
@@ -56,7 +57,7 @@ class UI_BASE_EXPORT ImageCursors {
 
   std::unique_ptr<CursorLoader> cursor_loader_;
   CursorSize cursor_size_;
-  base::WeakPtrFactory<ImageCursors> weak_ptr_factory_;
+  base::WeakPtrFactory<ImageCursors> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImageCursors);
 };

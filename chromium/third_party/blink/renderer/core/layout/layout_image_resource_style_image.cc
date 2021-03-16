@@ -47,7 +47,7 @@ void LayoutImageResourceStyleImage::Initialize(LayoutObject* layout_object) {
   LayoutImageResource::Initialize(layout_object);
 
   if (style_image_->IsImageResource())
-    cached_image_ = ToStyleFetchedImage(style_image_)->CachedImage();
+    cached_image_ = To<StyleFetchedImage>(style_image_.Get())->CachedImage();
 
   style_image_->AddClient(layout_object_);
 }
@@ -78,10 +78,11 @@ FloatSize LayoutImageResourceStyleImage::ImageSize(float multiplier) const {
 FloatSize LayoutImageResourceStyleImage::ImageSizeWithDefaultSize(
     float multiplier,
     const LayoutSize& default_size) const {
-  return style_image_->ImageSize(layout_object_->GetDocument(), multiplier,
-                                 default_size);
+  return style_image_->ImageSize(
+      layout_object_->GetDocument(), multiplier, default_size,
+      LayoutObject::ShouldRespectImageOrientation(layout_object_));
 }
-void LayoutImageResourceStyleImage::Trace(blink::Visitor* visitor) {
+void LayoutImageResourceStyleImage::Trace(Visitor* visitor) {
   visitor->Trace(style_image_);
   LayoutImageResource::Trace(visitor);
 }

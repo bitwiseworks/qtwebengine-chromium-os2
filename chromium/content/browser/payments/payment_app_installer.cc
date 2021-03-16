@@ -35,12 +35,14 @@ class SelfDeleteInstaller
                       const GURL& sw_url,
                       const GURL& scope,
                       const std::string& method,
+                      const SupportedDelegations& supported_delegations,
                       PaymentAppInstaller::InstallPaymentAppCallback callback)
       : app_name_(app_name),
         app_icon_(app_icon),
         sw_url_(sw_url),
         scope_(scope),
         method_(method),
+        supported_delegations_(supported_delegations),
         callback_(std::move(callback)) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
   }
@@ -62,9 +64,11 @@ class SelfDeleteInstaller
                 ->GetServiceWorkerContext());
     service_worker_watcher_ = new ServiceWorkerContextWatcher(
         service_worker_context,
-        base::Bind(&SelfDeleteInstaller::onServiceWorkerRegistration, this),
-        base::Bind(&SelfDeleteInstaller::onServiceWorkerVersionUpdate, this),
-        base::Bind(&SelfDeleteInstaller::onServiceWorkerError, this));
+        base::BindRepeating(&SelfDeleteInstaller::OnServiceWorkerRegistration,
+                            this),
+        base::BindRepeating(&SelfDeleteInstaller::OnServiceWorkerVersionUpdate,
+                            this),
+        base::BindRepeating(&SelfDeleteInstaller::OnServiceWorkerError, this));
     service_worker_watcher_->Start();
 
     blink::mojom::ServiceWorkerRegistrationOptions option;
@@ -79,9 +83,11 @@ class SelfDeleteInstaller
                        this));
   }
 
-  void onServiceWorkerRegistration(
+  void OnServiceWorkerRegistration(
       const std::vector<ServiceWorkerRegistrationInfo>& info) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    if (AbortInstallIfWebContentsOrBrowserContextIsGone())
+      return;
 
     for (const auto& worker : info) {
       if (worker.scope.EqualsIgnoringRef(scope_))
@@ -89,9 +95,11 @@ class SelfDeleteInstaller
     }
   }
 
-  void onServiceWorkerVersionUpdate(
+  void OnServiceWorkerVersionUpdate(
       const std::vector<ServiceWorkerVersionInfo>& info) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    if (AbortInstallIfWebContentsOrBrowserContextIsGone())
+      return;
 
     for (const auto& worker : info) {
       // Wait until the service worker is activated to set payment app info.
@@ -102,11 +110,13 @@ class SelfDeleteInstaller
     }
   }
 
-  void onServiceWorkerError(
+  void OnServiceWorkerError(
       int64_t registration_id,
       int64_t version_id,
       const ServiceWorkerContextCoreObserver::ErrorInfo& error_info) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    if (AbortInstallIfWebContentsOrBrowserContextIsGone())
+      return;
 
     if (registration_id == registration_id_) {
       LOG(ERROR) << "The newly registered service worker has an error "
@@ -117,6 +127,8 @@ class SelfDeleteInstaller
 
   void OnRegisterServiceWorkerResult(bool success) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    if (AbortInstallIfWebContentsOrBrowserContextIsGone())
+      return;
 
     if (!success) {
       LOG(ERROR) << "Failed to install the web payment app " << sw_url_.spec();
@@ -129,8 +141,23 @@ class SelfDeleteInstaller
 
   ~SelfDeleteInstaller() override {}
 
+  // If web contents or browser context are gone, then aborts payment and
+  // returns true. Should be called on UI thread.
+  bool AbortInstallIfWebContentsOrBrowserContextIsGone() {
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    if (!web_contents() || !web_contents()->GetBrowserContext()) {
+      FinishInstallation(false);
+      return true;
+    }
+
+    return false;
+  }
+
   void SetPaymentAppIntoDatabase() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+    DCHECK(web_contents());
+    DCHECK(web_contents()->GetBrowserContext());
 
     StoragePartitionImpl* partition = static_cast<StoragePartitionImpl*>(
         BrowserContext::GetDefaultStoragePartition(
@@ -138,33 +165,35 @@ class SelfDeleteInstaller
     scoped_refptr<PaymentAppContextImpl> payment_app_context =
         partition->GetPaymentAppContext();
 
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&SelfDeleteInstaller::SetPaymentAppInfoOnIO, this,
-                       payment_app_context, registration_id_, scope_.spec(),
-                       app_name_, app_icon_, method_));
+    RunOrPostTaskOnThread(
+        FROM_HERE, ServiceWorkerContext::GetCoreThreadId(),
+        base::BindOnce(&SelfDeleteInstaller::SetPaymentAppInfoOnCoreThread,
+                       this, payment_app_context, registration_id_,
+                       scope_.spec(), app_name_, app_icon_, method_,
+                       supported_delegations_));
   }
 
-  void SetPaymentAppInfoOnIO(
+  void SetPaymentAppInfoOnCoreThread(
       scoped_refptr<PaymentAppContextImpl> payment_app_context,
       int64_t registration_id,
       const std::string& instrument_key,
       const std::string& name,
       const std::string& app_icon,
-      const std::string& method) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
+      const std::string& method,
+      const SupportedDelegations& supported_delegations) {
+    DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
     payment_app_context->payment_app_database()
         ->SetPaymentAppInfoForRegisteredServiceWorker(
             registration_id, instrument_key, name, app_icon, method,
+            supported_delegations,
             base::BindOnce(&SelfDeleteInstaller::OnSetPaymentAppInfo, this));
   }
 
   void OnSetPaymentAppInfo(payments::mojom::PaymentHandlerStatus status) {
-    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
 
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
+    RunOrPostTaskOnThread(
+        FROM_HERE, BrowserThread::UI,
         base::BindOnce(&SelfDeleteInstaller::FinishInstallation, this,
                        status == payments::mojom::PaymentHandlerStatus::SUCCESS
                            ? true
@@ -199,6 +228,7 @@ class SelfDeleteInstaller
   GURL sw_url_;
   GURL scope_;
   std::string method_;
+  SupportedDelegations supported_delegations_;
   PaymentAppInstaller::InstallPaymentAppCallback callback_;
 
   int64_t registration_id_ = -1;  // Take -1 as an invalid registration Id.
@@ -210,18 +240,21 @@ class SelfDeleteInstaller
 }  // namespace.
 
 // Static
-void PaymentAppInstaller::Install(WebContents* web_contents,
-                                  const std::string& app_name,
-                                  const std::string& app_icon,
-                                  const GURL& sw_url,
-                                  const GURL& scope,
-                                  bool use_cache,
-                                  const std::string& method,
-                                  InstallPaymentAppCallback callback) {
+void PaymentAppInstaller::Install(
+    WebContents* web_contents,
+    const std::string& app_name,
+    const std::string& app_icon,
+    const GURL& sw_url,
+    const GURL& scope,
+    bool use_cache,
+    const std::string& method,
+    const SupportedDelegations& supported_delegations,
+    InstallPaymentAppCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   auto installer = base::MakeRefCounted<SelfDeleteInstaller>(
-      app_name, app_icon, sw_url, scope, method, std::move(callback));
+      app_name, app_icon, sw_url, scope, method, supported_delegations,
+      std::move(callback));
   installer->Init(web_contents, use_cache);
 }
 

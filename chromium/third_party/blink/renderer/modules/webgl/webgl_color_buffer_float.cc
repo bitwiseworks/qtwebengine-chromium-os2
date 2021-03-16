@@ -28,15 +28,14 @@
 namespace blink {
 
 WebGLColorBufferFloat::WebGLColorBufferFloat(WebGLRenderingContextBase* context)
-    : WebGLExtension(context) {}
+    : WebGLExtension(context) {
+  // https://github.com/KhronosGroup/WebGL/pull/2830
+  // Spec requires EXT_float_blend needs to be turned on implicitly here
+  context->ExtensionsUtil()->EnsureExtensionEnabled("GL_EXT_float_blend");
+}
 
 WebGLExtensionName WebGLColorBufferFloat::GetName() const {
   return kWebGLColorBufferFloatName;
-}
-
-WebGLColorBufferFloat* WebGLColorBufferFloat::Create(
-    WebGLRenderingContextBase* context) {
-  return MakeGarbageCollected<WebGLColorBufferFloat>(context);
 }
 
 bool WebGLColorBufferFloat::Supported(WebGLRenderingContextBase* context) {

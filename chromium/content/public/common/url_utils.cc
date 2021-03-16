@@ -8,12 +8,15 @@
 #include <string>
 
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/common/url_schemes.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
+#include "net/net_buildflags.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
 
@@ -36,7 +39,7 @@ bool IsURLHandledByNetworkStack(const GURL& url) {
   // Javascript URLs, srcdoc, schemes that don't load data should not send a
   // request to the network stack.
   if (url.SchemeIs(url::kJavaScriptScheme) || url.is_empty() ||
-      url == content::kAboutSrcDocURL) {
+      url.IsAboutSrcdoc()) {
     return false;
   }
 
@@ -63,9 +66,14 @@ bool IsURLHandledByNetworkStack(const GURL& url) {
 }
 
 bool IsURLHandledByNetworkService(const GURL& url) {
-  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIsWSOrWSS() ||
-         url.SchemeIs(url::kFtpScheme) || url.SchemeIs(url::kGopherScheme) ||
-         url.SchemeIs(url::kDataScheme);
+  if (url.SchemeIsHTTPOrHTTPS() || url.SchemeIsWSOrWSS())
+    return true;
+#if !BUILDFLAG(DISABLE_FTP_SUPPORT)
+  if (url.SchemeIs(url::kFtpScheme) &&
+      base::FeatureList::IsEnabled(features::kFtpProtocol))
+    return true;
+#endif
+  return false;
 }
 
 bool IsRendererDebugURL(const GURL& url) {
@@ -116,23 +124,32 @@ bool IsRendererDebugURL(const GURL& url) {
 bool IsSafeRedirectTarget(const GURL& from_url, const GURL& to_url) {
   static const base::NoDestructor<base::flat_set<base::StringPiece>>
       kUnsafeSchemes(base::flat_set<base::StringPiece>({
-        url::kAboutScheme, url::kDataScheme, url::kFileScheme,
-            url::kFileSystemScheme, url::kBlobScheme,
+        url::kAboutScheme,
+            url::kBlobScheme,
+            url::kJavaScriptScheme,
+#if !defined(CHROMECAST_BUILD)
+            url::kDataScheme,
+#endif
 #if defined(OS_ANDROID)
             url::kContentScheme,
 #endif
       }));
+#if defined(TOOLKIT_QT)
+  if (from_url.IsCustom())
+    return true;
+#endif
   if (HasWebUIScheme(to_url))
     return false;
-  if (!kUnsafeSchemes->contains(to_url.scheme_piece()))
-    return true;
-  if (from_url.is_empty())
+  if (kUnsafeSchemes->contains(to_url.scheme_piece()))
     return false;
-  if (from_url.SchemeIsFile() && to_url.SchemeIsFile())
-    return true;
-  if (from_url.SchemeIsFileSystem() && to_url.SchemeIsFileSystem())
-    return true;
-  return false;
+  for (const auto& local_scheme : url::GetLocalSchemes()) {
+    if (to_url.SchemeIs(local_scheme)) {
+      return from_url.SchemeIs(local_scheme);
+    }
+  }
+  if (to_url.SchemeIsFileSystem())
+    return from_url.SchemeIsFileSystem();
+  return true;
 }
 
 }  // namespace content

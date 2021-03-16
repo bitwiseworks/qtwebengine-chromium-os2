@@ -26,21 +26,27 @@
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
 
 #include <algorithm>
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "base/feature_list.h"
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/platform/web_scrollbar_overlay_color_theme.h"
+#include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/layout/layout_box.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
 #include "third_party/blink/renderer/core/scroll/scroll_animator_base.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar_theme.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
-#include "third_party/blink/renderer/platform/graphics/paint/cull_rect.h"
+#include "third_party/blink/renderer/platform/text/text_direction.h"
+#include "ui/base/ui_base_features.h"
 
 namespace blink {
 
 Scrollbar::Scrollbar(ScrollableArea* scrollable_area,
                      ScrollbarOrientation orientation,
                      ScrollbarControlSize control_size,
+                     Element* style_source,
                      ChromeClient* chrome_client,
                      ScrollbarTheme* theme)
     : scrollable_area_(scrollable_area),
@@ -64,7 +70,10 @@ Scrollbar::Scrollbar(ScrollableArea* scrollable_area,
                     &Scrollbar::AutoscrollTimerFired),
       elastic_overscroll_(0),
       track_needs_repaint_(true),
-      thumb_needs_repaint_(true) {
+      thumb_needs_repaint_(true),
+      injected_gesture_scroll_begin_(false),
+      scrollbar_manipulation_in_progress_on_cc_thread_(false),
+      style_source_(style_source) {
   theme_.RegisterScrollbar(*this);
 
   // FIXME: This is ugly and would not be necessary if we fix cross-platform
@@ -73,20 +82,21 @@ Scrollbar::Scrollbar(ScrollableArea* scrollable_area,
   // sizing).
   int thickness = theme_.ScrollbarThickness(control_size);
   theme_scrollbar_thickness_ = thickness;
-  if (chrome_client_)
-    thickness = chrome_client_->WindowToViewportScalar(thickness);
+  if (chrome_client_) {
+    thickness = chrome_client_->WindowToViewportScalar(
+        scrollable_area_->GetLayoutBox()->GetFrame(), thickness);
+  }
   frame_rect_ = IntRect(0, 0, thickness, thickness);
 
   current_pos_ = ScrollableAreaCurrentPos();
 }
 
-Scrollbar::~Scrollbar() {
-  theme_.UnregisterScrollbar(*this);
-}
+Scrollbar::~Scrollbar() = default;
 
-void Scrollbar::Trace(blink::Visitor* visitor) {
+void Scrollbar::Trace(Visitor* visitor) {
   visitor->Trace(scrollable_area_);
   visitor->Trace(chrome_client_);
+  visitor->Trace(style_source_);
 }
 
 void Scrollbar::SetFrameRect(const IntRect& frame_rect) {
@@ -104,9 +114,15 @@ ScrollbarOverlayColorTheme Scrollbar::GetScrollbarOverlayColorTheme() const {
                           : kScrollbarOverlayColorThemeDark;
 }
 
-void Scrollbar::GetTickmarks(Vector<IntRect>& tickmarks) const {
+bool Scrollbar::HasTickmarks() const {
+  return orientation_ == kVerticalScrollbar && scrollable_area_ &&
+         scrollable_area_->HasTickmarks();
+}
+
+Vector<IntRect> Scrollbar::GetTickmarks() const {
   if (scrollable_area_)
-    scrollable_area_->GetTickmarks(tickmarks);
+    return scrollable_area_->GetTickmarks();
+  return Vector<IntRect>();
 }
 
 bool Scrollbar::IsScrollableAreaActive() const {
@@ -126,7 +142,7 @@ int Scrollbar::Maximum() const {
                                               : max_offset.Height();
 }
 
-void Scrollbar::OffsetDidChange() {
+void Scrollbar::OffsetDidChange(mojom::blink::ScrollType scroll_type) {
   DCHECK(scrollable_area_);
 
   float position = ScrollableAreaCurrentPos();
@@ -138,12 +154,17 @@ void Scrollbar::OffsetDidChange() {
   current_pos_ = position;
 
   ScrollbarPart invalid_parts =
-      GetTheme().InvalidateOnThumbPositionChange(*this, old_position, position);
+      GetTheme().PartsToInvalidateOnThumbPositionChange(*this, old_position,
+                                                        position);
   SetNeedsPaintInvalidation(invalid_parts);
 
-  if (pressed_part_ == kThumbPart)
+  // Don't update the pressed position if scroll anchoring takes place as
+  // otherwise the next thumb movement will undo anchoring.
+  if (pressed_part_ == kThumbPart &&
+      scroll_type != mojom::blink::ScrollType::kAnchoring) {
     SetPressedPos(pressed_pos_ + GetTheme().ThumbPosition(*this) -
                   old_thumb_position);
+  }
 }
 
 void Scrollbar::DisconnectFromScrollableArea() {
@@ -161,11 +182,8 @@ void Scrollbar::SetProportion(int visible_size, int total_size) {
 }
 
 void Scrollbar::Paint(GraphicsContext& context,
-                      const CullRect& cull_rect) const {
-  if (!cull_rect.Intersects(FrameRect()))
-    return;
-
-  GetTheme().Paint(*this, context, cull_rect);
+                      const IntPoint& paint_offset) const {
+  GetTheme().Paint(*this, context, paint_offset);
 }
 
 void Scrollbar::AutoscrollTimerFired(TimerBase*) {
@@ -179,7 +197,7 @@ bool Scrollbar::ThumbWillBeUnderMouse() const {
   return PressedPos() >= thumb_pos && PressedPos() < thumb_pos + thumb_length;
 }
 
-void Scrollbar::AutoscrollPressedPart(TimeDelta delay) {
+void Scrollbar::AutoscrollPressedPart(base::TimeDelta delay) {
   if (!scrollable_area_)
     return;
 
@@ -194,31 +212,22 @@ void Scrollbar::AutoscrollPressedPart(TimeDelta delay) {
     return;
   }
 
-  // Handle the arrows and track.
-  bool did_scroll =
-      scrollable_area_
-          ->UserScroll(PressedPartScrollGranularity(),
-                       ToScrollDelta(PressedPartScrollDirectionPhysical(), 1))
-          .DidScroll();
+  // Handle the arrows and track by injecting a scroll update.
+  InjectScrollGestureForPressedPart(WebInputEvent::kGestureScrollUpdate);
 
   // Always start timer when user press on button since scrollable area maybe
   // infinite scrolling.
   if (pressed_part_ == kBackButtonStartPart ||
       pressed_part_ == kForwardButtonStartPart ||
       pressed_part_ == kBackButtonEndPart ||
-      pressed_part_ == kForwardButtonEndPart) {
-    StartTimerIfNeeded(delay);
-    return;
-  }
-
-  if ((pressed_part_ == kBackTrackPart || pressed_part_ == kForwardTrackPart) &&
-      did_scroll) {
+      pressed_part_ == kForwardButtonEndPart ||
+      pressed_part_ == kBackTrackPart || pressed_part_ == kForwardTrackPart) {
     StartTimerIfNeeded(delay);
     return;
   }
 }
 
-void Scrollbar::StartTimerIfNeeded(TimeDelta delay) {
+void Scrollbar::StartTimerIfNeeded(base::TimeDelta delay) {
   // Don't do anything for the thumb.
   if (pressed_part_ == kThumbPart)
     return;
@@ -256,9 +265,12 @@ ScrollGranularity Scrollbar::PressedPartScrollGranularity() {
   if (pressed_part_ == kBackButtonStartPart ||
       pressed_part_ == kBackButtonEndPart ||
       pressed_part_ == kForwardButtonStartPart ||
-      pressed_part_ == kForwardButtonEndPart)
-    return kScrollByLine;
-  return kScrollByPage;
+      pressed_part_ == kForwardButtonEndPart) {
+    return RuntimeEnabledFeatures::PercentBasedScrollingEnabled()
+               ? ScrollGranularity::kScrollByPercentage
+               : ScrollGranularity::kScrollByLine;
+  }
+  return ScrollGranularity::kScrollByPage;
 }
 
 void Scrollbar::MoveThumb(int pos, bool dragging_document) {
@@ -279,8 +291,7 @@ void Scrollbar::MoveThumb(int pos, bool dragging_document) {
         delta;
     destination_position =
         scrollable_area_->ClampScrollOffset(orientation_, destination_position);
-    scrollable_area_->SetScrollOffsetSingleAxis(
-        orientation_, destination_position, kUserScroll);
+    InjectGestureScrollUpdateForThumbMove(destination_position);
     document_drag_pos_ = pos;
     return;
   }
@@ -309,8 +320,8 @@ void Scrollbar::MoveThumb(int pos, bool dragging_document) {
     float new_offset = static_cast<float>(thumb_pos + delta) *
                            (max_offset - min_offset) / (track_len - thumb_len) +
                        min_offset;
-    scrollable_area_->SetScrollOffsetSingleAxis(orientation_, new_offset,
-                                                kUserScroll);
+
+    InjectGestureScrollUpdateForThumbMove(new_offset);
   }
 }
 
@@ -328,7 +339,7 @@ void Scrollbar::SetHoveredPart(ScrollbarPart part) {
   hovered_part_ = part;
 }
 
-void Scrollbar::SetPressedPart(ScrollbarPart part) {
+void Scrollbar::SetPressedPart(ScrollbarPart part, WebInputEvent::Type type) {
   if (pressed_part_ != kNoPart
       // When we no longer have a pressed part, we can start drawing a hovered
       // state on the hovered part.
@@ -336,8 +347,8 @@ void Scrollbar::SetPressedPart(ScrollbarPart part) {
     SetNeedsPaintInvalidation(
         static_cast<ScrollbarPart>(pressed_part_ | hovered_part_ | part));
 
-  if (GetScrollableArea())
-    GetScrollableArea()->DidScrollWithScrollbar(part, Orientation());
+  if (GetScrollableArea() && part != kNoPart)
+    GetScrollableArea()->DidScrollWithScrollbar(part, Orientation(), type);
 
   pressed_part_ = part;
 }
@@ -348,7 +359,8 @@ bool Scrollbar::GestureEvent(const WebGestureEvent& evt,
   switch (evt.GetType()) {
     case WebInputEvent::kGestureTapDown: {
       IntPoint position = FlooredIntPoint(evt.PositionInRootFrame());
-      SetPressedPart(GetTheme().HitTest(*this, position));
+      SetPressedPart(GetTheme().HitTestRootFramePosition(*this, position),
+                     evt.GetType());
       pressed_pos_ = Orientation() == kHorizontalScrollbar
                          ? ConvertFromRootFrame(position).X()
                          : ConvertFromRootFrame(position).Y();
@@ -362,15 +374,15 @@ bool Scrollbar::GestureEvent(const WebGestureEvent& evt,
       return true;
     case WebInputEvent::kGestureScrollBegin:
       switch (evt.SourceDevice()) {
-        case kWebGestureDeviceSyntheticAutoscroll:
-        case kWebGestureDeviceTouchpad:
+        case WebGestureDevice::kSyntheticAutoscroll:
+        case WebGestureDevice::kTouchpad:
           // Update the state on GSB for touchpad since GestureTapDown
           // is not generated by that device. Touchscreen uses the tap down
           // gesture since the scrollbar enters a visual active state.
-          SetPressedPart(kNoPart);
+          SetPressedPart(kNoPart, evt.GetType());
           pressed_pos_ = 0;
           return false;
-        case kWebGestureDeviceTouchscreen:
+        case WebGestureDevice::kTouchscreen:
           if (pressed_part_ != kThumbPart)
             return false;
           scroll_pos_ = pressed_pos_;
@@ -382,10 +394,10 @@ bool Scrollbar::GestureEvent(const WebGestureEvent& evt,
       break;
     case WebInputEvent::kGestureScrollUpdate:
       switch (evt.SourceDevice()) {
-        case kWebGestureDeviceSyntheticAutoscroll:
-        case kWebGestureDeviceTouchpad:
+        case WebGestureDevice::kSyntheticAutoscroll:
+        case WebGestureDevice::kTouchpad:
           return false;
-        case kWebGestureDeviceTouchscreen:
+        case WebGestureDevice::kTouchscreen:
           if (pressed_part_ != kThumbPart)
             return false;
           scroll_pos_ += Orientation() == kHorizontalScrollbar
@@ -399,42 +411,64 @@ bool Scrollbar::GestureEvent(const WebGestureEvent& evt,
       }
       break;
     case WebInputEvent::kGestureScrollEnd:
+      // If we see a GSE targeted at the scrollbar, clear the state that
+      // says we injected GestureScrollBegin, since we no longer need to inject
+      // a GSE ourselves.
+      injected_gesture_scroll_begin_ = false;
+      FALLTHROUGH;
     case WebInputEvent::kGestureLongPress:
     case WebInputEvent::kGestureFlingStart:
       scroll_pos_ = 0;
       pressed_pos_ = 0;
-      SetPressedPart(kNoPart);
+      SetPressedPart(kNoPart, evt.GetType());
       return false;
-    case WebInputEvent::kGestureTap: {
-      if (pressed_part_ != kThumbPart && pressed_part_ != kNoPart &&
-          scrollable_area_ &&
-          scrollable_area_
-              ->UserScroll(
-                  PressedPartScrollGranularity(),
-                  ToScrollDelta(PressedPartScrollDirectionPhysical(), 1))
-              .DidScroll()) {
-        return true;
-      }
-      scroll_pos_ = 0;
-      pressed_pos_ = 0;
-      SetPressedPart(kNoPart);
-      return false;
-    }
+    case WebInputEvent::kGestureTap:
+      return HandleTapGesture();
     default:
       // By default, we assume that gestures don't deselect the scrollbar.
       return true;
   }
 }
 
+bool Scrollbar::HandleTapGesture() {
+  if (pressed_part_ != kThumbPart && pressed_part_ != kNoPart &&
+      scrollable_area_) {
+    ScrollOffset delta = ToScrollDelta(PressedPartScrollDirectionPhysical(), 1);
+    if (DeltaWillScroll(delta)) {
+      // Taps perform a single scroll begin/update/end sequence of gesture
+      // events. There's no autoscroll timer since long press is not treated
+      // the same as holding a mouse down.
+      InjectScrollGestureForPressedPart(WebInputEvent::kGestureScrollBegin);
+      InjectScrollGestureForPressedPart(WebInputEvent::kGestureScrollUpdate);
+      InjectScrollGestureForPressedPart(WebInputEvent::kGestureScrollEnd);
+
+      return true;
+    }
+  }
+
+  scroll_pos_ = 0;
+  pressed_pos_ = 0;
+  SetPressedPart(kNoPart, WebInputEvent::Type::kGestureTap);
+  return false;
+}
+
 void Scrollbar::MouseMoved(const WebMouseEvent& evt) {
   IntPoint position = FlooredIntPoint(evt.PositionInRootFrame());
+  ScrollbarPart part = GetTheme().HitTestRootFramePosition(*this, position);
+
+  // If the WebMouseEvent was already handled on the compositor thread, simply
+  // set up the ScrollbarPart for invalidation and exit.
+  if (scrollbar_manipulation_in_progress_on_cc_thread_) {
+    SetHoveredPart(part);
+    return;
+  }
+
   if (pressed_part_ == kThumbPart) {
     if (GetTheme().ShouldSnapBackToDragOrigin(*this, evt)) {
       if (scrollable_area_) {
-        scrollable_area_->SetScrollOffsetSingleAxis(
-            orientation_,
-            drag_origin_ + scrollable_area_->MinimumScrollOffset(orientation_),
-            kUserScroll);
+        float destination_position =
+            drag_origin_ + scrollable_area_->MinimumScrollOffset(orientation_);
+        InjectGestureScrollUpdateForThumbMove(destination_position);
       }
     } else {
       MoveThumb(orientation_ == kHorizontalScrollbar
@@ -451,7 +485,6 @@ void Scrollbar::MouseMoved(const WebMouseEvent& evt) {
                        : ConvertFromRootFrame(position).Y();
   }
 
-  ScrollbarPart part = GetTheme().HitTest(*this, position);
   if (part != hovered_part_) {
     if (pressed_part_ != kNoPart) {
       if (part == pressed_part_) {
@@ -484,7 +517,12 @@ void Scrollbar::MouseExited() {
 
 void Scrollbar::MouseUp(const WebMouseEvent& mouse_event) {
   bool is_captured = pressed_part_ == kThumbPart;
-  SetPressedPart(kNoPart);
+  SetPressedPart(kNoPart, mouse_event.GetType());
+  if (scrollbar_manipulation_in_progress_on_cc_thread_) {
+    scrollbar_manipulation_in_progress_on_cc_thread_ = false;
+    return;
+  }
+
   pressed_pos_ = 0;
   dragging_document_ = false;
   StopTimerIfNeeded();
@@ -492,14 +530,19 @@ void Scrollbar::MouseUp(const WebMouseEvent& mouse_event) {
   if (scrollable_area_) {
     if (is_captured)
       scrollable_area_->MouseReleasedScrollbar();
-    scrollable_area_->SnapAfterScrollbarScrolling(orientation_);
 
-    ScrollbarPart part = GetTheme().HitTest(
+    ScrollableArea* scrollable_area_for_scrolling =
+        ScrollableArea::GetForScrolling(scrollable_area_->GetLayoutBox());
+    scrollable_area_for_scrolling->SnapAfterScrollbarScrolling(orientation_);
+
+    ScrollbarPart part = GetTheme().HitTestRootFramePosition(
         *this, FlooredIntPoint(mouse_event.PositionInRootFrame()));
     if (part == kNoPart) {
       SetHoveredPart(kNoPart);
       scrollable_area_->MouseExitedScrollbar(*this);
     }
+
+    InjectScrollGestureForPressedPart(WebInputEvent::kGestureScrollEnd);
   }
 }
 
@@ -509,7 +552,21 @@ void Scrollbar::MouseDown(const WebMouseEvent& evt) {
     return;
 
   IntPoint position = FlooredIntPoint(evt.PositionInRootFrame());
-  SetPressedPart(GetTheme().HitTest(*this, position));
+  SetPressedPart(GetTheme().HitTestRootFramePosition(*this, position),
+                 evt.GetType());
+
+  // Scrollbar manipulation (for a mouse) always begins with a MouseDown. If
+  // this is already being handled by the compositor thread, blink::Scrollbar
+  // needs to be made aware of this. It also means that, all the actions which
+  // follow (like MouseMove(s) and MouseUp) will also be handled on the cc
+  // thread. However, the scrollbar parts still need to be invalidated on the
+  // main thread.
+  scrollbar_manipulation_in_progress_on_cc_thread_ =
+      evt.GetModifiers() &
+      WebInputEvent::Modifiers::kScrollbarManipulationHandledOnCompositorThread;
+  if (scrollbar_manipulation_in_progress_on_cc_thread_)
+    return;
+
   int pressed_pos = Orientation() == kHorizontalScrollbar
                         ? ConvertFromRootFrame(position).X()
                         : ConvertFromRootFrame(position).Y();
@@ -517,7 +574,7 @@ void Scrollbar::MouseDown(const WebMouseEvent& evt) {
   if ((pressed_part_ == kBackTrackPart || pressed_part_ == kForwardTrackPart) &&
       GetTheme().ShouldCenterOnThumb(*this, evt)) {
     SetHoveredPart(kThumbPart);
-    SetPressedPart(kThumbPart);
+    SetPressedPart(kThumbPart, evt.GetType());
     drag_origin_ = current_pos_;
     int thumb_len = GetTheme().ThumbLength(*this);
     int desired_pos = pressed_pos;
@@ -540,9 +597,99 @@ void Scrollbar::MouseDown(const WebMouseEvent& evt) {
   AutoscrollPressedPart(GetTheme().InitialAutoscrollTimerDelay());
 }
 
-void Scrollbar::SetScrollbarsHiddenIfOverlay(bool hidden) {
+void Scrollbar::InjectScrollGestureForPressedPart(
+    WebInputEvent::Type gesture_type) {
+  ScrollGranularity granularity = PressedPartScrollGranularity();
+  ScrollOffset delta =
+      ToScrollDelta(PressedPartScrollDirectionPhysical(),
+                    ScrollableArea::DirectionBasedScrollDelta(granularity));
+  InjectScrollGesture(gesture_type, delta, granularity);
+}
+
+// Injects a GestureScrollUpdate event to change the scroll offset based on
+// the passed in parameter. This parameter is the target offset for the axis
+// which described by |orientation_|.
+void Scrollbar::InjectGestureScrollUpdateForThumbMove(
+    float single_axis_target_offset) {
+  DCHECK(scrollable_area_);
+  DCHECK(pressed_part_ == kThumbPart);
+
+  // Convert the target offset to the delta that will be injected as part of a
+  // GestureScrollUpdate event.
+  ScrollOffset current_offset =
+      scrollable_area_->GetScrollAnimator().CurrentOffset();
+  float desired_x = orientation_ == kHorizontalScrollbar
+                        ? single_axis_target_offset
+                        : current_offset.Width();
+  float desired_y = orientation_ == kVerticalScrollbar
+                        ? single_axis_target_offset
+                        : current_offset.Height();
+  ScrollOffset desired_offset(desired_x, desired_y);
+  ScrollOffset scroll_delta = desired_offset - current_offset;
+
+  InjectScrollGesture(WebInputEvent::Type::kGestureScrollUpdate, scroll_delta,
+                      ScrollGranularity::kScrollByPrecisePixel);
+}
+
+void Scrollbar::InjectScrollGesture(WebInputEvent::Type gesture_type,
+                                    ScrollOffset delta,
+                                    ScrollGranularity granularity) {
+  DCHECK(scrollable_area_);
+
+  if (gesture_type == WebInputEvent::Type::kGestureScrollEnd &&
+      !injected_gesture_scroll_begin_)
+    return;
+
+  // Don't inject a GSB/GSU if the expressed delta won't actually scroll. If
+  // we do send the GSB, a scroll chain will be set up that excludes the node
+  // associated with this scrollbar/ScrollableArea because this ScrollableArea
+  // can't scroll in the specified direction. Due to the way the gesture bubbles
+  // up the scroll chain, this will apply the scroll updates to a different
+  // node.
+  // Note that we don't apply the restriction to GSE since we want to send
+  // that regardless in order to complete the gesture sequence.
+  if ((gesture_type == WebInputEvent::Type::kGestureScrollUpdate ||
+       gesture_type == WebInputEvent::Type::kGestureScrollBegin) &&
+      !DeltaWillScroll(delta))
+    return;
+
+  if (gesture_type == WebInputEvent::Type::kGestureScrollUpdate &&
+      !injected_gesture_scroll_begin_) {
+    // If we're injecting a scroll update, but haven't yet injected a scroll
+    // begin, do so now. This can happen with the following sequence of events:
+    // - on mouse down the delta computed won't actually scroll (therefore
+    //   GSB/GSU not injected).
+    // - node/scrollable area changes size such that its scroll offset is no
+    //   longer at the end.
+    // - autoscroll timer fires and we inject a scroll update.
+    // Additionally, thumb drags via mouse follow this pattern, since we don't
+    // know the delta direction until the mouse actually moves.
+    InjectScrollGesture(WebInputEvent::Type::kGestureScrollBegin, delta,
+                        granularity);
+  }
+
+  scrollable_area_->InjectGestureScrollEvent(WebGestureDevice::kScrollbar,
+                                             delta, granularity, gesture_type);
+
+  if (gesture_type == WebInputEvent::Type::kGestureScrollBegin) {
+    injected_gesture_scroll_begin_ = true;
+  } else if (gesture_type == WebInputEvent::Type::kGestureScrollEnd) {
+    injected_gesture_scroll_begin_ = false;
+  }
+}
+
+bool Scrollbar::DeltaWillScroll(ScrollOffset delta) const {
+  ScrollOffset current_offset = scrollable_area_->GetScrollOffset();
+  ScrollOffset target_offset =
+      current_offset + ScrollOffset(delta.Width(), delta.Height());
+  ScrollOffset clamped_offset =
+      scrollable_area_->ClampScrollOffset(target_offset);
+  return clamped_offset != current_offset;
+}
+
+void Scrollbar::SetScrollbarsHiddenFromExternalAnimator(bool hidden) {
   if (scrollable_area_)
-    scrollable_area_->SetScrollbarsHiddenIfOverlay(hidden);
+    scrollable_area_->SetScrollbarsHiddenFromExternalAnimator(hidden);
 }
 
 void Scrollbar::SetEnabled(bool e) {
@@ -562,7 +709,12 @@ int Scrollbar::ScrollbarThickness() const {
   int thickness = Orientation() == kHorizontalScrollbar ? Height() : Width();
   if (!thickness || !chrome_client_)
     return thickness;
-  return chrome_client_->WindowToViewportScalar(theme_scrollbar_thickness_);
+  return chrome_client_->WindowToViewportScalar(
+      scrollable_area_->GetLayoutBox()->GetFrame(), theme_scrollbar_thickness_);
+}
+
+bool Scrollbar::IsSolidColor() const {
+  return theme_.IsSolidColor();
 }
 
 bool Scrollbar::IsOverlayScrollbar() const {
@@ -655,6 +807,27 @@ void Scrollbar::SetNeedsPaintInvalidation(ScrollbarPart invalid_parts) {
 CompositorElementId Scrollbar::GetElementId() {
   DCHECK(scrollable_area_);
   return scrollable_area_->GetScrollbarElementId(orientation_);
+}
+
+float Scrollbar::EffectiveZoom() const {
+  if (::features::IsFormControlsRefreshEnabled() && style_source_ &&
+      style_source_->GetLayoutObject()) {
+    return style_source_->GetLayoutObject()->Style()->EffectiveZoom();
+  }
+  return 1.0;
+}
+
+bool Scrollbar::ContainerIsRightToLeft() const {
+  if (::features::IsFormControlsRefreshEnabled() && style_source_ &&
+      style_source_->GetLayoutObject()) {
+    TextDirection dir = style_source_->GetLayoutObject()->Style()->Direction();
+    return IsRtl(dir);
+  }
+  return false;
+}
+
+WebColorScheme Scrollbar::UsedColorScheme() const {
+  return scrollable_area_->UsedColorScheme();
 }
 
 STATIC_ASSERT_ENUM(kWebScrollbarOverlayColorThemeDark,

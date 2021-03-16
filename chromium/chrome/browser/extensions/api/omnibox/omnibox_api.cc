@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -25,7 +26,6 @@
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_factory.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
 #include "ui/gfx/image/image.h"
 
@@ -186,8 +186,7 @@ void ExtensionOmniboxEventRouter::OnDeleteSuggestion(
 
 OmniboxAPI::OmniboxAPI(content::BrowserContext* context)
     : profile_(Profile::FromBrowserContext(context)),
-      url_service_(TemplateURLServiceFactory::GetForProfile(profile_)),
-      extension_registry_observer_(this) {
+      url_service_(TemplateURLServiceFactory::GetForProfile(profile_)) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
   if (url_service_) {
     template_url_sub_ = url_service_->RegisterOnLoadedCallback(

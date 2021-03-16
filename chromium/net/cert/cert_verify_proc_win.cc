@@ -15,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_local.h"
+#include "base/win/windows_version.h"
 #include "crypto/capi_util.h"
 #include "crypto/scoped_capi_types.h"
 #include "crypto/sha2.h"
@@ -152,7 +153,7 @@ int MapCertChainErrorStatusToCertStatus(DWORD error_status) {
     if (error_status & CERT_TRUST_HAS_WEAK_SIGNATURE) {
       cert_status |= CERT_STATUS_WEAK_KEY;
     } else {
-      cert_status |= CERT_STATUS_INVALID;
+      cert_status |= CERT_STATUS_AUTHORITY_INVALID;
     }
   }
 
@@ -183,7 +184,7 @@ bool CertSubjectCommonNameHasNull(PCCERT_CONTEXT cert) {
   decode_para.cbSize = sizeof(decode_para);
   decode_para.pfnAlloc = crypto::CryptAlloc;
   decode_para.pfnFree = crypto::CryptFree;
-  CERT_NAME_INFO* name_info = NULL;
+  CERT_NAME_INFO* name_info = nullptr;
   DWORD name_info_size = 0;
   BOOL rv;
   rv = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
@@ -272,15 +273,40 @@ bool CertSubjectCommonNameHasNull(PCCERT_CONTEXT cert) {
 // calling this function.
 void GetCertChainInfo(PCCERT_CHAIN_CONTEXT chain_context,
                       CertVerifyResult* verify_result) {
-  if (chain_context->cChain == 0)
+  if (chain_context->cChain == 0 || chain_context->rgpChain[0]->cElement == 0) {
+    verify_result->cert_status |= CERT_STATUS_INVALID;
     return;
+  }
 
   PCERT_SIMPLE_CHAIN first_chain = chain_context->rgpChain[0];
   DWORD num_elements = first_chain->cElement;
   PCERT_CHAIN_ELEMENT* element = first_chain->rgpElement;
 
-  PCCERT_CONTEXT verified_cert = NULL;
+  PCCERT_CONTEXT verified_cert = nullptr;
   std::vector<PCCERT_CONTEXT> verified_chain;
+
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
+    // Recheck signatures in the event junk data was provided.
+    for (DWORD i = 0; i < num_elements - 1; ++i) {
+      PCCERT_CONTEXT issuer = element[i + 1]->pCertContext;
+
+      // If Issuer isn't ECC, skip this certificate.
+      if (strcmp(issuer->pCertInfo->SubjectPublicKeyInfo.Algorithm.pszObjId,
+                 szOID_ECC_PUBLIC_KEY)) {
+        continue;
+      }
+
+      PCCERT_CONTEXT cert = element[i]->pCertContext;
+      if (!CryptVerifyCertificateSignatureEx(
+              NULL, X509_ASN_ENCODING, CRYPT_VERIFY_CERT_SIGN_SUBJECT_CERT,
+              const_cast<PCERT_CONTEXT>(cert),
+              CRYPT_VERIFY_CERT_SIGN_ISSUER_CERT,
+              const_cast<PCERT_CONTEXT>(issuer), 0, NULL)) {
+        verify_result->cert_status |= CERT_STATUS_INVALID;
+        break;
+      }
+    }
+  }
 
   bool has_root_ca = num_elements > 1 &&
       !(chain_context->TrustStatus.dwErrorStatus &
@@ -335,7 +361,7 @@ void GetCertPoliciesInfo(
   decode_para.cbSize = sizeof(decode_para);
   decode_para.pfnAlloc = crypto::CryptAlloc;
   decode_para.pfnFree = crypto::CryptFree;
-  CERT_POLICIES_INFO* policies_info = NULL;
+  CERT_POLICIES_INFO* policies_info = nullptr;
   DWORD policies_info_size = 0;
   BOOL rv;
   rv = CryptDecodeObjectEx(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
@@ -628,7 +654,7 @@ class RevocationInjector {
          reinterpret_cast<void*>(&CertDllVerifyRevocationWithCRLSet)},
     };
     BOOL ok = CryptInstallOIDFunctionAddress(
-        NULL, X509_ASN_ENCODING, CRYPT_OID_VERIFY_REVOCATION_FUNC,
+        nullptr, X509_ASN_ENCODING, CRYPT_OID_VERIFY_REVOCATION_FUNC,
         base::size(kInterceptFunction), kInterceptFunction,
         CRYPT_INSTALL_OID_FUNC_BEFORE_FLAG);
     DCHECK(ok);
@@ -847,10 +873,12 @@ int CertVerifyProcWin::VerifyInternal(
     X509Certificate* cert,
     const std::string& hostname,
     const std::string& ocsp_response,
+    const std::string& sct_list,
     int flags,
     CRLSet* crl_set,
     const CertificateList& additional_trust_anchors,
-    CertVerifyResult* verify_result) {
+    CertVerifyResult* verify_result,
+    const NetLogWithSource& net_log) {
   // Ensure the Revocation Provider has been installed and configured for this
   // CRLSet.
   ScopedThreadLocalCRLSet thread_local_crlset(crl_set);
@@ -882,7 +910,7 @@ int CertVerifyProcWin::VerifyInternal(
 
   // Get the certificatePolicies extension of the certificate.
   std::unique_ptr<CERT_POLICIES_INFO, base::FreeDeleter> policies_info;
-  LPSTR ev_policy_oid = NULL;
+  LPSTR ev_policy_oid = nullptr;
   GetCertPoliciesInfo(cert_list.get(), &policies_info);
   if (policies_info) {
     EVRootCAMetadata* metadata = EVRootCAMetadata::GetInstance();
@@ -936,7 +964,7 @@ int CertVerifyProcWin::VerifyInternal(
   // and used when in cache-only mode.
   if (!ocsp_response.empty()) {
     CRYPT_DATA_BLOB ocsp_response_blob;
-    ocsp_response_blob.cbData = ocsp_response.size();
+    ocsp_response_blob.cbData = base::checked_cast<DWORD>(ocsp_response.size());
     ocsp_response_blob.pbData =
         reinterpret_cast<BYTE*>(const_cast<char*>(ocsp_response.data()));
     CertSetCertificateContextProperty(
@@ -982,9 +1010,9 @@ int CertVerifyProcWin::VerifyInternal(
   // calls will use the fallback path.
   BOOL chain_result =
       CertGetCertificateChain(chain_engine, cert_list.get(),
-                              NULL,  // current system time
+                              nullptr,  // current system time
                               cert_list->hCertStore, &chain_para, chain_flags,
-                              NULL,  // reserved
+                              nullptr,  // reserved
                               &chain_context);
   if (chain_result && chain_context &&
       (chain_context->TrustStatus.dwErrorStatus &
@@ -999,9 +1027,9 @@ int CertVerifyProcWin::VerifyInternal(
     chain_para.dwStrongSignFlags = 0;
     chain_result =
         CertGetCertificateChain(chain_engine, cert_list.get(),
-                                NULL,  // current system time
+                                nullptr,  // current system time
                                 cert_list->hCertStore, &chain_para, chain_flags,
-                                NULL,  // reserved
+                                nullptr,  // reserved
                                 &chain_context);
   }
 
@@ -1014,9 +1042,8 @@ int CertVerifyProcWin::VerifyInternal(
   // should have prevented invalid paths from being built, the behaviour and
   // timing of how a Revocation Provider is invoked is not well documented. This
   // is just defense in depth.
-  CRLSetResult crl_set_result = kCRLSetUnknown;
-  if (crl_set)
-    crl_set_result = CheckChainRevocationWithCRLSet(chain_context, crl_set);
+  CRLSetResult crl_set_result =
+      CheckChainRevocationWithCRLSet(chain_context, crl_set);
 
   if (crl_set_result == kCRLSetRevoked) {
     verify_result->cert_status |= CERT_STATUS_REVOKED;
@@ -1029,15 +1056,12 @@ int CertVerifyProcWin::VerifyInternal(
     verify_result->cert_status |= CERT_STATUS_REV_CHECKING_ENABLED;
 
     CertFreeCertificateChain(chain_context);
-    if (!CertGetCertificateChain(
-             chain_engine,
-             cert_list.get(),
-             NULL,  // current system time
-             cert_list->hCertStore,
-             &chain_para,
-             chain_flags,
-             NULL,  // reserved
-             &chain_context)) {
+    if (!CertGetCertificateChain(chain_engine, cert_list.get(),
+                                 nullptr,  // current system time
+                                 cert_list->hCertStore, &chain_para,
+                                 chain_flags,
+                                 nullptr,  // reserved
+                                 &chain_context)) {
       verify_result->cert_status |= CERT_STATUS_INVALID;
       return MapSecurityError(GetLastError());
     }
@@ -1045,19 +1069,18 @@ int CertVerifyProcWin::VerifyInternal(
 
   if (chain_context->TrustStatus.dwErrorStatus &
       CERT_TRUST_IS_NOT_VALID_FOR_USAGE) {
-    ev_policy_oid = NULL;
+    // Could not verify the cert with the EV policy. Remove the EV policy and
+    // try again.
+    ev_policy_oid = nullptr;
     chain_para.RequestedIssuancePolicy.Usage.cUsageIdentifier = 0;
-    chain_para.RequestedIssuancePolicy.Usage.rgpszUsageIdentifier = NULL;
+    chain_para.RequestedIssuancePolicy.Usage.rgpszUsageIdentifier = nullptr;
     CertFreeCertificateChain(chain_context);
-    if (!CertGetCertificateChain(
-             chain_engine,
-             cert_list.get(),
-             NULL,  // current system time
-             cert_list->hCertStore,
-             &chain_para,
-             chain_flags,
-             NULL,  // reserved
-             &chain_context)) {
+    if (!CertGetCertificateChain(chain_engine, cert_list.get(),
+                                 nullptr,  // current system time
+                                 cert_list->hCertStore, &chain_para,
+                                 chain_flags,
+                                 nullptr,  // reserved
+                                 &chain_context)) {
       verify_result->cert_status |= CERT_STATUS_INVALID;
       return MapSecurityError(GetLastError());
     }
@@ -1074,24 +1097,16 @@ int CertVerifyProcWin::VerifyInternal(
     chain_flags &= ~CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY;
 
     CertFreeCertificateChain(chain_context);
-    if (!CertGetCertificateChain(
-             chain_engine,
-             cert_list.get(),
-             NULL,  // current system time
-             cert_list->hCertStore,
-             &chain_para,
-             chain_flags,
-             NULL,  // reserved
-             &chain_context)) {
+    if (!CertGetCertificateChain(chain_engine, cert_list.get(),
+                                 nullptr,  // current system time
+                                 cert_list->hCertStore, &chain_para,
+                                 chain_flags,
+                                 nullptr,  // reserved
+                                 &chain_context)) {
       verify_result->cert_status |= CERT_STATUS_INVALID;
       return MapSecurityError(GetLastError());
     }
     GetCertChainInfo(chain_context, verify_result);
-
-    if (chain_context->TrustStatus.dwErrorStatus &
-        CERT_TRUST_IS_OFFLINE_REVOCATION) {
-      verify_result->cert_status |= CERT_STATUS_REVOKED;
-    }
   }
 
   ScopedPCCERT_CHAIN_CONTEXT scoped_chain_context(chain_context);
@@ -1113,8 +1128,7 @@ int CertVerifyProcWin::VerifyInternal(
   // routine that has better support for RFC 6125 name matching.
   extra_policy_para.fdwChecks =
       0x00001000;  // SECURITY_FLAG_IGNORE_CERT_CN_INVALID
-  extra_policy_para.pwszServerName =
-      const_cast<base::char16*>(hostname16.c_str());
+  extra_policy_para.pwszServerName = base::as_writable_wcstr(hostname16);
 
   CERT_CHAIN_POLICY_PARA policy_para;
   memset(&policy_para, 0, sizeof(policy_para));
@@ -1139,16 +1153,14 @@ int CertVerifyProcWin::VerifyInternal(
         MapSecurityError(policy_status.dwError));
   }
 
-  // TODO(wtc): Suppress CERT_STATUS_NO_REVOCATION_MECHANISM for now to be
-  // compatible with WinHTTP, which doesn't report this error (bug 3004).
-  verify_result->cert_status &= ~CERT_STATUS_NO_REVOCATION_MECHANISM;
-
-  if (!rev_checking_enabled) {
-    // If we didn't do online revocation checking then Windows will report
-    // CERT_UNABLE_TO_CHECK_REVOCATION unless it had cached OCSP or CRL
-    // information for every certificate. We only want to put up revoked
-    // statuses from the offline checks so we squash this error.
-    verify_result->cert_status &= ~CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  // Mask off revocation checking failures unless hard-fail revocation checking
+  // for local anchors is enabled and the chain is issued by a local root.
+  // (CheckEV will still check chain_context->TrustStatus.dwErrorStatus directly
+  // so as to not mark as EV if revocation information was not available.)
+  if (!(!verify_result->is_issued_by_known_root &&
+        (flags & VERIFY_REV_CHECKING_REQUIRED_LOCAL_ANCHORS))) {
+    verify_result->cert_status &= ~(CERT_STATUS_NO_REVOCATION_MECHANISM |
+                                    CERT_STATUS_UNABLE_TO_CHECK_REVOCATION);
   }
 
   AppendPublicKeyHashesAndUpdateKnownRoot(
@@ -1162,6 +1174,10 @@ int CertVerifyProcWin::VerifyInternal(
       CheckEV(chain_context, rev_checking_enabled, ev_policy_oid)) {
     verify_result->cert_status |= CERT_STATUS_IS_EV;
   }
+
+  LogNameNormalizationMetrics(".Win", verify_result->verified_cert.get(),
+                              verify_result->is_issued_by_known_root);
+
   return OK;
 }
 

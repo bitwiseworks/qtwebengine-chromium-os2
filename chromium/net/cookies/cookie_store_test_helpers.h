@@ -12,7 +12,9 @@
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/synchronization/lock.h"
+#include "base/time/time.h"
 #include "net/cookies/cookie_change_dispatcher.h"
 #include "net/log/net_log_with_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -51,33 +53,16 @@ class DelayedCookieMonster : public CookieStore {
   // invoke the internal callback.
   // Post a delayed task to invoke the original callback with the results.
 
-  void SetCookieWithOptionsAsync(
-      const GURL& url,
-      const std::string& cookie_line,
-      const CookieOptions& options,
-      CookieMonster::SetCookiesCallback callback) override;
-
   void SetCanonicalCookieAsync(std::unique_ptr<CanonicalCookie> cookie,
-                               bool secure_source,
-                               bool modify_http_only,
+                               std::string source_scheme,
+                               const CookieOptions& options,
                                SetCookiesCallback callback) override;
 
   void GetCookieListWithOptionsAsync(const GURL& url,
                                      const CookieOptions& options,
                                      GetCookieListCallback callback) override;
 
-  void GetAllCookiesAsync(GetCookieListCallback callback) override;
-
-  virtual bool SetCookieWithOptions(const GURL& url,
-                                    const std::string& cookie_line,
-                                    const CookieOptions& options);
-
-  virtual void DeleteCookie(const GURL& url,
-                            const std::string& cookie_name);
-
-  void DeleteCookieAsync(const GURL& url,
-                         const std::string& cookie_name,
-                         base::OnceClosure callback) override;
+  void GetAllCookiesAsync(GetAllCookiesCallback callback) override;
 
   void DeleteCanonicalCookieAsync(const CanonicalCookie& cookie,
                                   DeleteCallback callback) override;
@@ -95,15 +80,19 @@ class DelayedCookieMonster : public CookieStore {
 
   CookieChangeDispatcher& GetChangeDispatcher() override;
 
-  bool IsEphemeral() override;
+  void SetCookieableSchemes(const std::vector<std::string>& schemes,
+                            SetCookieableSchemesCallback callback) override;
 
  private:
   // Be called immediately from CookieMonster.
 
-  void SetCookiesInternalCallback(bool result);
+  void SetCookiesInternalCallback(
+      CanonicalCookie::CookieInclusionStatus result);
 
   void GetCookiesWithOptionsInternalCallback(const std::string& cookie);
-  void GetCookieListWithOptionsInternalCallback(const CookieList& cookie);
+  void GetCookieListWithOptionsInternalCallback(
+      const CookieStatusList& cookie,
+      const CookieStatusList& excluded_cookies);
 
   // Invoke the original callbacks.
 
@@ -118,9 +107,10 @@ class DelayedCookieMonster : public CookieStore {
   DelayedCookieMonsterChangeDispatcher change_dispatcher_;
 
   bool did_run_;
-  bool result_;
+  CanonicalCookie::CookieInclusionStatus result_;
   std::string cookie_;
   std::string cookie_line_;
+  CookieStatusList cookie_status_list_;
   CookieList cookie_list_;
 
   DISALLOW_COPY_AND_ASSIGN(DelayedCookieMonster);
@@ -152,15 +142,15 @@ class FlushablePersistentStore : public CookieMonster::PersistentCookieStore {
   FlushablePersistentStore();
 
   // CookieMonster::PersistentCookieStore implementation:
-  void Load(const LoadedCallback& loaded_callback,
+  void Load(LoadedCallback loaded_callback,
             const NetLogWithSource& net_log) override;
   void LoadCookiesForKey(const std::string& key,
-                         const LoadedCallback& loaded_callback) override;
+                         LoadedCallback loaded_callback) override;
   void AddCookie(const CanonicalCookie&) override;
   void UpdateCookieAccessTime(const CanonicalCookie&) override;
   void DeleteCookie(const CanonicalCookie&) override;
   void SetForceKeepSessionState() override;
-  void SetBeforeFlushCallback(base::RepeatingClosure callback) override;
+  void SetBeforeCommitCallback(base::RepeatingClosure callback) override;
   void Flush(base::OnceClosure callback) override;
 
   int flush_count();

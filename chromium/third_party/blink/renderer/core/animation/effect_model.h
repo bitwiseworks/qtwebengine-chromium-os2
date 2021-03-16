@@ -45,11 +45,12 @@ class Interpolation;
 // Time independent representation of an Animation's content.
 // Can be sampled for the active pairs of Keyframes (represented by
 // Interpolations) at a given time fraction.
-class CORE_EXPORT EffectModel : public GarbageCollectedFinalized<EffectModel> {
+class CORE_EXPORT EffectModel : public GarbageCollected<EffectModel> {
  public:
   enum CompositeOperation {
     kCompositeReplace,
     kCompositeAdd,
+    kCompositeAccumulate,
   };
   static base::Optional<CompositeOperation> StringToCompositeOperation(
       const String&);
@@ -67,7 +68,7 @@ class CORE_EXPORT EffectModel : public GarbageCollectedFinalized<EffectModel> {
   virtual bool IsTransformRelatedEffect() const { return false; }
   virtual bool IsKeyframeEffectModel() const { return false; }
 
-  virtual void Trace(blink::Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) {}
 };
 
 }  // namespace blink

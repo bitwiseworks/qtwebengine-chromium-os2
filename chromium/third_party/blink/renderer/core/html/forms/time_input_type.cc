@@ -30,6 +30,7 @@
 
 #include "third_party/blink/renderer/core/html/forms/time_input_type.h"
 
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/date_time_fields_state.h"
@@ -37,16 +38,13 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/input_type_names.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
-#include "third_party/blink/renderer/platform/date_components.h"
+#include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/text/platform_locale.h"
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
-
-using namespace html_names;
 
 static const int kTimeDefaultStep = 60;
 static const int kTimeDefaultStepBase = 0;
@@ -54,10 +52,6 @@ static const int kTimeStepScaleFactor = 1000;
 
 TimeInputType::TimeInputType(HTMLInputElement& element)
     : BaseTemporalInputType(element) {}
-
-InputType* TimeInputType::Create(HTMLInputElement& element) {
-  return MakeGarbageCollected<TimeInputType>(element);
-}
 
 void TimeInputType::CountUsage() {
   CountUsageIfVisible(WebFeature::kInputTypeTime);
@@ -69,7 +63,8 @@ const AtomicString& TimeInputType::FormControlType() const {
 
 Decimal TimeInputType::DefaultValueForStepUp() const {
   DateComponents date;
-  date.SetMillisecondsSinceMidnight(ConvertToLocalTime(CurrentTimeMS()));
+  date.SetMillisecondsSinceMidnight(
+      ConvertToLocalTime(base::Time::Now()).InMillisecondsF());
   double milliseconds = date.MillisecondsSinceEpoch();
   DCHECK(std::isfinite(milliseconds));
   return Decimal::FromDouble(milliseconds);
@@ -82,7 +77,7 @@ StepRange TimeInputType::CreateStepRange(
       (kTimeDefaultStep, kTimeDefaultStepBase, kTimeStepScaleFactor,
        StepRange::kScaledStepValueShouldBeInteger));
 
-  return InputType::CreateStepRange(
+  return InputType::CreateReversibleStepRange(
       any_step_handling, kTimeDefaultStepBase,
       Decimal::FromDouble(DateComponents::MinimumTime()),
       Decimal::FromDouble(DateComponents::MaximumTime()), step_description);
@@ -158,11 +153,13 @@ void TimeInputType::SetupLayoutParameters(
         layout_parameters.locale.ShortTimeFormat();
     layout_parameters.fallback_date_time_format = "HH:mm";
   }
-  if (!ParseToDateComponents(GetElement().FastGetAttribute(kMinAttr),
-                             &layout_parameters.minimum))
+  if (!ParseToDateComponents(
+          GetElement().FastGetAttribute(html_names::kMinAttr),
+          &layout_parameters.minimum))
     layout_parameters.minimum = DateComponents();
-  if (!ParseToDateComponents(GetElement().FastGetAttribute(kMaxAttr),
-                             &layout_parameters.maximum))
+  if (!ParseToDateComponents(
+          GetElement().FastGetAttribute(html_names::kMaxAttr),
+          &layout_parameters.maximum))
     layout_parameters.maximum = DateComponents();
 }
 
@@ -175,6 +172,18 @@ bool TimeInputType::IsValidFormat(bool has_year,
                                   bool has_minute,
                                   bool has_second) const {
   return has_hour && has_minute && has_ampm;
+}
+
+String TimeInputType::AriaRoleForPickerIndicator() const {
+  return GetLocale().QueryString(IDS_AX_CALENDAR_SHOW_TIME_PICKER);
+}
+
+String TimeInputType::ReversedRangeOutOfRangeText(
+    const Decimal& minimum,
+    const Decimal& maximum) const {
+  return GetLocale().QueryString(
+      IDS_FORM_VALIDATION_REVERSED_RANGE_OUT_OF_RANGE_TIME,
+      LocalizeValue(Serialize(minimum)), LocalizeValue(Serialize(maximum)));
 }
 
 }  // namespace blink

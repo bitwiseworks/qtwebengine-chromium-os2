@@ -43,13 +43,13 @@ class ContentDecryptionModuleResultPromise
   void CompleteWithKeyStatus(
       WebEncryptedMediaKeyInformation::KeyStatus) override;
   void CompleteWithError(WebContentDecryptionModuleException,
-                         unsigned long system_code,
+                         uint32_t system_code,
                          const WebString&) override;
 
   // It is only valid to call this before completion.
   ScriptPromise Promise();
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   // |interface_name| and |property_name| must have static life time.

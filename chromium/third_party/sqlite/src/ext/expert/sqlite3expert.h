@@ -10,8 +10,8 @@
 **
 *************************************************************************
 */
-
-
+#if !defined(SQLITEEXPERT_H)
+#define SQLITEEXPERT_H 1
 #include "sqlite3.h"
 
 typedef struct sqlite3expert sqlite3expert;
@@ -34,7 +34,7 @@ sqlite3expert *sqlite3_expert_new(sqlite3 *db, char **pzErr);
 **   By default, sqlite3_expert_analyze() generates sqlite_stat1 data for
 **   each candidate index. This involves scanning and sorting the entire
 **   contents of each user database table once for each candidate index
-**   associated with the table. For large databases, this can be
+**   associated with the table. For large databases, this can be 
 **   prohibitively slow. This option allows the sqlite3expert object to
 **   be configured so that sqlite_stat1 data is instead generated based on a
 **   subset of each table, or so that no sqlite_stat1 data is used at all.
@@ -94,7 +94,7 @@ int sqlite3_expert_sql(
 ** add further SQL statements to the analysis.
 **
 ** If successful, SQLITE_OK is returned and (*pzErr) is set to NULL. Or, if
-** an error occurs, an SQLite error code is returned and (*pzErr) set to
+** an error occurs, an SQLite error code is returned and (*pzErr) set to 
 ** point to a buffer containing an English language error message. In this
 ** case it is the responsibility of the caller to eventually free the buffer
 ** using sqlite3_free().
@@ -123,7 +123,7 @@ int sqlite3_expert_count(sqlite3expert*);
 ** The value passed as the third argument must be one of the EXPERT_REPORT_*
 ** #define constants defined below.
 **
-** For some EXPERT_REPORT_* parameters, the buffer returned contains
+** For some EXPERT_REPORT_* parameters, the buffer returned contains 
 ** information relating to a specific SQL statement. In these cases that
 ** SQL statement is identified by the value passed as the second argument.
 ** SQL statements are numbered from 0 in the order in which they are parsed.
@@ -136,7 +136,7 @@ int sqlite3_expert_count(sqlite3expert*);
 **
 ** EXPERT_REPORT_INDEXES:
 **   Return a buffer containing the CREATE INDEX statements for all recommended
-**   indexes for statement iStmt. If there are no new recommeded indexes, NULL
+**   indexes for statement iStmt. If there are no new recommeded indexes, NULL 
 **   is returned.
 **
 ** EXPERT_REPORT_PLAN:
@@ -144,7 +144,7 @@ int sqlite3_expert_count(sqlite3expert*);
 **   iStmt after the proposed indexes have been added to the database schema.
 **
 ** EXPERT_REPORT_CANDIDATES:
-**   Return a pointer to a buffer containing the CREATE INDEX statements
+**   Return a pointer to a buffer containing the CREATE INDEX statements 
 **   for all indexes that were tested (for all SQL statements). The iStmt
 **   parameter is ignored for EXPERT_REPORT_CANDIDATES calls.
 */
@@ -159,10 +159,10 @@ const char *sqlite3_expert_report(sqlite3expert*, int iStmt, int eReport);
 #define EXPERT_REPORT_CANDIDATES 4
 
 /*
-** Free an (sqlite3expert*) handle and all associated resources. There
-** should be one call to this function for each successful call to
+** Free an (sqlite3expert*) handle and all associated resources. There 
+** should be one call to this function for each successful call to 
 ** sqlite3-expert_new().
 */
 void sqlite3_expert_destroy(sqlite3expert*);
 
-
+#endif  /* !defined(SQLITEEXPERT_H) */

@@ -6,6 +6,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_OFFSCREENCANVAS2D_OFFSCREEN_CANVAS_RENDERING_CONTEXT_2D_H_
 
 #include <memory>
+#include <random>
+
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
@@ -38,7 +40,7 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     }
 
     CanvasRenderingContext::ContextType GetContextType() const override {
-      return CanvasRenderingContext::kContext2d;
+      return CanvasRenderingContext::kContext2D;
     }
   };
 
@@ -55,18 +57,19 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
 
   // CanvasRenderingContext implementation
   ~OffscreenCanvasRenderingContext2D() override;
-  ContextType GetContextType() const override { return kContext2d; }
+  ContextType GetContextType() const override { return kContext2D; }
   bool Is2d() const override { return true; }
   bool IsComposited() const override { return false; }
   bool IsAccelerated() const override;
   void SetOffscreenCanvasGetContextResult(OffscreenRenderingContext&) final;
-  void SetIsHidden(bool) final { NOTREACHED(); }
+  void SetIsInHiddenPage(bool) final { NOTREACHED(); }
+  void SetIsBeingDisplayed(bool) final { NOTREACHED(); }
   void Stop() final { NOTREACHED(); }
   void SetCanvasGetContextResult(RenderingContext&) final {}
   void ClearRect(double x, double y, double width, double height) override {
     BaseRenderingContext2D::clearRect(x, y, width, height);
   }
-  scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) const final;
+  scoped_refptr<StaticBitmapImage> GetImage(AccelerationHint) final;
   void Reset() override;
   void RestoreCanvasMatrixClipStack(cc::PaintCanvas* c) const override {
     RestoreMatrixClipStack(c);
@@ -93,13 +96,18 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   int Height() const final;
 
   bool CanCreateCanvas2dResourceProvider() const final;
+  CanvasResourceProvider* GetOrCreateCanvasResourceProvider() const;
   CanvasResourceProvider* GetCanvasResourceProvider() const;
+
+  // Offscreen canvas doesn't have any notion of image orientation.
+  RespectImageOrientationEnum RespectImageOrientation() const final {
+    return kRespectImageOrientation;
+  }
 
   bool ParseColorOrCurrentColor(Color&, const String& color_string) const final;
 
-  cc::PaintCanvas* DrawingCanvas() const final;
-  cc::PaintCanvas* ExistingDrawingCanvas() const final;
-  void DisableDeferral(DisableDeferralReason) final;
+  cc::PaintCanvas* GetOrCreatePaintCanvas() final;
+  cc::PaintCanvas* GetPaintCanvas() const final;
 
   void DidDraw() final;
   void DidDraw(const SkIRect& dirty_rect) final;
@@ -108,30 +116,30 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   sk_sp<PaintFilter> StateGetFilter() final;
   void SnapshotStateForFilter() final;
 
-  void ValidateStateStack() const final;
+  void ValidateStateStackWithCanvas(const cc::PaintCanvas*) const final;
 
   bool HasAlpha() const final { return CreationAttributes().alpha; }
   bool isContextLost() const override;
 
   ImageBitmap* TransferToImageBitmap(ScriptState*) final;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
-  void PushFrame() override;
+  bool PushFrame() override;
 
  protected:
-  void NeedsFinalizeFrame() override {
-    CanvasRenderingContext::NeedsFinalizeFrame();
-  }
-
   CanvasColorParams ColorParams() const override;
   bool WritePixels(const SkImageInfo& orig_info,
                    const void* pixels,
                    size_t row_bytes,
                    int x,
                    int y) override;
+  void WillOverwriteCanvas() override;
 
  private:
+  void FinalizeFrame() final;
+  void FlushRecording();
+
   bool IsPaintable() const final;
   bool IsCanvas2DBufferValid() const override;
 
@@ -142,18 +150,17 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
                         double* max_width = nullptr);
   const Font& AccessFont();
 
-  scoped_refptr<CanvasResource> ProduceFrame();
+  scoped_refptr<CanvasResource> ProduceCanvasResource();
 
   String ColorSpaceAsString() const override;
   CanvasPixelFormat PixelFormat() const override;
   SkIRect dirty_rect_for_commit_;
-};
 
-DEFINE_TYPE_CASTS(OffscreenCanvasRenderingContext2D,
-                  CanvasRenderingContext,
-                  context,
-                  context->Is2d() && context->Host(),
-                  context.Is2d() && context.Host());
+  bool is_valid_size_ = false;
+
+  std::mt19937 random_generator_;
+  std::bernoulli_distribution bernoulli_distribution_;
+};
 
 }  // namespace blink
 

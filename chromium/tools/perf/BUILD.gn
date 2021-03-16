@@ -2,12 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# Keep in sync with group("perf_without_chrome").
 group("perf") {
   testonly = true
-  deps = [
-    "//tools/perf/chrome_telemetry_build:telemetry_chrome_test",
-  ]
-
+  deps = [ "//tools/perf/chrome_telemetry_build:telemetry_chrome_test" ]
   data = [
     "//tools/perf/",
 
@@ -18,6 +16,7 @@ group("perf") {
     # Field trial dependencies
     "//tools/json_comment_eater/",
     "//tools/json_to_struct/",
+    "//components/variations/service/generate_ui_string_overrider.py",
 
     # For blink_perf benchmarks.
     "//third_party/blink/perf_tests/",
@@ -28,31 +27,31 @@ group("perf") {
     # For image_decoding.measurement
     "//chrome/test/data/image_decoding/",
 
-    # For ad tagging ruleset
-    "$root_gen_dir/components/subresource_filter/tools/",
-
     # For Pylib used by VR tests
     "//build/android/pylib/",
   ]
 
   # Runs a script which generates the ad tagging ruleset.
   if (!is_ios) {
-    data_deps = [
-      "//components/subresource_filter/tools:index_ruleset",
-    ]
+    data_deps = [ "//components/subresource_filter/tools:index_ruleset" ]
   }
 }
 
 if (is_android) {
-  import("//build/config/android/rules.gni")
+  import("//build/util/generate_wrapper.gni")
 
-  wrapper_script("run_benchmark_wrapper") {
-    target = "run_benchmark"
-    flag_name = "--chromium-output-directory"
+  generate_wrapper("run_benchmark_wrapper") {
+    executable = "run_benchmark"
+    wrapper_script = "$root_build_dir/bin/run_benchmark"
+    executable_args = [
+      "--chromium-output-directory",
+      "@WrappedPath(.)",
+    ]
   }
 }
 
-# Group for running benchmarks without building Chrome
+# Group for running benchmarks without building Chrome. Keep in sync with
+# group("perf").
 group("perf_without_chrome") {
   testonly = true
   deps = [
@@ -69,6 +68,7 @@ group("perf_without_chrome") {
     # Field trial dependencies
     "//tools/json_comment_eater/",
     "//tools/json_to_struct/",
+    "//components/variations/service/generate_ui_string_overrider.py",
 
     # For blink_perf benchmarks.
     "//third_party/blink/perf_tests/",
@@ -79,17 +79,23 @@ group("perf_without_chrome") {
     # For image_decoding.measurement
     "//chrome/test/data/image_decoding/",
 
-    # For ad tagging ruleset
-    "$root_gen_dir/components/subresource_filter/tools/",
-
     # For Pylib used by VR tests
     "//build/android/pylib/",
   ]
 
+  data_deps = []
+
   # Runs a script which generates the ad tagging ruleset.
   if (!is_ios) {
-    data_deps = [
-      "//components/subresource_filter/tools:index_ruleset",
-    ]
+    data_deps += [ "//components/subresource_filter/tools:index_ruleset" ]
   }
+  if (is_android) {
+    data_deps += [ "//chrome/android/webapk/shell_apk:maps_go_webapk" ]
+  }
+}
+
+# This group makes visible those targets in subdirectories that are not
+# explicitly depended on.
+group("gn_all") {
+  deps = [ "//tools/perf/core/perfetto_binary_roller:upload_trace_processor" ]
 }

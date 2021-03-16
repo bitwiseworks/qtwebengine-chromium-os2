@@ -24,12 +24,20 @@ FakeClipboardRecentContent::GetRecentTextFromClipboard() {
   return clipboard_text_content_;
 }
 
-base::Optional<gfx::Image>
-FakeClipboardRecentContent::GetRecentImageFromClipboard() {
-  if (suppress_content_)
-    return base::nullopt;
+void FakeClipboardRecentContent::GetRecentImageFromClipboard(
+    GetRecentImageCallback callback) {
+  if (suppress_content_) {
+    std::move(callback).Run(base::nullopt);
+    return;
+  }
 
-  return clipboard_image_content_;
+  std::move(callback).Run(clipboard_image_content_);
+}
+
+bool FakeClipboardRecentContent::HasRecentImageFromClipboard() {
+  if (suppress_content_)
+    return false;
+  return clipboard_image_content_.has_value();
 }
 
 base::TimeDelta FakeClipboardRecentContent::GetClipboardContentAge() const {
@@ -38,6 +46,14 @@ base::TimeDelta FakeClipboardRecentContent::GetClipboardContentAge() const {
 
 void FakeClipboardRecentContent::SuppressClipboardContent() {
   suppress_content_ = true;
+}
+
+void FakeClipboardRecentContent::ClearClipboardContent() {
+  clipboard_url_content_ = base::nullopt;
+  clipboard_text_content_ = base::nullopt;
+  clipboard_image_content_ = base::nullopt;
+  content_age_ = base::TimeDelta::Max();
+  suppress_content_ = false;
 }
 
 void FakeClipboardRecentContent::SetClipboardURL(const GURL& url,

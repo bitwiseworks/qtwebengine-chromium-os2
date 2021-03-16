@@ -5,16 +5,20 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_STORAGE_CACHED_STORAGE_AREA_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_STORAGE_CACHED_STORAGE_AREA_H_
 
-#include "mojo/public/cpp/bindings/associated_binding.h"
-#include "mojo/public/cpp/bindings/associated_interface_ptr.h"
-#include "mojo/public/cpp/bindings/interface_ptr.h"
+#include "base/trace_event/memory_dump_provider.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/dom_storage/storage_area.mojom-blink.h"
-#include "third_party/blink/public/platform/web_scoped_virtual_time_pauser.h"
+#include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/storage/storage_area_map.h"
+#include "third_party/blink/renderer/modules/storage/storage_namespace.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/deque.h"
+#include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -29,7 +33,8 @@ namespace blink {
 // objects.
 class MODULES_EXPORT CachedStorageArea
     : public mojom::blink::StorageAreaObserver,
-      public RefCounted<CachedStorageArea> {
+      public RefCounted<CachedStorageArea>,
+      public base::trace_event::MemoryDumpProvider {
  public:
   // Instances of this class are used to identify the "source" of any changes
   // made to this storage area, as well as to dispatch any incoming change
@@ -50,26 +55,15 @@ class MODULES_EXPORT CachedStorageArea
         WebScopedVirtualTimePauser::VirtualTaskDuration duration) = 0;
   };
 
-  // Used to send events to the InspectorDOMStorageAgent.
-  class InspectorEventListener {
-   public:
-    virtual ~InspectorEventListener() = default;
-    virtual void DidDispatchStorageEvent(const SecurityOrigin* origin,
-                                         const String& key,
-                                         const String& old_value,
-                                         const String& new_value) = 0;
+  enum class AreaType {
+    kSessionStorage,
+    kLocalStorage,
   };
 
-  static scoped_refptr<CachedStorageArea> CreateForLocalStorage(
-      scoped_refptr<const SecurityOrigin> origin,
-      mojo::InterfacePtr<mojom::blink::StorageArea> area,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_runner,
-      InspectorEventListener* listener);
-  static scoped_refptr<CachedStorageArea> CreateForSessionStorage(
-      scoped_refptr<const SecurityOrigin> origin,
-      mojo::AssociatedInterfacePtr<mojom::blink::StorageArea> area,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_runner,
-      InspectorEventListener* listener);
+  CachedStorageArea(AreaType type,
+                    scoped_refptr<const SecurityOrigin> origin,
+                    scoped_refptr<base::SingleThreadTaskRunner> ipc_runner,
+                    StorageNamespace* storage_namespace);
 
   // These correspond to blink::Storage.
   unsigned GetLength();
@@ -84,7 +78,8 @@ class MODULES_EXPORT CachedStorageArea
   // Returns the (unique) id allocated for this source for testing purposes.
   String RegisterSource(Source* source);
 
-  size_t memory_used() const { return map_ ? map_->quota_used() : 0; }
+  size_t quota_used() const { return map_ ? map_->quota_used() : 0; }
+  size_t memory_used() const { return map_ ? map_->memory_used() : 0; }
 
   // Only public to allow tests to parametrize on this type.
   enum class FormatOption {
@@ -93,57 +88,76 @@ class MODULES_EXPORT CachedStorageArea
     kSessionStorageForceUTF8
   };
 
- private:
-  CachedStorageArea(scoped_refptr<const SecurityOrigin> origin,
-                    mojo::InterfacePtr<mojom::blink::StorageArea> area,
-                    scoped_refptr<base::SingleThreadTaskRunner> ipc_runner,
-                    InspectorEventListener* listener);
-  CachedStorageArea(
-      scoped_refptr<const SecurityOrigin> origin,
-      mojo::AssociatedInterfacePtr<mojom::blink::StorageArea> area,
-      scoped_refptr<base::SingleThreadTaskRunner> ipc_runner,
-      InspectorEventListener* listener);
+  mojo::Remote<mojom::blink::StorageArea>& RemoteArea() { return remote_area_; }
 
+  // Invoked by the owning StorageNamespace the renderer is told to reset its
+  // DOM Storage connections (e.g. to recover from a backend crash). Normally
+  // a new StorageArea pipe is bound through the owning StorageNamespace, but
+  // |new_area| may be provided by test code instead.
+  void ResetConnection(
+      mojo::PendingRemote<mojom::blink::StorageArea> new_area = {});
+
+  void SetRemoteAreaForTesting(
+      mojo::PendingRemote<mojom::blink::StorageArea> area) {
+    remote_area_.Bind(std::move(area));
+  }
+
+ private:
   friend class RefCounted<CachedStorageArea>;
   ~CachedStorageArea() override;
 
   friend class CachedStorageAreaTest;
   friend class CachedStorageAreaStringFormatTest;
+  friend class MockStorageArea;
 
-  // StorageAreaObserver:
-  void KeyAdded(const Vector<uint8_t>& key,
-                const Vector<uint8_t>& value,
-                const String& source) override;
+  // Simple structure used to return information about each locally-initiated
+  // mutation on the StorageArea until the mutation is acknowledged by a
+  // corresponding StorageAreaObserver event. See |pending_mutations_by_source_|
+  // and |pending_mutations_by_key_| below.
+  struct PendingMutation {
+    String key;
+    String new_value;
+    String old_value;
+  };
+
+  void BindStorageArea(
+      mojo::PendingRemote<mojom::blink::StorageArea> new_area = {});
+
+  // mojom::blink::StorageAreaObserver:
   void KeyChanged(const Vector<uint8_t>& key,
                   const Vector<uint8_t>& new_value,
-                  const Vector<uint8_t>& old_value,
+                  const base::Optional<Vector<uint8_t>>& old_value,
                   const String& source) override;
+  void KeyChangeFailed(const Vector<uint8_t>& key,
+                       const String& source) override;
   void KeyDeleted(const Vector<uint8_t>& key,
-                  const Vector<uint8_t>& old_value,
+                  const base::Optional<Vector<uint8_t>>& old_value,
                   const String& source) override;
-  void AllDeleted(const String& source) override;
+  void AllDeleted(bool was_nonempty, const String& source) override;
   void ShouldSendOldValueOnMutations(bool value) override;
 
-  // Common helper for KeyAdded() and KeyChanged()
-  void KeyAddedOrChanged(const Vector<uint8_t>& key,
-                         const Vector<uint8_t>& new_value,
-                         const String& old_value,
-                         const String& source);
+  // base::trace_event::MemoryDumpProvider:
+  bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
+                    base::trace_event::ProcessMemoryDump* pmd) override;
 
-  void OnSetItemComplete(const String& key,
-                         WebScopedVirtualTimePauser,
-                         bool success);
-  void OnRemoveItemComplete(const String& key,
-                            WebScopedVirtualTimePauser,
-                            bool success);
-  void OnClearComplete(WebScopedVirtualTimePauser, bool success);
-  void OnGetAllComplete(bool success);
+  // Enqueues state regarding a locally-initiated storage mutation which will
+  // eventually be acknowledged by a StorageAreaObserver event targeting
+  // |receiver_|.
+  void EnqueuePendingMutation(const String& key,
+                              const String& new_value,
+                              const String& old_value,
+                              const String& source);
+
+  // Dequeues and returns the oldest PendingMutation from the queue for |source|
+  // if one exists. If there is no pending mutation queued for |source| this
+  // returns null.
+  std::unique_ptr<PendingMutation> PopPendingMutation(const String& source);
+
+  void MaybeApplyNonLocalMutationForKey(const String& key,
+                                        const String& new_value);
 
   // Synchronously fetches the areas data if it hasn't been fetched already.
   void EnsureLoaded();
-
-  // Resets the object back to its newly constructed state.
-  void Reset();
 
   bool IsSessionStorage() const;
   FormatOption GetKeyFormat() const;
@@ -160,29 +174,49 @@ class MODULES_EXPORT CachedStorageArea
   static Vector<uint8_t> StringToUint8Vector(const String& input,
                                              FormatOption format_option);
 
-  scoped_refptr<const SecurityOrigin> origin_;
-  InspectorEventListener* inspector_event_listener_;
+  const AreaType type_;
+  const scoped_refptr<const SecurityOrigin> origin_;
+  const WeakPersistent<StorageNamespace> storage_namespace_;
+  const scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
 
   std::unique_ptr<StorageAreaMap> map_;
 
-  HashMap<String, int> ignore_key_mutations_;
-  bool ignore_all_mutations_ = false;
+  // Queues of local mutations which are pending browser acknowledgement via
+  // StorageAreaObserver events. This map is keyed by local source ID and owns
+  // the PendingMutation objects.
+  //
+  // Only used for Local Storage. Session Storage operations are confined to
+  // local side-effects and are not acknowledged with StorageAreaObsever events.
+  using OwnedPendingMutationQueue = Deque<std::unique_ptr<PendingMutation>>;
+  HashMap<String, OwnedPendingMutationQueue> pending_mutations_by_source_;
+
+  // Queues of local mutations indexed per key. Every queued value references a
+  // PendingMutation owned by |pending_mutations_by_source_| above.
+  //
+  // These per-key queues exists for two main reasons:
+  //
+  // * As long as a key's queue is non-empty, non-local mutations observed for
+  //   the key are ignored.
+  // * Any time a non-local |AllDeleted| (i.e. script |clear()|) is observed,
+  //   the most recent mutation for each key is re-applied locally to the
+  //   cleared area, as this improves locally script-observable consistency.
+  //
+  // Only used for Local Storage. Session Storage operations are confined to
+  // local side-effects and are not acknowledged with StorageAreaObsever events.
+  HashMap<String, Deque<PendingMutation*>> pending_mutations_by_key_;
 
   // See ShouldSendOldValueOnMutations().
   bool should_send_old_value_on_mutations_ = true;
 
-  // Depending on if this is a session storage or local storage area only one of
-  // |mojo_area_ptr_| and |mojo_area_associated_ptr_| will be non-null. Either
-  // way |mojo_area_| will be equal to the non-null one.
-  mojom::blink::StorageArea* mojo_area_;
-  mojo::InterfacePtr<mojom::blink::StorageArea> mojo_area_ptr_;
-  mojo::AssociatedInterfacePtr<mojom::blink::StorageArea>
-      mojo_area_associated_ptr_;
-  mojo::AssociatedBinding<mojom::blink::StorageAreaObserver> binding_;
+  // Connection to the backing implementation of this StorageArea. This is
+  // always bound.
+  mojo::Remote<mojom::blink::StorageArea> remote_area_;
+
+  // Receives StorageAreaObserver events from the StorageArea implementation and
+  // dispatches them to this CachedStorageArea.
+  mojo::Receiver<mojom::blink::StorageAreaObserver> receiver_{this};
 
   Persistent<HeapHashMap<WeakMember<Source>, String>> areas_;
-
-  base::WeakPtrFactory<CachedStorageArea> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CachedStorageArea);
 };

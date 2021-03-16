@@ -134,7 +134,9 @@ class Vp9ParserTest : public TestWithParam<TestParams> {
 Vp9Parser::Result Vp9ParserTest::ParseNextFrame(Vp9FrameHeader* fhdr) {
   while (1) {
     std::unique_ptr<DecryptConfig> null_config;
-    Vp9Parser::Result res = vp9_parser_->ParseNextFrame(fhdr, &null_config);
+    gfx::Size allocate_size;
+    Vp9Parser::Result res =
+        vp9_parser_->ParseNextFrame(fhdr, &allocate_size, &null_config);
     if (res == Vp9Parser::kEOStream) {
       IvfFrameHeader ivf_frame_header;
       const uint8_t* ivf_payload;
@@ -142,7 +144,8 @@ Vp9Parser::Result Vp9ParserTest::ParseNextFrame(Vp9FrameHeader* fhdr) {
       if (!ivf_parser_.ParseNextFrame(&ivf_frame_header, &ivf_payload))
         return Vp9Parser::kEOStream;
 
-      vp9_parser_->SetStream(ivf_payload, ivf_frame_header.frame_size, nullptr);
+      vp9_parser_->SetStream(ivf_payload, ivf_frame_header.frame_size,
+                             nullptr);
       continue;
     }
 
@@ -645,7 +648,7 @@ TEST_F(Vp9ParserTest, StreamFileParsingWithContextUpdate) {
     } else {
       EXPECT_TRUE(should_update);
       ReadContext(&frame_context);
-      context_refresh_cb.Run(frame_context);
+      std::move(context_refresh_cb).Run(frame_context);
     }
 
     ++num_parsed_frames;
@@ -677,7 +680,7 @@ TEST_F(Vp9ParserTest, AwaitingContextUpdate) {
   // After update, parse should be ok.
   auto context_refresh_cb = GetContextRefreshCb(fhdr);
   EXPECT_FALSE(!context_refresh_cb);
-  context_refresh_cb.Run(frame_context);
+  std::move(context_refresh_cb).Run(frame_context);
   EXPECT_EQ(Vp9Parser::kOk, ParseNextFrame(&fhdr));
 
   // Make sure it parsed the 2nd frame.
@@ -761,7 +764,7 @@ TEST_P(Vp9ParserTest, VerifyFirstFrame) {
             fhdr.uncompressed_header_size);
 }
 
-INSTANTIATE_TEST_CASE_P(, Vp9ParserTest, ::testing::ValuesIn(kTestParams));
+INSTANTIATE_TEST_SUITE_P(All, Vp9ParserTest, ::testing::ValuesIn(kTestParams));
 
 TEST_F(Vp9ParserTest, CheckColorSpace) {
   Vp9FrameHeader fhdr{};

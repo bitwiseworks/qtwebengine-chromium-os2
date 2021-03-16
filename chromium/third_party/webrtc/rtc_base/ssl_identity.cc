@@ -174,7 +174,7 @@ bool SSLIdentity::PemToDer(const std::string& pem_type,
   if (header == std::string::npos) {
     return false;
   }
-  size_t body = pem_string.find("\n", header);
+  size_t body = pem_string.find('\n', header);
   if (body == std::string::npos) {
     return false;
   }
@@ -207,6 +207,51 @@ std::string SSLIdentity::DerToPem(const std::string& pem_type,
   }
   result << "-----END " << pem_type << "-----\n";
   return result.Release();
+}
+
+// static
+std::unique_ptr<SSLIdentity> SSLIdentity::Create(const std::string& common_name,
+                                                 const KeyParams& key_param,
+                                                 time_t certificate_lifetime) {
+  return OpenSSLIdentity::CreateWithExpiration(common_name, key_param,
+                                               certificate_lifetime);
+}
+
+// static
+std::unique_ptr<SSLIdentity> SSLIdentity::Create(const std::string& common_name,
+                                                 const KeyParams& key_param) {
+  return OpenSSLIdentity::CreateWithExpiration(
+      common_name, key_param, kDefaultCertificateLifetimeInSeconds);
+}
+
+// static
+std::unique_ptr<SSLIdentity> SSLIdentity::Create(const std::string& common_name,
+                                                 KeyType key_type) {
+  return OpenSSLIdentity::CreateWithExpiration(
+      common_name, KeyParams(key_type), kDefaultCertificateLifetimeInSeconds);
+}
+
+//  static
+std::unique_ptr<SSLIdentity> SSLIdentity::CreateForTest(
+    const SSLIdentityParams& params) {
+  return OpenSSLIdentity::CreateForTest(params);
+}
+
+// Construct an identity from a private key and a certificate.
+// static
+std::unique_ptr<SSLIdentity> SSLIdentity::CreateFromPEMStrings(
+    const std::string& private_key,
+    const std::string& certificate) {
+  return OpenSSLIdentity::CreateFromPEMStrings(private_key, certificate);
+}
+
+// Construct an identity from a private key and a certificate chain.
+// static
+std::unique_ptr<SSLIdentity> SSLIdentity::CreateFromPEMChainStrings(
+    const std::string& private_key,
+    const std::string& certificate_chain) {
+  return OpenSSLIdentity::CreateFromPEMChainStrings(private_key,
+                                                    certificate_chain);
 }
 
 // static

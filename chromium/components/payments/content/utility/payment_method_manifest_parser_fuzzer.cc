@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/at_exit.h"
+#include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
@@ -30,12 +31,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   bool all_origins_supported;
 
   base::StringPiece json_data(reinterpret_cast<const char*>(data), size);
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(json_data);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadDeprecated(json_data);
+
+  base::CommandLine::Init(0, nullptr);
 
   payments::ErrorLogger log;
   log.DisableInTest();
   payments::PaymentManifestParser::ParsePaymentMethodManifestIntoVectors(
-      std::move(value), log, &web_app_manifest_urls, &supported_origins,
-      &all_origins_supported);
+      GURL("https://chromium.org/pmm.json"), std::move(value), log,
+      &web_app_manifest_urls, &supported_origins, &all_origins_supported);
   return 0;
 }

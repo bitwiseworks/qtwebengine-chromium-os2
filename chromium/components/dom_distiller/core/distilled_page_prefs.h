@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "components/dom_distiller/core/mojom/distilled_page_prefs.mojom.h"
 
 class PrefService;
 
@@ -20,24 +21,10 @@ namespace dom_distiller {
 // Interface for preferences used for distilled page.
 class DistilledPagePrefs {
  public:
-  // Possible font families for distilled page.
-  enum FontFamily {
-#define DEFINE_FONT_FAMILY(name, value) name = value,
-#include "components/dom_distiller/core/font_family_list.h"
-#undef DEFINE_FONT_FAMILY
-  };
-
-  // Possible themes for distilled page.
-  enum Theme {
-#define DEFINE_THEME(name, value) name = value,
-#include "components/dom_distiller/core/theme_list.h"
-#undef DEFINE_THEME
-  };
-
   class Observer {
    public:
-    virtual void OnChangeFontFamily(FontFamily font) = 0;
-    virtual void OnChangeTheme(Theme theme) = 0;
+    virtual void OnChangeFontFamily(mojom::FontFamily font) = 0;
+    virtual void OnChangeTheme(mojom::Theme theme) = 0;
     virtual void OnChangeFontScaling(float scaling) = 0;
   };
 
@@ -47,14 +34,14 @@ class DistilledPagePrefs {
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
   // Sets the user's preference for the font family of distilled pages.
-  void SetFontFamily(FontFamily new_font);
+  void SetFontFamily(mojom::FontFamily new_font);
   // Returns the user's preference for the font family of distilled pages.
-  FontFamily GetFontFamily();
+  mojom::FontFamily GetFontFamily();
 
   // Sets the user's preference for the theme of distilled pages.
-  void SetTheme(Theme new_theme);
+  void SetTheme(mojom::Theme new_theme);
   // Returns the user's preference for the theme of distilled pages.
-  Theme GetTheme();
+  mojom::Theme GetTheme();
 
   // Sets the user's preference for the font size scaling of distilled pages.
   void SetFontScaling(float scaling);
@@ -66,17 +53,16 @@ class DistilledPagePrefs {
 
  private:
   // Notifies all Observers of new font family.
-  void NotifyOnChangeFontFamily(FontFamily font_family);
+  void NotifyOnChangeFontFamily(mojom::FontFamily font_family);
   // Notifies all Observers of new theme.
-  void NotifyOnChangeTheme(Theme theme);
+  void NotifyOnChangeTheme(mojom::Theme theme);
   // Notifies all Observers of new font scaling.
   void NotifyOnChangeFontScaling(float scaling);
-
 
   PrefService* pref_service_;
   base::ObserverList<Observer>::Unchecked observers_;
 
-  base::WeakPtrFactory<DistilledPagePrefs> weak_ptr_factory_;
+  base::WeakPtrFactory<DistilledPagePrefs> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DistilledPagePrefs);
 };

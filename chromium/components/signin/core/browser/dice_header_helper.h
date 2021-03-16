@@ -8,8 +8,9 @@
 #include <string>
 
 #include "base/macros.h"
-#include "components/signin/core/browser/account_consistency_method.h"
 #include "components/signin/core/browser/signin_header_helper.h"
+#include "components/signin/public/base/account_consistency_method.h"
+#include "google_apis/gaia/core_account_id.h"
 
 class GURL;
 
@@ -21,8 +22,7 @@ extern const char kDiceProtocolVersion[];
 // SigninHeaderHelper implementation managing the Dice header.
 class DiceHeaderHelper : public SigninHeaderHelper {
  public:
-  explicit DiceHeaderHelper(bool signed_in_with_auth_error,
-                            AccountConsistencyMethod account_consistency);
+  explicit DiceHeaderHelper(AccountConsistencyMethod account_consistency);
   ~DiceHeaderHelper() override {}
 
   // Returns the parameters contained in the X-Chrome-ID-Consistency-Response
@@ -37,11 +37,11 @@ class DiceHeaderHelper : public SigninHeaderHelper {
 
   // Returns the header value for Dice requests. Returns the empty string when
   // the header must not be added.
-  // |sync_account_id| is not empty if Sync is currently enabled for this
+  // |sync_gaia_id| is not empty if Sync is currently enabled for this
   // account.
   // |show_signout_confirmation| is true if Gaia must display the signout
   // confirmation dialog.
-  std::string BuildRequestHeader(const std::string& sync_account_id,
+  std::string BuildRequestHeader(const std::string& sync_gaia_id,
                                  const std::string& device_id);
 
   // SigninHeaderHelper implementation:
@@ -53,7 +53,6 @@ class DiceHeaderHelper : public SigninHeaderHelper {
   // SigninHeaderHelper implementation:
   bool IsUrlEligibleForRequestHeader(const GURL& url) override;
 
-  bool signed_in_with_auth_error_;
   AccountConsistencyMethod account_consistency_;
 
   DISALLOW_COPY_AND_ASSIGN(DiceHeaderHelper);

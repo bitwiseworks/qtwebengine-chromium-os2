@@ -7,20 +7,30 @@
   <message name="IDS_EMPTY_KEYWORD_VALUE" desc="Shown in the location bar drop down when the user enters a string that matches a chrome keyword, but they haven't entered any text following the chrome keyword">
     &lt;Type search term&gt;
   </message>
-  <message name="IDS_LINK_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the link has been extracted from the user's clipboard. [Length: 21em]">
-    Link you copied
-  </message>
-  <message name="IDS_TEXT_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the text has been extracted from the user's clipboard.">
-    Text you copied
-  </message>
+  <if expr="use_titlecase">
+    <message name="IDS_LINK_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the link has been extracted from the user's clipboard." meaning="Length: 35em">
+      Link You Copied
+    </message>
+    <message name="IDS_TEXT_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the text has been extracted from the user's clipboard." meaning="Length: 35em">
+      Text You Copied
+    </message>
+    <message name="IDS_IMAGE_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the image has been extracted from the user's clipboard." meaning="Length: 35em">
+      Image You Copied
+    </message>
+  </if>
+  <if expr="not use_titlecase">
+    <message name="IDS_LINK_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the link has been extracted from the user's clipboard." meaning="Length: 21em">
+      Link you copied
+    </message>
+    <message name="IDS_TEXT_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the text has been extracted from the user's clipboard." meaning="Length: 21em">
+      Text you copied
+    </message>
+    <message name="IDS_IMAGE_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the image has been extracted from the user's clipboard." meaning="Length: 21em">
+      Image you copied
+    </message>
+  </if>
   <message name="IDS_COPIED_TEXT_FROM_CLIPBOARD" desc="The actual text the user copied, surrounded by quotation marks.">
     &quot;<ph name="TEXT">$1<ex>search string</ex></ph>&quot;
-  </message>
-  <message name="IDS_IMAGE_FROM_CLIPBOARD" desc="The label in the omnibox dropdown explaining that the image has been extracted from the user's clipboard.">
-    Image you copied
-  </message>
-  <message name="IDS_SEARCH_WEB_FOR_IMAGE" desc="Description for performing a search by image">
-    Search <ph name="SEARCH_ENGINE">$1<ex>Google</ex></ph> for Image
   </message>
   <message name="IDS_SECURE_CONNECTION_EV" desc="Short text shown in the location bar when the connection is secure with an EV cert.">
     <ph name="ORGANIZATION">$1<ex>Paypal Inc.</ex></ph> [<ph name="COUNTRY">$2<ex>US</ex></ph>]
@@ -70,6 +80,9 @@
   <message name="IDS_OMNIBOX_FILE" desc="Text shown in the omnibox to indicate a user is viewing a file.">
     File
   </message>
+  <message name="IDS_OMNIBOX_READER_MODE" desc="Text shown in the omnibox to indicate a user is viewing the reader mode view of an article.">
+    Reader Mode
+  </message>
   <message name="IDS_DRIVE_SUGGESTION_DOCUMENT" desc="Google Docs product name, for use in omnibox Docs result descriptions.">
     Google Docs
   </message>
@@ -86,6 +99,12 @@
     Google Drive
   </message>
   <message name="IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE" desc="Product description for Google Drive omnibox results.">
+    <ph name="RESULT_MODIFIED_DATE">$1<ex>12/31/2018</ex></ph> - <ph name="RESULT_OWNER">$2<ex>First Last</ex></ph> - <ph name="RESULT_PRODUCT_SOURCE">$3<ex>Google Docs</ex></ph>
+  </message>
+  <message name="IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_DATE" desc="Product description for Google Drive omnibox results when date is missing.">
+    <ph name="RESULT_OWNER">$1<ex>First Last</ex></ph> - <ph name="RESULT_PRODUCT_SOURCE">$2<ex>Google Docs</ex></ph>
+  </message>
+  <message name="IDS_DRIVE_SUGGESTION_DESCRIPTION_TEMPLATE_WITHOUT_OWNER" desc="Product description for Google Drive omnibox results when owner is missing.">
     <ph name="RESULT_MODIFIED_DATE">$1<ex>12/31/2018</ex></ph> - <ph name="RESULT_PRODUCT_SOURCE">$2<ex>Google Docs</ex></ph>
   </message>
 
@@ -194,8 +213,14 @@
   <message name="IDS_ACC_AUTOCOMPLETE_BOOKMARK" desc="Text for screenreaders describing a URL from a bookmark.">
     <ph name="LOCATION_TITLE">$2<ex>The Chromium Projects</ex></ph> <ph name="SHORT_URL">$1<ex>www.chromium.org</ex> bookmark</ph>
   </message>
-  <message name="IDS_ACC_AUTOCOMPLETE_CLIPBOARD" desc="Text for screenreaders describing a URL from a clipboard.">
-    <ph name="LOCATION_TITLE">$2<ex>The Chromium Projects</ex></ph> <ph name="SHORT_URL">$1<ex>www.chromium.org</ex> location from clipboard</ph>
+  <message name="IDS_ACC_AUTOCOMPLETE_CLIPBOARD_IMAGE" desc="Text for screenreaders describing an image from a clipboard.">
+    Search for clipboard image
+  </message>
+  <message name="IDS_ACC_AUTOCOMPLETE_CLIPBOARD_TEXT" desc="Text for screenreaders describing text from a clipboard.">
+    Search for clipboard text, <ph name="TEXT">$2<ex>Paris, france</ex></ph>
+  </message>
+  <message name="IDS_ACC_AUTOCOMPLETE_CLIPBOARD_URL" desc="Text for screenreaders describing a URL from a clipboard.">
+    Search for clipboard URL, <ph name="SHORT_URL">$2<ex>www.chromium.org</ex></ph>
   </message>
   <message name="IDS_ACC_SEARCH_ICON" desc="Text for screenreaders describing a search icon image.">
     Search icon
@@ -214,5 +239,12 @@
   </message>
   <message name="IDS_ACC_TAB_SWITCH_BUTTON" desc="Announcement when tab switch button focused.">
     Tab switch button, press Enter to switch to this tab
+  </message>
+  <!-- Accessibility suffix for suggestions when the remove button is focused.-->
+  <message name="IDS_ACC_REMOVE_SUGGESTION_FOCUSED_PREFIX" desc="Announcement when remove suggestion button is focused.">
+    Remove Suggestion button, press Enter to remove, <ph name="REMOVE_BUTTON_FOCUSED_FRIENDLY_MATCH_TEXT">$1<ex>The Chromium Projects http://www.chromium.org bookmark</ex></ph>
+  </message>
+  <message name="IDS_ACC_REMOVE_SUGGESTION_BUTTON" desc="Announcement when remove suggestion button is focused.">
+    Remove Suggestion button, press Enter to remove this suggestion
   </message>
 </grit-part>

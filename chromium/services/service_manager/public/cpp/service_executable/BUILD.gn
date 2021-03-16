@@ -9,12 +9,11 @@ source_set("support") {
   ]
 
   deps = [
+    ":switches",
     "//mojo/core/embedder",
     "//mojo/public/cpp/platform",
     "//mojo/public/cpp/system",
     "//services/service_manager/public/cpp",
-    "//services/service_manager/runner:init",
-    "//services/service_manager/runner/common",
     "//services/service_manager/sandbox",
   ]
 
@@ -32,6 +31,13 @@ source_set("support") {
   }
 }
 
+source_set("switches") {
+  sources = [
+    "switches.cc",
+    "switches.h",
+  ]
+}
+
 # Service executable targets should link against this to get a boilerplate entry
 # point which accepts canonical command-line arguments to establish a connection
 # to the Service Manager. In order to link properly, dependents must ensure that
@@ -41,18 +47,16 @@ source_set("support") {
 # Note that GN targets based on the service_executable() template defined in
 # service_executable.gni implicitly link against this.
 source_set("main") {
-  public = [
-    "service_main.h",
-  ]
+  public = [ "service_main.h" ]
 
-  sources = [
-    "main.cc",
-  ]
+  sources = [ "main.cc" ]
+
+  public_deps = [ "//services/service_manager/public/mojom" ]
 
   deps = [
     ":support",
     "//base",
+    "//base:base_static",
     "//base:i18n",
-    "//services/service_manager/runner:init",
   ]
 }

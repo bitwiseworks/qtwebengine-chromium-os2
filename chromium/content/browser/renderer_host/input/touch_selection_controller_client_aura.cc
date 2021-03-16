@@ -6,13 +6,14 @@
 
 #include <set>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_view_host.h"
-#include "content/public/common/context_menu_params.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
@@ -79,10 +80,8 @@ class TouchSelectionControllerClientAura::EnvEventObserver
       // Check IsMouseEventsEnabled, except on Mus, where it's disabled on touch
       // events in this client, but not re-enabled on mouse events elsewhere.
       auto* cursor = aura::client::GetCursorClient(window_->GetRootWindow());
-      if (cursor && !cursor->IsMouseEventsEnabled() &&
-          aura::Env::GetInstance()->mode() != aura::Env::Mode::MUS) {
+      if (cursor && !cursor->IsMouseEventsEnabled())
         return;
-      }
 
       // Windows OS unhandled WM_POINTER* may be redispatched as WM_MOUSE*.
       // Avoid adjusting the handles on synthesized events or events generated
@@ -109,11 +108,11 @@ TouchSelectionControllerClientAura::TouchSelectionControllerClientAura(
       internal_client_(rwhva),
       active_client_(&internal_client_),
       active_menu_client_(this),
-      quick_menu_timer_(
-          FROM_HERE,
-          base::TimeDelta::FromMilliseconds(kQuickMenuDelayInMs),
-          base::Bind(&TouchSelectionControllerClientAura::ShowQuickMenu,
-                     base::Unretained(this))),
+      quick_menu_timer_(FROM_HERE,
+                        base::TimeDelta::FromMilliseconds(kQuickMenuDelayInMs),
+                        base::BindRepeating(
+                            &TouchSelectionControllerClientAura::ShowQuickMenu,
+                            base::Unretained(this))),
       quick_menu_requested_(false),
       touch_down_(false),
       scroll_in_progress_(false),
@@ -242,7 +241,8 @@ void TouchSelectionControllerClientAura::ShowQuickMenu() {
   if (!ui::TouchSelectionMenuRunner::GetInstance())
     return;
 
-  gfx::RectF rect = rwhva_->selection_controller()->GetRectBetweenBounds();
+  gfx::RectF rect =
+      rwhva_->selection_controller()->GetVisibleRectBetweenBounds();
 
   // Clip rect, which is in |rwhva_|'s window's coordinate space, to client
   // bounds.
@@ -440,7 +440,7 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
     case IDS_APP_PASTE: {
       base::string16 result;
       ui::Clipboard::GetForCurrentThread()->ReadText(
-          ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
+          ui::ClipboardBuffer::kCopyPaste, &result);
       return editable && !result.empty();
     }
     default:
@@ -473,7 +473,7 @@ void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
 
 void TouchSelectionControllerClientAura::RunContextMenu() {
   gfx::RectF anchor_rect =
-      rwhva_->selection_controller()->GetRectBetweenBounds();
+      rwhva_->selection_controller()->GetVisibleRectBetweenBounds();
   gfx::PointF anchor_point =
       gfx::PointF(anchor_rect.CenterPoint().x(), anchor_rect.y());
   RenderWidgetHostImpl* host = rwhva_->host();

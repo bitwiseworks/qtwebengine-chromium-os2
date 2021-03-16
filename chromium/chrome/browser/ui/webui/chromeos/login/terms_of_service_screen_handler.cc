@@ -13,10 +13,11 @@
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/base/locale_util.h"
-#include "chrome/browser/chromeos/login/screens/core_oobe_view.h"
+#include "chrome/browser/chromeos/login/screens/terms_of_service_screen.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
@@ -30,30 +31,21 @@
 #include "content/public/browser/web_ui.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 
-namespace {
-
-const char kJsScreenPath[] = "login.TermsOfServiceScreen";
-
-}  // namespace
-
 namespace chromeos {
 
+constexpr StaticOobeScreenId TermsOfServiceScreenView::kScreenId;
+
 TermsOfServiceScreenHandler::TermsOfServiceScreenHandler(
+    JSCallsContainer* js_calls_container,
     CoreOobeView* core_oobe_view)
-    : BaseScreenHandler(kScreenId), core_oobe_view_(core_oobe_view) {
-  set_call_js_prefix(kJsScreenPath);
+    : BaseScreenHandler(kScreenId, js_calls_container),
+      core_oobe_view_(core_oobe_view) {
+  set_user_acted_method_path("login.TermsOfServiceScreen.userActed");
 }
 
 TermsOfServiceScreenHandler::~TermsOfServiceScreenHandler() {
   if (screen_)
     screen_->OnViewDestroyed(this);
-}
-
-void TermsOfServiceScreenHandler::RegisterMessages() {
-  AddCallback("termsOfServiceBack",
-              &TermsOfServiceScreenHandler::HandleBack);
-  AddCallback("termsOfServiceAccept",
-              &TermsOfServiceScreenHandler::HandleAccept);
 }
 
 void TermsOfServiceScreenHandler::DeclareLocalizedValues(
@@ -73,7 +65,8 @@ void TermsOfServiceScreenHandler::DeclareLocalizedValues(
                IDS_TERMS_OF_SERVICE_SCREEN_ACCEPT_BUTTON);
 }
 
-void TermsOfServiceScreenHandler::SetDelegate(Delegate* screen) {
+void TermsOfServiceScreenHandler::SetScreen(TermsOfServiceScreen* screen) {
+  BaseScreenHandler::SetBaseScreen(screen);
   screen_ = screen;
 }
 
@@ -127,6 +120,10 @@ void TermsOfServiceScreenHandler::OnLoadSuccess(
   load_error_ = false;
   terms_of_service_ = terms_of_service;
   UpdateTermsOfServiceInUI();
+}
+
+bool TermsOfServiceScreenHandler::AreTermsLoaded() {
+  return !load_error_ && !terms_of_service_.empty();
 }
 
 void TermsOfServiceScreenHandler::Initialize() {
@@ -192,25 +189,6 @@ void TermsOfServiceScreenHandler::UpdateTermsOfServiceInUI() {
     CallJS("login.TermsOfServiceScreen.setTermsOfServiceLoadError");
   else if (!terms_of_service_.empty())
     CallJS("login.TermsOfServiceScreen.setTermsOfService", terms_of_service_);
-}
-
-void TermsOfServiceScreenHandler::HandleBack() {
-  if (screen_)
-    screen_->OnDecline();
-}
-
-void TermsOfServiceScreenHandler::HandleAccept() {
-  if (!screen_)
-    return;
-
-  // If the Terms of Service have not been successfully downloaded, the "accept
-  // and continue" button should not be accessible. If the user managed to
-  // activate it somehow anway, do not treat this as acceptance of the Terms
-  // and Conditions and end the session instead, as if the user had declined.
-  if (terms_of_service_.empty())
-    screen_->OnDecline();
-  else
-    screen_->OnAccept();
 }
 
 }  // namespace chromeos

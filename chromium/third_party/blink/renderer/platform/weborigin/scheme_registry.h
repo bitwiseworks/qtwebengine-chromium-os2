@@ -28,7 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WEBORIGIN_SCHEME_REGISTRY_H_
 
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
@@ -49,8 +49,6 @@ class PLATFORM_EXPORT SchemeRegistry {
   STATIC_ONLY(SchemeRegistry);
 
  public:
-  static void Initialize();
-
   static void RegisterURLSchemeAsLocal(const String&);
   static bool ShouldTreatURLSchemeAsLocal(const String&);
 
@@ -92,8 +90,8 @@ class PLATFORM_EXPORT SchemeRegistry {
   // Serialize the registered schemes in a comma-separated list.
   static String ListOfCorsEnabledURLSchemes();
 
-  // "Legacy" schemes (e.g. 'ftp:', 'gopher:') which we might want to treat
-  // differently from "webby" schemes.
+  // "Legacy" schemes (e.g. 'ftp:') which we might want to treat differently
+  // from "webby" schemes.
   static bool ShouldTreatURLSchemeAsLegacy(const String& scheme);
 
   // Does the scheme represent a location relevant to web compatibility metrics?
@@ -108,7 +106,13 @@ class PLATFORM_EXPORT SchemeRegistry {
   static void RegisterURLSchemeAsSupportingFetchAPI(const String& scheme);
   static bool ShouldTreatURLSchemeAsSupportingFetchAPI(const String& scheme);
 
+  // https://fetch.spec.whatwg.org/#fetch-scheme
+  static bool IsFetchScheme(const String& scheme);
+
   // Schemes which override the first-/third-party checks on a Document.
+  // TODO(chlily): This should also reflect the fact that chrome:// scheme
+  // should be considered first-party if the embedded origin is secure, to be
+  // consistent with other places that check this.
   static void RegisterURLSchemeAsFirstPartyWhenTopLevel(const String& scheme);
   static void RemoveURLSchemeAsFirstPartyWhenTopLevel(const String& scheme);
   static bool ShouldTreatURLSchemeAsFirstPartyWhenTopLevel(

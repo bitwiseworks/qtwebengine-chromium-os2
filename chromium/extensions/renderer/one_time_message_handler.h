@@ -67,7 +67,6 @@ class OneTimeMessageHandler {
                    const PortId& new_port_id,
                    const MessageTarget& target_id,
                    const std::string& method_name,
-                   bool include_tls_channel_id,
                    const Message& message,
                    v8::Local<v8::Function> response_callback);
 
@@ -125,7 +124,7 @@ class OneTimeMessageHandler {
   // The associated bindings system. Outlives this object.
   NativeExtensionBindingsSystem* const bindings_system_;
 
-  base::WeakPtrFactory<OneTimeMessageHandler> weak_factory_;
+  base::WeakPtrFactory<OneTimeMessageHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OneTimeMessageHandler);
 };

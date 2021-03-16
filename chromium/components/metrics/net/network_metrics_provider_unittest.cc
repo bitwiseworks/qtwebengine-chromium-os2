@@ -22,11 +22,11 @@
 #endif  // OS_CHROMEOS
 
 #if defined(OS_IOS)
-#include "ios/web/public/test/test_web_thread_bundle.h"
-using TestThreadBundle = web::TestWebThreadBundle;
+#include "ios/web/public/test/web_task_environment.h"
+using MetricsTaskEnvironment = web::WebTaskEnvironment;
 #else  // !defined(OS_IOS)
-#include "content/public/test/test_browser_thread_bundle.h"
-using TestThreadBundle = content::TestBrowserThreadBundle;
+#include "content/public/test/browser_task_environment.h"
+using MetricsTaskEnvironment = content::BrowserTaskEnvironment;
 #endif  // defined(OS_IOS)
 
 namespace metrics {
@@ -35,15 +35,27 @@ class NetworkMetricsProviderTest : public testing::Test {
  public:
  protected:
   NetworkMetricsProviderTest()
-      : test_thread_bundle_(TestThreadBundle::IO_MAINLOOP) {
+      : task_environment_(MetricsTaskEnvironment::IO_MAINLOOP) {}
+  ~NetworkMetricsProviderTest() override {}
+
+  void SetUp() override {
 #if defined(OS_CHROMEOS)
     chromeos::DBusThreadManager::Initialize();
     chromeos::NetworkHandler::Initialize();
 #endif  // OS_CHROMEOS
   }
 
+  void TearDown() override {
+#if defined(OS_CHROMEOS)
+    chromeos::NetworkHandler::Shutdown();
+    chromeos::DBusThreadManager::Shutdown();
+#endif  // OS_CHROMEOS
+  }
+
  private:
-  TestThreadBundle test_thread_bundle_;
+  MetricsTaskEnvironment task_environment_;
+
+  DISALLOW_COPY_AND_ASSIGN(NetworkMetricsProviderTest);
 };
 
 // Verifies that the effective connection type is correctly set.

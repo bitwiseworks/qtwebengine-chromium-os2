@@ -3,13 +3,12 @@
 # found in the LICENSE file.
 
 executable("bluetooth_metrics_hash") {
-  sources = [
-    "bluetooth_metrics_hash.cc",
-  ]
+  sources = [ "bluetooth_metrics_hash.cc" ]
 
   deps = [
     "//base",
     "//build/win:default_exe_manifest",
     "//device/bluetooth",
+    "//device/bluetooth/public/cpp",
   ]
 }

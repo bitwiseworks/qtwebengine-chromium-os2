@@ -35,8 +35,8 @@
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 
 namespace blink {
@@ -64,14 +64,13 @@ void RunPendingTasks() {
   Thread::Current()->GetTaskRunner()->PostTask(FROM_HERE,
                                                WTF::Bind(&ExitRunLoop));
 
-  // We forbid GC in the tasks. Otherwise the registered GCTaskObserver tries
-  // to run GC with NoHeapPointerOnStack.
-  ThreadState::Current()->EnterGCForbiddenScope();
+  // The following runloop can execute non-nested tasks with heap pointers
+  // living on stack, so we force both Oilpan and Unified GC to visit the stack.
+  ThreadState::HeapPointersOnStackScope scan_stack(ThreadState::Current());
   EnterRunLoop();
-  ThreadState::Current()->LeaveGCForbiddenScope();
 }
 
-void RunDelayedTasks(TimeDelta delay) {
+void RunDelayedTasks(base::TimeDelta delay) {
   Thread::Current()->GetTaskRunner()->PostDelayedTask(
       FROM_HERE, WTF::Bind(&ExitRunLoop), delay);
   EnterRunLoop();
@@ -132,21 +131,27 @@ scoped_refptr<SharedBuffer> ReadFromFile(const String& path) {
   return SharedBuffer::Create(buffer.data(), buffer.size());
 }
 
-LineReader::LineReader(const std::string& text) : text_(text), index_(0) {}
+String BlinkWebTestsFontsTestDataPath(const String& relative_path) {
+  return FilePathToWebString(
+      WebTestsFilePath()
+          .Append(FILE_PATH_LITERAL("external/wpt/fonts"))
+          .Append(WebStringToFilePath(relative_path)));
+}
 
-bool LineReader::GetNextLine(std::string* line) {
-  line->clear();
+LineReader::LineReader(const String& text) : text_(text), index_(0) {}
+
+bool LineReader::GetNextLine(String* line) {
   if (index_ >= text_.length())
     return false;
 
-  size_t end_of_line_index = text_.find("\r\n", index_);
-  if (end_of_line_index == std::string::npos) {
-    *line = text_.substr(index_);
+  wtf_size_t end_of_line_index = text_.Find("\r\n", index_);
+  if (end_of_line_index == kNotFound) {
+    *line = text_.Substring(index_);
     index_ = text_.length();
     return true;
   }
 
-  *line = text_.substr(index_, end_of_line_index - index_);
+  *line = text_.Substring(index_, end_of_line_index - index_);
   index_ = end_of_line_index + 2;
   return true;
 }

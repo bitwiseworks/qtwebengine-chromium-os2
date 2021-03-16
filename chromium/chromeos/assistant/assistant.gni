@@ -1,13 +1,14 @@
 import("//build/config/chrome_build.gni")
 
 declare_args() {
-  # Enable assistant features. Assistant related code is compiled only when
-  # true. The default assistant implementation is a stub.
-  enable_cros_assistant = is_chromeos
+  # Enable assistant implementation based on libassistant.
+  enable_cros_libassistant = is_chromeos && is_chrome_branded
 }
 
 declare_args() {
-  # Enable assistant implementation based on libassistant. This requires
-  # enable_cros_assistant also enabled.
-  enable_cros_libassistant = enable_cros_assistant && is_chrome_branded
+  # Enable Assistant integration tests using LibAssistant and a fake S3 server.
+  # This requires libassistant.so to support grpc communication with the S3
+  # server, which increases the library size, which is why we introduced this
+  # flag to disable them in the release builds.
+  enable_assistant_integration_tests = enable_cros_libassistant
 }

@@ -307,28 +307,16 @@ CPDF_NameTree::CPDF_NameTree(CPDF_Document* pDoc, const ByteString& category) {
   if (!pNames)
     return;
 
-  m_pRoot = pNames->GetDictFor(category);
+  m_pRoot.Reset(pNames->GetDictFor(category));
 }
 
-CPDF_NameTree::~CPDF_NameTree() {}
+CPDF_NameTree::~CPDF_NameTree() = default;
 
 size_t CPDF_NameTree::GetCount() const {
   return m_pRoot ? CountNamesInternal(m_pRoot.Get(), 0) : 0;
 }
 
-int CPDF_NameTree::GetIndex(const WideString& csName) const {
-  if (!m_pRoot)
-    return -1;
-
-  size_t nIndex = 0;
-  if (!SearchNameNodeByName(m_pRoot.Get(), csName, 0, &nIndex, nullptr,
-                            nullptr)) {
-    return -1;
-  }
-  return nIndex;
-}
-
-bool CPDF_NameTree::AddValueAndName(std::unique_ptr<CPDF_Object> pObj,
+bool CPDF_NameTree::AddValueAndName(RetainPtr<CPDF_Object> pObj,
                                     const WideString& name) {
   if (!m_pRoot)
     return false;
@@ -336,10 +324,18 @@ bool CPDF_NameTree::AddValueAndName(std::unique_ptr<CPDF_Object> pObj,
   size_t nIndex = 0;
   CPDF_Array* pFind = nullptr;
   int nFindIndex = -1;
-  // Fail if the tree already contains this name or if the tree is too deep.
-  if (SearchNameNodeByName(m_pRoot.Get(), name, 0, &nIndex, &pFind,
-                           &nFindIndex)) {
-    return false;
+  // Handle the corner case where the root node is empty. i.e. No kids and no
+  // names. In which case, just insert into it and skip all the searches.
+  CPDF_Array* pNames = m_pRoot->GetArrayFor("Names");
+  if (pNames && pNames->IsEmpty() && !m_pRoot->GetArrayFor("Kids"))
+    pFind = pNames;
+
+  if (!pFind) {
+    // Fail if the tree already contains this name or if the tree is too deep.
+    if (SearchNameNodeByName(m_pRoot.Get(), name, 0, &nIndex, &pFind,
+                             &nFindIndex)) {
+      return false;
+    }
   }
 
   // If the returned |pFind| is a nullptr, then |name| is smaller than all
@@ -352,7 +348,9 @@ bool CPDF_NameTree::AddValueAndName(std::unique_ptr<CPDF_Object> pObj,
     SearchNameNodeByIndex(m_pRoot.Get(), 0, 0, &nCurIndex, &csName, &pFind,
                           nullptr);
   }
-  ASSERT(pFind);
+  // Give up if that fails too.
+  if (!pFind)
+    return false;
 
   // Insert the name and the object into the leaf array found. Note that the
   // insertion position is right after the key-value pair returned by |index|.

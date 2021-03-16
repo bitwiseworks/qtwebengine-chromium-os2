@@ -12,20 +12,17 @@
 
 namespace content {
 
-bool RenderWidgetHostDelegate::DoBrowserControlsShrinkRendererSize() const {
-  return false;
-}
-
-int RenderWidgetHostDelegate::GetTopControlsHeight() const {
-  return 0;
-}
-
 KeyboardEventProcessingResult RenderWidgetHostDelegate::PreHandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   return KeyboardEventProcessingResult::NOT_HANDLED;
 }
 
 bool RenderWidgetHostDelegate::PreHandleMouseEvent(
+    const blink::WebMouseEvent& event) {
+  return false;
+}
+
+bool RenderWidgetHostDelegate::HandleMouseEvent(
     const blink::WebMouseEvent& event) {
   return false;
 }
@@ -90,9 +87,9 @@ bool RenderWidgetHostDelegate::ShouldShowStaleContentOnEviction() {
   return false;
 }
 
-blink::WebDisplayMode RenderWidgetHostDelegate::GetDisplayMode(
+blink::mojom::DisplayMode RenderWidgetHostDelegate::GetDisplayMode(
     RenderWidgetHostImpl* render_widget_host) const {
-  return blink::kWebDisplayModeBrowser;
+  return blink::mojom::DisplayMode::kBrowser;
 }
 
 bool RenderWidgetHostDelegate::HasMouseLock(
@@ -149,10 +146,6 @@ ukm::SourceId RenderWidgetHostDelegate::GetUkmSourceIdForLastCommittedSource()
   return ukm::kInvalidSourceId;
 }
 
-gfx::Size RenderWidgetHostDelegate::GetAutoResizeSize() {
-  return gfx::Size();
-}
-
 WebContents* RenderWidgetHostDelegate::GetAsWebContents() {
   return nullptr;
 }
@@ -161,8 +154,13 @@ bool RenderWidgetHostDelegate::IsShowingContextMenuOnPage() const {
   return false;
 }
 
-InputEventShim* RenderWidgetHostDelegate::GetInputEventShim() const {
+RenderFrameHostImpl*
+RenderWidgetHostDelegate::GetFocusedFrameFromFocusedDelegate() {
   return nullptr;
+}
+
+bool RenderWidgetHostDelegate::IsPortal() const {
+  return false;
 }
 
 }  // namespace content

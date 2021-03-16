@@ -4,9 +4,9 @@
 
 #include "net/disk_cache/blockfile/block_files.h"
 
+#include <atomic>
 #include <limits>
 
-#include "base/atomicops.h"
 #include "base/files/file_path.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -15,7 +15,6 @@
 #include "base/time/time.h"
 #include "net/disk_cache/blockfile/file_lock.h"
 #include "net/disk_cache/blockfile/stress_support.h"
-#include "net/disk_cache/blockfile/trace.h"
 #include "net/disk_cache/cache_util.h"
 
 using base::TimeTicks;
@@ -39,8 +38,7 @@ inline int GetMapBlockType(uint32_t value) {
 
 namespace disk_cache {
 
-BlockHeader::BlockHeader() : header_(NULL) {
-}
+BlockHeader::BlockHeader() : header_(nullptr) {}
 
 BlockHeader::BlockHeader(BlockFileHeader* header) : header_(header) {
 }
@@ -92,7 +90,7 @@ bool BlockHeader::CreateMapBlock(int size, int* index) {
       // the order of memory accesses between num_entries and allocation_map, we
       // can assert that even if we crash here, num_entries will never be less
       // than the actual number of used blocks.
-      base::subtle::MemoryBarrier();
+      std::atomic_thread_fence(std::memory_order_seq_cst);
       header_->allocation_map[current] |= to_add;
 
       header_->hints[target - 1] = current;
@@ -145,7 +143,7 @@ void BlockHeader::DeleteMapBlock(int index, int size) {
     header_->empty[new_type - 1]++;
     STRESS_DCHECK(header_->empty[bits_at_end - 1] >= 0);
   }
-  base::subtle::MemoryBarrier();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
   header_->num_entries--;
   STRESS_DCHECK(header_->num_entries >= 0);
   LOCAL_HISTOGRAM_TIMES("DiskCache.DeleteBlock", TimeTicks::Now() - start);
@@ -262,8 +260,7 @@ BlockFileHeader* BlockHeader::Header() {
 // ------------------------------------------------------------------------
 
 BlockFiles::BlockFiles(const base::FilePath& path)
-    : init_(false), zero_buffer_(NULL), path_(path) {
-}
+    : init_(false), zero_buffer_(nullptr), path_(path) {}
 
 BlockFiles::~BlockFiles() {
   if (zero_buffer_)
@@ -302,14 +299,14 @@ MappedFile* BlockFiles::GetFile(Addr address) {
             static_cast<size_t>(kFirstAdditionalBlockFile));
   DCHECK(address.is_block_file() || !address.is_initialized());
   if (!address.is_initialized())
-    return NULL;
+    return nullptr;
 
   int file_index = address.FileNumber();
   if (static_cast<unsigned int>(file_index) >= block_files_.size() ||
       !block_files_[file_index]) {
     // We need to open the file
     if (!OpenBlockFile(file_index))
-      return NULL;
+      return nullptr;
   }
   DCHECK_GE(block_files_.size(), static_cast<unsigned int>(file_index));
   return block_files_[file_index].get();
@@ -341,7 +338,6 @@ bool BlockFiles::CreateBlock(FileType block_type, int block_count,
 
   Addr address(block_type, block_count, file_header.FileId(), index);
   block_address->set_value(address.value());
-  Trace("CreateBlock 0x%x", address.value());
   return true;
 }
 
@@ -357,8 +353,6 @@ void BlockFiles::DeleteBlock(Addr address, bool deep) {
   MappedFile* file = GetFile(address);
   if (!file)
     return;
-
-  Trace("DeleteBlock 0x%x", address.value());
 
   size_t size = address.BlockSize() * address.num_blocks();
   size_t offset = address.start_block() * address.BlockSize() +
@@ -551,13 +545,13 @@ MappedFile* BlockFiles::FileForNewBlock(FileType block_type, int block_count) {
     if (kMaxBlocks == file_header.Header()->max_entries) {
       file = NextFile(file);
       if (!file)
-        return NULL;
+        return nullptr;
       file_header = BlockHeader(file);
       continue;
     }
 
     if (!GrowBlockFile(file, file_header.Header()))
-      return NULL;
+      return nullptr;
     break;
   }
   LOCAL_HISTOGRAM_TIMES("DiskCache.GetFileForNewBlock",
@@ -578,7 +572,7 @@ MappedFile* BlockFiles::NextFile(MappedFile* file) {
 
     new_file = CreateNextBlockFile(type);
     if (!new_file)
-      return NULL;
+      return nullptr;
 
     FileLock lock(header);
     header->next_file = new_file;
@@ -625,7 +619,7 @@ bool BlockFiles::RemoveEmptyFile(FileType block_type) {
       base::FilePath name = Name(file_index);
       scoped_refptr<File> this_file(new File(false));
       this_file->Init(name);
-      block_files_[file_index] = NULL;
+      block_files_[file_index] = nullptr;
 
       int failure = DeleteCacheFile(name) ? 0 : 1;
       UMA_HISTOGRAM_COUNTS_1M("DiskCache.DeleteFailed2", failure);

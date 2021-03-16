@@ -15,7 +15,7 @@
 #ifndef UTILS_COMBORENDERPIPELINEDESCRIPTOR_H_
 #define UTILS_COMBORENDERPIPELINEDESCRIPTOR_H_
 
-#include <dawn/dawncpp.h>
+#include <dawn/webgpu_cpp.h>
 
 #include "common/Constants.h"
 
@@ -23,21 +23,29 @@
 
 namespace utils {
 
-    class ComboRenderPipelineDescriptor : public dawn::RenderPipelineDescriptor {
+    class ComboVertexStateDescriptor : public wgpu::VertexStateDescriptor {
       public:
-        ComboRenderPipelineDescriptor(const dawn::Device& device);
+        ComboVertexStateDescriptor();
 
-        dawn::PipelineStageDescriptor cVertexStage;
-        dawn::PipelineStageDescriptor cFragmentStage;
+        std::array<wgpu::VertexBufferLayoutDescriptor, kMaxVertexBuffers> cVertexBuffers;
+        std::array<wgpu::VertexAttributeDescriptor, kMaxVertexAttributes> cAttributes;
+    };
 
-        dawn::AttachmentsStateDescriptor cAttachmentsState;
-        std::array<dawn::AttachmentDescriptor*, kMaxColorAttachments> cColorAttachments;
-        dawn::AttachmentDescriptor cDepthStencilAttachment;
-        std::array<dawn::BlendStateDescriptor, kMaxColorAttachments> cBlendStates;
-        dawn::DepthStencilStateDescriptor cDepthStencilState;
+    class ComboRenderPipelineDescriptor : public wgpu::RenderPipelineDescriptor {
+      public:
+        ComboRenderPipelineDescriptor(const wgpu::Device& device);
 
-      private:
-        dawn::AttachmentDescriptor colorAttachments[kMaxColorAttachments];
+        ComboRenderPipelineDescriptor(const ComboRenderPipelineDescriptor&) = delete;
+        ComboRenderPipelineDescriptor& operator=(const ComboRenderPipelineDescriptor&) = delete;
+        ComboRenderPipelineDescriptor(ComboRenderPipelineDescriptor&&) = delete;
+        ComboRenderPipelineDescriptor& operator=(ComboRenderPipelineDescriptor&&) = delete;
+
+        wgpu::ProgrammableStageDescriptor cFragmentStage;
+
+        ComboVertexStateDescriptor cVertexState;
+        wgpu::RasterizationStateDescriptor cRasterizationState;
+        std::array<wgpu::ColorStateDescriptor, kMaxColorAttachments> cColorStates;
+        wgpu::DepthStencilStateDescriptor cDepthStencilState;
     };
 
 }  // namespace utils

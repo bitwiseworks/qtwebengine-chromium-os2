@@ -25,48 +25,55 @@
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_pattern.h"
+#include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources_cache.h"
 #include "third_party/blink/renderer/core/svg/pattern_attributes.h"
 #include "third_party/blink/renderer/core/svg/svg_resource.h"
 #include "third_party/blink/renderer/core/svg/svg_tree_scope_resources.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 
 namespace blink {
 
-inline SVGPatternElement::SVGPatternElement(Document& document)
+SVGPatternElement::SVGPatternElement(Document& document)
     : SVGElement(svg_names::kPatternTag, document),
       SVGURIReference(this),
       SVGTests(this),
       SVGFitToViewBox(this),
-      x_(SVGAnimatedLength::Create(this,
-                                   svg_names::kXAttr,
-                                   SVGLengthMode::kWidth,
-                                   SVGLength::Initial::kUnitlessZero)),
-      y_(SVGAnimatedLength::Create(this,
-                                   svg_names::kYAttr,
-                                   SVGLengthMode::kHeight,
-                                   SVGLength::Initial::kUnitlessZero)),
-      width_(SVGAnimatedLength::Create(this,
-                                       svg_names::kWidthAttr,
-                                       SVGLengthMode::kWidth,
-                                       SVGLength::Initial::kUnitlessZero)),
-      height_(SVGAnimatedLength::Create(this,
-                                        svg_names::kHeightAttr,
-                                        SVGLengthMode::kHeight,
-                                        SVGLength::Initial::kUnitlessZero)),
-      pattern_transform_(
-          SVGAnimatedTransformList::Create(this,
-                                           svg_names::kPatternTransformAttr,
-                                           CSSPropertyTransform)),
-      pattern_units_(SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>::Create(
+      x_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kXAttr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kUnitlessZero)),
+      y_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kYAttr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kUnitlessZero)),
+      width_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kWidthAttr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kUnitlessZero)),
+      height_(MakeGarbageCollected<SVGAnimatedLength>(
+          this,
+          svg_names::kHeightAttr,
+          SVGLengthMode::kHeight,
+          SVGLength::Initial::kUnitlessZero)),
+      pattern_transform_(MakeGarbageCollected<SVGAnimatedTransformList>(
+          this,
+          svg_names::kPatternTransformAttr,
+          CSSPropertyID::kTransform)),
+      pattern_units_(MakeGarbageCollected<
+                     SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>>(
           this,
           svg_names::kPatternUnitsAttr,
           SVGUnitTypes::kSvgUnitTypeObjectboundingbox)),
-      pattern_content_units_(
-          SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>::Create(
-              this,
-              svg_names::kPatternContentUnitsAttr,
-              SVGUnitTypes::kSvgUnitTypeUserspaceonuse)) {
+      pattern_content_units_(MakeGarbageCollected<
+                             SVGAnimatedEnumeration<SVGUnitTypes::SVGUnitType>>(
+          this,
+          svg_names::kPatternContentUnitsAttr,
+          SVGUnitTypes::kSvgUnitTypeUserspaceonuse)) {
   AddToPropertyMap(x_);
   AddToPropertyMap(y_);
   AddToPropertyMap(width_);
@@ -76,7 +83,7 @@ inline SVGPatternElement::SVGPatternElement(Document& document)
   AddToPropertyMap(pattern_content_units_);
 }
 
-void SVGPatternElement::Trace(blink::Visitor* visitor) {
+void SVGPatternElement::Trace(Visitor* visitor) {
   visitor->Trace(x_);
   visitor->Trace(y_);
   visitor->Trace(width_);
@@ -90,8 +97,6 @@ void SVGPatternElement::Trace(blink::Visitor* visitor) {
   SVGTests::Trace(visitor);
   SVGFitToViewBox::Trace(visitor);
 }
-
-DEFINE_NODE_FACTORY(SVGPatternElement)
 
 void SVGPatternElement::BuildPendingResource() {
   ClearResourceReferences();
@@ -123,7 +128,7 @@ void SVGPatternElement::CollectStyleForPresentationAttribute(
     MutableCSSPropertyValueSet* style) {
   if (name == svg_names::kPatternTransformAttr) {
     AddPropertyToPresentationAttributeStyle(
-        style, CSSPropertyTransform,
+        style, CSSPropertyID::kTransform,
         *pattern_transform_->CurrentValue()->CssValue());
     return;
   }
@@ -181,10 +186,8 @@ void SVGPatternElement::RemovedFrom(ContainerNode& root_parent) {
 void SVGPatternElement::ChildrenChanged(const ChildrenChange& change) {
   SVGElement::ChildrenChanged(change);
 
-  if (change.by_parser)
-    return;
-
-  InvalidatePattern(layout_invalidation_reason::kChildChanged);
+  if (!change.ByParser())
+    InvalidatePattern(layout_invalidation_reason::kChildChanged);
 }
 
 void SVGPatternElement::InvalidatePattern(
@@ -193,14 +196,13 @@ void SVGPatternElement::InvalidatePattern(
     layout_object->InvalidateCacheAndMarkForLayout(reason);
 }
 
-LayoutObject* SVGPatternElement::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* SVGPatternElement::CreateLayoutObject(const ComputedStyle&,
+                                                    LegacyLayout) {
   return new LayoutSVGResourcePattern(this);
 }
 
 static void SetPatternAttributes(const SVGPatternElement& element,
                                  PatternAttributes& attributes) {
-  element.SynchronizeAnimatedSVGAttribute(AnyQName());
-
   if (!attributes.HasX() && element.x()->IsSpecified())
     attributes.SetX(element.x()->CurrentValue());
 
@@ -245,7 +247,8 @@ static void SetPatternAttributes(const SVGPatternElement& element,
 }
 
 const SVGPatternElement* SVGPatternElement::ReferencedElement() const {
-  return ToSVGPatternElementOrNull(resource_ ? resource_->Target() : nullptr);
+  return DynamicTo<SVGPatternElement>(resource_ ? resource_->Target()
+                                                : nullptr);
 }
 
 void SVGPatternElement::CollectPatternAttributes(
@@ -261,10 +264,10 @@ void SVGPatternElement::CollectPatternAttributes(
     // from that element to override values this pattern didn't set.
     current = current->ReferencedElement();
 
-    // Only consider attached SVG pattern elements.
+    // Ignore the referenced pattern element if it is not attached.
     if (!current || !current->GetLayoutObject())
       break;
-    // Cycle detection
+    // Cycle detection.
     if (processed_patterns.Contains(current))
       break;
   }

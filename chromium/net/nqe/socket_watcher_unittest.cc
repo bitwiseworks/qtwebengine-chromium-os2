@@ -13,7 +13,7 @@
 #include "net/base/ip_address.h"
 #include "net/socket/socket_performance_watcher.h"
 #include "net/socket/socket_performance_watcher_factory.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -24,7 +24,7 @@ namespace internal {
 
 namespace {
 
-class NetworkQualitySocketWatcherTest : public TestWithScopedTaskEnvironment {
+class NetworkQualitySocketWatcherTest : public TestWithTaskEnvironment {
  protected:
   NetworkQualitySocketWatcherTest() { ResetExpectedCallbackParams(); }
   ~NetworkQualitySocketWatcherTest() override { ResetExpectedCallbackParams(); }
@@ -114,8 +114,9 @@ TEST_F(NetworkQualitySocketWatcherTest, NotificationsThrottled) {
   SocketWatcher socket_watcher(
       SocketPerformanceWatcherFactory::PROTOCOL_TCP, address_list,
       base::TimeDelta::FromMilliseconds(2000), false,
-      base::ThreadTaskRunnerHandle::Get(), base::Bind(OnUpdatedRTTAvailable),
-      base::Bind(ShouldNotifyRTTCallback), &tick_clock);
+      base::ThreadTaskRunnerHandle::Get(),
+      base::BindRepeating(OnUpdatedRTTAvailable),
+      base::BindRepeating(ShouldNotifyRTTCallback), &tick_clock);
 
   EXPECT_TRUE(socket_watcher.ShouldNotifyUpdatedRTT());
   socket_watcher.OnUpdatedRTTAvailable(base::TimeDelta::FromSeconds(10));
@@ -158,8 +159,8 @@ TEST_F(NetworkQualitySocketWatcherTest, QuicFirstNotificationDropped) {
       SocketPerformanceWatcherFactory::PROTOCOL_QUIC, address_list,
       base::TimeDelta::FromMilliseconds(2000), false,
       base::ThreadTaskRunnerHandle::Get(),
-      base::Bind(OnUpdatedRTTAvailableStoreParams),
-      base::Bind(ShouldNotifyRTTCallback), &tick_clock);
+      base::BindRepeating(OnUpdatedRTTAvailableStoreParams),
+      base::BindRepeating(ShouldNotifyRTTCallback), &tick_clock);
 
   EXPECT_TRUE(socket_watcher.ShouldNotifyUpdatedRTT());
   socket_watcher.OnUpdatedRTTAvailable(base::TimeDelta::FromSeconds(10));
@@ -212,8 +213,9 @@ TEST_F(NetworkQualitySocketWatcherTest, PrivateAddressRTTNotNotified) {
     SocketWatcher socket_watcher(
         SocketPerformanceWatcherFactory::PROTOCOL_TCP, address_list,
         base::TimeDelta::FromMilliseconds(2000), false,
-        base::ThreadTaskRunnerHandle::Get(), base::Bind(OnUpdatedRTTAvailable),
-        base::Bind(ShouldNotifyRTTCallback), &tick_clock);
+        base::ThreadTaskRunnerHandle::Get(),
+        base::BindRepeating(OnUpdatedRTTAvailable),
+        base::BindRepeating(ShouldNotifyRTTCallback), &tick_clock);
 
     EXPECT_EQ(test.expect_should_notify_rtt,
               socket_watcher.ShouldNotifyUpdatedRTT());
@@ -251,8 +253,8 @@ TEST_F(NetworkQualitySocketWatcherTest, RemoteHostIPHashComputedCorrectly) {
         SocketPerformanceWatcherFactory::PROTOCOL_TCP, address_list,
         base::TimeDelta::FromMilliseconds(2000), false,
         base::ThreadTaskRunnerHandle::Get(),
-        base::Bind(OnUpdatedRTTAvailableStoreParams),
-        base::Bind(ShouldNotifyRTTCallback), &tick_clock);
+        base::BindRepeating(OnUpdatedRTTAvailableStoreParams),
+        base::BindRepeating(ShouldNotifyRTTCallback), &tick_clock);
     EXPECT_TRUE(socket_watcher.ShouldNotifyUpdatedRTT());
     socket_watcher.OnUpdatedRTTAvailable(base::TimeDelta::FromSeconds(10));
     base::RunLoop().RunUntilIdle();

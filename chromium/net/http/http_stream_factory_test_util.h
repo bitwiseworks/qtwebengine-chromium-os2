@@ -72,10 +72,12 @@ class MockHttpStreamRequestDelegate : public HttpStreamRequest::Delegate {
       const ProxyInfo& used_proxy_info,
       std::unique_ptr<WebSocketHandshakeStreamBase> stream) override {}
 
-  MOCK_METHOD3(OnStreamFailed,
+  MOCK_METHOD5(OnStreamFailed,
                void(int status,
                     const NetErrorDetails& net_error_details,
-                    const SSLConfig& used_ssl_config));
+                    const SSLConfig& used_ssl_config,
+                    const ProxyInfo& used_proxy_info,
+                    ResolveErrorInfo resolve_error_info));
 
   MOCK_METHOD3(OnCertificateError,
                void(int status,
@@ -91,13 +93,6 @@ class MockHttpStreamRequestDelegate : public HttpStreamRequest::Delegate {
   MOCK_METHOD2(OnNeedsClientAuth,
                void(const SSLConfig& used_ssl_config,
                     SSLCertRequestInfo* cert_info));
-
-  // std::unique_ptr is not copyable and therefore cannot be mocked.
-  void OnHttpsProxyTunnelResponseRedirect(
-      const HttpResponseInfo& response_info,
-      const SSLConfig& used_ssl_config,
-      const ProxyInfo& used_proxy_info,
-      std::unique_ptr<HttpStream> stream) override {}
 
   MOCK_METHOD0(OnQuicBroken, void());
 
@@ -118,7 +113,7 @@ class MockHttpStreamFactoryJob : public HttpStreamFactory::Job {
                            HostPortPair destination,
                            GURL origin_url,
                            NextProto alternative_protocol,
-                           quic::QuicTransportVersion quic_version,
+                           quic::ParsedQuicVersion quic_version,
                            const ProxyServer& alternative_proxy_server,
                            bool is_websocket,
                            bool enable_ip_based_pooling,
@@ -164,7 +159,7 @@ class TestJobFactory : public HttpStreamFactory::JobFactory {
       HostPortPair destination,
       GURL origin_url,
       NextProto alternative_protocol,
-      quic::QuicTransportVersion quic_version,
+      quic::ParsedQuicVersion quic_version,
       bool is_websocket,
       bool enable_ip_based_pooling,
       NetLog* net_log) override;

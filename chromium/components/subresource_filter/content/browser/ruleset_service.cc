@@ -92,7 +92,7 @@ class SentinelFile {
 base::FilePath IndexedRulesetLocator::GetSubdirectoryPathForVersion(
     const base::FilePath& base_dir,
     const IndexedRulesetVersion& version) {
-  return base_dir.AppendASCII(base::IntToString(version.format_version))
+  return base_dir.AppendASCII(base::NumberToString(version.format_version))
       .AppendASCII(version.content_version);
 }
 
@@ -119,7 +119,7 @@ void IndexedRulesetLocator::DeleteObsoleteRulesets(
     const base::FilePath& indexed_ruleset_base_dir,
     const IndexedRulesetVersion& most_recent_version) {
   base::FilePath current_format_dir(indexed_ruleset_base_dir.AppendASCII(
-      base::IntToString(IndexedRulesetVersion::CurrentFormatVersion())));
+      base::NumberToString(IndexedRulesetVersion::CurrentFormatVersion())));
 
   // First delete all directories containing rulesets of obsolete formats.
   base::FileEnumerator format_dirs(indexed_ruleset_base_dir,
@@ -128,7 +128,7 @@ void IndexedRulesetLocator::DeleteObsoleteRulesets(
   for (base::FilePath format_dir = format_dirs.Next(); !format_dir.empty();
        format_dir = format_dirs.Next()) {
     if (format_dir != current_format_dir)
-      base::DeleteFile(format_dir, true /* recursive */);
+      base::DeleteFileRecursively(format_dir);
   }
 
   base::FilePath most_recent_version_dir =
@@ -147,7 +147,7 @@ void IndexedRulesetLocator::DeleteObsoleteRulesets(
       continue;
     if (version_dir == most_recent_version_dir)
       continue;
-    base::DeleteFile(version_dir, true /* recursive */);
+    base::DeleteFileRecursively(version_dir);
   }
 }
 
@@ -235,7 +235,8 @@ IndexedRulesetVersion RulesetService::GetMostRecentlyIndexedVersion() const {
 IndexedRulesetVersion RulesetService::IndexAndWriteRuleset(
     const base::FilePath& indexed_ruleset_base_dir,
     const UnindexedRulesetInfo& unindexed_ruleset_info) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   base::File unindexed_ruleset_file(
       unindexed_ruleset_info.ruleset_path,
@@ -372,14 +373,14 @@ RulesetService::IndexAndWriteRulesetResult RulesetService::WriteRuleset(
   // Due to the same-version check in IndexAndStoreAndPublishRulesetIfNeeded, we
   // would not normally find a pre-existing copy at this point unless the
   // previous write was interrupted.
-  if (!base::DeleteFile(indexed_ruleset_version_dir, true))
+  if (!base::DeleteFileRecursively(indexed_ruleset_version_dir))
     return IndexAndWriteRulesetResult::FAILED_DELETE_PREEXISTING;
 
   base::FilePath scratch_dir_with_new_indexed_ruleset = scratch_dir.Take();
   base::File::Error error;
   if (!(*g_replace_file_func)(scratch_dir_with_new_indexed_ruleset,
                               indexed_ruleset_version_dir, &error)) {
-    base::DeleteFile(scratch_dir_with_new_indexed_ruleset, true);
+    base::DeleteFileRecursively(scratch_dir_with_new_indexed_ruleset);
     // While enumerators of base::File::Error all have negative values, the
     // histogram records the absolute values.
     UMA_HISTOGRAM_ENUMERATION("SubresourceFilter.WriteRuleset.ReplaceFileError",

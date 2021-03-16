@@ -5,17 +5,18 @@
  * found in the LICENSE file.
  */
 
-#include "SkImageEncoderPriv.h"
+#include "src/images/SkImageEncoderPriv.h"
 
-#ifdef SK_HAS_PNG_LIBRARY
+#ifdef SK_ENCODE_PNG
 
-#include "SkColorTable.h"
-#include "SkImageEncoderFns.h"
-#include "SkImageInfoPriv.h"
-#include "SkStream.h"
-#include "SkString.h"
-#include "SkPngEncoder.h"
-#include "SkPngPriv.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkString.h"
+#include "include/encode/SkPngEncoder.h"
+#include "include/private/SkImageInfoPriv.h"
+#include "src/codec/SkColorTable.h"
+#include "src/codec/SkPngPriv.h"
+#include "src/core/SkMSAN.h"
+#include "src/images/SkImageEncoderFns.h"
 #include <vector>
 
 #include "third_party/libpng/png.h"
@@ -106,6 +107,7 @@ bool SkPngEncoderMgr::setHeader(const SkImageInfo& srcInfo, const SkPngEncoder::
     png_color_8 sigBit;
     int bitDepth = 8;
     switch (srcInfo.colorType()) {
+        case kRGBA_F16Norm_SkColorType:
         case kRGBA_F16_SkColorType:
         case kRGBA_F32_SkColorType:
             sigBit.red = 16;
@@ -196,7 +198,7 @@ bool SkPngEncoderMgr::setHeader(const SkImageInfo& srcInfo, const SkPngEncoder::
     SkASSERT(filters == (int)options.fFilterFlags);
     png_set_filter(fPngPtr, PNG_FILTER_TYPE_BASE, filters);
 
-    int zlibLevel = SkTMin(SkTMax(0, options.fZLibLevel), 9);
+    int zlibLevel = std::min(std::max(0, options.fZLibLevel), 9);
     SkASSERT(zlibLevel == options.fZLibLevel);
     png_set_compression_level(fPngPtr, zlibLevel);
 
@@ -232,6 +234,9 @@ bool SkPngEncoderMgr::setHeader(const SkImageInfo& srcInfo, const SkPngEncoder::
 
 static transform_scanline_proc choose_proc(const SkImageInfo& info) {
     switch (info.colorType()) {
+        case kUnknown_SkColorType:
+            break;
+
         case kRGBA_8888_SkColorType:
             switch (info.alphaType()) {
                 case kOpaque_SkAlphaType:
@@ -272,6 +277,8 @@ static transform_scanline_proc choose_proc(const SkImageInfo& info) {
             }
         case kGray_8_SkColorType:
             return transform_scanline_memcpy;
+
+        case kRGBA_F16Norm_SkColorType:
         case kRGBA_F16_SkColorType:
             switch (info.alphaType()) {
                 case kOpaque_SkAlphaType:
@@ -305,14 +312,32 @@ static transform_scanline_proc choose_proc(const SkImageInfo& info) {
                     SkASSERT(false);
                     return nullptr;
             }
-        case kRGB_101010x_SkColorType:
-            return transform_scanline_101010x;
+        case kBGRA_1010102_SkColorType:
+            switch (info.alphaType()) {
+                case kOpaque_SkAlphaType:
+                case kUnpremul_SkAlphaType:
+                    return transform_scanline_bgra_1010102;
+                case kPremul_SkAlphaType:
+                    return transform_scanline_bgra_1010102_premul;
+                default:
+                    SkASSERT(false);
+                    return nullptr;
+            }
+        case kRGB_101010x_SkColorType: return transform_scanline_101010x;
+        case kBGR_101010x_SkColorType: return transform_scanline_bgr_101010x;
+
         case kAlpha_8_SkColorType:
             return transform_scanline_A8_to_GrayAlpha;
-        default:
-            SkASSERT(false);
+        case kR8G8_unorm_SkColorType:
+        case kR16G16_unorm_SkColorType:
+        case kR16G16_float_SkColorType:
+        case kA16_unorm_SkColorType:
+        case kA16_float_SkColorType:
+        case kR16G16B16A16_unorm_SkColorType:
             return nullptr;
     }
+    SkASSERT(false);
+    return nullptr;
 }
 
 static void set_icc(png_structp png_ptr, png_infop info_ptr, const SkImageInfo& info) {
@@ -409,6 +434,8 @@ bool SkPngEncoder::onEncodeRows(int numRows) {
 
     const void* srcRow = fSrc.addr(0, fCurrRow);
     for (int y = 0; y < numRows; y++) {
+        sk_msan_assert_initialized(srcRow,
+                                   (const uint8_t*)srcRow + (fSrc.width() << fSrc.shiftPerPixel()));
         fEncoderMgr->proc()((char*)fStorage.get(),
                             (const char*)srcRow,
                             fSrc.width(),

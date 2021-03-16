@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #import "components/image_fetcher/ios/webp_decoder.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -49,11 +50,6 @@ void IOSImageDataFetcherWrapper::FetchImageDataWebpDecoded(
       referrer_policy, NO_TRAFFIC_ANNOTATION_YET, send_cookies);
 }
 
-void IOSImageDataFetcherWrapper::SetDataUseServiceName(
-    DataUseServiceName data_use_service_name) {
-  image_data_fetcher_.SetDataUseServiceName(data_use_service_name);
-}
-
 ImageDataFetcherCallback
 IOSImageDataFetcherWrapper::CallbackForImageDataFetcher(
     ImageDataFetcherBlock callback) {
@@ -71,7 +67,7 @@ IOSImageDataFetcherWrapper::CallbackForImageDataFetcher(
     // The image is a webp image.
     RequestMetadata webp_metadata = metadata;
 
-    base::PostTaskWithTraitsAndReplyWithResult(
+    base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE,
         {
             base::TaskPriority::BEST_EFFORT,

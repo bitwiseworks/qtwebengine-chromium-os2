@@ -15,7 +15,7 @@ as follows:
      [table-valued function](https://www.sqlite.org/vtab.html#tabfunc2).
 
   *  **csv.c** &mdash;  A [virtual table](https://sqlite.org/vtab.html)
-     for reading
+     for reading 
      [Comma-Separated-Value (CSV) files](https://en.wikipedia.org/wiki/Comma-separated_values).
 
   *  **dbdump.c** &mdash;  This is not actually a loadable extension, but
@@ -56,5 +56,5 @@ as follows:
      demand.
 
   *  **zipfile.c** &mdash;  A [virtual table](https://sqlite.org/vtab.html)
-     that can read and write a
+     that can read and write a 
      [ZIP archive](https://en.wikipedia.org/wiki/Zip_%28file_format%29).

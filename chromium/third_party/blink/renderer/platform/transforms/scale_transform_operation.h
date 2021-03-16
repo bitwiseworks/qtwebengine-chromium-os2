@@ -26,6 +26,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_TRANSFORMS_SCALE_TRANSFORM_OPERATION_H_
 
 #include "third_party/blink/renderer/platform/transforms/transform_operation.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -58,6 +59,8 @@ class PLATFORM_EXPORT ScaleTransformOperation final
   void Apply(TransformationMatrix& transform, const FloatSize&) const override {
     transform.Scale3d(x_, y_, z_);
   }
+  scoped_refptr<TransformOperation> Accumulate(
+      const TransformOperation& other) override;
   scoped_refptr<TransformOperation> Blend(
       const TransformOperation* from,
       double progress,
@@ -84,6 +87,8 @@ class PLATFORM_EXPORT ScaleTransformOperation final
 
   scoped_refptr<TransformOperation> Zoom(double factor) final { return this; }
 
+  bool PreservesAxisAlignment() const final { return true; }
+
   ScaleTransformOperation(double sx, double sy, double sz, OperationType type)
       : x_(sx), y_(sy), z_(sz), type_(type) {
     DCHECK(IsMatchingOperationType(type));
@@ -95,7 +100,13 @@ class PLATFORM_EXPORT ScaleTransformOperation final
   OperationType type_;
 };
 
-DEFINE_TRANSFORM_TYPE_CASTS(ScaleTransformOperation);
+template <>
+struct DowncastTraits<ScaleTransformOperation> {
+  static bool AllowFrom(const TransformOperation& transform) {
+    return ScaleTransformOperation::IsMatchingOperationType(
+        transform.GetType());
+  }
+};
 
 }  // namespace blink
 

@@ -7,22 +7,16 @@
 
 #include <stdint.h>
 
-#include <set>
 #include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "components/prefs/pref_registry_simple.h"
 
-namespace base {
-class Value;
-}
-
 // TODO(tfarina): Change this namespace to pref_registry.
 namespace user_prefs {
 
-// A PrefRegistry that forces users to choose whether each registered
-// preference is syncable or not.
+// A PrefRegistry for syncable prefs.
 //
 // Classes or components that want to register such preferences should
 // define a static function named RegisterUserPrefs that takes a
@@ -54,10 +48,18 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
     //    a passphrase.
     // -- they are preferred for receiving server-provided data.
     SYNCABLE_PRIORITY_PREF = 1 << 1,
+
+#if defined(OS_CHROMEOS)
+    // As above, but the pref is for an OS settings (e.g. keyboard layout).
+    // This distinction allows OS pref sync to be controlled independently from
+    // browser pref sync in the UI.
+    SYNCABLE_OS_PREF = 1 << 2,
+    SYNCABLE_OS_PRIORITY_PREF = 1 << 3,
+#endif
   };
 
-  typedef base::Callback<void(const std::string& path, uint32_t flags)>
-      SyncableRegistrationCallback;
+  using SyncableRegistrationCallback =
+      base::RepeatingCallback<void(const std::string& path, uint32_t flags)>;
 
   PrefRegistrySyncable();
 
@@ -68,32 +70,20 @@ class PrefRegistrySyncable : public PrefRegistrySimple {
   // Calling this method after a callback has already been set will
   // make the object forget the previous callback and use the new one
   // instead.
-  void SetSyncableRegistrationCallback(const SyncableRegistrationCallback& cb);
+  void SetSyncableRegistrationCallback(SyncableRegistrationCallback cb);
 
   // Returns a new PrefRegistrySyncable that uses the same defaults
   // store.
   scoped_refptr<PrefRegistrySyncable> ForkForIncognito();
-
-  // Adds a the preference with name |pref_name| to the whitelist of prefs which
-  // will be synced even before they got registered. Note that it's still
-  // illegal to read or write a whitelisted preference via the PrefService
-  // before its registration.
-  void WhitelistLateRegistrationPrefForSync(const std::string& pref_name);
-
-  // Checks weather the preference with name |path| is on the whitelist of
-  // sync-supported prefs before registration.
-  bool IsWhitelistedLateRegistrationPref(const std::string& path) const;
 
  private:
   ~PrefRegistrySyncable() override;
 
   // PrefRegistrySimple overrides.
   void OnPrefRegistered(const std::string& path,
-                        base::Value* default_value,
                         uint32_t flags) override;
 
   SyncableRegistrationCallback callback_;
-  std::set<std::string> sync_unknown_prefs_whitelist_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefRegistrySyncable);
 };

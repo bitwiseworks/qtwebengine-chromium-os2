@@ -2,103 +2,82 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# All build targets below are experimental and not used within the
-# Chromium / V8 / etc. trees yet thus far. Do not depend on anything.
+import("//build/config/jumbo.gni")
 
-import("//testing/test.gni")
-
-static_library("json_parser") {
+jumbo_component("crdtp") {
   sources = [
-    "encoding/json_parser.cc",
-    "encoding/json_parser.h",
-    "encoding/json_parser_handler.h",
-    "encoding/platform.h",
-    "encoding/span.h",
-    "encoding/status.h",
+    "crdtp/cbor.cc",
+    "crdtp/cbor.h",
+    "crdtp/dispatch.cc",
+    "crdtp/dispatch.h",
+    "crdtp/error_support.cc",
+    "crdtp/error_support.h",
+    "crdtp/export.h",
+    "crdtp/find_by_first.h",
+    "crdtp/frontend_channel.h",
+    "crdtp/glue.h",
+    "crdtp/json.cc",
+    "crdtp/json.h",
+    "crdtp/parser_handler.h",
+    "crdtp/serializable.cc",
+    "crdtp/serializable.h",
+    "crdtp/serializer_traits.h",
+    "crdtp/span.cc",
+    "crdtp/span.h",
+    "crdtp/status.cc",
+    "crdtp/status.h",
   ]
+
+  defines = [ "CRDTP_IMPLEMENTATION" ]
+
+  if (!is_debug) {
+    configs -= [ "//build/config/compiler:default_optimization" ]
+    configs += [ "//build/config/compiler:optimize_max" ]
+  }
+  deps = [ ":crdtp_platform" ]
 }
 
-static_library("linux_dev_platform") {
+# A small adapter library which only :crdtp may depend on.
+source_set("crdtp_platform") {
+  visibility = [ ":crdtp" ]
   sources = [
-    "encoding/linux_dev_platform.cc",
-    "encoding/linux_dev_platform.h",
-    "encoding/platform.h",
+    "crdtp/chromium/json_platform_chromium.cc",
+    "crdtp/json_platform.h",
   ]
+  deps = [ "//base" ]
 }
 
-test("json_parser_test") {
+# These tests are linked into //content/test:content_unittests.
+source_set("crdtp_test") {
+  testonly = true
   sources = [
-    "encoding/json_parser_test.cc",
+    "crdtp/cbor_test.cc",
+    "crdtp/dispatch_test.cc",
+    "crdtp/error_support_test.cc",
+    "crdtp/find_by_first_test.cc",
+    "crdtp/glue_test.cc",
+    "crdtp/json_test.cc",
+    "crdtp/serializable_test.cc",
+    "crdtp/serializer_traits_test.cc",
+    "crdtp/span_test.cc",
+    "crdtp/status_test.cc",
+    "crdtp/status_test_support.cc",
+    "crdtp/status_test_support.h",
   ]
-  deps = [
-    ":json_parser",
-    ":linux_dev_platform",
+  deps = [ ":crdtp_test_platform" ]
+}
+
+# A small adapter library which only :crdtp_test may depend on.
+source_set("crdtp_test_platform") {
+  testonly = true
+  sources = [
+    "crdtp/test_platform.cc",
+    "crdtp/test_platform.h",
+  ]
+  public_deps = [
     "//base",
-    "//testing/gmock:gmock",
-    "//testing/gtest:gtest",
-    "//testing/gtest:gtest_main",
-  ]
-}
-
-static_library("cbor") {
-  sources = [
-    "encoding/cbor.cc",
-    "encoding/cbor.h",
-    "encoding/json_parser_handler.h",
-    "encoding/span.h",
-    "encoding/status.h",
-  ]
-  deps = [
-    ":json_parser",
-  ]
-}
-
-test("cbor_test") {
-  sources = [
-    "encoding/cbor_test.cc",
-  ]
-  deps = [
-    ":cbor",
-    ":json_std_string_writer",
-    ":linux_dev_platform",
-    "//base",
-    "//testing/gmock:gmock",
-    "//testing/gtest:gtest",
-    "//testing/gtest:gtest_main",
-  ]
-}
-
-test("span_test") {
-  sources = [
-    "encoding/span.h",
-    "encoding/span_test.cc",
-  ]
-  deps = [
-    "//base",
-    "//testing/gmock:gmock",
-    "//testing/gtest:gtest",
-    "//testing/gtest:gtest_main",
-  ]
-}
-
-static_library("json_std_string_writer") {
-  sources = [
-    "encoding/json_parser_handler.h",
-    "encoding/json_std_string_writer.cc",
-    "encoding/json_std_string_writer.h",
-  ]
-}
-
-test("json_std_string_writer_test") {
-  sources = [
-    "encoding/json_std_string_writer_test.cc",
-  ]
-  deps = [
-    ":json_std_string_writer",
-    ":linux_dev_platform",
-    "//base",
-    "//testing/gmock:gmock",
-    "//testing/gtest:gtest",
-    "//testing/gtest:gtest_main",
+    "//testing/gmock",
+    "//testing/gtest",
+    "//third_party/inspector_protocol:crdtp",
   ]
 }

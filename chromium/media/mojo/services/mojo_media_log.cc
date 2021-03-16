@@ -4,16 +4,17 @@
 
 #include "media/mojo/services/mojo_media_log.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 
 namespace media {
 
-MojoMediaLog::MojoMediaLog(mojom::MediaLogAssociatedPtrInfo remote_media_log,
-                           scoped_refptr<base::SequencedTaskRunner> task_runner)
+MojoMediaLog::MojoMediaLog(
+    mojo::PendingAssociatedRemote<mojom::MediaLog> remote_media_log,
+    scoped_refptr<base::SequencedTaskRunner> task_runner)
     : remote_media_log_(std::move(remote_media_log)),
-      task_runner_(std::move(task_runner)),
-      weak_ptr_factory_(this) {
+      task_runner_(std::move(task_runner)) {
   weak_this_ = weak_ptr_factory_.GetWeakPtr();
   DVLOG(1) << __func__;
 }
@@ -26,7 +27,7 @@ MojoMediaLog::~MojoMediaLog() {
   InvalidateLog();
 }
 
-void MojoMediaLog::AddEventLocked(std::unique_ptr<MediaLogEvent> event) {
+void MojoMediaLog::AddLogRecordLocked(std::unique_ptr<MediaLogRecord> event) {
   DVLOG(1) << __func__;
   DCHECK(event);
 
@@ -37,14 +38,14 @@ void MojoMediaLog::AddEventLocked(std::unique_ptr<MediaLogEvent> event) {
   //
   // Also, we post here, so this is the base case.  :)
   if (task_runner_->RunsTasksInCurrentSequence()) {
-    remote_media_log_->AddEvent(*event);
+    remote_media_log_->AddLogRecord(*event);
     return;
   }
 
   // From other threads, we have little choice.
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&MojoMediaLog::AddEvent, weak_this_, std::move(event)));
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&MojoMediaLog::AddLogRecord, weak_this_,
+                                        std::move(event)));
 }
 
 }  // namespace media

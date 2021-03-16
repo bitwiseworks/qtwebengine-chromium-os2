@@ -11,12 +11,9 @@
 namespace views {
 
 RoundRectPainter::RoundRectPainter(SkColor border_color, int corner_radius)
-    : border_color_(border_color),
-      corner_radius_(corner_radius) {
-}
+    : border_color_(border_color), corner_radius_(corner_radius) {}
 
-RoundRectPainter::~RoundRectPainter() {
-}
+RoundRectPainter::~RoundRectPainter() = default;
 
 gfx::Size RoundRectPainter::GetMinimumSize() const {
   return gfx::Size(1, 1);

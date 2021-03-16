@@ -46,21 +46,20 @@ class LayoutSVGText final : public LayoutSVGBlock {
   FloatRect StrokeBoundingBox() const override;
   bool IsObjectBoundingBoxValid() const;
 
-  void AddOutlineRects(Vector<LayoutRect>&,
-                       const LayoutPoint& additional_offset,
+  void AddOutlineRects(Vector<PhysicalRect>&,
+                       const PhysicalOffset& additional_offset,
                        NGOutlineType) const override;
 
   static LayoutSVGText* LocateLayoutSVGTextAncestor(LayoutObject*);
   static const LayoutSVGText* LocateLayoutSVGTextAncestor(const LayoutObject*);
 
+  static void NotifySubtreeStructureChanged(LayoutObject*,
+                                            LayoutInvalidationReasonForTracing);
+
   bool NeedsReordering() const { return needs_reordering_; }
   const Vector<LayoutSVGInlineText*>& DescendantTextNodes() const {
     return descendant_text_nodes_;
   }
-
-  void SubtreeChildWasAdded();
-  void SubtreeChildWillBeRemoved();
-  void SubtreeTextDidChange();
 
   void RecalcVisualOverflow() override;
 
@@ -75,10 +74,10 @@ class LayoutSVGText final : public LayoutSVGBlock {
 
   void Paint(const PaintInfo&) const override;
   bool NodeAtPoint(HitTestResult&,
-                   const HitTestLocation& location_in_parent,
-                   const LayoutPoint& accumulated_offset,
+                   const HitTestLocation&,
+                   const PhysicalOffset& accumulated_offset,
                    HitTestAction) override;
-  PositionWithAffinity PositionForPoint(const LayoutPoint&) const override;
+  PositionWithAffinity PositionForPoint(const PhysicalOffset&) const override;
 
   void UpdateLayout() override;
 
@@ -94,7 +93,7 @@ class LayoutSVGText final : public LayoutSVGBlock {
 
   RootInlineBox* CreateRootInlineBox() override;
 
-  void InvalidatePositioningValues(LayoutInvalidationReasonForTracing);
+  void SubtreeStructureChanged(LayoutInvalidationReasonForTracing);
 
   bool needs_reordering_ : 1;
   bool needs_positioning_values_update_ : 1;

@@ -206,7 +206,7 @@ static char **tableColumnList(DState *p, const char *zTab){
       nPK++;
       if( nPK==1
        && sqlite3_stricmp((const char*)sqlite3_column_text(pStmt,2),
-                          "INTEGER")==0
+                          "INTEGER")==0 
       ){
         isIPK = 1;
       }else{
@@ -501,7 +501,7 @@ static int dump_callback(void *pArg, int nArg, char **azArg, char **azCol){
               break;
             }
             case SQLITE_TEXT: {
-              output_quoted_escaped_string(p,
+              output_quoted_escaped_string(p, 
                    (const char*)sqlite3_column_text(pStmt,i));
               break;
             }
@@ -614,7 +614,7 @@ static void run_schema_dump_query(
   va_list ap;
   va_start(ap, zQuery);
   z = sqlite3_vmprintf(zQuery, ap);
-  va_end(ap);
+  va_end(ap); 
   sqlite3_exec(p->db, z, dump_callback, p, &zErr);
   sqlite3_free(z);
   if( zErr ){
@@ -671,7 +671,7 @@ int sqlite3_db_dump(
       "  AND type IN ('index','trigger','view')"
       "  AND tbl_name=%Q COLLATE nocase",
       zSchema, zTable
-    );
+    ); 
   }
   if( x.writableSchema ){
     xCallback("PRAGMA writable_schema=OFF;\n", pArg);
@@ -713,12 +713,12 @@ int main(int argc, char **argv){
     sqlite3_close(db);
     return 1;
   }
-  rc = sqlite3_db_dump(db, zSchema, zTable,
+  rc = sqlite3_db_dump(db, zSchema, zTable, 
           (int(*)(const char*,void*))fputs, (void*)stdout);
   if( rc ){
     fprintf(stderr, "Error: sqlite3_db_dump() returns %d\n", rc);
   }
   sqlite3_close(db);
-  return rc!=SQLITE_OK;
+  return rc!=SQLITE_OK;  
 }
 #endif /* DBDUMP_STANDALONE */

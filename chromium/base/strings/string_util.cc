@@ -51,21 +51,6 @@ static bool CompareParameter(const ReplacementOffset& elem1,
   return elem1.parameter < elem2.parameter;
 }
 
-// Overloaded function to append one string onto the end of another. Having a
-// separate overload for |source| as both string and StringPiece allows for more
-// efficient usage from functions templated to work with either type (avoiding a
-// redundant call to the BasicStringPiece constructor in both cases).
-template <typename string_type>
-inline void AppendToString(string_type* target, const string_type& source) {
-  target->append(source);
-}
-
-template <typename string_type>
-inline void AppendToString(string_type* target,
-                           const BasicStringPiece<string_type>& source) {
-  source.AppendToString(target);
-}
-
 // Assuming that a pointer is the size of a "machine word", then
 // uintptr_t is an integer type that is also a machine word.
 using MachineWord = uintptr_t;
@@ -237,17 +222,16 @@ bool ReplaceCharsT(const StringType& input,
 
 bool ReplaceChars(const string16& input,
                   StringPiece16 replace_chars,
-                  const string16& replace_with,
+                  StringPiece16 replace_with,
                   string16* output) {
-  return ReplaceCharsT(input, replace_chars, StringPiece16(replace_with),
-                       output);
+  return ReplaceCharsT(input, replace_chars, replace_with, output);
 }
 
 bool ReplaceChars(const std::string& input,
                   StringPiece replace_chars,
-                  const std::string& replace_with,
+                  StringPiece replace_with,
                   std::string* output) {
-  return ReplaceCharsT(input, replace_chars, StringPiece(replace_with), output);
+  return ReplaceCharsT(input, replace_chars, replace_with, output);
 }
 
 bool RemoveChars(const string16& input,
@@ -262,8 +246,8 @@ bool RemoveChars(const std::string& input,
   return ReplaceCharsT(input, remove_chars, StringPiece(), output);
 }
 
-template<typename Str>
-TrimPositions TrimStringT(const Str& input,
+template <typename Str>
+TrimPositions TrimStringT(BasicStringPiece<Str> input,
                           BasicStringPiece<Str> trim_chars,
                           TrimPositions positions,
                           Str* output) {
@@ -271,40 +255,40 @@ TrimPositions TrimStringT(const Str& input,
   // a StringPiece version of input to be able to call find* on it with the
   // StringPiece version of trim_chars (normally the trim_chars will be a
   // constant so avoid making a copy).
-  BasicStringPiece<Str> input_piece(input);
   const size_t last_char = input.length() - 1;
-  const size_t first_good_char = (positions & TRIM_LEADING) ?
-      input_piece.find_first_not_of(trim_chars) : 0;
-  const size_t last_good_char = (positions & TRIM_TRAILING) ?
-      input_piece.find_last_not_of(trim_chars) : last_char;
+  const size_t first_good_char =
+      (positions & TRIM_LEADING) ? input.find_first_not_of(trim_chars) : 0;
+  const size_t last_good_char = (positions & TRIM_TRAILING)
+                                    ? input.find_last_not_of(trim_chars)
+                                    : last_char;
 
   // When the string was all trimmed, report that we stripped off characters
   // from whichever position the caller was interested in. For empty input, we
   // stripped no characters, but we still need to clear |output|.
-  if (input.empty() ||
-      (first_good_char == Str::npos) || (last_good_char == Str::npos)) {
+  if (input.empty() || first_good_char == Str::npos ||
+      last_good_char == Str::npos) {
     bool input_was_empty = input.empty();  // in case output == &input
     output->clear();
     return input_was_empty ? TRIM_NONE : positions;
   }
 
   // Trim.
-  *output =
-      input.substr(first_good_char, last_good_char - first_good_char + 1);
+  output->assign(input.data() + first_good_char,
+                 last_good_char - first_good_char + 1);
 
   // Return where we trimmed from.
   return static_cast<TrimPositions>(
-      ((first_good_char == 0) ? TRIM_NONE : TRIM_LEADING) |
-      ((last_good_char == last_char) ? TRIM_NONE : TRIM_TRAILING));
+      (first_good_char == 0 ? TRIM_NONE : TRIM_LEADING) |
+      (last_good_char == last_char ? TRIM_NONE : TRIM_TRAILING));
 }
 
-bool TrimString(const string16& input,
+bool TrimString(StringPiece16 input,
                 StringPiece16 trim_chars,
                 string16* output) {
   return TrimStringT(input, trim_chars, TRIM_ALL, output) != TRIM_NONE;
 }
 
-bool TrimString(const std::string& input,
+bool TrimString(StringPiece input,
                 StringPiece trim_chars,
                 std::string* output) {
   return TrimStringT(input, trim_chars, TRIM_ALL, output) != TRIM_NONE;
@@ -370,7 +354,7 @@ void TruncateUTF8ToByteSize(const std::string& input,
     output->clear();
 }
 
-TrimPositions TrimWhitespace(const string16& input,
+TrimPositions TrimWhitespace(StringPiece16 input,
                              TrimPositions positions,
                              string16* output) {
   return TrimStringT(input, StringPiece16(kWhitespaceUTF16), positions, output);
@@ -381,7 +365,7 @@ StringPiece16 TrimWhitespace(StringPiece16 input,
   return TrimStringPieceT(input, StringPiece16(kWhitespaceUTF16), positions);
 }
 
-TrimPositions TrimWhitespaceASCII(const std::string& input,
+TrimPositions TrimWhitespaceASCII(StringPiece input,
                                   TrimPositions positions,
                                   std::string* output) {
   return TrimStringT(input, StringPiece(kWhitespaceASCII), positions, output);
@@ -506,18 +490,27 @@ bool IsStringASCII(WStringPiece str) {
 }
 #endif
 
-bool IsStringUTF8(StringPiece str) {
-  const char *src = str.data();
+template <bool (*Validator)(uint32_t)>
+inline static bool DoIsStringUTF8(StringPiece str) {
+  const char* src = str.data();
   int32_t src_len = static_cast<int32_t>(str.length());
   int32_t char_index = 0;
 
   while (char_index < src_len) {
     int32_t code_point;
     CBU8_NEXT(src, char_index, src_len, code_point);
-    if (!IsValidCharacter(code_point))
+    if (!Validator(code_point))
       return false;
   }
   return true;
+}
+
+bool IsStringUTF8(StringPiece str) {
+  return DoIsStringUTF8<IsValidCharacter>(str);
+}
+
+bool IsStringUTF8AllowingNoncharacters(StringPiece str) {
+  return DoIsStringUTF8<IsValidCodepoint>(str);
 }
 
 // Implementation note: Normally this function will be called with a hardcoded
@@ -913,7 +906,7 @@ void ReplaceSubstringsAfterOffset(std::string* str,
 template <class string_type>
 inline typename string_type::value_type* WriteIntoT(string_type* str,
                                                     size_t length_with_null) {
-  DCHECK_GT(length_with_null, 1u);
+  DCHECK_GE(length_with_null, 1u);
   str->reserve(length_with_null);
   str->resize(length_with_null - 1);
   return &((*str)[0]);
@@ -927,11 +920,6 @@ char16* WriteInto(string16* str, size_t length_with_null) {
   return WriteIntoT(str, length_with_null);
 }
 
-#if defined(_MSC_VER) && !defined(__clang__)
-// Work around VC++ code-gen bug. https://crbug.com/804884
-#pragma optimize("", off)
-#endif
-
 // Generic version for all JoinString overloads. |list_type| must be a sequence
 // (std::vector or std::initializer_list) of strings/StringPieces (std::string,
 // string16, StringPiece or StringPiece16). |string_type| is either std::string
@@ -939,7 +927,7 @@ char16* WriteInto(string16* str, size_t length_with_null) {
 template <typename list_type, typename string_type>
 static string_type JoinStringT(const list_type& parts,
                                BasicStringPiece<string_type> sep) {
-  if (parts.size() == 0)
+  if (base::empty(parts))
     return string_type();
 
   // Pre-allocate the eventual size of the string. Start with the size of all of
@@ -952,15 +940,12 @@ static string_type JoinStringT(const list_type& parts,
 
   auto iter = parts.begin();
   DCHECK(iter != parts.end());
-  AppendToString(&result, *iter);
+  result.append(iter->data(), iter->size());
   ++iter;
 
   for (; iter != parts.end(); ++iter) {
-    sep.AppendToString(&result);
-    // Using the overloaded AppendToString allows this template function to work
-    // on both strings and StringPieces without creating an intermediate
-    // StringPiece object.
-    AppendToString(&result, *iter);
+    result.append(sep.data(), sep.size());
+    result.append(iter->data(), iter->size());
   }
 
   // Sanity-check that we pre-allocated correctly.
@@ -978,11 +963,6 @@ string16 JoinString(const std::vector<string16>& parts,
                     StringPiece16 separator) {
   return JoinStringT(parts, separator);
 }
-
-#if defined(_MSC_VER) && !defined(__clang__)
-// Work around VC++ code-gen bug. https://crbug.com/804884
-#pragma optimize("", on)
-#endif
 
 std::string JoinString(const std::vector<StringPiece>& parts,
                        StringPiece separator) {
@@ -1084,6 +1064,36 @@ string16 ReplaceStringPlaceholders(const string16& format_string,
     *offset = offsets[0];
   return result;
 }
+
+#if defined(OS_WIN) && defined(BASE_STRING16_IS_STD_U16STRING)
+
+TrimPositions TrimWhitespace(WStringPiece input,
+                             TrimPositions positions,
+                             std::wstring* output) {
+  return TrimStringT(input, WStringPiece(kWhitespaceWide), positions, output);
+}
+
+WStringPiece TrimWhitespace(WStringPiece input, TrimPositions positions) {
+  return TrimStringPieceT(input, WStringPiece(kWhitespaceWide), positions);
+}
+
+bool TrimString(WStringPiece input,
+                WStringPiece trim_chars,
+                std::wstring* output) {
+  return TrimStringT(input, trim_chars, TRIM_ALL, output) != TRIM_NONE;
+}
+
+WStringPiece TrimString(WStringPiece input,
+                        WStringPiece trim_chars,
+                        TrimPositions positions) {
+  return TrimStringPieceT(input, trim_chars, positions);
+}
+
+wchar_t* WriteInto(std::wstring* str, size_t length_with_null) {
+  return WriteIntoT(str, length_with_null);
+}
+
+#endif
 
 // The following code is compatible with the OpenBSD lcpy interface.  See:
 //   http://www.gratisoft.us/todd/papers/strlcpy.html

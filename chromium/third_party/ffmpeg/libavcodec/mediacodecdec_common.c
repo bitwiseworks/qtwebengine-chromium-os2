@@ -525,8 +525,8 @@ int ff_mediacodec_dec_init(AVCodecContext *avctx, MediaCodecDecContext *s,
     if (status < 0) {
         char *desc = ff_AMediaFormat_toString(format);
         av_log(avctx, AV_LOG_ERROR,
-            "Failed to configure codec (status = %d) with format %s\n",
-            status, desc);
+            "Failed to configure codec %s (status = %d) with format %s\n",
+            s->codec_name, status, desc);
         av_freep(&desc);
 
         ret = AVERROR_EXTERNAL;
@@ -537,8 +537,8 @@ int ff_mediacodec_dec_init(AVCodecContext *avctx, MediaCodecDecContext *s,
     if (status < 0) {
         char *desc = ff_AMediaFormat_toString(format);
         av_log(avctx, AV_LOG_ERROR,
-            "Failed to start codec (status = %d) with format %s\n",
-            status, desc);
+            "Failed to start codec %s (status = %d) with format %s\n",
+            s->codec_name, status, desc);
         av_freep(&desc);
         ret = AVERROR_EXTERNAL;
         goto fail;
@@ -569,7 +569,6 @@ int ff_mediacodec_dec_send(AVCodecContext *avctx, MediaCodecDecContext *s,
     int offset = 0;
     int need_draining = 0;
     uint8_t *data;
-    ssize_t index = s->current_input_buffer;
     size_t size;
     FFAMediaCodec *codec = s->codec;
     int status;
@@ -591,6 +590,7 @@ int ff_mediacodec_dec_send(AVCodecContext *avctx, MediaCodecDecContext *s,
     }
 
     while (offset < pkt->size || (need_draining && !s->draining)) {
+        ssize_t index = s->current_input_buffer;
         if (index < 0) {
             index = ff_AMediaCodec_dequeueInputBuffer(codec, input_dequeue_timeout_us);
             if (ff_AMediaCodec_infoTryAgainLater(codec, index)) {
@@ -612,7 +612,11 @@ int ff_mediacodec_dec_send(AVCodecContext *avctx, MediaCodecDecContext *s,
         }
 
         pts = pkt->pts;
-        if (pts != AV_NOPTS_VALUE && avctx->pkt_timebase.num && avctx->pkt_timebase.den) {
+        if (pts == AV_NOPTS_VALUE) {
+            av_log(avctx, AV_LOG_WARNING, "Input packet is missing PTS\n");
+            pts = 0;
+        }
+        if (pts && avctx->pkt_timebase.num && avctx->pkt_timebase.den) {
             pts = av_rescale_q(pts, avctx->pkt_timebase, AV_TIME_BASE_Q);
         }
 
@@ -628,24 +632,24 @@ int ff_mediacodec_dec_send(AVCodecContext *avctx, MediaCodecDecContext *s,
             }
 
             av_log(avctx, AV_LOG_TRACE,
-                   "Queued input buffer %zd size=%zd ts=%"PRIi64"\n", index, size, pts);
+                   "Queued empty EOS input buffer %zd with flags=%d\n", index, flags);
 
             s->draining = 1;
-            break;
-        } else {
-            size = FFMIN(pkt->size - offset, size);
-            memcpy(data, pkt->data + offset, size);
-            offset += size;
-
-            status = ff_AMediaCodec_queueInputBuffer(codec, index, 0, size, pts, 0);
-            if (status < 0) {
-                av_log(avctx, AV_LOG_ERROR, "Failed to queue input buffer (status = %d)\n", status);
-                return AVERROR_EXTERNAL;
-            }
-
-            av_log(avctx, AV_LOG_TRACE,
-                   "Queued input buffer %zd size=%zd ts=%"PRIi64"\n", index, size, pts);
+            return 0;
         }
+
+        size = FFMIN(pkt->size - offset, size);
+        memcpy(data, pkt->data + offset, size);
+        offset += size;
+
+        status = ff_AMediaCodec_queueInputBuffer(codec, index, 0, size, pts, 0);
+        if (status < 0) {
+            av_log(avctx, AV_LOG_ERROR, "Failed to queue input buffer (status = %d)\n", status);
+            return AVERROR_EXTERNAL;
+        }
+
+        av_log(avctx, AV_LOG_TRACE,
+               "Queued input buffer %zd size=%zd ts=%"PRIi64"\n", index, size, pts);
     }
 
     if (offset == 0)

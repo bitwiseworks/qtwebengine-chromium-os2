@@ -103,7 +103,7 @@ class VIEWS_EXPORT FocusTraversable {
   virtual View* GetFocusTraversableParentView() = 0;
 
  protected:
-  virtual ~FocusTraversable() {}
+  virtual ~FocusTraversable() = default;
 };
 
 // This interface should be implemented by classes that want to be notified when
@@ -117,36 +117,30 @@ class VIEWS_EXPORT FocusChangeListener {
   virtual void OnDidChangeFocus(View* focused_before, View* focused_now) = 0;
 
  protected:
-  virtual ~FocusChangeListener() {}
+  virtual ~FocusChangeListener() = default;
 };
 
 // FocusManager adds itself as a ViewObserver to the currently focused view.
 class VIEWS_EXPORT FocusManager : public ViewObserver {
  public:
   // The reason why the focus changed.
-  enum FocusChangeReason {
+  enum class FocusChangeReason {
     // The focus changed because the user traversed focusable views using
     // keys like Tab or Shift+Tab.
-    kReasonFocusTraversal,
+    kFocusTraversal,
 
     // The focus changed due to restoring the focus.
-    kReasonFocusRestore,
+    kFocusRestore,
 
     // The focus changed due to a click or a shortcut to jump directly to
     // a particular view.
-    kReasonDirectFocusChange
+    kDirectFocusChange
   };
 
-  // TODO: use Direction in place of bool reverse throughout.
-  enum Direction {
-    kForward,
-    kBackward
-  };
+  // TODO(dmazzoni): use Direction in place of bool reverse throughout.
+  enum Direction { kForward, kBackward };
 
-  enum FocusCycleWrappingBehavior {
-    kWrap,
-    kNoWrap
-  };
+  enum class FocusCycleWrapping { kEnabled, kDisabled };
 
   FocusManager(Widget* widget, std::unique_ptr<FocusManagerDelegate> delegate);
   ~FocusManager() override;
@@ -171,9 +165,7 @@ class VIEWS_EXPORT FocusManager : public ViewObserver {
   // a reason). If the focus change should only happen if the view is
   // currenty focusable, enabled, and visible, call view->RequestFocus().
   void SetFocusedViewWithReason(View* view, FocusChangeReason reason);
-  void SetFocusedView(View* view) {
-    SetFocusedViewWithReason(view, kReasonDirectFocusChange);
-  }
+  void SetFocusedView(View* view);
 
   // Get the reason why the focus most recently changed.
   FocusChangeReason focus_change_reason() const { return focus_change_reason_; }
@@ -277,7 +269,7 @@ class VIEWS_EXPORT FocusManager : public ViewObserver {
   // order to trap keyboard focus within that pane. If |wrap| is kWrap,
   // it keeps cycling within this widget, otherwise it returns false after
   // reaching the last pane so that focus can cycle to another widget.
-  bool RotatePaneFocus(Direction direction, FocusCycleWrappingBehavior wrap);
+  bool RotatePaneFocus(Direction direction, FocusCycleWrapping wrapping);
 
   // Convenience method that returns true if the passed |key_event| should
   // trigger tab traversal (if it is a TAB key press with or without SHIFT
@@ -295,8 +287,6 @@ class VIEWS_EXPORT FocusManager : public ViewObserver {
     return arrow_key_traversal_enabled_;
   }
 
-  // TODO(weidongg): converts compatible usages of
-  // |arrow_key_traversal_enabled_| to this (https://crbug.com/899431).
   // Similar to above, but only for the widget that owns this FocusManager.
   void set_arrow_key_traversal_enabled_for_widget(bool enabled) {
     arrow_key_traversal_enabled_for_widget_ = enabled;
@@ -365,7 +355,8 @@ class VIEWS_EXPORT FocusManager : public ViewObserver {
   std::unique_ptr<ViewTracker> view_tracker_for_stored_view_;
 
   // The reason why the focus most recently changed.
-  FocusChangeReason focus_change_reason_ = kReasonDirectFocusChange;
+  FocusChangeReason focus_change_reason_ =
+      FocusChangeReason::kDirectFocusChange;
 
   // The list of registered FocusChange listeners.
   base::ObserverList<FocusChangeListener, true>::Unchecked
@@ -378,6 +369,9 @@ class VIEWS_EXPORT FocusManager : public ViewObserver {
   // FocusTraversable level. Currently only used on Mac, when Full Keyboard
   // access is enabled.
   bool keyboard_accessible_ = false;
+
+  // Whether FocusManager is currently trying to restore a focused view.
+  bool in_restoring_focused_view_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(FocusManager);
 };

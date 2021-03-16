@@ -65,20 +65,6 @@
       type: "int",
     },
 
-    // Number of pixels below which 2D canvas is rendered in software
-    // even if hardware acceleration is enabled.
-    // Hardware acceleration is useful for large canvases where it can avoid the
-    // pixel bandwidth between the CPU and GPU. But GPU acceleration comes at
-    // a price - extra back-buffer and texture copy. Small canvases are also
-    // widely used for stylized fonts. Anti-aliasing text in hardware at that
-    // scale is generally slower. So below a certain size it is better to
-    // draw canvas in software.
-    {
-      name: "minimumAccelerated2dCanvasSize",
-      initial: "129*128",
-      type: "int",
-    },
-
     {
       name: "minimumFontSize",
       initial: 0,
@@ -117,6 +103,7 @@
     {
       name: "allowUniversalAccessFromFileURLs",
       initial: true,
+      invalidate: "UniversalAccess",
     },
     {
       name: "allowFileAccessFromFileURLs",
@@ -169,11 +156,6 @@
     {
       name: "downloadableBinaryFontsEnabled",
       initial: true,
-    },
-
-    {
-      name: "xssAuditorEnabled",
-      initial: false,
     },
 
     {
@@ -247,6 +229,7 @@
       invalidate: "MediaControls",
     },
 
+    // Only affects main thread scrolling
     {
       name: "scrollAnimatorEnabled",
       initial: true,
@@ -270,17 +253,6 @@
 
     {
       name: "shouldRespectImageOrientation",
-      initial: false,
-    },
-
-    // Limited use by features which behave differently depending on the input
-    // devices available.  For example, the pointer and hover media queries.
-    // Note that we need to be careful when basing behavior or UI on this -
-    // just because a device is present doesn't mean the user cares about it
-    // or uses it (i.e. Chromebook Pixel users generally don't want to give up
-    // screen real estate just because they happen to have a touchscreen).
-    {
-      name: "deviceSupportsTouch",
       initial: false,
     },
 
@@ -348,6 +320,7 @@
     {
       name: "spatialNavigationEnabled",
       initial: false,
+      invalidate: "SpatialNavigation",
     },
 
     // This setting adds a means to enable/disable touch initiated drag & drop. If
@@ -478,19 +451,17 @@
       initial: false,
     },
 
-    // If true, scrollers will use overlay scrollbars.  These do not take up any
-    // layout width, are drawn using solid color quads by the compositor, and fade away
-    // after a timeout.
-    {
-      name: "useSolidColorScrollbars",
-      initial: false,
-    },
-
     // The rubber-band overscroll effect is implemented in Blink and is being moved
     // to the compositor thread. This will be set to true and eventually removed.
     // crbug.com/133097
     {
       name: "rubberBandingOnCompositorThread",
+      initial: false,
+    },
+
+    // The current state of caret browsing mode.
+    {
+      name: "caretBrowsingEnabled",
       initial: false,
     },
 
@@ -511,9 +482,9 @@
     },
     {
       name: "displayModeOverride",
-      initial: "kWebDisplayModeUndefined",
+      initial: "blink::mojom::DisplayMode::kUndefined",
       invalidate: "MediaQuery",
-      type: "WebDisplayMode",
+      type: "blink::mojom::DisplayMode",
     },
 
     // loadsImagesAutomatically only suppresses the network load of
@@ -581,10 +552,17 @@
       initial: false,
     },
 
+    {
+      name: "parserScriptingFlagPolicy",
+      initial: "ParserScriptingFlagPolicy::kOnlyIfScriptIsEnabled",
+      type: "ParserScriptingFlagPolicy"
+    },
+
     // Forces Android Overlay Scrollbar for mobile emulator.
     {
       name: "forceAndroidOverlayScrollbar",
       initial: false,
+      invalidate: "ScrollbarLayout",
     },
 
     // Set the timeout seconds of the network-quiet timers in IdlenessDetector.
@@ -780,6 +758,18 @@
       name: "textTrackTextSize",
       type: "String",
     },
+    {
+      name: "textTrackWindowColor",
+      type: "String",
+    },
+    {
+      name: "textTrackWindowPadding",
+      type: "String",
+    },
+    {
+      name: "textTrackWindowRadius",
+      type: "String",
+    },
 
     // Margin for title-safe placement of cues with overscan, gives top and bottom margin size as
     // percentage of video element height (for horizontal text) into which cues will not be placed.
@@ -787,11 +777,6 @@
       name: "textTrackMarginPercentage",
       initial: 0,
       type: "double",
-    },
-
-    {
-      name: "historyEntryRequiresUserGesture",
-      initial: false,
     },
 
     // Do we want to try to save screen real estate in the media player by hiding
@@ -847,13 +832,6 @@
       type: "PassiveListenerDefault",
     },
 
-    // Some platforms have media subsystems which are too buggy to allow preloading
-    // of content by default. See http://crbug.com/612909 for details.
-    {
-      name: "forcePreloadNoneForMediaElements",
-      initial: false,
-    },
-
     {
       name: "hideScrollbars",
       initial: false,
@@ -902,30 +880,65 @@
     },
 
     //
-    // High contrast mode
+    // Dark mode
     //
     {
-      name: "highContrastMode",
-      initial: "HighContrastMode::kOff",
-      type: "HighContrastMode",
-    },
-    {
-      name: "highContrastGrayscale",
+      name: "forceDarkModeEnabled",
       initial: false,
+      invalidate: "ForceDark",
     },
     {
-      name: "highContrastContrast",
+      name: "forceDarkModeInversionAlgorithm",
+      initial: "DarkModeInversionAlgorithm::kInvertLightnessLAB",
+      type: "DarkModeInversionAlgorithm",
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModeGrayscale",
+      initial: false,
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModeContrast",
       initial: 0,
       type: "double",
+      invalidate: "ForceDark",
     },
     {
-      name: "highContrastImagePolicy",
-      initial: "HighContrastImagePolicy::kFilterAll",
-      type: "HighContrastImagePolicy",
+      name: "forceDarkModeClassifierType",
+      initial: "DarkModeClassifierType::kGeneric",
+      type: "DarkModeClassifierType",
+      invalidate: "ForceDark",
     },
     {
-      name: "mediaDownloadInProductHelpEnabled",
-      initial: false,
+      name: "forceDarkModeImagePolicy",
+      initial: "DarkModeImagePolicy::kFilterNone",
+      type: "DarkModeImagePolicy",
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModePagePolicy",
+      initial: "DarkModePagePolicy::kFilterByBackground",
+      type: "DarkModePagePolicy",
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModeTextBrightnessThreshold",
+      initial: "150",
+      type: "int",
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModeBackgroundBrightnessThreshold",
+      initial: "205",
+      type: "int",
+      invalidate: "ForceDark",
+    },
+    {
+      name: "forceDarkModeImageGrayscale",
+      initial: "0.0",
+      type: "float",
+      invalidate: "ForceDark",
     },
     {
       name: "navigatorPlatformOverride",
@@ -943,39 +956,39 @@
 
     {
       name: "lazyLoadEnabled",
-      initial: false,
+      initial: true,
     },
     //
     // Lazy frame loading distance-from-viewport thresholds for different effective connection types.
     //
     {
       name: "lazyFrameLoadingDistanceThresholdPxUnknown",
-      initial: 800,
+      initial: 4000,
       type: "int",
     },
     {
       name: "lazyFrameLoadingDistanceThresholdPxOffline",
-      initial: 800,
+      initial: 8000,
       type: "int",
     },
     {
       name: "lazyFrameLoadingDistanceThresholdPxSlow2G",
-      initial: 800,
+      initial: 8000,
       type: "int",
     },
     {
       name: "lazyFrameLoadingDistanceThresholdPx2G",
-      initial: 800,
+      initial: 6000,
       type: "int",
     },
     {
       name: "lazyFrameLoadingDistanceThresholdPx3G",
-      initial: 800,
+      initial: 5000,
       type: "int",
     },
     {
       name: "lazyFrameLoadingDistanceThresholdPx4G",
-      initial: 800,
+      initial: 4000,
       type: "int",
     },
 
@@ -984,32 +997,60 @@
     //
     {
       name: "lazyImageLoadingDistanceThresholdPxUnknown",
-      initial: 800,
+      initial: 3000,
       type: "int",
     },
     {
       name: "lazyImageLoadingDistanceThresholdPxOffline",
-      initial: 800,
+      initial: 8000,
       type: "int",
     },
     {
       name: "lazyImageLoadingDistanceThresholdPxSlow2G",
-      initial: 800,
+      initial: 8000,
       type: "int",
     },
     {
       name: "lazyImageLoadingDistanceThresholdPx2G",
-      initial: 800,
+      initial: 6000,
       type: "int",
     },
     {
       name: "lazyImageLoadingDistanceThresholdPx3G",
-      initial: 800,
+      initial: 4000,
       type: "int",
     },
     {
       name: "lazyImageLoadingDistanceThresholdPx4G",
-      initial: 800,
+      initial: 3000,
+      type: "int",
+    },
+    //
+    // Count of the images to fully load for different effective connection types.
+    //
+    {
+      name: "lazyImageFirstKFullyLoadUnknown",
+      initial: 0,
+      type: "int",
+    },
+    {
+      name: "lazyImageFirstKFullyLoadSlow2G",
+      initial: 12,
+      type: "int",
+    },
+    {
+      name: "lazyImageFirstKFullyLoad2G",
+      initial: 10,
+      type: "int",
+    },
+    {
+      name: "lazyImageFirstKFullyLoad3G",
+      initial: 8,
+      type: "int",
+    },
+    {
+      name: "lazyImageFirstKFullyLoad4G",
+      initial: 6,
       type: "int",
     },
 
@@ -1017,9 +1058,9 @@
     // evaluating the prefers-color-scheme media query.
     {
       name: "preferredColorScheme",
-      initial: "WebColorScheme::kNoPreference",
-      invalidate: "MediaQuery",
-      type: "WebColorScheme",
+      initial: "PreferredColorScheme::kNoPreference",
+      invalidate: "ColorScheme",
+      type: "PreferredColorScheme",
     },
 
     // Preferred motion-reduction setting from the OS/application passed to the
@@ -1028,6 +1069,18 @@
       name: "prefersReducedMotion",
       initial: false,
       invalidate: "MediaQuery",
+    },
+    {
+      name: "DontSendKeyEventsToJavascript",
+      initial: false,
+    },
+    // Navigation controls from the application passed to the renderer for
+    // evaluating the navigation-controls media query.
+    {
+      name: "navigationControls",
+      initial: "NavigationControls::kNone",
+      invalidate: "MediaQuery",
+      type: "NavigationControls",
     },
   ],
 }

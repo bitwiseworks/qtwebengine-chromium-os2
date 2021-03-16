@@ -5,14 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_FIND_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_FINDER_FIND_BUFFER_H_
 
-#include "third_party/blink/public/mojom/frame/find_in_page.mojom-blink.h"
-#include "third_party/blink/renderer/core/editing/finder/find_buffer.h"
+#include "third_party/blink/renderer/core/display_lock/display_lock_context.h"
+#include "third_party/blink/renderer/core/editing/finder/find_options.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_searcher_icu.h"
-#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
+#include "third_party/blink/renderer/core/editing/position.h"
 
 namespace blink {
 
 class LayoutBlockFlow;
+class NGOffsetMapping;
 class Node;
 class WebString;
 
@@ -23,30 +24,51 @@ class CORE_EXPORT FindBuffer {
   STACK_ALLOCATED();
 
  public:
-  FindBuffer(const PositionInFlatTree& start_position);
+  explicit FindBuffer(const EphemeralRangeInFlatTree& range);
+
+  static EphemeralRangeInFlatTree FindMatchInRange(
+      const EphemeralRangeInFlatTree& range,
+      String search_text,
+      const FindOptions);
 
   // A match result, containing the starting position of the match and
   // the length of the match.
   struct BufferMatchResult {
     const unsigned start;
     const unsigned length;
+
+    bool operator==(const BufferMatchResult& other) const {
+      return start == other.start && length == other.length;
+    }
+
+    bool operator!=(const BufferMatchResult& other) const {
+      return !operator==(other);
+    }
   };
 
   // All match results for this buffer. We can iterate through the
   // BufferMatchResults one by one using the Iterator.
   class CORE_EXPORT Results {
+    STACK_ALLOCATED();
+
    public:
     Results();
 
-    Results(const Vector<UChar>& buffer,
-            String search_text,
-            const mojom::blink::FindOptions& options);
+    Results(const FindBuffer& find_buffer,
+            TextSearcherICU* text_searcher,
+            const Vector<UChar>& buffer,
+            const String& search_text,
+            const blink::FindOptions options);
 
     class CORE_EXPORT Iterator
         : public std::iterator<std::forward_iterator_tag, BufferMatchResult> {
+      STACK_ALLOCATED();
+
      public:
       Iterator() = default;
-      Iterator(TextSearcherICU* text_searcher);
+      Iterator(const FindBuffer& find_buffer,
+               TextSearcherICU* text_searcher,
+               const String& search_text);
 
       bool operator==(const Iterator& other) {
         return has_match_ == other.has_match_;
@@ -61,27 +83,34 @@ class CORE_EXPORT FindBuffer {
       void operator++();
 
      private:
+      const FindBuffer* find_buffer_;
       TextSearcherICU* text_searcher_;
       MatchResultICU match_;
       bool has_match_ = false;
     };
 
-    Iterator begin();
+    Iterator begin() const;
 
     Iterator end() const;
 
-    unsigned CountForTesting();
+    bool IsEmpty() const;
+
+    BufferMatchResult front() const;
+
+    BufferMatchResult back() const;
+
+    unsigned CountForTesting() const;
 
    private:
-    bool empty_result_ = false;
     String search_text_;
-    TextSearcherICU text_searcher_;
+    const FindBuffer* find_buffer_;
+    TextSearcherICU* text_searcher_;
+    bool empty_result_ = false;
   };
 
   // Finds all the match for |search_text| in |buffer_|.
-  std::unique_ptr<Results> FindMatches(
-      const WebString& search_text,
-      const mojom::blink::FindOptions& options) const;
+  Results FindMatches(const WebString& search_text,
+                      const blink::FindOptions options);
 
   // Gets a flat tree range corresponding to text in the [start_index,
   // end_index) of |buffer|.
@@ -94,28 +123,15 @@ class CORE_EXPORT FindBuffer {
     return PositionInFlatTree::FirstPositionInNode(*node_after_block_);
   }
 
+  bool IsInvalidMatch(MatchResultICU match) const;
+
  private:
-  // Collects text for one LayoutBlockFlow located at or after |start_node|
-  // to |buffer_|, might be stopped without finishing one full LayoutBlockFlow
-  // if we encountered another LayoutBLockFlow. Saves the next starting node
-  // after the block (first node in another LayoutBlockFlow) to
-  // |node_after_block_|.
-  void CollectTextUntilBlockBoundary(Node& start_node);
-
-  class CORE_EXPORT InvisibleLayoutScope {
-    STACK_ALLOCATED();
-
-   public:
-    InvisibleLayoutScope() {}
-    ~InvisibleLayoutScope();
-
-    void EnsureRecalc(Node& block_root);
-    bool DidRecalc() { return did_recalc_; }
-
-   private:
-    bool did_recalc_ = false;
-    Member<Element> invisible_root_;
-  };
+  // Collects text for one LayoutBlockFlow located within |range| to |buffer_|,
+  // might be stopped without finishing one full LayoutBlockFlow  if we
+  // encountered another LayoutBLockFlow, or if the end of |range| is
+  // surpassed. Saves the next starting node after the block (first node in
+  // another LayoutBlockFlow or after |end_position|) to |node_after_block_|.
+  void CollectTextUntilBlockBoundary(const EphemeralRangeInFlatTree& range);
 
   // Mapping for position in buffer -> actual node where the text came from,
   // along with the offset in the NGOffsetMapping of this find_buffer.
@@ -147,26 +163,23 @@ class CORE_EXPORT FindBuffer {
     const unsigned offset_in_mapping;
   };
 
-  BufferNodeMapping MappingForIndex(unsigned index) const;
+  const BufferNodeMapping* MappingForIndex(unsigned index) const;
 
   PositionInFlatTree PositionAtStartOfCharacterAtIndex(unsigned index) const;
 
   PositionInFlatTree PositionAtEndOfCharacterAtIndex(unsigned index) const;
 
-  void AddTextToBuffer(const Text& text_node, LayoutBlockFlow& block_flow);
+  // Adds text in |text_node| that are located within |range| to |buffer_|.
+  void AddTextToBuffer(const Text& text_node,
+                       LayoutBlockFlow& block_flow,
+                       const EphemeralRangeInFlatTree& range);
 
-  InvisibleLayoutScope invisible_layout_scope_;
-  Member<Node> node_after_block_;
+  Node* node_after_block_ = nullptr;
   Vector<UChar> buffer_;
   Vector<BufferNodeMapping> buffer_node_mappings_;
+  TextSearcherICU text_searcher_;
 
-  // For legacy layout, we need to save a unique_ptr of the NGOffsetMapping
-  // because nobody owns it. In LayoutNG, the NGOffsetMapping is owned by
-  // the corresponding LayoutBlockFlow, so we don't need to save it.
-  std::unique_ptr<NGOffsetMapping> offset_mapping_storage_;
   const NGOffsetMapping* offset_mapping_ = nullptr;
-
-  bool mapping_needs_recalc_ = false;
 };
 
 }  // namespace blink

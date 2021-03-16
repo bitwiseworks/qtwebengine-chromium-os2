@@ -5,7 +5,9 @@
 #include "content/browser/renderer_host/media/video_capture_provider_switcher.h"
 #include "content/public/browser/video_capture_device_launcher.h"
 
-#include "base/callback_helpers.h"
+#include <utility>
+
+#include "base/bind.h"
 
 namespace content {
 
@@ -22,18 +24,18 @@ class VideoCaptureDeviceLauncherSwitcher : public VideoCaptureDeviceLauncher {
   ~VideoCaptureDeviceLauncherSwitcher() override {}
 
   void LaunchDeviceAsync(const std::string& device_id,
-                         blink::MediaStreamType stream_type,
+                         blink::mojom::MediaStreamType stream_type,
                          const media::VideoCaptureParams& params,
                          base::WeakPtr<media::VideoFrameReceiver> receiver,
                          base::OnceClosure connection_lost_cb,
                          Callbacks* callbacks,
                          base::OnceClosure done_cb) override {
-    if (stream_type == blink::MEDIA_DEVICE_VIDEO_CAPTURE) {
+    if (stream_type == blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE) {
       // Use of Unretained() is safe, because |media_device_launcher_| is owned
       // by |this|.
       abort_launch_cb_ =
-          base::Bind(&VideoCaptureDeviceLauncher::AbortLaunch,
-                     base::Unretained(media_device_launcher_.get()));
+          base::BindOnce(&VideoCaptureDeviceLauncher::AbortLaunch,
+                         base::Unretained(media_device_launcher_.get()));
       return media_device_launcher_->LaunchDeviceAsync(
           device_id, stream_type, params, std::move(receiver),
           std::move(connection_lost_cb), callbacks, std::move(done_cb));
@@ -41,17 +43,17 @@ class VideoCaptureDeviceLauncherSwitcher : public VideoCaptureDeviceLauncher {
     // Use of Unretained() is safe, because |other_types_launcher_| is owned by
     // |this|.
     abort_launch_cb_ =
-        base::Bind(&VideoCaptureDeviceLauncher::AbortLaunch,
-                   base::Unretained(other_types_launcher_.get()));
+        base::BindOnce(&VideoCaptureDeviceLauncher::AbortLaunch,
+                       base::Unretained(other_types_launcher_.get()));
     return other_types_launcher_->LaunchDeviceAsync(
         device_id, stream_type, params, std::move(receiver),
         std::move(connection_lost_cb), callbacks, std::move(done_cb));
   }
 
   void AbortLaunch() override {
-    if (abort_launch_cb_.is_null())
+    if (!abort_launch_cb_)
       return;
-    base::ResetAndReturn(&abort_launch_cb_).Run();
+    std::move(abort_launch_cb_).Run();
   }
 
  private:

@@ -40,19 +40,18 @@ static_library("network") {
 
 if (is_android) {
   android_library("network_java") {
-    java_files = [ "android/java/src/org/chromium/components/download/NetworkStatusListenerAndroid.java" ]
+    sources = [ "android/java/src/org/chromium/components/download/NetworkStatusListenerAndroid.java" ]
 
     deps = [
       "//base:base_java",
+      "//base:jni_java",
       "//net/android:net_java",
     ]
+    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
   }
 
   generate_jni("jni_headers") {
     visibility = [ ":*" ]
-    sources = [
-      "android/java/src/org/chromium/components/download/NetworkStatusListenerAndroid.java",
-    ]
-    jni_package = "components/download/network"
+    sources = [ "android/java/src/org/chromium/components/download/NetworkStatusListenerAndroid.java" ]
   }
 }

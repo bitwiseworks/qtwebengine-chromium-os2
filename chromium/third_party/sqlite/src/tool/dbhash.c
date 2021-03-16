@@ -62,24 +62,9 @@ struct GlobalVars {
  *
  * blk0le() for little-endian and blk0be() for big-endian.
  */
-#if __GNUC__ && (defined(__i386__) || defined(__x86_64__))
-/*
- * GCC by itself only generates left rotates.  Use right rotates if
- * possible to be kinder to dinky implementations with iterative rotate
- * instructions.
- */
-#define SHA_ROT(op, x, k) \
-        ({ unsigned int y; asm(op " %1,%0" : "=r" (y) : "I" (k), "0" (x)); y; })
-#define rol(x,k) SHA_ROT("roll", x, k)
-#define ror(x,k) SHA_ROT("rorl", x, k)
-
-#else
-/* Generic C equivalent */
 #define SHA_ROT(x,l,r) ((x) << (l) | (x) >> (r))
 #define rol(x,k) SHA_ROT(x,k,32-(k))
 #define ror(x,k) SHA_ROT(x,32-(k),k)
-#endif
-
 
 #define blk0le(i) (block[i] = (ror(block[i],8)&0xFF00FF00) \
     |(rol(block[i],8)&0x00FF00FF))
@@ -232,7 +217,7 @@ static void hash_finish(const char *zName){
 }
 /* End of the hashing logic
 *******************************************************************************/
-
+  
 /*
 ** Print an error resulting from faulting command-line arguments and
 ** abort the program.
@@ -445,7 +430,7 @@ int main(int argc, char **argv){
   if( zLike==0 ) zLike = "%";
 
   for(i=1; i<=nFile; i++){
-    static const int openFlags =
+    static const int openFlags = 
        SQLITE_OPEN_READWRITE |     /* Read/write so hot journals can recover */
        SQLITE_OPEN_URI
     ;
@@ -465,7 +450,7 @@ int main(int argc, char **argv){
 
     /* Start the hash */
     hash_init();
-
+  
     /* Hash table content */
     if( !omitContent ){
       pStmt = db_prepare(
@@ -487,7 +472,7 @@ int main(int argc, char **argv){
       }
       sqlite3_finalize(pStmt);
     }
-
+  
     /* Hash the database schema */
     if( !omitSchema ){
       hash_one_query(
@@ -497,7 +482,7 @@ int main(int argc, char **argv){
          zLike
       );
     }
-
+  
     /* Finish and output the hash and close the database connection. */
     hash_finish(zDb);
     sqlite3_close(g.db);

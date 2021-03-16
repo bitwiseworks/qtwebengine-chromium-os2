@@ -44,10 +44,12 @@ CSSViewportRule::CSSViewportRule(StyleRuleViewport* viewport_rule,
 CSSViewportRule::~CSSViewportRule() = default;
 
 CSSStyleDeclaration* CSSViewportRule::style() const {
-  if (!properties_cssom_wrapper_)
-    properties_cssom_wrapper_ = StyleRuleCSSStyleDeclaration::Create(
-        viewport_rule_->MutableProperties(),
-        const_cast<CSSViewportRule*>(this));
+  if (!properties_cssom_wrapper_) {
+    properties_cssom_wrapper_ =
+        MakeGarbageCollected<StyleRuleCSSStyleDeclaration>(
+            viewport_rule_->MutableProperties(),
+            const_cast<CSSViewportRule*>(this));
+  }
 
   return properties_cssom_wrapper_.Get();
 }
@@ -68,12 +70,12 @@ String CSSViewportRule::cssText() const {
 
 void CSSViewportRule::Reattach(StyleRuleBase* rule) {
   DCHECK(rule);
-  viewport_rule_ = ToStyleRuleViewport(rule);
+  viewport_rule_ = To<StyleRuleViewport>(rule);
   if (properties_cssom_wrapper_)
     properties_cssom_wrapper_->Reattach(viewport_rule_->MutableProperties());
 }
 
-void CSSViewportRule::Trace(blink::Visitor* visitor) {
+void CSSViewportRule::Trace(Visitor* visitor) {
   visitor->Trace(viewport_rule_);
   visitor->Trace(properties_cssom_wrapper_);
   CSSRule::Trace(visitor);

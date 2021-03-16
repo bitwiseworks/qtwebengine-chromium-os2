@@ -8,12 +8,13 @@
 #include <string>
 
 #include "base/values.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 
 class AuthContext;
-class CastMessage;
-class DeviceAuthMessage;
+using ::cast::channel::CastMessage;
+using ::cast::channel::DeviceAuthMessage;
 
 // Reserved message namespaces for internal messages.
 static constexpr char kCastInternalNamespacePrefix[] =
@@ -36,23 +37,60 @@ static constexpr char kPlatformReceiverId[] = "receiver-0";
 
 // Cast application protocol message types.
 enum class CastMessageType {
+  // Heartbeat messages.
   kPing,
   kPong,
+
+  // RPC control/status messages used by Media Remoting. These occur at high
+  // frequency, up to dozens per second at times, and should not be logged.
+  kRpc,
+
   kGetAppAvailability,
-  kReceiverStatusRequest,
-  kConnect,          // Virtual connection request
-  kCloseConnection,  // Close virtual connection
-  kBroadcast,        // Application broadcast / precache
-  kLaunch,           // Session launch request
-  kStop,             // Session stop request
+  kGetStatus,
+
+  // Virtual connection request
+  kConnect,
+
+  // Close virtual connection
+  kCloseConnection,
+
+  // Application broadcast / precache
+  kBroadcast,
+
+  // Session launch request
+  kLaunch,
+
+  // Session stop request
+  kStop,
+
   kReceiverStatus,
   kMediaStatus,
+
+  // error from receiver
   kLaunchError,
-  kOther  // Add new types above |kOther|.
+
+  kOffer,
+  kAnswer,
+  kCapabilitiesResponse,
+  kStatusResponse,
+
+  // The following values are part of the protocol but are not currently used.
+  kMultizoneStatus,
+  kInvalidPlayerState,
+  kLoadFailed,
+  kLoadCancelled,
+  kInvalidRequest,
+  kPresentation,
+  kGetCapabilities,
+
+  kOther,  // Add new types above |kOther|.
+  kMaxValue = kOther,
 };
 
 enum class V2MessageType {
+  // Request to modify the text tracks style or change the tracks status.
   kEditTracksInfo,
+
   kGetStatus,
   kLoad,
   kMediaGetStatus,
@@ -60,17 +98,44 @@ enum class V2MessageType {
   kPause,
   kPlay,
   kPrecache,
+
+  // Inserts a list of new media items into the queue.
   kQueueInsert,
+
+  // Loads and optionally starts playback of a new queue of media items.
   kQueueLoad,
+
+  // Removes a list of items from the queue. If the remaining queue is empty,
+  // the media session will be terminated.
   kQueueRemove,
+
+  // Reorder a list of media items in the queue.
   kQueueReorder,
+
+  // Updates properties of the media queue, e.g. repeat mode, and properties of
+  // the existing items in the media queue.
   kQueueUpdate,
+
+  kQueueNext,
+  kQueuePrev,
   kSeek,
+
+  // Device set volume is also 'SET_VOLUME'. Thus, give this a different name.
+  // The message will be translate before being sent to the receiver.
   kSetVolume,
+
   kStop,
+
+  // Stop-media type is 'kStop', which collides with stop-session.
+  // Thus, give it a different name.  The message will be translate
+  // before being sent to the receiver.
   kStopMedia,
-  kOther  // Add new types above |kOther|.
+
+  kOther,  // Add new types above |kOther|.
+  kMaxValue = kOther,
 };
+
+std::ostream& operator<<(std::ostream& lhs, const CastMessage& rhs);
 
 // Checks if the contents of |message_proto| are valid.
 bool IsCastMessageValid(const CastMessage& message_proto);
@@ -137,6 +202,9 @@ CastMessage CreateVirtualConnectionRequest(
     const std::string& user_agent,
     const std::string& browser_version);
 
+CastMessage CreateVirtualConnectionClose(const std::string& source_id,
+                                         const std::string& destination_id);
+
 // Creates an app availability request for |app_id| from |source_id| with
 // ID |request_id|.
 // TODO(imcheng): May not need |source_id|, just use sender-0?
@@ -198,6 +266,7 @@ enum class GetAppAvailabilityResult {
   kAvailable,
   kUnavailable,
   kUnknown,
+  kMaxValue = kUnknown,
 };
 
 const char* ToString(GetAppAvailabilityResult result);
@@ -213,7 +282,7 @@ GetAppAvailabilityResult GetAppAvailabilityResultFromResponse(
 
 // Result of a session launch.
 struct LaunchSessionResponse {
-  enum Result { kOk, kError, kTimedOut, kUnknown };
+  enum Result { kOk, kError, kTimedOut, kUnknown, kMaxValue = kUnknown };
 
   LaunchSessionResponse();
   LaunchSessionResponse(LaunchSessionResponse&& other);

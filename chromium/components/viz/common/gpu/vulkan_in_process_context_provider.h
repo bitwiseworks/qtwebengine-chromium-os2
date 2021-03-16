@@ -10,6 +10,8 @@
 #include "components/viz/common/gpu/vulkan_context_provider.h"
 #include "components/viz/common/viz_vulkan_context_provider_export.h"
 #include "gpu/vulkan/buildflags.h"
+#include "third_party/skia/include/gpu/GrContextOptions.h"
+
 #if BUILDFLAG(ENABLE_VULKAN)
 #include "third_party/skia/include/gpu/vk/GrVkBackendContext.h"
 #endif
@@ -25,22 +27,27 @@ class VIZ_VULKAN_CONTEXT_PROVIDER_EXPORT VulkanInProcessContextProvider
     : public VulkanContextProvider {
  public:
   static scoped_refptr<VulkanInProcessContextProvider> Create(
-      gpu::VulkanImplementation* vulkan_implementation);
+      gpu::VulkanImplementation* vulkan_implementation,
+      const GrContextOptions& context_options = GrContextOptions());
 
-  bool Initialize();
   void Destroy();
-  GrContext* GetGrContext() override;
 
   // VulkanContextProvider implementation
   gpu::VulkanImplementation* GetVulkanImplementation() override;
   gpu::VulkanDeviceQueue* GetDeviceQueue() override;
+  GrContext* GetGrContext() override;
+  GrVkSecondaryCBDrawContext* GetGrSecondaryCBDrawContext() override;
+  void EnqueueSecondaryCBSemaphores(
+      std::vector<VkSemaphore> semaphores) override;
+  void EnqueueSecondaryCBPostSubmitTask(base::OnceClosure closure) override;
 
- protected:
+ private:
   explicit VulkanInProcessContextProvider(
       gpu::VulkanImplementation* vulkan_implementation);
   ~VulkanInProcessContextProvider() override;
 
- private:
+  bool Initialize(const GrContextOptions& context_options);
+
 #if BUILDFLAG(ENABLE_VULKAN)
   sk_sp<GrContext> gr_context_;
   gpu::VulkanImplementation* vulkan_implementation_;

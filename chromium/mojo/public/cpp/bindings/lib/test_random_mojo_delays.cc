@@ -4,6 +4,7 @@
 
 #include <list>
 
+#include "base/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/no_destructor.h"
@@ -13,6 +14,7 @@
 #include "base/synchronization/lock.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "mojo/public/cpp/bindings/lib/binding_state.h"
 #include "mojo/public/cpp/bindings/lib/test_random_mojo_delays.h"
@@ -37,8 +39,7 @@ constexpr base::TimeDelta kPauseBindingsFrequency =
 class RandomMojoDelays {
  public:
   RandomMojoDelays()
-      : runner_for_pauses_(
-            base::CreateSequencedTaskRunnerWithTraits(base::TaskTraits())) {
+      : runner_for_pauses_(base::ThreadPool::CreateSequencedTaskRunner({})) {
     DETACH_FROM_SEQUENCE(runner_for_pauses_sequence_checker);
   }
 
@@ -151,7 +152,7 @@ class RandomMojoDelays {
     }
     // Set the bindings to resume soon.
     // TODO(mpdenton) may cause deadlock on shutdown if this doesn't run. But
-    // there is no PostDelayedTaskWithTraits for a SequencedTaskRunner.
+    // there is no PostDelayedTask for a SequencedTaskRunner.
     if (paused_binding_state_bases.size() > 0) {
       base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,

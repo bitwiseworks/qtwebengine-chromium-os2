@@ -292,9 +292,9 @@ class NET_EXPORT_PRIVATE EntryImpl
   // actual cleanup.
   void GetData(int index, char** buffer, Addr* address);
 
-  // Logs this entry to the internal trace buffer.
-  void Log(const char* msg);
-
+  // |net_log_| should be early since some field destructors (at least
+  // ~SparseControl) can touch it.
+  net::NetLogWithSource net_log_;
   CacheEntryBlock entry_;     // Key related information for this entry.
   CacheRankingsBlock node_;   // Rankings related information for this entry.
   base::WeakPtr<BackendImpl> backend_;  // Back pointer to the cache.
@@ -308,8 +308,6 @@ class NET_EXPORT_PRIVATE EntryImpl
   bool read_only_;            // True if not yet writing.
   bool dirty_;                // True if we detected that this is a dirty entry.
   std::unique_ptr<SparseControl> sparse_;  // Support for sparse entries.
-
-  net::NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(EntryImpl);
 };

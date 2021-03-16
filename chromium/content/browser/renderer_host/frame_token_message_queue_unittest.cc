@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -128,8 +129,9 @@ class FrameTokenMessageQueueTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(FrameTokenMessageQueueTest);
 };
 
-FrameTokenMessageQueueTest::FrameTokenMessageQueueTest()
-    : frame_token_message_queue_(&test_client_) {}
+FrameTokenMessageQueueTest::FrameTokenMessageQueueTest() {
+  frame_token_message_queue_.Init(&test_client_);
+}
 
 // Tests that if a valid IPC::Message is enqueued, that it is processed when its
 // matching frame token arrives.

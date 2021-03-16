@@ -15,7 +15,6 @@
 #include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/network_interfaces.h"
-#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/p2p_socket_type.h"
 #include "third_party/webrtc/rtc_base/async_packet_socket.h"
 
@@ -24,35 +23,6 @@
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT COMPONENT_EXPORT(NETWORK_CPP_BASE)
-
-namespace net {
-class IPAddress;
-class IPEndPoint;
-}  // namespace net
-
-namespace IPC {
-
-template <>
-struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ParamTraits<net::IPEndPoint> {
-  typedef net::IPEndPoint param_type;
-  static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* p);
-  static void Log(const param_type& p, std::string* l);
-};
-
-template <>
-struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ParamTraits<net::IPAddress> {
-  typedef net::IPAddress param_type;
-  static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* p);
-  static void Log(const param_type& p, std::string* l);
-};
-
-}  // namespace IPC
 
 #endif  // INTERNAL_SERVICES_NETWORK_PUBLIC_CPP_P2P_PARAM_TRAITS_H_
 
@@ -86,7 +56,7 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(network::P2PSendPacketMetrics)
   IPC_STRUCT_TRAITS_MEMBER(packet_id)
   IPC_STRUCT_TRAITS_MEMBER(rtc_packet_id)
-  IPC_STRUCT_TRAITS_MEMBER(send_time)
+  IPC_STRUCT_TRAITS_MEMBER(send_time_ms)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(network::P2PPortRange)

@@ -50,32 +50,34 @@ class AudioLatencyTest : public testing::TestWithParam<AudioLatencyTestData> {
     EXPECT_EQ(platform_min_buffer_size,
               media::AudioLatency::GetExactBufferSize(
                   base::TimeDelta::FromSecondsD(0.0), hardware_sample_rate,
-                  hardware_buffer_size, min_buffer_size, max_buffer_size));
+                  hardware_buffer_size, min_buffer_size, max_buffer_size,
+                  limits::kMaxWebAudioBufferSize));
     EXPECT_EQ(
         platform_min_buffer_size,
         media::AudioLatency::GetExactBufferSize(
             base::TimeDelta::FromSecondsD(
                 min_buffer_size / static_cast<double>(hardware_sample_rate)),
             hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-            max_buffer_size));
+            max_buffer_size, limits::kMaxWebAudioBufferSize));
     EXPECT_EQ(
         multiplier * 2,
         media::AudioLatency::GetExactBufferSize(
             base::TimeDelta::FromSecondsD(
                 (multiplier * 2) / static_cast<double>(hardware_sample_rate)),
             hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-            max_buffer_size));
+            max_buffer_size, limits::kMaxWebAudioBufferSize));
     EXPECT_EQ(
         multiplier * 2,
         media::AudioLatency::GetExactBufferSize(
             base::TimeDelta::FromSecondsD(
                 (multiplier * 1.1) / static_cast<double>(hardware_sample_rate)),
             hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-            max_buffer_size));
+            max_buffer_size, limits::kMaxWebAudioBufferSize));
     EXPECT_EQ(platform_max_buffer_size,
               media::AudioLatency::GetExactBufferSize(
                   base::TimeDelta::FromSecondsD(10.0), hardware_sample_rate,
-                  hardware_buffer_size, min_buffer_size, max_buffer_size));
+                  hardware_buffer_size, min_buffer_size, max_buffer_size,
+                  limits::kMaxWebAudioBufferSize));
     if (max_buffer_size) {
       EXPECT_EQ(
           max_buffer_size,
@@ -83,7 +85,7 @@ class AudioLatencyTest : public testing::TestWithParam<AudioLatencyTestData> {
               base::TimeDelta::FromSecondsD(
                   max_buffer_size / static_cast<double>(hardware_sample_rate)),
               hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-              max_buffer_size));
+              max_buffer_size, limits::kMaxWebAudioBufferSize));
     }
 
 #if defined(OS_WIN)
@@ -94,7 +96,7 @@ class AudioLatencyTest : public testing::TestWithParam<AudioLatencyTestData> {
                         (min_buffer_size * 1.1) /
                         static_cast<double>(hardware_sample_rate)),
                     hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-                    max_buffer_size));
+                    max_buffer_size, limits::kMaxWebAudioBufferSize));
     }
 #elif defined(OS_MACOSX)
     EXPECT_EQ(limits::kMaxWebAudioBufferSize,
@@ -103,14 +105,15 @@ class AudioLatencyTest : public testing::TestWithParam<AudioLatencyTestData> {
                       (limits::kMaxAudioBufferSize * 1.1) /
                       static_cast<double>(hardware_sample_rate)),
                   hardware_sample_rate, hardware_buffer_size, min_buffer_size,
-                  max_buffer_size));
+                  max_buffer_size, limits::kMaxWebAudioBufferSize));
 #endif
 
     int previous_buffer_size = 0;
     for (int i = 0; i < 1000; i++) {
       int buffer_size = media::AudioLatency::GetExactBufferSize(
           base::TimeDelta::FromSecondsD(i / 1000.0), hardware_sample_rate,
-          hardware_buffer_size, min_buffer_size, max_buffer_size);
+          hardware_buffer_size, min_buffer_size, max_buffer_size,
+          limits::kMaxWebAudioBufferSize);
       EXPECT_GE(buffer_size, previous_buffer_size);
 #if defined(OS_WIN)
       EXPECT_TRUE(buffer_size == min_buffer_size ||
@@ -134,7 +137,11 @@ TEST(AudioLatency, HighLatencyBufferSizes) {
   }
 #else
   for (int i = 6400; i <= 204800; i *= 2)
+#if defined(USE_CRAS)
+    EXPECT_EQ(8 * (i / 100), AudioLatency::GetHighLatencyBufferSize(i, 32));
+#else
     EXPECT_EQ(2 * (i / 100), AudioLatency::GetHighLatencyBufferSize(i, 32));
+#endif  // defined(USE_CRAS)
 #endif  // defined(OS_WIN)
 }
 
@@ -161,8 +168,8 @@ TEST_P(AudioLatencyTest, ExactBufferSizes) {
   TestExactBufferSizes();
 }
 
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AudioLatencyTest,
 #if defined(OS_WIN)
     // Windows 10 with supported driver will have valid min and max buffer sizes
@@ -187,5 +194,5 @@ INSTANTIATE_TEST_CASE_P(
     testing::Values(std::make_tuple(44100, 256, 0, 0),
                     std::make_tuple(44100, 440, 0, 0))
 #endif
-        );
+);
 }  // namespace media

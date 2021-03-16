@@ -17,6 +17,7 @@
 #include "ppapi/c/private/ppb_isolated_file_system_private.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/host/resource_message_filter.h"
+#include "storage/browser/file_system/isolated_context.h"
 #include "url/gurl.h"
 
 class Profile;
@@ -39,7 +40,7 @@ class PepperIsolatedFileSystemMessageFilter
       content::BrowserPpapiHost* host);
 
   // ppapi::host::ResourceMessageFilter implementation.
-  scoped_refptr<base::TaskRunner> OverrideTaskRunnerForMessage(
+  scoped_refptr<base::SequencedTaskRunner> OverrideTaskRunnerForMessage(
       const IPC::Message& msg) override;
   int32_t OnResourceMessageReceived(
       const IPC::Message& msg,
@@ -58,7 +59,8 @@ class PepperIsolatedFileSystemMessageFilter
   // Returns filesystem id of isolated filesystem if valid, or empty string
   // otherwise.  This must run on the UI thread because ProfileManager only
   // allows access on that thread.
-  std::string CreateCrxFileSystem(Profile* profile);
+  storage::IsolatedContext::ScopedFSHandle CreateCrxFileSystem(
+      Profile* profile);
 
   int32_t OnOpenFileSystem(ppapi::host::HostMessageContext* context,
                            PP_IsolatedFileSystemType_Private type);

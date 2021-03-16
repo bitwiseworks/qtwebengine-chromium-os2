@@ -19,7 +19,7 @@ namespace browsing_data {
 
 class HistoryCounter : public browsing_data::BrowsingDataCounter {
  public:
-  typedef base::Callback<history::WebHistoryService*()>
+  typedef base::RepeatingCallback<history::WebHistoryService*()>
       GetUpdatedWebHistoryServiceCallback;
 
   class HistoryResult : public SyncResult {
@@ -37,14 +37,14 @@ class HistoryCounter : public browsing_data::BrowsingDataCounter {
   };
 
   explicit HistoryCounter(history::HistoryService* history_service,
-                          const GetUpdatedWebHistoryServiceCallback& callback,
+                          GetUpdatedWebHistoryServiceCallback callback,
                           syncer::SyncService* sync_service);
   ~HistoryCounter() override;
 
   void OnInitialized() override;
 
   // Whether there are counting tasks in progress. Only used for testing.
-  bool HasTrackedTasks();
+  bool HasTrackedTasksForTesting();
 
   const char* GetPrefName() const override;
 
@@ -80,7 +80,7 @@ class HistoryCounter : public browsing_data::BrowsingDataCounter {
 
   BrowsingDataCounter::ResultInt local_result_;
 
-  base::WeakPtrFactory<HistoryCounter> weak_ptr_factory_;
+  base::WeakPtrFactory<HistoryCounter> weak_ptr_factory_{this};
 };
 
 }  // namespace browsing_data

@@ -42,9 +42,10 @@ class FrameViewPropertyTreePrinter
       CollectNodes(*layout_view);
     for (Frame* child = frame_view.GetFrame().Tree().FirstChild(); child;
          child = child->Tree().NextSibling()) {
-      if (!child->IsLocalFrame())
+      auto* child_local_frame = DynamicTo<LocalFrame>(child);
+      if (!child_local_frame)
         continue;
-      if (LocalFrameView* child_view = ToLocalFrame(child)->View())
+      if (LocalFrameView* child_view = child_local_frame->View())
         CollectNodes(*child_view);
     }
   }
@@ -53,7 +54,7 @@ class FrameViewPropertyTreePrinter
     for (const auto* fragment = &object.FirstFragment(); fragment;
          fragment = fragment->NextFragment()) {
       if (const auto* properties = fragment->PaintProperties())
-        Traits::AddObjectPaintProperties(object, *properties, *this);
+        Traits::AddObjectPaintProperties(*properties, *this);
     }
     for (const auto* child = object.SlowFirstChild(); child;
          child = child->NextSibling()) {
@@ -68,12 +69,12 @@ class PropertyTreePrinterTraits<TransformPaintPropertyNode> {
   static void AddVisualViewportProperties(
       const VisualViewport& visual_viewport,
       PropertyTreePrinter<TransformPaintPropertyNode>& printer) {
+    printer.AddNode(visual_viewport.GetDeviceEmulationTransformNode());
     printer.AddNode(visual_viewport.GetOverscrollElasticityTransformNode());
     printer.AddNode(visual_viewport.GetPageScaleNode());
     printer.AddNode(visual_viewport.GetScrollTranslationNode());
   }
   static void AddObjectPaintProperties(
-      const LayoutObject& object,
       const ObjectPaintProperties& properties,
       PropertyTreePrinter<TransformPaintPropertyNode>& printer) {
     printer.AddNode(properties.PaintOffsetTranslation());
@@ -93,7 +94,6 @@ class PropertyTreePrinterTraits<ClipPaintPropertyNode> {
       const VisualViewport& visual_viewport,
       PropertyTreePrinter<ClipPaintPropertyNode>& printer) {}
   static void AddObjectPaintProperties(
-      const LayoutObject& object,
       const ObjectPaintProperties& properties,
       PropertyTreePrinter<ClipPaintPropertyNode>& printer) {
     printer.AddNode(properties.FragmentClip());
@@ -116,7 +116,6 @@ class PropertyTreePrinterTraits<EffectPaintPropertyNode> {
       PropertyTreePrinter<EffectPaintPropertyNode>& printer) {}
 
   static void AddObjectPaintProperties(
-      const LayoutObject& object,
       const ObjectPaintProperties& properties,
       PropertyTreePrinter<EffectPaintPropertyNode>& printer) {
     printer.AddNode(properties.Effect());
@@ -125,7 +124,6 @@ class PropertyTreePrinterTraits<EffectPaintPropertyNode> {
     printer.AddNode(properties.HorizontalScrollbarEffect());
     printer.AddNode(properties.Mask());
     printer.AddNode(properties.ClipPath());
-    printer.AddNode(properties.LinkHighlightEffect());
     printer.AddNode(properties.EffectIsolationNode());
   }
 };
@@ -140,7 +138,6 @@ class PropertyTreePrinterTraits<ScrollPaintPropertyNode> {
   }
 
   static void AddObjectPaintProperties(
-      const LayoutObject& object,
       const ObjectPaintProperties& properties,
       PropertyTreePrinter<ScrollPaintPropertyNode>& printer) {
     printer.AddNode(properties.Scroll());
@@ -166,6 +163,10 @@ void SetDebugName(const PropertyTreeNode* node,
 namespace paint_property_tree_printer {
 
 void UpdateDebugNames(const VisualViewport& viewport) {
+  if (auto* device_emulation_node = viewport.GetDeviceEmulationTransformNode())
+    device_emulation_node->SetDebugName("Device Emulation Node");
+  if (auto* overscroll_node = viewport.GetOverscrollElasticityTransformNode())
+    overscroll_node->SetDebugName("Overscroll Elasticity Node");
   viewport.GetPageScaleNode()->SetDebugName("VisualViewport Scale Node");
   viewport.GetScrollTranslationNode()->SetDebugName(
       "VisualViewport Translate Node");
@@ -206,7 +207,6 @@ void UpdateDebugNames(const LayoutObject& object,
                "HorizontalScrollbarEffect", object);
   SetDebugName(properties.Mask(), "Mask", object);
   SetDebugName(properties.ClipPath(), "ClipPath", object);
-  SetDebugName(properties.LinkHighlightEffect(), "LinkHighlightEffect", object);
   SetDebugName(properties.EffectIsolationNode(), "EffectIsolationNode", object);
 
   SetDebugName(properties.Scroll(), "Scroll", object);
@@ -225,22 +225,21 @@ CORE_EXPORT void showAllPropertyTrees(const blink::LocalFrameView& rootFrame) {
 
 void showTransformPropertyTree(const blink::LocalFrameView& rootFrame) {
   LOG(ERROR) << "Transform tree:\n"
-             << transformPropertyTreeAsString(rootFrame).Utf8().data();
+             << transformPropertyTreeAsString(rootFrame).Utf8();
 }
 
 void showClipPropertyTree(const blink::LocalFrameView& rootFrame) {
-  LOG(ERROR) << "Clip tree:\n"
-             << clipPropertyTreeAsString(rootFrame).Utf8().data();
+  LOG(ERROR) << "Clip tree:\n" << clipPropertyTreeAsString(rootFrame).Utf8();
 }
 
 void showEffectPropertyTree(const blink::LocalFrameView& rootFrame) {
   LOG(ERROR) << "Effect tree:\n"
-             << effectPropertyTreeAsString(rootFrame).Utf8().data();
+             << effectPropertyTreeAsString(rootFrame).Utf8();
 }
 
 void showScrollPropertyTree(const blink::LocalFrameView& rootFrame) {
   LOG(ERROR) << "Scroll tree:\n"
-             << scrollPropertyTreeAsString(rootFrame).Utf8().data();
+             << scrollPropertyTreeAsString(rootFrame).Utf8();
 }
 
 String transformPropertyTreeAsString(const blink::LocalFrameView& rootFrame) {

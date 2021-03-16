@@ -12,6 +12,8 @@ pattern that is passed in.  Only files which match the regex
 will be written to the list.
 """
 
+from __future__ import print_function
+
 import os
 import re
 import sys
@@ -19,10 +21,12 @@ import sys
 from cStringIO import StringIO
 from optparse import OptionParser
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "pylib"))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mojom"))
 
-from mojom.generate.generator import  WriteFile
+from mojom.generate.generator import WriteFile
 
 
 def main():
@@ -39,7 +43,7 @@ def main():
 
   stream = StringIO()
   for f in files:
-    print >> stream, f
+    print(f, file=stream)
 
   WriteFile(stream.getvalue(), options.output)
   stream.close()

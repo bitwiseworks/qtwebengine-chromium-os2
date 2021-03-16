@@ -7,13 +7,12 @@
 #include <ctime>
 #include <vector>
 
-#include "testing/gtest/include/gtest/gtest.h"
 #include "net/third_party/quiche/src/http2/test_tools/http2_random.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_test.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_constants.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_decoder_adapter.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_encoder.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_test_utils.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
 
 namespace spdy {
 namespace test {
@@ -23,7 +22,7 @@ namespace {
 // Supports testing with the input split at every byte boundary.
 enum InputSizeParam { ALL_INPUT, ONE_BYTE, ZERO_THEN_ONE_BYTE };
 
-class HpackRoundTripTest : public ::testing::TestWithParam<InputSizeParam> {
+class HpackRoundTripTest : public QuicheTestWithParam<InputSizeParam> {
  protected:
   HpackRoundTripTest() : encoder_(ObtainHpackHuffmanTable()), decoder_() {}
 
@@ -34,7 +33,7 @@ class HpackRoundTripTest : public ::testing::TestWithParam<InputSizeParam> {
   }
 
   bool RoundTrip(const SpdyHeaderBlock& header_set) {
-    SpdyString encoded;
+    std::string encoded;
     encoder_.EncodeHeaderSet(header_set, &encoded);
 
     bool success = true;
@@ -78,11 +77,11 @@ class HpackRoundTripTest : public ::testing::TestWithParam<InputSizeParam> {
   HpackDecoderAdapter decoder_;
 };
 
-INSTANTIATE_TEST_CASE_P(Tests,
-                        HpackRoundTripTest,
-                        ::testing::Values(ALL_INPUT,
-                                          ONE_BYTE,
-                                          ZERO_THEN_ONE_BYTE));
+INSTANTIATE_TEST_SUITE_P(Tests,
+                         HpackRoundTripTest,
+                         ::testing::Values(ALL_INPUT,
+                                           ONE_BYTE,
+                                           ZERO_THEN_ONE_BYTE));
 
 TEST_P(HpackRoundTripTest, ResponseFixtures) {
   {
@@ -111,7 +110,7 @@ TEST_P(HpackRoundTripTest, ResponseFixtures) {
     headers["set-cookie"] =
         "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU;"
         " max-age=3600; version=1";
-    headers["multivalue"] = SpdyString("foo\0bar", 7);
+    headers["multivalue"] = std::string("foo\0bar", 7);
     EXPECT_TRUE(RoundTrip(headers));
   }
 }
@@ -144,7 +143,7 @@ TEST_P(HpackRoundTripTest, RequestFixtures) {
     headers[":scheme"] = "https";
     headers["custom-key"] = "custom-value";
     headers["cookie"] = "baz=bing; fizzle=fazzle; garbage";
-    headers["multivalue"] = SpdyString("foo\0bar", 7);
+    headers["multivalue"] = std::string("foo\0bar", 7);
     EXPECT_TRUE(RoundTrip(headers));
   }
 }
@@ -153,7 +152,7 @@ TEST_P(HpackRoundTripTest, RandomizedExamples) {
   // Grow vectors of names & values, which are seeded with fixtures and then
   // expanded with dynamically generated data. Samples are taken using the
   // exponential distribution.
-  std::vector<SpdyString> pseudo_header_names, random_header_names;
+  std::vector<std::string> pseudo_header_names, random_header_names;
   pseudo_header_names.push_back(":authority");
   pseudo_header_names.push_back(":path");
   pseudo_header_names.push_back(":status");
@@ -161,7 +160,7 @@ TEST_P(HpackRoundTripTest, RandomizedExamples) {
   // TODO(jgraettinger): Enable "cookie" as a name fixture. Crumbs may be
   // reconstructed in any order, which breaks the simple validation used here.
 
-  std::vector<SpdyString> values;
+  std::vector<std::string> values;
   values.push_back("/");
   values.push_back("/index.html");
   values.push_back("200");
@@ -180,7 +179,7 @@ TEST_P(HpackRoundTripTest, RandomizedExamples) {
         std::min(header_count, 1 + SampleExponential(7, 50));
     EXPECT_LE(pseudo_header_count, header_count);
     for (size_t j = 0; j != header_count; ++j) {
-      SpdyString name, value;
+      std::string name, value;
       // Pseudo headers must be added before regular headers.
       if (j < pseudo_header_count) {
         // Choose one of the defined pseudo headers at random.
@@ -204,7 +203,8 @@ TEST_P(HpackRoundTripTest, RandomizedExamples) {
       // Randomly reuse an existing value, or generate a new one.
       size_t value_index = SampleExponential(20, 200);
       if (value_index >= values.size()) {
-        SpdyString newvalue = random_.RandString(1 + SampleExponential(15, 75));
+        std::string newvalue =
+            random_.RandString(1 + SampleExponential(15, 75));
         // Currently order is not preserved in the encoder.  In particular,
         // when a value is decomposed at \0 delimiters, its parts might get
         // encoded out of order if some but not all of them already exist in

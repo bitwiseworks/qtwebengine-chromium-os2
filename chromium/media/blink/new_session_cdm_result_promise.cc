@@ -53,12 +53,12 @@ NewSessionCdmResultPromise::NewSessionCdmResultPromise(
     const blink::WebContentDecryptionModuleResult& result,
     const std::string& key_system_uma_prefix,
     const std::string& uma_name,
-    const SessionInitializedCB& new_session_created_cb,
+    SessionInitializedCB new_session_created_cb,
     const std::vector<SessionInitStatus>& expected_statuses)
     : web_cdm_result_(result),
       key_system_uma_prefix_(key_system_uma_prefix),
       uma_name_(uma_name),
-      new_session_created_cb_(new_session_created_cb),
+      new_session_created_cb_(std::move(new_session_created_cb)),
       expected_statuses_(expected_statuses),
       creation_time_(base::TimeTicks::Now()) {}
 
@@ -73,16 +73,16 @@ void NewSessionCdmResultPromise::resolve(const std::string& session_id) {
   // |new_session_created_cb_| uses a WeakPtr<> and may not do anything
   // if the session object has been destroyed.
   SessionInitStatus status = SessionInitStatus::UNKNOWN_STATUS;
-  new_session_created_cb_.Run(session_id, &status);
+  std::move(new_session_created_cb_).Run(session_id, &status);
 
-  if (!base::ContainsValue(expected_statuses_, status)) {
+  if (!base::Contains(expected_statuses_, status)) {
     reject(Exception::INVALID_STATE_ERROR, 0,
            "Cannot finish session initialization");
     return;
   }
 
   MarkPromiseSettled();
-  ReportCdmResultUMA(key_system_uma_prefix_ + uma_name_,
+  ReportCdmResultUMA(key_system_uma_prefix_ + uma_name_, 0,
                      ConvertStatusToUMAResult(status));
 
   // Only report time for promise resolution (not rejection).
@@ -99,7 +99,7 @@ void NewSessionCdmResultPromise::reject(CdmPromise::Exception exception_code,
            << ", error_message = " << error_message;
 
   MarkPromiseSettled();
-  ReportCdmResultUMA(uma_name_,
+  ReportCdmResultUMA(key_system_uma_prefix_ + uma_name_, system_code,
                      ConvertCdmExceptionToResultForUMA(exception_code));
   web_cdm_result_.CompleteWithError(ConvertCdmException(exception_code),
                                     system_code,

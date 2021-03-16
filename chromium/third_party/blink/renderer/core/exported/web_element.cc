@@ -41,12 +41,12 @@
 #include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace blink {
-
-using namespace html_names;
 
 bool WebElement::IsFormControlElement() const {
   return ConstUnwrap<Element>()->IsFormControlElement();
@@ -66,7 +66,8 @@ bool WebElement::IsEditable() const {
       return true;
   }
 
-  return EqualIgnoringASCIICase(element->getAttribute(kRoleAttr), "textbox");
+  return EqualIgnoringASCIICase(
+      element->FastGetAttribute(html_names::kRoleAttr), "textbox");
 }
 
 WebString WebElement::TagName() const {
@@ -81,7 +82,7 @@ bool WebElement::HasHTMLTagName(const WebString& tag_name) const {
   // createElementNS(xhtmlNS, 'INPUT') HTMLUnknownElement INPUT    INPUT
   const Element* element = ConstUnwrap<Element>();
   return html_names::xhtmlNamespaceURI == element->namespaceURI() &&
-         element->localName() == String(tag_name).DeprecatedLower();
+         element->localName() == String(tag_name).LowerASCII();
 }
 
 bool WebElement::HasAttribute(const WebString& attr_name) const {
@@ -125,7 +126,7 @@ WebString WebElement::TextContent() const {
 }
 
 WebString WebElement::InnerHTML() const {
-  return ConstUnwrap<Element>()->InnerHTMLAsString();
+  return ConstUnwrap<Element>()->innerHTML();
 }
 
 bool WebElement::IsAutonomousCustomElement() const {
@@ -144,21 +145,36 @@ WebNode WebElement::ShadowRoot() const {
   return WebNode(root);
 }
 
-bool WebElement::HasNonEmptyLayoutSize() const {
-  return ConstUnwrap<Element>()->HasNonEmptyLayoutSize();
-}
-
 WebRect WebElement::BoundsInViewport() const {
   return ConstUnwrap<Element>()->BoundsInViewport();
 }
 
 SkBitmap WebElement::ImageContents() {
-  if (IsNull())
-    return {};
-  Image* image = Unwrap<Element>()->ImageContents();
+  Image* image = GetImage();
   if (!image)
     return {};
   return image->AsSkBitmapForCurrentFrame(kRespectImageOrientation);
+}
+
+std::vector<uint8_t> WebElement::CopyOfImageData() {
+  Image* image = GetImage();
+  if (!image || !image->Data())
+    return std::vector<uint8_t>();
+  return image->Data()->CopyAs<std::vector<uint8_t>>();
+}
+
+std::string WebElement::ImageExtension() {
+  Image* image = GetImage();
+  if (!image)
+    return std::string();
+  return image->FilenameExtension().Utf8();
+}
+
+gfx::Size WebElement::GetImageSize() {
+  Image* image = GetImage();
+  if (!image)
+    return gfx::Size();
+  return gfx::Size(image->width(), image->height());
 }
 
 void WebElement::RequestFullscreen() {
@@ -168,7 +184,7 @@ void WebElement::RequestFullscreen() {
 
 WebElement::WebElement(Element* elem) : WebNode(elem) {}
 
-DEFINE_WEB_NODE_TYPE_CASTS(WebElement, IsElementNode());
+DEFINE_WEB_NODE_TYPE_CASTS(WebElement, IsElementNode())
 
 WebElement& WebElement::operator=(Element* elem) {
   private_ = elem;
@@ -176,7 +192,13 @@ WebElement& WebElement::operator=(Element* elem) {
 }
 
 WebElement::operator Element*() const {
-  return ToElement(private_.Get());
+  return blink::To<Element>(private_.Get());
+}
+
+Image* WebElement::GetImage() {
+  if (IsNull())
+    return nullptr;
+  return Unwrap<Element>()->ImageContents();
 }
 
 }  // namespace blink

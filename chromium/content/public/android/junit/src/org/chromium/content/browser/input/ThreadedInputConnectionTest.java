@@ -36,8 +36,10 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.PostTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.concurrent.Callable;
 
@@ -57,7 +59,7 @@ public class ThreadedInputConnectionTest {
     boolean mRunningOnUiThread;
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         MockitoAnnotations.initMocks(this);
 
         mImeAdapter = Mockito.mock(ImeAdapterImpl.class);
@@ -186,7 +188,7 @@ public class ThreadedInputConnectionTest {
     public void testRendererCannotUpdateState() {
         when(mImeAdapter.requestTextInputStateUpdate()).thenReturn(true);
         // We found that renderer cannot update state, e.g., due to a crash.
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 try {
@@ -232,7 +234,7 @@ public class ThreadedInputConnectionTest {
 
     @Test
     @Feature("TextInput")
-    public void testUpdateSelectionBehaviorWhenUpdatesRequested() throws InterruptedException {
+    public void testUpdateSelectionBehaviorWhenUpdatesRequested() {
         // Arrange.
         final ExtractedTextRequest request = new ExtractedTextRequest();
 
@@ -265,7 +267,7 @@ public class ThreadedInputConnectionTest {
 
     @Test
     @Feature("TextInput")
-    public void testUpdateSelectionBehaviorWhenUpdatesNotRequested() throws InterruptedException {
+    public void testUpdateSelectionBehaviorWhenUpdatesNotRequested() {
         // Arrange.
         final ExtractedTextRequest request = new ExtractedTextRequest();
 
@@ -314,7 +316,7 @@ public class ThreadedInputConnectionTest {
 
     @Test
     @Feature("TextInput")
-    public void testExtractedTextNotSentAfterInputConnectionReset() throws InterruptedException {
+    public void testExtractedTextNotSentAfterInputConnectionReset() {
         // Arrange.
         final ExtractedTextRequest request = new ExtractedTextRequest();
 

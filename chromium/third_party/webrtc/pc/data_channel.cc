@@ -14,7 +14,6 @@
 #include <string>
 #include <utility>
 
-#include "absl/memory/memory.h"
 #include "media/sctp/sctp_transport_internal.h"
 #include "pc/sctp_utils.h"
 #include "rtc_base/checks.h"
@@ -27,6 +26,40 @@ namespace webrtc {
 
 static size_t kMaxQueuedReceivedDataBytes = 16 * 1024 * 1024;
 static size_t kMaxQueuedSendDataBytes = 16 * 1024 * 1024;
+
+namespace {
+
+static std::atomic<int> g_unique_id{0};
+
+int GenerateUniqueId() {
+  return ++g_unique_id;
+}
+
+}  // namespace
+
+InternalDataChannelInit::InternalDataChannelInit(const DataChannelInit& base)
+    : DataChannelInit(base), open_handshake_role(kOpener) {
+  // If the channel is externally negotiated, do not send the OPEN message.
+  if (base.negotiated) {
+    open_handshake_role = kNone;
+  } else {
+    // Datachannel is externally negotiated. Ignore the id value.
+    // Specified in createDataChannel, WebRTC spec section 6.1 bullet 13.
+    id = -1;
+  }
+  // Backwards compatibility: If base.maxRetransmits or base.maxRetransmitTime
+  // have been set to -1, unset them.
+  if (maxRetransmits && *maxRetransmits == -1) {
+    RTC_LOG(LS_ERROR)
+        << "Accepting maxRetransmits = -1 for backwards compatibility";
+    maxRetransmits = absl::nullopt;
+  }
+  if (maxRetransmitTime && *maxRetransmitTime == -1) {
+    RTC_LOG(LS_ERROR)
+        << "Accepting maxRetransmitTime = -1 for backwards compatibility";
+    maxRetransmitTime = absl::nullopt;
+  }
+}
 
 bool SctpSidAllocator::AllocateSid(rtc::SSLRole role, int* sid) {
   int potential_sid = (role == rtc::SSL_CLIENT) ? 0 : 1;
@@ -114,19 +147,23 @@ rtc::scoped_refptr<DataChannel> DataChannel::Create(
 }
 
 bool DataChannel::IsSctpLike(cricket::DataChannelType type) {
-  return type == cricket::DCT_SCTP || type == cricket::DCT_MEDIA_TRANSPORT;
+  return type == cricket::DCT_SCTP || type == cricket::DCT_MEDIA_TRANSPORT ||
+         type == cricket::DCT_DATA_CHANNEL_TRANSPORT ||
+         type == cricket::DCT_DATA_CHANNEL_TRANSPORT_SCTP;
 }
 
 DataChannel::DataChannel(DataChannelProviderInterface* provider,
                          cricket::DataChannelType dct,
                          const std::string& label)
-    : label_(label),
+    : internal_id_(GenerateUniqueId()),
+      label_(label),
       observer_(nullptr),
       state_(kConnecting),
       messages_sent_(0),
       bytes_sent_(0),
       messages_received_(0),
       bytes_received_(0),
+      buffered_amount_(0),
       data_channel_type_(dct),
       provider_(provider),
       handshake_state_(kHandshakeInit),
@@ -139,21 +176,22 @@ DataChannel::DataChannel(DataChannelProviderInterface* provider,
 
 bool DataChannel::Init(const InternalDataChannelInit& config) {
   if (data_channel_type_ == cricket::DCT_RTP) {
-    if (config.reliable || config.id != -1 || config.maxRetransmits != -1 ||
-        config.maxRetransmitTime != -1) {
+    if (config.reliable || config.id != -1 || config.maxRetransmits ||
+        config.maxRetransmitTime) {
       RTC_LOG(LS_ERROR) << "Failed to initialize the RTP data channel due to "
                            "invalid DataChannelInit.";
       return false;
     }
     handshake_state_ = kHandshakeReady;
   } else if (IsSctpLike(data_channel_type_)) {
-    if (config.id < -1 || config.maxRetransmits < -1 ||
-        config.maxRetransmitTime < -1) {
+    if (config.id < -1 ||
+        (config.maxRetransmits && *config.maxRetransmits < 0) ||
+        (config.maxRetransmitTime && *config.maxRetransmitTime < 0)) {
       RTC_LOG(LS_ERROR) << "Failed to initialize the SCTP data channel due to "
                            "invalid DataChannelInit.";
       return false;
     }
-    if (config.maxRetransmits != -1 && config.maxRetransmitTime != -1) {
+    if (config.maxRetransmits && config.maxRetransmitTime) {
       RTC_LOG(LS_ERROR)
           << "maxRetransmits and maxRetransmitTime should not be both set.";
       return false;
@@ -205,12 +243,12 @@ bool DataChannel::reliable() const {
   if (data_channel_type_ == cricket::DCT_RTP) {
     return false;
   } else {
-    return config_.maxRetransmits == -1 && config_.maxRetransmitTime == -1;
+    return !config_.maxRetransmits && !config_.maxRetransmitTime;
   }
 }
 
 uint64_t DataChannel::buffered_amount() const {
-  return queued_send_data_.byte_count();
+  return buffered_amount_;
 }
 
 void DataChannel::Close() {
@@ -223,7 +261,12 @@ void DataChannel::Close() {
   UpdateState();
 }
 
+RTCError DataChannel::error() const {
+  return error_;
+}
+
 bool DataChannel::Send(const DataBuffer& buffer) {
+  buffered_amount_ += buffer.size();
   if (state_ != kOpen) {
     return false;
   }
@@ -244,7 +287,10 @@ bool DataChannel::Send(const DataBuffer& buffer) {
     if (!QueueSendDataMessage(buffer)) {
       RTC_LOG(LS_ERROR) << "Closing the DataChannel due to a failure to queue "
                            "additional data.";
-      CloseAbruptly();
+      // https://w3c.github.io/webrtc-pc/#dom-rtcdatachannel-send step 5
+      // Note that the spec doesn't explicitly say to close in this situation.
+      CloseAbruptlyWithError(RTCError(RTCErrorType::RESOURCE_EXHAUSTED,
+                                      "Unable to queue data for sending"));
     }
     return true;
   }
@@ -320,16 +366,21 @@ void DataChannel::OnTransportChannelCreated() {
   }
 }
 
-void DataChannel::OnTransportChannelDestroyed() {
-  // The SctpTransport is going away (for example, because the SCTP m= section
-  // was rejected), so we need to close abruptly.
-  CloseAbruptly();
+void DataChannel::OnTransportChannelClosed() {
+  // The SctpTransport is unusable (for example, because the SCTP m= section
+  // was rejected, or because the DTLS transport closed), so we need to close
+  // abruptly.
+  // Note: this needs to differentiate between normal close and error close.
+  // https://w3c.github.io/webrtc-pc/#announcing-a-data-channel-as-closed
+  CloseAbruptlyWithError(
+      RTCError(RTCErrorType::NETWORK_ERROR, "Transport channel closed"));
 }
 
 // The remote peer request that this channel shall be closed.
 void DataChannel::RemotePeerRequestClose() {
   RTC_DCHECK(data_channel_type_ == cricket::DCT_RTP);
-  CloseAbruptly();
+  // Close with error code explicitly set to OK.
+  CloseAbruptlyWithError(RTCError());
 }
 
 void DataChannel::SetSendSsrc(uint32_t send_ssrc) {
@@ -386,7 +437,7 @@ void DataChannel::OnDataReceived(const cricket::ReceiveDataParams& params,
   }
 
   bool binary = (params.type == cricket::DMT_BINARY);
-  auto buffer = absl::make_unique<DataBuffer>(payload, binary);
+  auto buffer = std::make_unique<DataBuffer>(payload, binary);
   if (state_ == kOpen && observer_) {
     ++messages_received_;
     bytes_received_ += buffer->size();
@@ -398,7 +449,9 @@ void DataChannel::OnDataReceived(const cricket::ReceiveDataParams& params,
 
       queued_received_data_.Clear();
       if (data_channel_type_ != cricket::DCT_RTP) {
-        CloseAbruptly();
+        CloseAbruptlyWithError(
+            RTCError(RTCErrorType::RESOURCE_EXHAUSTED,
+                     "Queued received data exceeds the max buffer size."));
       }
 
       return;
@@ -418,7 +471,7 @@ void DataChannel::OnChannelReady(bool writable) {
   UpdateState();
 }
 
-void DataChannel::CloseAbruptly() {
+void DataChannel::CloseAbruptlyWithError(RTCError error) {
   if (state_ == kClosed) {
     return;
   }
@@ -429,12 +482,21 @@ void DataChannel::CloseAbruptly() {
 
   // Closing abruptly means any queued data gets thrown away.
   queued_send_data_.Clear();
+  buffered_amount_ = 0;
   queued_control_data_.Clear();
 
   // Still go to "kClosing" before "kClosed", since observers may be expecting
   // that.
   SetState(kClosing);
+  error_ = std::move(error);
   SetState(kClosed);
+}
+
+void DataChannel::CloseAbruptlyWithDataChannelFailure(
+    const std::string& message) {
+  RTCError error(RTCErrorType::OPERATION_ERROR_WITH_DATA, message);
+  error.set_error_detail(RTCErrorDetailType::DATA_CHANNEL_FAILURE);
+  CloseAbruptlyWithError(std::move(error));
 }
 
 void DataChannel::UpdateState() {
@@ -548,7 +610,6 @@ void DataChannel::SendQueuedDataMessages() {
 
   RTC_DCHECK(state_ == kOpen || state_ == kClosing);
 
-  uint64_t start_buffered_amount = buffered_amount();
   while (!queued_send_data_.Empty()) {
     std::unique_ptr<DataBuffer> buffer = queued_send_data_.PopFront();
     if (!SendDataMessage(*buffer, false)) {
@@ -556,10 +617,6 @@ void DataChannel::SendQueuedDataMessages() {
       queued_send_data_.PushFront(std::move(buffer));
       break;
     }
-  }
-
-  if (observer_ && buffered_amount() < start_buffered_amount) {
-    observer_->OnBufferedAmountChange(start_buffered_amount);
   }
 }
 
@@ -577,8 +634,10 @@ bool DataChannel::SendDataMessage(const DataBuffer& buffer,
              "because the OPEN_ACK message has not been received.";
     }
 
-    send_params.max_rtx_count = config_.maxRetransmits;
-    send_params.max_rtx_ms = config_.maxRetransmitTime;
+    send_params.max_rtx_count =
+        config_.maxRetransmits ? *config_.maxRetransmits : -1;
+    send_params.max_rtx_ms =
+        config_.maxRetransmitTime ? *config_.maxRetransmitTime : -1;
     send_params.sid = config_.id;
   } else {
     send_params.ssrc = send_ssrc_;
@@ -591,6 +650,12 @@ bool DataChannel::SendDataMessage(const DataBuffer& buffer,
   if (success) {
     ++messages_sent_;
     bytes_sent_ += buffer.size();
+
+    RTC_DCHECK(buffered_amount_ >= buffer.size());
+    buffered_amount_ -= buffer.size();
+    if (observer_ && buffer.size() > 0) {
+      observer_->OnBufferedAmountChange(buffer.size());
+    }
     return true;
   }
 
@@ -608,23 +673,19 @@ bool DataChannel::SendDataMessage(const DataBuffer& buffer,
   RTC_LOG(LS_ERROR) << "Closing the DataChannel due to a failure to send data, "
                        "send_result = "
                     << send_result;
-  CloseAbruptly();
+  CloseAbruptlyWithError(
+      RTCError(RTCErrorType::NETWORK_ERROR, "Failure to send data"));
 
   return false;
 }
 
 bool DataChannel::QueueSendDataMessage(const DataBuffer& buffer) {
-  size_t start_buffered_amount = buffered_amount();
-  if (start_buffered_amount >= kMaxQueuedSendDataBytes) {
+  size_t start_buffered_amount = queued_send_data_.byte_count();
+  if (start_buffered_amount + buffer.size() > kMaxQueuedSendDataBytes) {
     RTC_LOG(LS_ERROR) << "Can't buffer any more data for the data channel.";
     return false;
   }
-  queued_send_data_.PushBack(absl::make_unique<DataBuffer>(buffer));
-
-  // The buffer can have length zero, in which case there is no change.
-  if (observer_ && buffered_amount() > start_buffered_amount) {
-    observer_->OnBufferedAmountChange(start_buffered_amount);
-  }
+  queued_send_data_.PushBack(std::make_unique<DataBuffer>(buffer));
   return true;
 }
 
@@ -639,7 +700,7 @@ void DataChannel::SendQueuedControlMessages() {
 }
 
 void DataChannel::QueueControlMessage(const rtc::CopyOnWriteBuffer& buffer) {
-  queued_control_data_.PushBack(absl::make_unique<DataBuffer>(buffer, true));
+  queued_control_data_.PushBack(std::make_unique<DataBuffer>(buffer, true));
 }
 
 bool DataChannel::SendControlMessage(const rtc::CopyOnWriteBuffer& buffer) {
@@ -661,7 +722,7 @@ bool DataChannel::SendControlMessage(const rtc::CopyOnWriteBuffer& buffer) {
   cricket::SendDataResult send_result = cricket::SDR_SUCCESS;
   bool retval = provider_->SendData(send_params, buffer, &send_result);
   if (retval) {
-    RTC_LOG(LS_INFO) << "Sent CONTROL message on channel " << config_.id;
+    RTC_LOG(LS_VERBOSE) << "Sent CONTROL message on channel " << config_.id;
 
     if (handshake_state_ == kHandshakeShouldSendAck) {
       handshake_state_ = kHandshakeReady;
@@ -674,9 +735,15 @@ bool DataChannel::SendControlMessage(const rtc::CopyOnWriteBuffer& buffer) {
     RTC_LOG(LS_ERROR) << "Closing the DataChannel due to a failure to send"
                          " the CONTROL message, send_result = "
                       << send_result;
-    CloseAbruptly();
+    CloseAbruptlyWithError(RTCError(RTCErrorType::NETWORK_ERROR,
+                                    "Failed to send a CONTROL message"));
   }
   return retval;
+}
+
+// static
+void DataChannel::ResetInternalIdAllocatorForTesting(int new_value) {
+  g_unique_id = new_value;
 }
 
 }  // namespace webrtc

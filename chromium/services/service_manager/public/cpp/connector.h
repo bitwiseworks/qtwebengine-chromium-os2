@@ -7,15 +7,19 @@
 
 #include <map>
 #include <memory>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/optional.h"
 #include "base/sequence_checker.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/service_manager/public/cpp/export.h"
 #include "services/service_manager/public/cpp/identity.h"
 #include "services/service_manager/public/mojom/connector.mojom.h"
-#include "services/service_manager/public/mojom/service.mojom.h"
-#include "services/service_manager/public/mojom/service_manager.mojom.h"
+#include "services/service_manager/public/mojom/service.mojom-forward.h"
+#include "services/service_manager/public/mojom/service_manager.mojom-forward.h"
 
 namespace service_manager {
 
@@ -61,13 +65,14 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
     Connector* connector_;
   };
 
-  explicit Connector(mojom::ConnectorPtrInfo unbound_state);
-  explicit Connector(mojom::ConnectorPtr connector);
+  explicit Connector(mojo::PendingRemote<mojom::Connector> unbound_state);
+  explicit Connector(mojo::Remote<mojom::Connector> connector);
   ~Connector();
 
-  // Creates a new Connector instance and fills in |*request| with a request
+  // Creates a new Connector instance and fills in |*receiver| with a request
   // for the other end the Connector's interface.
-  static std::unique_ptr<Connector> Create(mojom::ConnectorRequest* request);
+  static std::unique_ptr<Connector> Create(
+      mojo::PendingReceiver<mojom::Connector>* receiver);
 
   // Asks the Service Manager to ensure that there's a running service instance
   // which would match |filter| from the caller's perspective. Useful when
@@ -105,16 +110,58 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
   // manifest. This is considered privileged behavior.
   using RegisterServiceInstanceCallback =
       base::OnceCallback<void(mojom::ConnectResult result)>;
-  void RegisterServiceInstance(const Identity& identity,
-                               mojom::ServicePtr service,
-                               mojom::PIDReceiverRequest pid_receiver_request,
-                               RegisterServiceInstanceCallback callback = {});
+  void RegisterServiceInstance(
+      const Identity& identity,
+      mojo::PendingRemote<mojom::Service> service,
+      mojo::PendingReceiver<mojom::ProcessMetadata> metadata_receiver,
+      RegisterServiceInstanceCallback callback = {});
 
   // Determines if the service for |service_name| is known, and returns
   // information about it from the catalog.
   void QueryService(const std::string& service_name,
                     mojom::Connector::QueryServiceCallback callback);
 
+  // All variants of |Connect()| ask the Service Manager to route a
+  // |mojo::Receiver<T>| for any interface type T to a service instance
+  // identified by a ServiceFilter. If no running service instance matches the
+  // provided ServiceFilter, the Service Manager may start a new instance which
+  // does, before routing the Receiver to it.
+  template <typename Interface>
+  void Connect(const ServiceFilter& filter,
+               mojo::PendingReceiver<Interface> receiver,
+               mojom::BindInterfacePriority priority =
+                   mojom::BindInterfacePriority::kImportant) {
+    BindInterface(filter, std::move(receiver), priority);
+  }
+
+  // A variant of the above which constructs a simple ServiceFilter by service
+  // name only. This will route the Receiver to any available instance of the
+  // named service.
+  template <typename Interface>
+  void Connect(const std::string& service_name,
+               mojo::PendingReceiver<Interface> receiver) {
+    Connect(ServiceFilter::ByName(service_name), std::move(receiver));
+  }
+
+  // A variant of the above which take a callback, |callback| conveys
+  // information about the result of the request. See documentation on the mojom
+  // ConnectResult definition for the meaning of |result|. If |result| is
+  // |SUCCEEDED|, then |identity| will contain the full identity of the matching
+  // service instance to which the pending receiver was routed. This service
+  // instance was either already running, or was started as a result of this
+  // request.
+  using BindInterfaceCallback =
+      base::OnceCallback<void(mojom::ConnectResult result,
+                              const base::Optional<Identity>& identity)>;
+  template <typename Interface>
+  void Connect(const ServiceFilter& filter,
+               mojo::PendingReceiver<Interface> receiver,
+               BindInterfaceCallback callback) {
+    BindInterface(filter, std::move(receiver), std::move(callback));
+  }
+  // DEPRECATED: Prefer |Connect()| above. |BindInterface()| uses deprecated
+  // InterfaceRequest and InterfacePtr types.
+  //
   // All variants of |BindInterface()| ask the Service Manager to route an
   // interface request to a service instance matching |filter|. If no running
   // service instance matches |filter|, the Service Manager may start a new
@@ -135,14 +182,12 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
   // ServiceFilter and InterfaceRequest rather than having a bunch of template
   // helpers to do the same in various combinations. The first and last variants
   // of |BindInterface()| here are sufficient for all use cases.
-  using BindInterfaceCallback =
-      base::OnceCallback<void(mojom::ConnectResult result,
-                              const base::Optional<Identity>& identity)>;
   template <typename Interface>
   void BindInterface(const ServiceFilter& filter,
-                     mojo::InterfaceRequest<Interface> request,
+                     mojo::PendingReceiver<Interface> receiver,
                      BindInterfaceCallback callback = {}) {
-    BindInterface(filter, Interface::Name_, request.PassMessagePipe(),
+    BindInterface(filter, Interface::Name_, receiver.PassPipe(),
+                  mojom::BindInterfacePriority::kImportant,
                   std::move(callback));
   }
 
@@ -161,15 +206,33 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
 
   template <typename Interface>
   void BindInterface(const std::string& service_name,
-                     mojo::InterfaceRequest<Interface> request) {
+                     mojo::PendingReceiver<Interface> receiver) {
     return BindInterface(ServiceFilter::ByName(service_name),
-                         std::move(request));
+                         std::move(receiver));
+  }
+
+  template <typename Interface>
+  void BindInterface(const ServiceFilter& filter,
+                     mojo::PendingReceiver<Interface> receiver,
+                     mojom::BindInterfacePriority priority) {
+    return BindInterface(filter, Interface::Name_, receiver.PassPipe(),
+                         priority, {});
   }
 
   void BindInterface(const ServiceFilter& filter,
                      const std::string& interface_name,
                      mojo::ScopedMessagePipeHandle interface_pipe,
-                     BindInterfaceCallback callback = {});
+                     BindInterfaceCallback callback = {}) {
+    BindInterface(filter, interface_name, std::move(interface_pipe),
+                  mojom::BindInterfacePriority::kImportant,
+                  std::move(callback));
+  }
+
+  void BindInterface(const ServiceFilter& filter,
+                     const std::string& interface_name,
+                     mojo::ScopedMessagePipeHandle interface_pipe,
+                     mojom::BindInterfacePriority priority,
+                     BindInterfaceCallback callback);
 
   // Creates a new instance of this class which may be passed to another thread.
   // The returned object may be passed across sequences until any of its public
@@ -180,13 +243,8 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
   // Returns |true| if this Connector instance is already bound to a thread.
   bool IsBound() const;
 
-  void FilterInterfaces(const std::string& spec,
-                        const Identity& source_identity,
-                        mojom::InterfaceProviderRequest request,
-                        mojom::InterfaceProviderPtr target);
-
-  // Binds a Connector request to the other end of this Connector.
-  void BindConnectorRequest(mojom::ConnectorRequest request);
+  // Binds a Connector receiver to the other end of this Connector.
+  void BindConnectorReceiver(mojo::PendingReceiver<mojom::Connector> receiver);
 
   base::WeakPtr<Connector> GetWeakPtr();
 
@@ -210,15 +268,15 @@ class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
   void OnConnectionError();
   bool BindConnectorIfNecessary();
 
-  mojom::ConnectorPtrInfo unbound_state_;
-  mojom::ConnectorPtr connector_;
+  mojo::PendingRemote<mojom::Connector> unbound_state_;
+  mojo::Remote<mojom::Connector> connector_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
   std::map<service_manager::ServiceFilter, BinderOverrideMap>
       local_binder_overrides_;
 
-  base::WeakPtrFactory<Connector> weak_factory_;
+  base::WeakPtrFactory<Connector> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Connector);
 };

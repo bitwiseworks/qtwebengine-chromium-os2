@@ -5,6 +5,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -56,8 +57,8 @@ class ActivityLogApiTest : public ExtensionApiTest {
   base::CommandLine saved_cmdline_;
 };
 
-#if defined(OS_WIN)
-// TODO(pmarch): fix flakiness on win debug - http://crbug.com/299393
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+// TODO(crbug.com/299393): Flaky on Mac, Windows and Linux.
 #define MAYBE_TriggerEvent DISABLED_TriggerEvent
 #else
 #define MAYBE_TriggerEvent TriggerEvent

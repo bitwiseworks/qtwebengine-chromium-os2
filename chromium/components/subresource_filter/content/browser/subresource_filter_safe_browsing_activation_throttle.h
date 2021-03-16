@@ -17,7 +17,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "components/safe_browsing/db/database_manager.h"
+#include "components/safe_browsing/core/db/database_manager.h"
 #include "components/subresource_filter/content/browser/subresource_filter_safe_browsing_client.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "components/subresource_filter/core/common/activation_decision.h"
@@ -28,12 +28,15 @@ namespace subresource_filter {
 
 class SubresourceFilterClient;
 
-enum class ActivationPosition {
+// Enum representing a position in the redirect chain. These values are
+// persisted to logs. Entries should not be renumbered and numeric values should
+// never be reused.
+enum class RedirectPosition {
   kOnly = 0,
   kFirst = 1,
   kMiddle = 2,
   kLast = 3,
-  kMaxValue = kLast,
+  kMaxValue = kLast
 };
 
 // Navigation throttle responsible for activating subresource filtering on page
@@ -91,9 +94,7 @@ class SubresourceFilterSafeBrowsingActivationThrottle
       const SubresourceFilterSafeBrowsingClient::CheckResult& result);
   // Gets the ActivationDecision for the given Configuration.
   // Returns it, or ACTIVATION_CONDITIONS_NOT_MET if no Configuration.
-  ActivationDecision GetActivationDecision(
-      const std::vector<ConfigResult>& configs,
-      ConfigResult* selected_config);
+  ActivationDecision GetActivationDecision(const ConfigResult& configs);
 
   // Returns whether a main-frame navigation satisfies the activation
   // |conditions| of a given configuration, except for |priority|.
@@ -102,7 +103,6 @@ class SubresourceFilterSafeBrowsingActivationThrottle
       ActivationList matched_list) const;
 
   std::vector<SubresourceFilterSafeBrowsingClient::CheckResult> check_results_;
-  std::vector<base::TimeTicks> check_start_times_;
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 

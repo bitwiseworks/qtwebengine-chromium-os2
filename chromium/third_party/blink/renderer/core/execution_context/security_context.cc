@@ -26,41 +26,79 @@
 
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "services/network/public/mojom/ip_address_space.mojom-blink.h"
+#include "third_party/blink/public/common/feature_policy/document_policy_features.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
+#include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/core/execution_context/agent.h"
+#include "third_party/blink/renderer/core/execution_context/security_context_init.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
+#include "third_party/blink/renderer/core/origin_trials/origin_trial_context.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
 // static
-std::vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
+WTF::Vector<unsigned> SecurityContext::SerializeInsecureNavigationSet(
     const InsecureNavigationsSet& set) {
   // The set is serialized as a sorted array. Sorting it makes it easy to know
   // if two serialized sets are equal.
-  std::vector<unsigned> serialized;
-  serialized.reserve(set.size());
+  WTF::Vector<unsigned> serialized;
+  serialized.ReserveCapacity(set.size());
   for (unsigned host : set)
-    serialized.push_back(host);
+    serialized.emplace_back(host);
   std::sort(serialized.begin(), serialized.end());
 
   return serialized;
 }
 
-SecurityContext::SecurityContext()
-    : sandbox_flags_(kSandboxNone),
-      address_space_(mojom::IPAddressSpace::kPublic),
-      insecure_request_policy_(kLeaveInsecureRequestsAlone),
-      require_safe_types_(false) {}
+SecurityContext::SecurityContext(const SecurityContextInit& init,
+                                 SecurityContextType context_type)
+    : sandbox_flags_(init.GetSandboxFlags()),
+      security_origin_(init.GetSecurityOrigin()),
+      feature_policy_(init.CreateFeaturePolicy()),
+      report_only_feature_policy_(init.CreateReportOnlyFeaturePolicy()),
+      document_policy_(init.CreateDocumentPolicy()),
+      report_only_document_policy_(init.CreateReportOnlyDocumentPolicy()),
+      content_security_policy_(init.GetCSP()),
+      address_space_(network::mojom::IPAddressSpace::kUnknown),
+      insecure_request_policy_(
+          mojom::blink::InsecureRequestPolicy::kLeaveInsecureRequestsAlone),
+      require_safe_types_(false),
+      context_type_(context_type),
+      agent_(init.GetAgent()),
+      secure_context_mode_(init.GetSecureContextMode()),
+      origin_trial_context_(init.GetOriginTrialContext()),
+      bind_csp_immediately_(init.BindCSPImmediately()) {}
 
-SecurityContext::~SecurityContext() = default;
-
-void SecurityContext::Trace(blink::Visitor* visitor) {
+void SecurityContext::Trace(Visitor* visitor) {
   visitor->Trace(content_security_policy_);
+  visitor->Trace(agent_);
+  visitor->Trace(origin_trial_context_);
 }
 
 void SecurityContext::SetSecurityOrigin(
+    scoped_refptr<SecurityOrigin> security_origin) {
+  // Enforce that we don't change access, we might change the reference (via
+  // IsolatedCopy but we can't change the security policy).
+  CHECK(security_origin);
+  // The purpose of this check is to ensure that the SecurityContext does not
+  // change after script has executed in the ExecutionContext. If this is a
+  // RemoteSecurityContext, then there is no local script execution, so it is
+  // safe for the SecurityOrigin to change.
+  // Exempting null ExecutionContexts is also necessary because RemoteFrames and
+  // RemoteSecurityContexts do not change when a cross-origin navigation happens
+  // remotely.
+  CHECK(context_type_ == kRemote || !security_origin_ ||
+        security_origin_->CanAccess(security_origin.get()));
+  security_origin_ = std::move(security_origin);
+}
+
+void SecurityContext::SetSecurityOriginForTesting(
     scoped_refptr<SecurityOrigin> security_origin) {
   security_origin_ = std::move(security_origin);
 }
@@ -70,38 +108,14 @@ void SecurityContext::SetContentSecurityPolicy(
   content_security_policy_ = content_security_policy;
 }
 
-void SecurityContext::EnforceSandboxFlags(SandboxFlags mask) {
-  ApplySandboxFlags(mask);
-}
-
-void SecurityContext::ApplySandboxFlags(SandboxFlags mask,
-                                        bool is_potentially_trustworthy) {
-  sandbox_flags_ |= mask;
-
-  if (IsSandboxed(kSandboxOrigin) && GetSecurityOrigin() &&
-      !GetSecurityOrigin()->IsOpaque()) {
-    scoped_refptr<SecurityOrigin> security_origin =
-        GetSecurityOrigin()->DeriveNewOpaqueOrigin();
-    security_origin->SetOpaqueOriginIsPotentiallyTrustworthy(
-        is_potentially_trustworthy);
-    SetSecurityOrigin(std::move(security_origin));
-    DidUpdateSecurityOrigin();
+bool SecurityContext::IsSandboxed(mojom::blink::WebSandboxFlags mask) const {
+  if (RuntimeEnabledFeatures::FeaturePolicyForSandboxEnabled()) {
+    mojom::blink::FeaturePolicyFeature feature =
+        FeaturePolicy::FeatureForSandboxFlag(mask);
+    if (feature != mojom::blink::FeaturePolicyFeature::kNotFound)
+      return !feature_policy_->IsFeatureEnabled(feature);
   }
-}
-
-String SecurityContext::addressSpaceForBindings() const {
-  switch (address_space_) {
-    case mojom::IPAddressSpace::kPublic:
-      return "public";
-
-    case mojom::IPAddressSpace::kPrivate:
-      return "private";
-
-    case mojom::IPAddressSpace::kLocal:
-      return "local";
-  }
-  NOTREACHED();
-  return "public";
+  return (sandbox_flags_ & mask) != mojom::blink::WebSandboxFlags::kNone;
 }
 
 void SecurityContext::SetRequireTrustedTypes() {
@@ -114,81 +128,63 @@ void SecurityContext::SetRequireTrustedTypesForTesting() {
   require_safe_types_ = true;
 }
 
-bool SecurityContext::RequireTrustedTypes() const {
+bool SecurityContext::TrustedTypesRequiredByPolicy() const {
   return require_safe_types_;
 }
 
 void SecurityContext::SetFeaturePolicy(
     std::unique_ptr<FeaturePolicy> feature_policy) {
-  // This method should be called before a FeaturePolicy has been created.
-  DCHECK(!feature_policy_);
   feature_policy_ = std::move(feature_policy);
 }
 
-void SecurityContext::InitializeFeaturePolicy(
-    const ParsedFeaturePolicy& parsed_header,
-    const ParsedFeaturePolicy& container_policy,
-    const FeaturePolicy* parent_feature_policy) {
-  report_only_feature_policy_ = nullptr;
-  if (!HasCustomizedFeaturePolicy()) {
-    feature_policy_ = FeaturePolicy::CreateFromParentPolicy(
-        nullptr, {}, security_origin_->ToUrlOrigin());
-    return;
-  }
-
-  feature_policy_ = FeaturePolicy::CreateFromParentPolicy(
-      parent_feature_policy, container_policy, security_origin_->ToUrlOrigin());
-  feature_policy_->SetHeaderPolicy(parsed_header);
+void SecurityContext::SetDocumentPolicyForTesting(
+    std::unique_ptr<DocumentPolicy> document_policy) {
+  document_policy_ = std::move(document_policy);
 }
 
-// Uses the parent enforcing policy as the basis for the report-only policy.
-void SecurityContext::AddReportOnlyFeaturePolicy(
-    const ParsedFeaturePolicy& parsed_report_only_header,
-    const ParsedFeaturePolicy& container_policy,
-    const FeaturePolicy* parent_feature_policy) {
-  report_only_feature_policy_ = FeaturePolicy::CreateFromParentPolicy(
-      parent_feature_policy, container_policy, security_origin_->ToUrlOrigin());
-  report_only_feature_policy_->SetHeaderPolicy(parsed_report_only_header);
+bool SecurityContext::IsFeatureEnabled(
+    mojom::blink::FeaturePolicyFeature feature) const {
+  return IsFeatureEnabled(
+      feature, PolicyValue::CreateMaxPolicyValue(
+                   feature_policy_->GetFeatureList().at(feature).second));
 }
 
-bool SecurityContext::IsFeatureEnabled(mojom::FeaturePolicyFeature feature,
-                                       ReportOptions report_on_failure,
-                                       const String& message) const {
-  if (report_on_failure == ReportOptions::kReportOnFailure) {
-    // We are expecting a violation report in case the feature is disabled in
-    // the context. Therefore, this qualifies as a potential violation (i.e.,
-    // if the feature was disabled it would generate a report).
-    CountPotentialFeaturePolicyViolation(feature);
-  }
-
-  FeatureEnabledState state = GetFeatureEnabledState(feature);
-  if (state == FeatureEnabledState::kEnabled)
-    return true;
-  if (report_on_failure == ReportOptions::kReportOnFailure) {
-    ReportFeaturePolicyViolation(
-        feature,
-        (state == FeatureEnabledState::kReportOnly
-             ? mojom::FeaturePolicyDisposition::kReport
-             : mojom::FeaturePolicyDisposition::kEnforce),
-        message);
-  }
-  return (state != FeatureEnabledState::kDisabled);
-}
-
-FeatureEnabledState SecurityContext::GetFeatureEnabledState(
-    mojom::FeaturePolicyFeature feature) const {
-  // The policy should always be initialized before checking it to ensure we
-  // properly inherit the parent policy.
+bool SecurityContext::IsFeatureEnabled(
+    mojom::blink::FeaturePolicyFeature feature,
+    PolicyValue threshold_value,
+    bool* should_report) const {
   DCHECK(feature_policy_);
+  bool feature_policy_result =
+      feature_policy_->IsFeatureEnabled(feature, threshold_value);
+  bool report_only_feature_policy_result =
+      !report_only_feature_policy_ ||
+      report_only_feature_policy_->IsFeatureEnabled(feature, threshold_value);
 
-  if (feature_policy_->IsFeatureEnabled(feature)) {
-    if (report_only_feature_policy_ &&
-        !report_only_feature_policy_->IsFeatureEnabled(feature)) {
-      return FeatureEnabledState::kReportOnly;
-    }
-    return FeatureEnabledState::kEnabled;
+  if (should_report) {
+    *should_report =
+        !feature_policy_result || !report_only_feature_policy_result;
   }
-  return FeatureEnabledState::kDisabled;
+
+  return feature_policy_result;
+}
+
+bool SecurityContext::IsFeatureEnabled(
+    mojom::blink::DocumentPolicyFeature feature) const {
+  DCHECK(GetDocumentPolicyFeatureInfoMap().at(feature).default_value.Type() ==
+         mojom::blink::PolicyValueType::kBool);
+  return IsFeatureEnabled(feature, PolicyValue(true)).enabled;
+}
+
+SecurityContext::FeatureStatus SecurityContext::IsFeatureEnabled(
+    mojom::blink::DocumentPolicyFeature feature,
+    PolicyValue threshold_value) const {
+  DCHECK(document_policy_);
+  bool policy_result =
+      document_policy_->IsFeatureEnabled(feature, threshold_value);
+  bool report_only_policy_result =
+      !report_only_document_policy_ ||
+      report_only_document_policy_->IsFeatureEnabled(feature, threshold_value);
+  return {policy_result, !policy_result || !report_only_policy_result};
 }
 
 }  // namespace blink

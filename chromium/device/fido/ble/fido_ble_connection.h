@@ -24,6 +24,7 @@
 
 namespace device {
 
+class BluetoothUUID;
 class BluetoothGattConnection;
 class BluetoothGattNotifySession;
 class BluetoothRemoteGattCharacteristic;
@@ -54,6 +55,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleConnection
 
   FidoBleConnection(BluetoothAdapter* adapter,
                     std::string device_address,
+                    BluetoothUUID service_uuid,
                     ReadCallback read_callback);
   ~FidoBleConnection() override;
 
@@ -68,9 +70,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleConnection
                                  WriteCallback callback);
 
  protected:
-  // Used for testing.
-  FidoBleConnection(BluetoothAdapter* adapter, std::string device_address);
-
   scoped_refptr<BluetoothAdapter> adapter_;
   std::string address_;
   ReadCallback read_callback_;
@@ -86,6 +85,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleConnection
       const std::vector<uint8_t>& value) override;
   void GattServicesDiscovered(BluetoothAdapter* adapter,
                               BluetoothDevice* device) override;
+
+  const BluetoothRemoteGattService* GetFidoService();
 
   void OnCreateGattConnection(
       std::unique_ptr<BluetoothGattConnection> connection);
@@ -115,6 +116,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleConnection
 
   ConnectionCallback pending_connection_callback_;
   bool waiting_for_gatt_discovery_ = false;
+  const BluetoothUUID service_uuid_;
 
   base::Optional<std::string> control_point_length_id_;
   base::Optional<std::string> control_point_id_;
@@ -122,7 +124,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleConnection
   base::Optional<std::string> service_revision_id_;
   base::Optional<std::string> service_revision_bitfield_id_;
 
-  base::WeakPtrFactory<FidoBleConnection> weak_factory_;
+  base::WeakPtrFactory<FidoBleConnection> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FidoBleConnection);
 };

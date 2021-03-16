@@ -25,6 +25,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/synchronization/lock.h"
 #include "media/base/audio_decoder.h"
@@ -57,6 +58,10 @@ class MEDIA_EXPORT AudioRendererImpl
  public:
   using PlayDelayCBForTesting = base::RepeatingCallback<void(base::TimeDelta)>;
 
+  // Send the audio to the speech recognition service for caption transcription.
+  using TranscribeAudioCallback =
+      base::RepeatingCallback<void(scoped_refptr<media::AudioBuffer>)>;
+
   // |task_runner| is the thread on which AudioRendererImpl will execute.
   //
   // |sink| is used as the destination for the rendered audio.
@@ -66,7 +71,8 @@ class MEDIA_EXPORT AudioRendererImpl
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       AudioRendererSink* sink,
       const CreateAudioDecodersCB& create_audio_decoders_cb,
-      MediaLog* media_log);
+      MediaLog* media_log,
+      const TranscribeAudioCallback& transcribe_audio_callback);
   ~AudioRendererImpl() override;
 
   // TimeSource implementation.
@@ -83,11 +89,12 @@ class MEDIA_EXPORT AudioRendererImpl
   void Initialize(DemuxerStream* stream,
                   CdmContext* cdm_context,
                   RendererClient* client,
-                  const PipelineStatusCB& init_cb) override;
+                  PipelineStatusCallback init_cb) override;
   TimeSource* GetTimeSource() override;
-  void Flush(const base::Closure& callback) override;
+  void Flush(base::OnceClosure callback) override;
   void StartPlaying() override;
   void SetVolume(float volume) override;
+  void SetLatencyHint(base::Optional<base::TimeDelta> latency_hint) override;
 
   // base::PowerObserver implementation.
   void OnSuspend() override;
@@ -131,13 +138,13 @@ class MEDIA_EXPORT AudioRendererImpl
                             OutputDeviceInfo output_device_info);
 
   // Callback from the audio decoder delivering decoded audio samples.
-  void DecodedAudioReady(AudioDecoderStream::Status status,
-                         const scoped_refptr<AudioBuffer>& buffer);
+  void DecodedAudioReady(AudioDecoderStream::ReadStatus status,
+                         scoped_refptr<AudioBuffer> buffer);
 
   // Handles buffers that come out of decoder (MSE: after passing through
   // |buffer_converter_|).
   // Returns true if more buffers are needed.
-  bool HandleDecodedBuffer_Locked(const scoped_refptr<AudioBuffer>& buffer);
+  bool HandleDecodedBuffer_Locked(scoped_refptr<AudioBuffer> buffer);
 
   // Helper functions for DecodeStatus values passed to
   // DecodedAudioReady().
@@ -182,7 +189,7 @@ class MEDIA_EXPORT AudioRendererImpl
 
   // Returns true if the data in the buffer is all before |start_timestamp_|.
   // This can only return true while in the kPlaying state.
-  bool IsBeforeStartTime(const scoped_refptr<AudioBuffer>& buffer);
+  bool IsBeforeStartTime(const AudioBuffer& buffer);
 
   // Called upon AudioDecoderStream initialization, or failure thereof
   // (indicated by the value of |success|).
@@ -241,13 +248,16 @@ class MEDIA_EXPORT AudioRendererImpl
   // Cached copy of audio params that the renderer is initialized with.
   AudioParameters audio_parameters_;
 
+  // Passed in during Initialize().
+  DemuxerStream* demuxer_stream_;
+
   RendererClient* client_;
 
   // Callback provided during Initialize().
-  PipelineStatusCB init_cb_;
+  PipelineStatusCallback init_cb_;
 
   // Callback provided to Flush().
-  base::Closure flush_cb_;
+  base::OnceClosure flush_cb_;
 
   // Overridable tick clock for testing.
   const base::TickClock* tick_clock_;
@@ -278,6 +288,10 @@ class MEDIA_EXPORT AudioRendererImpl
   // Algorithm for scaling audio.
   double playback_rate_;
   std::unique_ptr<AudioRendererAlgorithm> algorithm_;
+
+  // Stored value from last call to SetLatencyHint(). Passed to |algorithm_|
+  // during Initialize().
+  base::Optional<base::TimeDelta> latency_hint_;
 
   // Simple state tracking variable.
   State state_;
@@ -336,8 +350,10 @@ class MEDIA_EXPORT AudioRendererImpl
 
   // End variables which must be accessed under |lock_|. ----------------------
 
+  TranscribeAudioCallback transcribe_audio_callback_;
+
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<AudioRendererImpl> weak_factory_;
+  base::WeakPtrFactory<AudioRendererImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererImpl);
 };

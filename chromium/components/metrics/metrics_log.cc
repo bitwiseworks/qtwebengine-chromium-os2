@@ -68,9 +68,9 @@ class IndependentFlattener : public base::HistogramFlattener {
   DISALLOW_COPY_AND_ASSIGN(IndependentFlattener);
 };
 
-// Any id less than 16 bytes is considered to be a testing id.
-bool IsTestingID(const std::string& id) {
-  return id.size() < 16;
+// Convenience function to return the given time at a resolution in seconds.
+static int64_t ToMonotonicSeconds(base::TimeTicks time_ticks) {
+  return (time_ticks - base::TimeTicks()).InSeconds();
 }
 
 }  // namespace
@@ -87,8 +87,7 @@ void MetricsLog::IndependentMetricsLoader::Run(
     base::OnceCallback<void(bool)> done_callback,
     MetricsProvider* metrics_provider) {
   metrics_provider->ProvideIndependentMetrics(
-      std::move(done_callback), log_->uma_proto()->mutable_system_profile(),
-      snapshot_manager_.get());
+      std::move(done_callback), log_->uma_proto(), snapshot_manager_.get());
 }
 
 std::unique_ptr<MetricsLog> MetricsLog::IndependentMetricsLoader::ReleaseLog() {
@@ -104,11 +103,7 @@ MetricsLog::MetricsLog(const std::string& client_id,
       client_(client),
       creation_time_(base::TimeTicks::Now()),
       has_environment_(false) {
-  if (IsTestingID(client_id))
-    uma_proto_.set_client_id(0);
-  else
-    uma_proto_.set_client_id(Hash(client_id));
-
+  uma_proto_.set_client_id(Hash(client_id));
   uma_proto_.set_session_id(session_id);
 
   const int32_t product = client_->GetProduct();
@@ -117,6 +112,9 @@ MetricsLog::MetricsLog(const std::string& client_id,
     uma_proto_.set_product(product);
 
   SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
+  // Record the unhashed the client_id to system profile. This is used to
+  // simulate field trial assignments for the client.
+  system_profile->set_client_uuid(client_id);
   RecordCoreSystemProfile(client_, system_profile);
 }
 
@@ -153,23 +151,37 @@ int64_t MetricsLog::GetBuildTime() {
 
 // static
 int64_t MetricsLog::GetCurrentTime() {
-  return (base::TimeTicks::Now() - base::TimeTicks()).InSeconds();
+  return ToMonotonicSeconds(base::TimeTicks::Now());
 }
 
-void MetricsLog::RecordUserAction(const std::string& key) {
+void MetricsLog::RecordUserAction(const std::string& key,
+                                  base::TimeTicks action_time) {
   DCHECK(!closed_);
 
   UserActionEventProto* user_action = uma_proto_.add_user_action_event();
   user_action->set_name_hash(Hash(key));
-  user_action->set_time_sec(GetCurrentTime());
+  user_action->set_time_sec(ToMonotonicSeconds(action_time));
 }
 
+// static
 void MetricsLog::RecordCoreSystemProfile(MetricsServiceClient* client,
                                          SystemProfileProto* system_profile) {
+  RecordCoreSystemProfile(client->GetVersionString(), client->GetChannel(),
+                          client->GetApplicationLocale(),
+                          client->GetAppPackageName(), system_profile);
+}
+
+// static
+void MetricsLog::RecordCoreSystemProfile(
+    const std::string& version,
+    metrics::SystemProfileProto::Channel channel,
+    const std::string& application_locale,
+    const std::string& package_name,
+    SystemProfileProto* system_profile) {
   system_profile->set_build_timestamp(metrics::MetricsLog::GetBuildTime());
-  system_profile->set_app_version(client->GetVersionString());
-  system_profile->set_channel(client->GetChannel());
-  system_profile->set_application_locale(client->GetApplicationLocale());
+  system_profile->set_app_version(version);
+  system_profile->set_channel(channel);
+  system_profile->set_application_locale(application_locale);
 
 #if defined(ADDRESS_SANITIZER) || DCHECK_IS_ON()
   // Set if a build is instrumented (e.g. built with ASAN, or with DCHECKs).
@@ -207,7 +219,6 @@ void MetricsLog::RecordCoreSystemProfile(MetricsServiceClient* client,
 #if defined(OS_ANDROID)
   os->set_build_fingerprint(
       base::android::BuildInfo::GetInstance()->android_build_fp());
-  std::string package_name = client->GetAppPackageName();
   if (!package_name.empty() && package_name != "com.android.chrome")
     system_profile->set_app_package_name(package_name);
 #elif defined(OS_IOS)
@@ -286,11 +297,25 @@ void MetricsLog::WriteRealtimeStabilityAttributes(
 
 const SystemProfileProto& MetricsLog::RecordEnvironment(
     DelegatingProvider* delegating_provider) {
-  DCHECK(!has_environment_);
+  // If |has_environment_| is true, then the system profile in |uma_proto_| has
+  // previously been fully filled in. We still want to fill it in again with
+  // more up to date information (e.g. current field trials), but in order to
+  // not have duplicate repeated fields, we must first clear it. Clearing it
+  // will reset the information filled in by RecordCoreSystemProfile() that was
+  // previously done in the constructor, so re-add that too.
+  //
+  // The |has_environment| case will happen on the very first log, where we
+  // call RecordEnvironment() in order to persist the system profile in the
+  // persistent hitograms .pma file.
+  if (has_environment_) {
+    uma_proto_.clear_system_profile();
+    MetricsLog::RecordCoreSystemProfile(client_,
+                                        uma_proto_.mutable_system_profile());
+  }
+
   has_environment_ = true;
 
-  SystemProfileProto* system_profile = uma_proto()->mutable_system_profile();
-
+  SystemProfileProto* system_profile = uma_proto_.mutable_system_profile();
   WriteMetricsEnableDefault(client_->GetMetricsReportingDefaultState(),
                             system_profile);
 
@@ -298,7 +323,8 @@ const SystemProfileProto& MetricsLog::RecordEnvironment(
   if (client_->GetBrand(&brand_code))
     system_profile->set_brand_code(brand_code);
 
-  delegating_provider->ProvideSystemProfileMetrics(system_profile);
+  delegating_provider->ProvideSystemProfileMetricsWithLogCreationTime(
+      creation_time_, system_profile);
 
   return *system_profile;
 }

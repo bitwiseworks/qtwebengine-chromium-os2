@@ -46,7 +46,7 @@ class SVGFilterPrimitiveStandardAttributes : public SVGElement {
   // Returns true, if the new value is different from the old one.
   virtual bool SetFilterEffectAttribute(FilterEffect*, const QualifiedName&);
 
-  virtual bool TaintsOrigin(bool inputs_taint_origin) const { return true; }
+  virtual bool TaintsOrigin() const { return true; }
 
   // JS API
   SVGAnimatedLength* x() const { return x_.Get(); }
@@ -55,7 +55,7 @@ class SVGFilterPrimitiveStandardAttributes : public SVGElement {
   SVGAnimatedLength* height() const { return height_.Get(); }
   SVGAnimatedString* result() const { return result_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   void PrimitiveAttributeChanged(const QualifiedName&);
   void Invalidate();
@@ -69,7 +69,7 @@ class SVGFilterPrimitiveStandardAttributes : public SVGElement {
  private:
   bool IsFilterEffect() const final { return true; }
 
-  LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
+  LayoutObject* CreateLayoutObject(const ComputedStyle&, LegacyLayout) override;
   bool LayoutObjectIsNeeded(const ComputedStyle&) const final;
 
   Member<SVGAnimatedLength> x_;
@@ -81,12 +81,13 @@ class SVGFilterPrimitiveStandardAttributes : public SVGElement {
 
 void InvalidateFilterPrimitiveParent(SVGElement&);
 
-inline bool IsSVGFilterPrimitiveStandardAttributes(const SVGElement& element) {
-  return element.IsFilterEffect();
-}
-
-DEFINE_SVGELEMENT_TYPE_CASTS_WITH_FUNCTION(
-    SVGFilterPrimitiveStandardAttributes);
+template <>
+struct DowncastTraits<SVGFilterPrimitiveStandardAttributes> {
+  static bool AllowFrom(const Node& node) {
+    auto* element = DynamicTo<SVGElement>(node);
+    return element && element->IsFilterEffect();
+  }
+};
 
 }  // namespace blink
 

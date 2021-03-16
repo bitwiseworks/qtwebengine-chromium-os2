@@ -32,8 +32,6 @@
 
 #include "third_party/blink/renderer/modules/filesystem/dom_file_path.h"
 #include "third_party/blink/renderer/modules/filesystem/dom_file_system_base.h"
-#include "third_party/blink/renderer/modules/filesystem/file_system_directory_handle.h"
-#include "third_party/blink/renderer/modules/filesystem/file_system_file_handle.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -57,15 +55,7 @@ String EntryBase::toURL() const {
   return cached_url_;
 }
 
-FileSystemBaseHandle* EntryBase::asFileSystemHandle() const {
-  if (isFile())
-    return MakeGarbageCollected<FileSystemFileHandle>(filesystem(), fullPath());
-  DCHECK(isDirectory());
-  return MakeGarbageCollected<FileSystemDirectoryHandle>(filesystem(),
-                                                         fullPath());
-}
-
-void EntryBase::Trace(blink::Visitor* visitor) {
+void EntryBase::Trace(Visitor* visitor) {
   visitor->Trace(file_system_);
   ScriptWrappable::Trace(visitor);
 }

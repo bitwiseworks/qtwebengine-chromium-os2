@@ -21,6 +21,7 @@
 #include "third_party/blink/renderer/core/dom/processing_instruction.h"
 
 #include <memory>
+
 #include "third_party/blink/renderer/core/css/css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/media_list.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
@@ -32,6 +33,7 @@
 #include "third_party/blink/renderer/core/xml/document_xslt.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_document_parser.h"  // for parseAttributes()
 #include "third_party/blink/renderer/core/xml/xsl_style_sheet.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
@@ -39,9 +41,9 @@
 
 namespace blink {
 
-inline ProcessingInstruction::ProcessingInstruction(Document& document,
-                                                    const String& target,
-                                                    const String& data)
+ProcessingInstruction::ProcessingInstruction(Document& document,
+                                             const String& target,
+                                             const String& data)
     : CharacterData(document, data, kCreateOther),
       target_(target),
       loading_(false),
@@ -49,12 +51,6 @@ inline ProcessingInstruction::ProcessingInstruction(Document& document,
       is_css_(false),
       is_xsl_(false),
       listener_for_xslt_(nullptr) {}
-
-ProcessingInstruction* ProcessingInstruction::Create(Document& document,
-                                                     const String& target,
-                                                     const String& data) {
-  return MakeGarbageCollected<ProcessingInstruction>(document, target, data);
-}
 
 ProcessingInstruction::~ProcessingInstruction() = default;
 
@@ -83,7 +79,7 @@ Node::NodeType ProcessingInstruction::getNodeType() const {
 Node* ProcessingInstruction::Clone(Document& factory, CloneChildrenFlag) const {
   // FIXME: Is it a problem that this does not copy local_href_?
   // What about other data members?
-  return Create(factory, target_, data_);
+  return MakeGarbageCollected<ProcessingInstruction>(factory, target_, data_);
 }
 
 void ProcessingInstruction::DidAttributeChanged() {
@@ -142,7 +138,8 @@ void ProcessingInstruction::Process(const String& href, const String& charset) {
     // can hang off some parent sheet.
     if (is_xsl_ && RuntimeEnabledFeatures::XSLTEnabled()) {
       KURL final_url(local_href_);
-      sheet_ = XSLStyleSheet::CreateEmbedded(this, final_url);
+      sheet_ = MakeGarbageCollected<XSLStyleSheet>(this, final_url.GetString(),
+                                                   final_url, true);
       loading_ = false;
     }
     return;
@@ -161,8 +158,8 @@ void ProcessingInstruction::Process(const String& href, const String& charset) {
   loading_ = true;
   if (is_xsl_) {
     DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
-    params.MutableResourceRequest().SetFetchRequestMode(
-        network::mojom::FetchRequestMode::kSameOrigin);
+    params.MutableResourceRequest().SetMode(
+        network::mojom::RequestMode::kSameOrigin);
     XSLStyleSheetResource::Fetch(params, GetDocument().Fetcher(), this);
   } else {
     params.SetCharset(charset.IsEmpty() ? GetDocument().Encoding()
@@ -196,31 +193,33 @@ void ProcessingInstruction::NotifyFinished(Resource* resource) {
   }
 
   std::unique_ptr<IncrementLoadEventDelayCount> delay =
-      is_xsl_ ? IncrementLoadEventDelayCount::Create(GetDocument()) : nullptr;
+      is_xsl_ ? std::make_unique<IncrementLoadEventDelayCount>(GetDocument())
+              : nullptr;
   if (is_xsl_) {
-    sheet_ = XSLStyleSheet::Create(this, resource->Url(),
-                                   resource->GetResponse().ResponseUrl());
-    ToXSLStyleSheet(sheet_.Get())
+    sheet_ = MakeGarbageCollected<XSLStyleSheet>(
+        this, resource->Url(), resource->GetResponse().ResponseUrl(), false);
+    To<XSLStyleSheet>(sheet_.Get())
         ->ParseString(ToXSLStyleSheetResource(resource)->Sheet());
   } else {
     DCHECK(is_css_);
     CSSStyleSheetResource* style_resource = ToCSSStyleSheetResource(resource);
-    CSSParserContext* parser_context = CSSParserContext::Create(
+    auto* parser_context = MakeGarbageCollected<CSSParserContext>(
         GetDocument(), style_resource->GetResponse().ResponseUrl(),
         style_resource->GetResponse().IsCorsSameOrigin(),
         style_resource->GetReferrerPolicy(), style_resource->Encoding());
 
-    StyleSheetContents* new_sheet =
-        StyleSheetContents::Create(style_resource->Url(), parser_context);
+    auto* new_sheet = MakeGarbageCollected<StyleSheetContents>(
+        parser_context, style_resource->Url());
 
-    CSSStyleSheet* css_sheet = CSSStyleSheet::Create(new_sheet, *this);
+    auto* css_sheet = MakeGarbageCollected<CSSStyleSheet>(new_sheet, *this);
     css_sheet->setDisabled(alternate_);
     css_sheet->SetTitle(title_);
     if (!alternate_ && !title_.IsEmpty()) {
       GetDocument().GetStyleEngine().SetPreferredStylesheetSetNameIfNotSet(
           title_);
     }
-    css_sheet->SetMediaQueries(MediaQuerySet::Create(media_));
+    css_sheet->SetMediaQueries(
+        MediaQuerySet::Create(media_, GetExecutionContext()));
     sheet_ = css_sheet;
     // We don't need the cross-origin security check here because we are
     // getting the sheet text in "strict" mode. This enforces a valid CSS MIME
@@ -233,9 +232,9 @@ void ProcessingInstruction::NotifyFinished(Resource* resource) {
   loading_ = false;
 
   if (is_css_)
-    ToCSSStyleSheet(sheet_.Get())->Contents()->CheckLoaded();
+    To<CSSStyleSheet>(sheet_.Get())->Contents()->CheckLoaded();
   else if (is_xsl_)
-    ToXSLStyleSheet(sheet_.Get())->CheckLoaded();
+    To<XSLStyleSheet>(sheet_.Get())->CheckLoaded();
 }
 
 Node::InsertionNotificationRequest ProcessingInstruction::InsertedInto(
@@ -285,6 +284,8 @@ void ProcessingInstruction::ClearSheet() {
 }
 
 void ProcessingInstruction::RemovePendingSheet() {
+  if (is_xsl_)
+    return;
   GetDocument().GetStyleEngine().RemovePendingSheet(*this,
                                                     style_engine_context_);
 }

@@ -21,7 +21,7 @@
 **    CREATE TABLE tclvar(
 **       name TEXT,       -- base name of the variable:  "x" in "$x(y)"
 **       arrayname TEXT,  -- array index name: "y" in "$x(y)"
-**       value TEXT,      -- the value of the variable
+**       value TEXT,      -- the value of the variable 
 **       fullname TEXT,   -- the full name of the variable
 **       PRIMARY KEY(fullname)
 **    ) WITHOUT ROWID;
@@ -58,8 +58,8 @@
 typedef struct tclvar_vtab tclvar_vtab;
 typedef struct tclvar_cursor tclvar_cursor;
 
-/*
-** A tclvar virtual-table object
+/* 
+** A tclvar virtual-table object 
 */
 struct tclvar_vtab {
   sqlite3_vtab base;
@@ -85,7 +85,7 @@ static int tclvarConnect(
   char **pzErr
 ){
   tclvar_vtab *pVtab;
-  static const char zSchema[] =
+  static const char zSchema[] = 
      "CREATE TABLE x("
      "  name TEXT,"                       /* Base name */
      "  arrayname TEXT,"                  /* Array index */
@@ -186,7 +186,7 @@ static int tclvarNext(sqlite3_vtab_cursor *cur){
 }
 
 static int tclvarFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -250,7 +250,7 @@ static int tclvarFilter(
 static int tclvarColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
   Tcl_Obj *p1;
   Tcl_Obj *p2;
-  const char *z1;
+  const char *z1; 
   const char *z2 = "";
   tclvar_cursor *pCur = (tclvar_cursor*)cur;
   Tcl_Interp *interp = ((tclvar_vtab *)cur->pVtab)->interp;
@@ -300,7 +300,7 @@ static int tclvarEof(sqlite3_vtab_cursor *cur){
 }
 
 /*
-** If nul-terminated string zStr does not already contain the character
+** If nul-terminated string zStr does not already contain the character 
 ** passed as the second argument, append it and return 0. Or, if there is
 ** already an instance of x in zStr, do nothing return 1;
 **
@@ -346,7 +346,7 @@ static int tclvarSetOmit(Tcl_Interp *interp){
 **     value LIKE ?                (omit flag set iff $::tclvar_set_omit)
 **
 ** For each constraint present, the corresponding TCLVAR_XXX character is
-** appended to the idxStr value.
+** appended to the idxStr value. 
 */
 static int tclvarBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   tclvar_vtab *pTab = (tclvar_vtab*)tab;
@@ -360,7 +360,7 @@ static int tclvarBestIndex(sqlite3_vtab *tab, sqlite3_index_info *pIdxInfo){
   for(ii=0; ii<pIdxInfo->nConstraint; ii++){
     struct sqlite3_index_constraint const *pCons = &pIdxInfo->aConstraint[ii];
     struct sqlite3_index_constraint_usage *pUsage;
-
+    
     pUsage = &pIdxInfo->aConstraintUsage[ii];
     if( pCons->usable ){
       /* name = ? */
@@ -471,7 +471,7 @@ static sqlite3_module tclvarModule = {
   tclvarConnect,
   tclvarConnect,
   tclvarBestIndex,
-  tclvarDisconnect,
+  tclvarDisconnect, 
   tclvarDisconnect,
   tclvarOpen,                  /* xOpen - open a cursor */
   tclvarClose,                 /* xClose - close a cursor */
@@ -512,7 +512,7 @@ static int SQLITE_TCLAPI register_tclvar_module(
   if( getDbPointer(interp, Tcl_GetString(objv[1]), &db) ) return TCL_ERROR;
 #ifndef SQLITE_OMIT_VIRTUALTABLE
   sqlite3_create_module(db, "tclvar", &tclvarModule, (void*)interp);
-  rc = Tcl_Eval(interp,
+  rc = Tcl_Eval(interp, 
       "proc like {pattern str} {\n"
       "  set p [string map {% * _ ?} $pattern]\n"
       "  string match $p $str\n"
@@ -554,7 +554,7 @@ int Sqlitetesttclvar_Init(Tcl_Interp *interp){
   };
   int i;
   for(i=0; i<sizeof(aObjCmd)/sizeof(aObjCmd[0]); i++){
-    Tcl_CreateObjCommand(interp, aObjCmd[i].zName,
+    Tcl_CreateObjCommand(interp, aObjCmd[i].zName, 
         aObjCmd[i].xProc, aObjCmd[i].clientData, 0);
   }
 #endif

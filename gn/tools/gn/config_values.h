@@ -42,9 +42,13 @@ class ConfigValues {
   STRING_VALUES_ACCESSOR(cflags_objc)
   STRING_VALUES_ACCESSOR(cflags_objcc)
   STRING_VALUES_ACCESSOR(defines)
+  DIR_VALUES_ACCESSOR(framework_dirs)
+  STRING_VALUES_ACCESSOR(frameworks)
   DIR_VALUES_ACCESSOR(include_dirs)
   STRING_VALUES_ACCESSOR(ldflags)
   DIR_VALUES_ACCESSOR(lib_dirs)
+  STRING_VALUES_ACCESSOR(rustflags)
+  STRING_VALUES_ACCESSOR(rustenv)
   // =================================================================
   // IMPORTANT: If you add a new one, be sure to update AppendValues()
   //            and command_desc.cc.
@@ -77,10 +81,14 @@ class ConfigValues {
   std::vector<std::string> cflags_objcc_;
   std::vector<std::string> defines_;
   std::vector<SourceDir> include_dirs_;
+  std::vector<SourceDir> framework_dirs_;
+  std::vector<std::string> frameworks_;
   std::vector<SourceFile> inputs_;
   std::vector<std::string> ldflags_;
   std::vector<SourceDir> lib_dirs_;
   std::vector<LibFile> libs_;
+  std::vector<std::string> rustflags_;
+  std::vector<std::string> rustenv_;
   // If you add a new one, be sure to update AppendValues().
 
   std::string precompiled_header_;

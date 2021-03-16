@@ -32,7 +32,7 @@
 #include "base/thread_annotations.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node.h"
 #include "third_party/blink/renderer/platform/audio/audio_source_provider_client.h"
-#include "third_party/blink/renderer/platform/audio/multi_channel_resampler.h"
+#include "third_party/blink/renderer/platform/audio/media_multi_channel_resampler.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/threading_primitives.h"
 
@@ -86,19 +86,23 @@ class MediaElementAudioSourceHandler final : public AudioHandler {
   // zeroes.
   void PrintCorsMessage(const String& message);
 
-  // This Persistent doesn't make a reference cycle. The reference from
-  // HTMLMediaElement to AudioSourceProvideClient, which
-  // MediaElementAudioSourceNode implements, is weak.
+  // Provide input to the resampler (if used).
+  void ProvideResamplerInput(int resampler_frame_delay, AudioBus* dest);
+
+  // The HTMLMediaElement is held alive by MediaElementAudioSourceNode which is
+  // an AudioNode. AudioNode uses pre-finalizers to dispose the handler, so
+  // holding a weak reference is ok here and will not interfer with garbage
+  // collection.
   //
   // It is accessed by both audio and main thread. TODO: we really should
   // try to minimize or avoid the audio thread touching this element.
-  CrossThreadPersistent<HTMLMediaElement> media_element_;
+  CrossThreadWeakPersistent<HTMLMediaElement> media_element_;
   Mutex process_lock_;
 
   unsigned source_number_of_channels_;
   double source_sample_rate_;
 
-  std::unique_ptr<MultiChannelResampler> multi_channel_resampler_;
+  std::unique_ptr<MediaMultiChannelResampler> multi_channel_resampler_;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
@@ -123,7 +127,7 @@ class MediaElementAudioSourceNode final : public AudioNode,
 
   MediaElementAudioSourceNode(AudioContext&, HTMLMediaElement&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   MediaElementAudioSourceHandler& GetMediaElementAudioSourceHandler() const;
 
   HTMLMediaElement* mediaElement() const;
@@ -134,6 +138,13 @@ class MediaElementAudioSourceNode final : public AudioNode,
       GetMediaElementAudioSourceHandler().GetProcessLock());
   void unlock() override
       UNLOCK_FUNCTION(GetMediaElementAudioSourceHandler().GetProcessLock());
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
+
+ private:
+  Member<HTMLMediaElement> media_element_;
 };
 
 }  // namespace blink

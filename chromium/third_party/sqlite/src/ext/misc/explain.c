@@ -184,13 +184,13 @@ static int explainEof(sqlite3_vtab_cursor *cur){
 /*
 ** This method is called to "rewind" the explain_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to explainColumn() or explainRowid() or
+** once prior to any call to explainColumn() or explainRowid() or 
 ** explainEof().
 **
 ** The argv[0] is the SQL statement that is to be explained.
 */
 static int explainFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -265,7 +265,7 @@ static int explainBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** explain virtual table.
 */
 static sqlite3_module explainModule = {
@@ -309,8 +309,8 @@ int sqlite3ExplainVtabInit(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_explain_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

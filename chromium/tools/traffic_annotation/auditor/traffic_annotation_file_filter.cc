@@ -32,6 +32,7 @@ const char* kRelevantKeywords[] = {
     "DefinePartialNetworkTrafficAnnotation",
     "CompleteNetworkTrafficAnnotation",
     "BranchedCompleteNetworkTrafficAnnotation",
+    "CreateMutableNetworkTrafficAnnotationTag",
     "NO_TRAFFIC_ANNOTATION_YET",
     "NO_PARTIAL_TRAFFIC_ANNOTATION_YET",
     "MISSING_TRAFFIC_ANNOTATION",
@@ -78,10 +79,10 @@ void TrafficAnnotationFileFilter::GetFilesFromGit(
     }
   }
 
-  for (const std::string file_path : base::SplitString(
+  for (const std::string& file_path : base::SplitString(
            git_list, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL)) {
     if (IsFileRelevant(file_path))
-      git_files_.push_back(file_path);
+      git_files_.push_back(std::move(file_path));
   }
 
   base::SetCurrentDirectory(original_path);

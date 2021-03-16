@@ -8,7 +8,7 @@
 
 #include <utility>
 
-#include "core/fpdfapi/cpdf_modulemgr.h"
+#include "core/fpdfapi/page/cpdf_dib.h"
 #include "core/fpdfapi/page/cpdf_image.h"
 #include "core/fpdfapi/page/cpdf_imageobject.h"
 #include "core/fpdfapi/page/cpdf_page.h"
@@ -17,7 +17,6 @@
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_name.h"
 #include "core/fpdfapi/parser/cpdf_stream_acc.h"
-#include "core/fpdfapi/render/cpdf_dibbase.h"
 #include "fpdfsdk/cpdfsdk_customaccess.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "third_party/base/ptr_util.h"
@@ -131,7 +130,13 @@ FPDFImageObj_GetMatrix(FPDF_PAGEOBJECT image_object,
   if (!pImgObj || !a || !b || !c || !d || !e || !f)
     return false;
 
-  std::tie(*a, *b, *c, *d, *e, *f) = pImgObj->matrix().AsTuple();
+  const CFX_Matrix& matrix = pImgObj->matrix();
+  *a = matrix.a;
+  *b = matrix.b;
+  *c = matrix.c;
+  *d = matrix.d;
+  *e = matrix.e;
+  *f = matrix.f;
   return true;
 }
 
@@ -244,15 +249,7 @@ FPDFImageObj_GetImageDataRaw(FPDF_PAGEOBJECT image_object,
   if (!pImgStream)
     return 0;
 
-  auto streamAcc = pdfium::MakeRetain<CPDF_StreamAcc>(pImgStream);
-  streamAcc->LoadAllDataRaw();
-
-  const uint32_t len = streamAcc->GetSize();
-  if (!buffer || buflen < len)
-    return len;
-
-  memcpy(buffer, streamAcc->GetData(), len);
-  return len;
+  return GetRawStreamMaybeCopyAndReturnLength(pImgStream, buffer, buflen);
 }
 
 FPDF_EXPORT int FPDF_CALLCONV
@@ -335,11 +332,11 @@ FPDFImageObj_GetImageMetadata(FPDF_PAGEOBJECT image_object,
   if (!pPage || !pPage->GetDocument() || !pImg->GetStream())
     return true;
 
-  auto pSource = pdfium::MakeRetain<CPDF_DIBBase>();
-  CPDF_DIBBase::LoadState ret = pSource->StartLoadDIBBase(
+  auto pSource = pdfium::MakeRetain<CPDF_DIB>();
+  CPDF_DIB::LoadState ret = pSource->StartLoadDIBBase(
       pPage->GetDocument(), pImg->GetStream(), false, nullptr,
       pPage->m_pPageResources.Get(), false, 0, false);
-  if (ret == CPDF_DIBBase::LoadState::kFail)
+  if (ret == CPDF_DIB::LoadState::kFail)
     return true;
 
   metadata->bits_per_pixel = pSource->GetBPP();

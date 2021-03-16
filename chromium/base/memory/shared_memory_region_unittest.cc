@@ -6,7 +6,6 @@
 
 #include "base/memory/platform_shared_memory_region.h"
 #include "base/memory/read_only_shared_memory_region.h"
-#include "base/memory/shared_memory.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/writable_shared_memory_region.h"
 #include "base/system/sys_info.h"
@@ -50,7 +49,7 @@ typedef ::testing::Types<WritableSharedMemoryRegion,
                          UnsafeSharedMemoryRegion,
                          ReadOnlySharedMemoryRegion>
     AllRegionTypes;
-TYPED_TEST_CASE(SharedMemoryRegionTest, AllRegionTypes);
+TYPED_TEST_SUITE(SharedMemoryRegionTest, AllRegionTypes);
 
 TYPED_TEST(SharedMemoryRegionTest, NonValidRegion) {
   TypeParam region;
@@ -213,7 +212,7 @@ class DuplicatableSharedMemoryRegionTest
 
 typedef ::testing::Types<UnsafeSharedMemoryRegion, ReadOnlySharedMemoryRegion>
     DuplicatableRegionTypes;
-TYPED_TEST_CASE(DuplicatableSharedMemoryRegionTest, DuplicatableRegionTypes);
+TYPED_TEST_SUITE(DuplicatableSharedMemoryRegionTest, DuplicatableRegionTypes);
 
 TYPED_TEST(DuplicatableSharedMemoryRegionTest, Duplicate) {
   TypeParam dup_region = this->region_.Duplicate();
@@ -281,19 +280,6 @@ TEST_F(ReadOnlySharedMemoryRegionTest,
   ASSERT_TRUE(mapping.IsValid());
   void* memory_ptr = const_cast<void*>(mapping.memory());
   EXPECT_DEATH_IF_SUPPORTED(memset(memory_ptr, 'G', kRegionSize), "");
-}
-
-class UnsafeSharedMemoryRegionTest : public ::testing::Test {};
-
-TEST_F(UnsafeSharedMemoryRegionTest, CreateFromHandleTest) {
-  SharedMemory shm;
-
-  auto region = UnsafeSharedMemoryRegion::CreateFromHandle(shm.TakeHandle());
-  ASSERT_FALSE(region.IsValid());
-
-  shm.CreateAndMapAnonymous(10);
-  region = UnsafeSharedMemoryRegion::CreateFromHandle(shm.TakeHandle());
-  ASSERT_TRUE(region.IsValid());
 }
 
 }  // namespace base

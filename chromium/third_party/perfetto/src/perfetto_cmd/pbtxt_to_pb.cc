@@ -15,33 +15,35 @@
  */
 
 #include <ctype.h>
+
+#include <map>
 #include <set>
 #include <stack>
 #include <string>
 
 #include "src/perfetto_cmd/pbtxt_to_pb.h"
 
-#include "google/protobuf/io/zero_copy_stream_impl_lite.h"
-#include "src/perfetto_cmd/descriptor.pb.h"
-
-#include "perfetto/base/file_utils.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/base/string_view.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/string_utils.h"
+#include "perfetto/ext/base/string_view.h"
+#include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/message.h"
 #include "perfetto/protozero/message_handle.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "src/perfetto_cmd/perfetto_config.descriptor.h"
 
+#include "protos/perfetto/common/descriptor.gen.h"
+
 namespace perfetto {
 constexpr char kConfigProtoName[] = ".perfetto.protos.TraceConfig";
 
-using protos::DescriptorProto;
-using protos::EnumDescriptorProto;
-using protos::EnumValueDescriptorProto;
-using protos::FieldDescriptorProto;
-using protos::FileDescriptorSet;
-using ::google::protobuf::io::ZeroCopyInputStream;
-using ::google::protobuf::io::ArrayInputStream;
+using protos::gen::DescriptorProto;
+using protos::gen::EnumDescriptorProto;
+using protos::gen::EnumValueDescriptorProto;
+using protos::gen::FieldDescriptorProto;
+using protos::gen::FileDescriptorSet;
 
 namespace {
 
@@ -93,7 +95,7 @@ const char* FieldToTypeName(const FieldDescriptorProto* field) {
       return "enum";
   }
   // For gcc
-  PERFETTO_FATAL("Non conmplete switch");
+  PERFETTO_FATAL("Non complete switch");
 }
 
 std::string Format(const char* fmt, std::map<std::string, std::string> args) {
@@ -112,6 +114,7 @@ enum ParseState {
   kReadingKey,
   kWaitingForValue,
   kReadingStringValue,
+  kReadingStringEscape,
   kReadingNumericValue,
   kReadingIdentifierValue,
 };
@@ -211,7 +214,62 @@ class ParserDelegate {
     PERFETTO_CHECK(field_type == FieldDescriptorProto::TYPE_STRING ||
                    field_type == FieldDescriptorProto::TYPE_BYTES);
 
-    msg()->AppendBytes(field_id, value.txt.data(), value.size());
+    std::unique_ptr<char, base::FreeDeleter> s(
+        static_cast<char*>(malloc(value.size())));
+    size_t j = 0;
+    for (size_t i = 0; i < value.size(); i++) {
+      char c = value.txt.data()[i];
+      if (c == '\\') {
+        if (i + 1 >= value.size()) {
+          // This should be caught by the lexer.
+          PERFETTO_FATAL("Escape at end of string.");
+          return;
+        }
+        char next = value.txt.data()[++i];
+        switch (next) {
+          case '\\':
+          case '\'':
+          case '"':
+          case '?':
+            s.get()[j++] = next;
+            break;
+          case 'a':
+            s.get()[j++] = '\a';
+            break;
+          case 'b':
+            s.get()[j++] = '\b';
+            break;
+          case 'f':
+            s.get()[j++] = '\f';
+            break;
+          case 'n':
+            s.get()[j++] = '\n';
+            break;
+          case 'r':
+            s.get()[j++] = '\r';
+            break;
+          case 't':
+            s.get()[j++] = '\t';
+            break;
+          case 'v':
+            s.get()[j++] = '\v';
+            break;
+          default:
+            AddError(value,
+                     "Unknown string escape in $k in "
+                     "proto $n: '$v'",
+                     std::map<std::string, std::string>{
+                         {"$k", key.ToStdString()},
+                         {"$n", descriptor_name()},
+                         {"$v", value.ToStdString()},
+                     });
+            return;
+        }
+      } else {
+        s.get()[j++] = c;
+      }
+    }
+    msg()->AppendBytes(field_id, s.get(), j);
   }
 
   void IdentifierField(Token key, Token value) {
@@ -251,9 +309,18 @@ class ParserDelegate {
         enum_value_number = enum_value.number();
         break;
       }
-      PERFETTO_CHECK(found_value);
+      if (!found_value) {
+        AddError(value,
+                 "Unexpected value '$v' for enum field $k in "
+                 "proto $n",
+                 std::map<std::string, std::string>{
+                     {"$v", value.ToStdString()},
+                     {"$k", key.ToStdString()},
+                     {"$n", descriptor_name()},
+                 });
+        return;
+      }
       msg()->AppendVarInt<int32_t>(field_id, enum_value_number);
-    } else {
     }
   }
 
@@ -319,8 +386,8 @@ class ParserDelegate {
   template <typename T>
   void FixedFloatField(const FieldDescriptorProto* field, Token t) {
     uint32_t field_id = static_cast<uint32_t>(field->number());
-    double n = std::stod(t.ToStdString());
-    msg()->AppendFixed<T>(field_id, static_cast<T>(n));
+    base::Optional<double> opt_n = base::StringToDouble(t.ToStdString());
+    msg()->AppendFixed<T>(field_id, static_cast<T>(opt_n.value_or(0l)));
   }
 
   template <typename T>
@@ -501,7 +568,8 @@ void Parse(const std::string& input, ParserDelegate* delegate) {
 
       case kReadingNumericValue:
         if (isspace(c) || c == ';' || last_character) {
-          size_t size = i - value.offset + (last_character ? 1 : 0);
+          bool keep_last = last_character && !(isspace(c) || c == ';');
+          size_t size = i - value.offset + (keep_last ? 1 : 0);
           value.txt = base::StringView(input.data() + value.offset, size);
           saw_semicolon_for_this_value = c == ';';
           state = kWaitingForKey;
@@ -513,20 +581,27 @@ void Parse(const std::string& input, ParserDelegate* delegate) {
         break;
 
       case kReadingStringValue:
-        if (c == '"') {
+        if (c == '\\') {
+          state = kReadingStringEscape;
+        } else if (c == '"') {
           size_t size = i - value.offset - 1;
           value.column++;
           value.txt = base::StringView(input.data() + value.offset + 1, size);
           saw_semicolon_for_this_value = false;
           state = kWaitingForKey;
           delegate->StringField(key, value);
-          continue;
         }
+        continue;
+
+      case kReadingStringEscape:
+        state = kReadingStringValue;
         continue;
 
       case kReadingIdentifierValue:
         if (isspace(c) || c == ';' || c == '#' || last_character) {
-          size_t size = i - value.offset + (last_character ? 1 : 0);
+          bool keep_last =
+              last_character && !(isspace(c) || c == ';' || c == '#');
+          size_t size = i - value.offset + (keep_last ? 1 : 0);
           value.txt = base::StringView(input.data() + value.offset, size);
           comment_till_eol = c == '#';
           saw_semicolon_for_this_value = c == ';';
@@ -599,17 +674,12 @@ std::vector<uint8_t> PbtxtToPb(const std::string& input,
   const DescriptorProto* descriptor = name_to_descriptor[kConfigProtoName];
   PERFETTO_CHECK(descriptor);
 
-  protozero::ScatteredHeapBuffer stream_delegate(base::kPageSize);
-  protozero::ScatteredStreamWriter stream(&stream_delegate);
-  stream_delegate.set_writer(&stream);
-
-  protozero::Message message;
-  message.Reset(&stream);
-  ParserDelegate delegate(descriptor, &message, reporter,
+  protozero::HeapBuffered<protozero::Message> message;
+  ParserDelegate delegate(descriptor, message.get(), reporter,
                           std::move(name_to_descriptor),
                           std::move(name_to_enum));
   Parse(input, &delegate);
-  return stream_delegate.StitchSlices();
+  return message.SerializeAsArray();
 }
 
 }  // namespace perfetto

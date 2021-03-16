@@ -5,14 +5,13 @@
  * found in the LICENSE file.
  */
 
-#include "SkAndroidCodec.h"
-#include "SkAndroidCodecAdapter.h"
-#include "SkCodec.h"
-#include "SkCodecPriv.h"
-#include "SkMakeUnique.h"
-#include "SkPixmap.h"
-#include "SkPixmapPriv.h"
-#include "SkSampledCodec.h"
+#include "include/codec/SkAndroidCodec.h"
+#include "include/codec/SkCodec.h"
+#include "include/core/SkPixmap.h"
+#include "src/codec/SkAndroidCodecAdapter.h"
+#include "src/codec/SkCodecPriv.h"
+#include "src/codec/SkSampledCodec.h"
+#include "src/core/SkPixmapPriv.h"
 
 static bool is_valid_sample_size(int sampleSize) {
     // FIXME: As Leon has mentioned elsewhere, surely there is also a maximum sampleSize?
@@ -91,20 +90,24 @@ std::unique_ptr<SkAndroidCodec> SkAndroidCodec::MakeFromCodec(std::unique_ptr<Sk
         case SkEncodedImageFormat::kPNG:
         case SkEncodedImageFormat::kICO:
         case SkEncodedImageFormat::kJPEG:
+#ifndef SK_HAS_WUFFS_LIBRARY
         case SkEncodedImageFormat::kGIF:
+#endif
         case SkEncodedImageFormat::kBMP:
         case SkEncodedImageFormat::kWBMP:
         case SkEncodedImageFormat::kHEIF:
-            return skstd::make_unique<SkSampledCodec>(codec.release(), orientationBehavior);
-
-#ifdef SK_HAS_WEBP_LIBRARY
+            return std::make_unique<SkSampledCodec>(codec.release(), orientationBehavior);
+#ifdef SK_HAS_WUFFS_LIBRARY
+        case SkEncodedImageFormat::kGIF:
+#endif
+#ifdef SK_CODEC_DECODES_WEBP
         case SkEncodedImageFormat::kWEBP:
 #endif
 #ifdef SK_CODEC_DECODES_RAW
         case SkEncodedImageFormat::kDNG:
 #endif
-#if defined(SK_HAS_WEBP_LIBRARY) || defined(SK_CODEC_DECODES_RAW)
-            return skstd::make_unique<SkAndroidCodecAdapter>(codec.release(), orientationBehavior);
+#if defined(SK_CODEC_DECODES_WEBP) || defined(SK_CODEC_DECODES_RAW) || defined(SK_HAS_WUFFS_LIBRARY)
+            return std::make_unique<SkAndroidCodecAdapter>(codec.release(), orientationBehavior);
 #endif
 
         default:
@@ -162,6 +165,8 @@ SkAlphaType SkAndroidCodec::computeOutputAlphaType(bool requestedUnpremul) {
 sk_sp<SkColorSpace> SkAndroidCodec::computeOutputColorSpace(SkColorType outputColorType,
                                                             sk_sp<SkColorSpace> prefColorSpace) {
     switch (outputColorType) {
+        case kRGBA_F16_SkColorType:
+        case kRGB_565_SkColorType:
         case kRGBA_8888_SkColorType:
         case kBGRA_8888_SkColorType: {
             // If |prefColorSpace| is supplied, choose it.
@@ -178,18 +183,12 @@ sk_sp<SkColorSpace> SkAndroidCodec::computeOutputColorSpace(SkColorType outputCo
                 }
 
                 if (is_wide_gamut(*encodedProfile)) {
-                    return SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kDCIP3);
+                    return SkColorSpace::MakeRGB(SkNamedTransferFn::kSRGB, SkNamedGamut::kDisplayP3);
                 }
             }
 
             return SkColorSpace::MakeSRGB();
         }
-        case kRGBA_F16_SkColorType:
-            // Note that |prefColorSpace| is ignored, F16 is always linear sRGB.
-            return SkColorSpace::MakeSRGBLinear();
-        case kRGB_565_SkColorType:
-            // Note that |prefColorSpace| is ignored, 565 is always sRGB.
-            return SkColorSpace::MakeSRGB();
         default:
             // Color correction not supported for kGray.
             return nullptr;
@@ -300,7 +299,13 @@ SkISize SkAndroidCodec::getSampledDimensions(int sampleSize) const {
         return fInfo.dimensions();
     }
 
-    return this->onGetSampledDimensions(sampleSize);
+    auto dims = this->onGetSampledDimensions(sampleSize);
+    if (fOrientationBehavior == SkAndroidCodec::ExifOrientationBehavior::kIgnore
+            || !SkPixmapPriv::ShouldSwapWidthHeight(fCodec->getOrigin())) {
+        return dims;
+    }
+
+    return { dims.height(), dims.width() };
 }
 
 bool SkAndroidCodec::getSupportedSubset(SkIRect* desiredSubset) const {

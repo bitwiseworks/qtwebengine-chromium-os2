@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NGPositionedFloat_h
-#define NGPositionedFloat_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_POSITIONED_FLOAT_H_
+#define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_POSITIONED_FLOAT_H_
 
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -16,7 +16,7 @@ class NGLayoutResult;
 
 // Contains the information necessary for copying back data to a FloatingObject.
 struct CORE_EXPORT NGPositionedFloat {
-  NGPositionedFloat(scoped_refptr<NGLayoutResult> layout_result,
+  NGPositionedFloat(scoped_refptr<const NGLayoutResult> layout_result,
                     const NGBfcOffset& bfc_offset)
       : layout_result(layout_result), bfc_offset(bfc_offset) {}
   NGPositionedFloat(NGPositionedFloat&&) noexcept = default;
@@ -24,10 +24,10 @@ struct CORE_EXPORT NGPositionedFloat {
   NGPositionedFloat& operator=(NGPositionedFloat&&) = default;
   NGPositionedFloat& operator=(const NGPositionedFloat&) = default;
 
-  scoped_refptr<NGLayoutResult> layout_result;
+  scoped_refptr<const NGLayoutResult> layout_result;
   NGBfcOffset bfc_offset;
 };
 
 }  // namespace blink
 
-#endif  // NGPositionedFloat_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_NG_NG_POSITIONED_FLOAT_H_

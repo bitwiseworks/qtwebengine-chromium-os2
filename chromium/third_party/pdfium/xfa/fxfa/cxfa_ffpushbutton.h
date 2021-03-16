@@ -28,7 +28,7 @@ class CXFA_FFPushButton final : public CXFA_FFField {
   // CXFA_FFField
   void RenderWidget(CXFA_Graphics* pGS,
                     const CFX_Matrix& matrix,
-                    uint32_t dwStatus) override;
+                    HighlightOption highlight) override;
   bool LoadWidget() override;
   bool PerformLayout() override;
   void UpdateWidgetProperty() override;
@@ -51,7 +51,7 @@ class CXFA_FFPushButton final : public CXFA_FFField {
   std::unique_ptr<CXFA_TextProvider> m_pRollProvider;
   std::unique_ptr<CXFA_TextProvider> m_pDownProvider;
   UnownedPtr<IFWL_WidgetDelegate> m_pOldDelegate;
-  UnownedPtr<CXFA_Button> button_;
+  UnownedPtr<CXFA_Button> const button_;
 };
 
 #endif  // XFA_FXFA_CXFA_FFPUSHBUTTON_H_

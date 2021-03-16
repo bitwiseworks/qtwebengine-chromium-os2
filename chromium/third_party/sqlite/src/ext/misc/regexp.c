@@ -141,7 +141,7 @@ static void re_add_state(ReStateSet *pSet, int newState){
 
 /* Extract the next unicode character from *pzIn and return it.  Advance
 ** *pzIn to the first byte past the end of the character returned.  To
-** be clear:  this routine converts utf8 to unicode.  This routine is
+** be clear:  this routine converts utf8 to unicode.  This routine is 
 ** optimized for the common case where the next character is a single byte.
 */
 static unsigned re_next_char(ReInput *p){
@@ -156,7 +156,7 @@ static unsigned re_next_char(ReInput *p){
            && (p->z[p->i+1]&0xc0)==0x80 ){
       c = (c&0x0f)<<12 | ((p->z[p->i]&0x3f)<<6) | (p->z[p->i+1]&0x3f);
       p->i += 2;
-      if( c<=0x3ff || (c>=0xd800 && c<=0xdfff) ) c = 0xfffd;
+      if( c<=0x7ff || (c>=0xd800 && c<=0xdfff) ) c = 0xfffd;
     }else if( (c&0xf8)==0xf0 && p->i+3<p->mx && (p->z[p->i]&0xc0)==0x80
            && (p->z[p->i+1]&0xc0)==0x80 && (p->z[p->i+2]&0xc0)==0x80 ){
       c = (c&0x07)<<18 | ((p->z[p->i]&0x3f)<<12) | ((p->z[p->i+1]&0x3f)<<6)
@@ -212,7 +212,7 @@ static int re_match(ReCompiled *pRe, const unsigned char *zIn, int nIn){
   /* Look for the initial prefix match, if there is one. */
   if( pRe->nInit ){
     unsigned char x = pRe->zInit[0];
-    while( in.i+pRe->nInit<=in.mx
+    while( in.i+pRe->nInit<=in.mx 
      && (zIn[in.i]!=x ||
          strncmp((const char*)zIn+in.i, (const char*)pRe->zInit, pRe->nInit)!=0)
     ){
@@ -319,7 +319,7 @@ static int re_match(ReCompiled *pRe, const unsigned char *zIn, int nIn){
           }
           if( pRe->aOp[x]==RE_OP_CC_EXC ) hit = !hit;
           if( hit ) re_add_state(pNext, x+n);
-          break;
+          break;            
         }
       }
     }
@@ -480,7 +480,7 @@ static const char *re_subcompile_string(ReCompiled *p){
     iStart = p->nState;
     switch( c ){
       case '|':
-      case '$':
+      case '$': 
       case ')': {
         p->sIn.i--;
         return 0;
@@ -496,7 +496,7 @@ static const char *re_subcompile_string(ReCompiled *p){
         if( rePeek(p)=='*' ){
           re_append(p, RE_OP_ANYSTAR, 0);
           p->sIn.i++;
-        }else{
+        }else{ 
           re_append(p, RE_OP_ANY, 0);
         }
         break;
@@ -610,7 +610,7 @@ static const char *re_subcompile_string(ReCompiled *p){
 ** regular expression.  Applications should invoke this routine once
 ** for every call to re_compile() to avoid memory leaks.
 */
-void re_free(ReCompiled *pRe){
+static void re_free(ReCompiled *pRe){
   if( pRe ){
     sqlite3_free(pRe->aOp);
     sqlite3_free(pRe->aArg);
@@ -624,7 +624,7 @@ void re_free(ReCompiled *pRe){
 ** compiled regular expression in *ppRe.  Return NULL on success or an
 ** error message if something goes wrong.
 */
-const char *re_compile(ReCompiled **ppRe, const char *zIn, int noCase){
+static const char *re_compile(ReCompiled **ppRe, const char *zIn, int noCase){
   ReCompiled *pRe;
   const char *zErr;
   int i, j;
@@ -668,7 +668,7 @@ const char *re_compile(ReCompiled **ppRe, const char *zIn, int noCase){
   /* The following is a performance optimization.  If the regex begins with
   ** ".*" (if the input regex lacks an initial "^") and afterwards there are
   ** one or more matching characters, enter those matching characters into
-  ** zInit[].  The re_match() routine can then search ahead in the input
+  ** zInit[].  The re_match() routine can then search ahead in the input 
   ** string looking for the initial match without having to run the whole
   ** regex engine over the string.  Do not worry able trying to match
   ** unicode characters beyond plane 0 - those are very rare and this is
@@ -705,8 +705,8 @@ const char *re_compile(ReCompiled **ppRe, const char *zIn, int noCase){
 ** is implemented as regexp(B,A).
 */
 static void re_sql_func(
-  sqlite3_context *context,
-  int argc,
+  sqlite3_context *context, 
+  int argc, 
   sqlite3_value **argv
 ){
   ReCompiled *pRe;          /* Compiled regular expression */
@@ -748,13 +748,13 @@ static void re_sql_func(
 __declspec(dllexport)
 #endif
 int sqlite3_regexp_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
-  rc = sqlite3_create_function(db, "regexp", 2, SQLITE_UTF8, 0,
-                                 re_sql_func, 0, 0);
+  rc = sqlite3_create_function(db, "regexp", 2, SQLITE_UTF8|SQLITE_INNOCUOUS,
+                               0, re_sql_func, 0, 0);
   return rc;
 }

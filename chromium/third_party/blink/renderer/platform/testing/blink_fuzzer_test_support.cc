@@ -10,7 +10,6 @@
 #include "base/test/test_timeouts.h"
 #include "content/public/test/blink_test_environment.h"
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
-#include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 
 namespace blink {
 
@@ -30,8 +29,6 @@ BlinkFuzzerTestSupport::BlinkFuzzerTestSupport(int argc, char** argv) {
   TestTimeouts::Initialize();
 
   content::SetUpBlinkTestEnvironment();
-
-  blink::SchemeRegistry::Initialize();
 }
 
 BlinkFuzzerTestSupport::~BlinkFuzzerTestSupport() {
@@ -39,7 +36,7 @@ BlinkFuzzerTestSupport::~BlinkFuzzerTestSupport() {
   // LSAN needs unreachable objects to be released to avoid reporting them
   // incorrectly as a memory leak.
   blink::ThreadState* currentThreadState = blink::ThreadState::Current();
-  currentThreadState->CollectAllGarbage();
+  currentThreadState->CollectAllGarbageForTesting();
 #endif
 }
 

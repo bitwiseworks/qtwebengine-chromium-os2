@@ -7,7 +7,6 @@
 #include "base/time/time.h"
 #include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
-#include "net/log/test_net_log_entry.h"
 #include "net/nqe/effective_connection_type.h"
 #include "net/nqe/network_quality.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,23 +21,14 @@ namespace {
 
 // Returns the number of entries in |net_log| that have type set to
 // |NetLogEventType::NETWORK_QUALITY_CHANGED|.
-int GetNetworkQualityChangedEntriesCount(BoundTestNetLog* net_log) {
-  TestNetLogEntry::List entries;
-  net_log->GetEntries(&entries);
-
-  int count = 0;
-  for (const auto& entry : entries) {
-    if (entry.type == NetLogEventType::NETWORK_QUALITY_CHANGED)
-      ++count;
-  }
-  return count;
+int GetNetworkQualityChangedEntriesCount(RecordingBoundTestNetLog* net_log) {
+  return net_log->GetEntriesWithType(NetLogEventType::NETWORK_QUALITY_CHANGED)
+      .size();
 }
 
 // Verify that the net log events are recorded correctly.
 TEST(NetworkQualityEstimatorEventCreatorTest, Notified) {
-  // std::unique_ptr<BoundTestNetLog>
-  // net_log(std::make_unique<BoundTestNetLog>());
-  BoundTestNetLog net_log;
+  RecordingBoundTestNetLog net_log;
 
   EventCreator event_creator(net_log.bound());
 

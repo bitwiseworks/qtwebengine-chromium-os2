@@ -10,9 +10,11 @@
 #include <utility>
 #include <vector>
 
+#include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "services/metrics/public/cpp/ukm_decode.h"
 #include "services/metrics/public/cpp/ukm_source.h"
+#include "services/metrics/public/mojom/ukm_interface.mojom.h"
 #include "url/gurl.h"
 
 namespace ukm {
@@ -46,14 +48,13 @@ base::Value ConvertEntryToValue(const ukm::builders::DecodeMap& decode_map,
     entry_value.SetKey("name", base::Value(it->second.name));
 
     base::ListValue metrics_list;
-    auto* metrics_list_storage = &metrics_list.GetList();
     for (const auto& metric : entry.metrics) {
       base::DictionaryValue metric_value;
       metric_value.SetKey("name",
                           base::Value(GetName(it->second, metric.first)));
       metric_value.SetKey(
           "value", UkmDebugDataExtractor::UInt64AsPairOfInt(metric.second));
-      metrics_list_storage->push_back(std::move(metric_value));
+      metrics_list.Append(std::move(metric_value));
     }
     entry_value.SetKey("metrics", std::move(metrics_list));
   }
@@ -84,11 +85,16 @@ base::Value UkmDebugDataExtractor::GetStructuredData(
     return {};
 
   base::DictionaryValue ukm_data;
+
   ukm_data.SetKey("state", base::Value(ukm_service->recording_enabled_));
-  ukm_data.SetKey("client_id", UkmDebugDataExtractor::UInt64AsPairOfInt(
-                                   ukm_service->client_id_));
+  ukm_data.SetKey("client_id", base::Value(base::StringPrintf(
+                                   "%016" PRIx64, ukm_service->client_id_)));
   ukm_data.SetKey("session_id",
                   base::Value(static_cast<int>(ukm_service->session_id_)));
+
+  ukm_data.SetKey(
+      "is_sampling_enabled",
+      base::Value(static_cast<bool>(ukm_service->IsSamplingEnabled())));
 
   std::map<SourceId, SourceData> source_data;
   for (const auto& kv : ukm_service->recordings_.sources) {
@@ -100,7 +106,6 @@ base::Value UkmDebugDataExtractor::GetStructuredData(
   }
 
   base::ListValue sources_list;
-  auto* source_list_storage = &sources_list.GetList();
   for (const auto& kv : source_data) {
     const auto* src = kv.second.source;
 
@@ -115,15 +120,14 @@ base::Value UkmDebugDataExtractor::GetStructuredData(
     }
 
     base::ListValue entries_list;
-    auto* entries_list_storage = &entries_list.GetList();
     for (auto* entry : kv.second.entries) {
-      entries_list_storage->push_back(
+      entries_list.Append(
           ConvertEntryToValue(ukm_service->decode_map_, *entry));
     }
 
     source_value.SetKey("entries", std::move(entries_list));
 
-    source_list_storage->push_back(std::move(source_value));
+    sources_list.Append(std::move(source_value));
   }
   ukm_data.SetKey("sources", std::move(sources_list));
   return std::move(ukm_data);

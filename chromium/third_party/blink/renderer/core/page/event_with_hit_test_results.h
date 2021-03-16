@@ -21,8 +21,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_EVENT_WITH_HIT_TEST_RESULTS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAGE_EVENT_WITH_HIT_TEST_RESULTS_H_
 
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 
 namespace blink {
@@ -43,7 +43,7 @@ class EventWithHitTestResults {
 
   const EventType& Event() const { return event_; }
   const HitTestResult& GetHitTestResult() const { return hit_test_result_; }
-  LayoutPoint LocalPoint() const { return hit_test_result_.LocalPoint(); }
+  PhysicalOffset LocalPoint() const { return hit_test_result_.LocalPoint(); }
   Scrollbar* GetScrollbar() const { return hit_test_result_.GetScrollbar(); }
   bool IsOverLink() const { return hit_test_result_.IsOverLink(); }
   bool IsOverEmbeddedContentView() const {

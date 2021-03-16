@@ -49,8 +49,7 @@ class CryptoResultCancel : public ThreadSafeRefCounted<CryptoResultCancel> {
 };
 
 // Receives notification of completion of the crypto operation.
-class PLATFORM_EXPORT CryptoResult
-    : public GarbageCollectedFinalized<CryptoResult> {
+class PLATFORM_EXPORT CryptoResult : public GarbageCollected<CryptoResult> {
  public:
   virtual ~CryptoResult() = default;
 
@@ -62,7 +61,7 @@ class PLATFORM_EXPORT CryptoResult
   virtual void CompleteWithKeyPair(const WebCryptoKey& public_key,
                                    const WebCryptoKey& private_key) = 0;
 
-  virtual void Trace(blink::Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) {}
 };
 
 }  // namespace blink

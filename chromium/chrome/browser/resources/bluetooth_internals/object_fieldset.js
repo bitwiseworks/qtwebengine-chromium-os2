@@ -21,7 +21,7 @@ cr.define('object_fieldset', function() {
    * @constructor
    * @extends {HTMLFieldSetElement}
    */
-  var ObjectFieldSet = cr.ui.define('fieldset');
+  const ObjectFieldSet = cr.ui.define('fieldset');
 
   ObjectFieldSet.prototype = {
     __proto__: HTMLFieldSetElement.prototype,
@@ -37,7 +37,7 @@ cr.define('object_fieldset', function() {
     /**
      * Decorates the element as an ObjectFieldset.
      */
-    decorate: function() {
+    decorate() {
       this.classList.add('object-fieldset');
 
       /** @type {?Object} */
@@ -51,7 +51,7 @@ cr.define('object_fieldset', function() {
      * Sets the object data to be displayed in the fieldset.
      * @param {!Object} value
      */
-    setObject: function(value) {
+    setObject(value) {
       this.value = value;
       this.redraw();
     },
@@ -61,31 +61,31 @@ cr.define('object_fieldset', function() {
      * name is not provided, the default property name will be used.
      * @param {!Object<string, string>} nameMap
      */
-    setPropertyDisplayNames: function(nameMap) {
+    setPropertyDisplayNames(nameMap) {
       this.nameMap_ = nameMap;
     },
 
     /**
      * Deletes and recreates the table structure with current object data.
      */
-    redraw: function() {
+    redraw() {
       this.innerHTML = '';
 
       Object.keys(assert(this.value)).forEach(function(propName) {
-        var value = this.value[propName];
+        const value = this.value[propName];
         if (value === false && !this.showAll_) {
           return;
         }
 
-        var name = this.nameMap_[propName] || propName;
-        var newField = document.createElement('div');
+        const name = this.nameMap_[propName] || propName;
+        const newField = document.createElement('div');
         newField.classList.add('status');
 
-        var nameDiv = document.createElement('div');
+        const nameDiv = document.createElement('div');
         nameDiv.textContent = name + ':';
         newField.appendChild(nameDiv);
 
-        var valueDiv = document.createElement('div');
+        const valueDiv = document.createElement('div');
         valueDiv.dataset.field = propName;
 
         if (typeof(value) === 'boolean') {

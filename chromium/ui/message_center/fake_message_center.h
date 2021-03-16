@@ -7,8 +7,13 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/macros.h"
 #include "ui/message_center/message_center.h"
+#include "ui/message_center/message_center_observer.h"
 #include "ui/message_center/message_center_types.h"
 
 namespace message_center {
@@ -27,6 +32,7 @@ class FakeMessageCenter : public MessageCenter {
   size_t NotificationCount() const override;
   bool HasPopupNotifications() const override;
   bool IsQuietMode() const override;
+  bool IsSpokenFeedbackEnabled() const override;
   Notification* FindVisibleNotificationById(const std::string& id) override;
   NotificationList::Notifications FindNotificationsByAppId(
       const std::string& app_id) override;
@@ -59,6 +65,7 @@ class FakeMessageCenter : public MessageCenter {
   void DisplayedNotification(const std::string& id,
                              const DisplaySource source) override;
   void SetQuietMode(bool in_quiet_mode) override;
+  void SetSpokenFeedbackEnabled(bool enabled) override;
   void EnterQuietModeWithExpire(const base::TimeDelta& expires_in) override;
   void SetVisibility(Visibility visible) override;
   bool IsMessageCenterVisible() const override;
@@ -73,12 +80,14 @@ class FakeMessageCenter : public MessageCenter {
   void DisableTimersForTest() override;
   const base::ObserverList<MessageCenterObserver>::Unchecked& observer_list()
       const {
-    return observer_list_;
+    return observers_;
   }
 
  private:
-  base::ObserverList<MessageCenterObserver>::Unchecked observer_list_;
-  const NotificationList::Notifications empty_notifications_;
+  base::ObserverList<MessageCenterObserver>::Unchecked observers_;
+  NotificationList notifications_;
+  NotificationList::Notifications visible_notifications_;
+  std::vector<NotificationBlocker*> blockers_;
   bool has_message_center_view_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(FakeMessageCenter);

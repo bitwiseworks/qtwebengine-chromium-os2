@@ -8,11 +8,14 @@
 #include <vector>
 
 #include "base/memory/scoped_refptr.h"
+#include "build/build_config.h"
 #include "components/autofill/core/common/form_data.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "net/base/network_isolation_key.h"
 
-namespace net {
-class URLRequestContextGetter;
-}
+#if !defined(OS_IOS)
+#include "components/autofill/core/browser/payments/internal_authenticator.h"
+#endif
 
 namespace network {
 class SharedURLLoaderFactory;
@@ -20,6 +23,10 @@ class SharedURLLoaderFactory;
 
 namespace gfx {
 class RectF;
+}
+
+namespace ui {
+class AXTreeID;
 }
 
 namespace autofill {
@@ -47,8 +54,12 @@ class AutofillDriver {
   // Returns whether AutofillDriver instance is associated to the main frame.
   virtual bool IsInMainFrame() const = 0;
 
-  // Returns the URL request context information associated with this driver.
-  virtual net::URLRequestContextGetter* GetURLRequestContext() = 0;
+  // Returns true iff a popup can be shown on the behalf of the associated
+  // frame.
+  virtual bool CanShowAutofillUi() const = 0;
+
+  // Returns the ax tree id associated with this driver.
+  virtual ui::AXTreeID GetAxTreeId() const = 0;
 
   // Returns the URL loader factory associated with this driver.
   virtual scoped_refptr<network::SharedURLLoaderFactory>
@@ -56,6 +67,12 @@ class AutofillDriver {
 
   // Returns true iff the renderer is available for communication.
   virtual bool RendererIsAvailable() = 0;
+
+#if !defined(OS_IOS)
+  // Gets or creates a pointer to an implementation of InternalAuthenticator.
+  virtual InternalAuthenticator*
+  GetOrCreateCreditCardInternalAuthenticator() = 0;
+#endif
 
   // Forwards |data| to the renderer. |query_id| is the id of the renderer's
   // original request for the data. |action| is the action the renderer should
@@ -69,6 +86,9 @@ class AutofillDriver {
   // and to the password generation manager to detect account creation forms.
   virtual void PropagateAutofillPredictions(
       const std::vector<autofill::FormStructure*>& forms) = 0;
+
+  // Forwards parsed |forms| to the embedder.
+  virtual void HandleParsedForms(const std::vector<FormStructure*>& forms) = 0;
 
   // Sends the field type predictions specified in |forms| to the renderer. This
   // method is a no-op if the renderer is not available or the appropriate
@@ -94,6 +114,11 @@ class AutofillDriver {
   virtual void RendererShouldPreviewFieldWithValue(
       const base::string16& value) = 0;
 
+  // Tells the renderer to set the currently focused node's corresponding
+  // accessibility node's autofill state to |state|.
+  virtual void RendererShouldSetSuggestionAvailability(
+      const mojom::AutofillState state) = 0;
+
   // Informs the renderer that the popup has been hidden.
   virtual void PopupHidden() = 0;
 
@@ -102,6 +127,8 @@ class AutofillDriver {
   // renderers cannot do this transformation themselves.
   virtual gfx::RectF TransformBoundingBoxToViewportCoordinates(
       const gfx::RectF& bounding_box) = 0;
+
+  virtual net::NetworkIsolationKey NetworkIsolationKey() = 0;
 };
 
 }  // namespace autofill

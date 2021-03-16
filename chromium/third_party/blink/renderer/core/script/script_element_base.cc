@@ -11,9 +11,9 @@ namespace blink {
 
 ScriptLoader* ScriptLoaderFromElement(Element* element) {
   ScriptLoader* script_loader = nullptr;
-  if (auto* html_script = ToHTMLScriptElementOrNull(*element))
+  if (auto* html_script = DynamicTo<HTMLScriptElement>(*element))
     script_loader = html_script->Loader();
-  else if (auto* svg_script = ToSVGScriptElementOrNull(*element))
+  else if (auto* svg_script = DynamicTo<SVGScriptElement>(*element))
     script_loader = svg_script->Loader();
   DCHECK(script_loader);
   return script_loader;
@@ -21,7 +21,8 @@ ScriptLoader* ScriptLoaderFromElement(Element* element) {
 
 ScriptLoader* ScriptElementBase::InitializeScriptLoader(bool parser_inserted,
                                                         bool already_started) {
-  return ScriptLoader::Create(this, parser_inserted, already_started);
+  return MakeGarbageCollected<ScriptLoader>(this, parser_inserted,
+                                            already_started);
 }
 
 }  // namespace blink

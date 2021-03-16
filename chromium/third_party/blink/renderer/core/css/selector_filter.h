@@ -53,7 +53,7 @@ class CORE_EXPORT SelectorFilter {
     ParentStackFrame() : element(nullptr) {}
     explicit ParentStackFrame(Element& element) : element(&element) {}
 
-    void Trace(blink::Visitor*);
+    void Trace(Visitor*);
 
     Member<Element> element;
     Vector<unsigned, 4> identifier_hashes;
@@ -75,7 +75,7 @@ class CORE_EXPORT SelectorFilter {
                                       unsigned* identifier_hashes,
                                       unsigned maximum_identifier_count);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   void PushParentStackFrame(Element& parent);
@@ -104,6 +104,6 @@ inline bool SelectorFilter::FastRejectSelector(
 
 }  // namespace blink
 
-WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::SelectorFilter::ParentStackFrame);
+WTF_ALLOW_INIT_WITH_MEM_FUNCTIONS(blink::SelectorFilter::ParentStackFrame)
 
 #endif

@@ -5,7 +5,10 @@
 #include "third_party/blink/renderer/core/html/parser/html_resource_preloader.h"
 
 #include <memory>
+#include <utility>
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/web_prescient_networking.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/html/parser/preload_request.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 
@@ -18,37 +21,40 @@ struct HTMLResourcePreconnectTestCase {
   bool is_https;
 };
 
-class PreloaderNetworkHintsMock : public NetworkHintsInterface {
+class PreloaderNetworkHintsMock : public WebPrescientNetworking {
  public:
   PreloaderNetworkHintsMock() : did_preconnect_(false) {}
 
-  void DnsPrefetchHost(const String& host) const override {}
-  void PreconnectHost(
-      const KURL& host,
-      const CrossOriginAttributeValue cross_origin) const override {
+  void PrefetchDNS(const WebString& hostname) override {}
+  void Preconnect(const WebURL& url, bool allow_credentials) override {
     did_preconnect_ = true;
-    is_https_ = host.ProtocolIs("https");
-    is_cross_origin_ = (cross_origin == kCrossOriginAttributeAnonymous);
+    is_https_ = url.ProtocolIs("https");
+    allow_credentials_ = allow_credentials;
   }
 
   bool DidPreconnect() { return did_preconnect_; }
   bool IsHTTPS() { return is_https_; }
-  bool IsCrossOrigin() { return is_cross_origin_; }
+  bool AllowCredentials() { return allow_credentials_; }
 
  private:
   mutable bool did_preconnect_;
   mutable bool is_https_;
-  mutable bool is_cross_origin_;
+  mutable bool allow_credentials_;
 };
 
 class HTMLResourcePreloaderTest : public PageTestBase {
  protected:
-  void SetUp() override { PageTestBase::SetUp(IntSize()); }
+  void SetUp() override {
+    PageTestBase::SetUp(IntSize());
+    GetFrame().SetPrescientNetworkingForTesting(
+        std::make_unique<PreloaderNetworkHintsMock>());
+    mock_network_hints_ = static_cast<PreloaderNetworkHintsMock*>(
+        GetFrame().PrescientNetworking());
+  }
 
   void Test(HTMLResourcePreconnectTestCase test_case) {
     // TODO(yoav): Need a mock loader here to verify things are happenning
     // beyond preconnect.
-    PreloaderNetworkHintsMock network_hints;
     auto preload_request = PreloadRequest::CreateIfNeeded(
         String(), TextPosition(), test_case.url, KURL(test_case.base_url),
         ResourceType::kImage, network::mojom::ReferrerPolicy(),
@@ -58,13 +64,15 @@ class HTMLResourcePreloaderTest : public PageTestBase {
     DCHECK(preload_request);
     if (test_case.is_cors)
       preload_request->SetCrossOrigin(kCrossOriginAttributeAnonymous);
-    HTMLResourcePreloader* preloader =
-        HTMLResourcePreloader::Create(GetDocument());
-    preloader->Preload(std::move(preload_request), network_hints);
-    ASSERT_TRUE(network_hints.DidPreconnect());
-    ASSERT_EQ(test_case.is_cors, network_hints.IsCrossOrigin());
-    ASSERT_EQ(test_case.is_https, network_hints.IsHTTPS());
+    auto* preloader =
+        MakeGarbageCollected<HTMLResourcePreloader>(GetDocument());
+    preloader->Preload(std::move(preload_request));
+    ASSERT_TRUE(mock_network_hints_->DidPreconnect());
+    ASSERT_NE(test_case.is_cors, mock_network_hints_->AllowCredentials());
+    ASSERT_EQ(test_case.is_https, mock_network_hints_->IsHTTPS());
   }
+
+  PreloaderNetworkHintsMock* mock_network_hints_ = nullptr;
 };
 
 TEST_F(HTMLResourcePreloaderTest, testPreconnect) {

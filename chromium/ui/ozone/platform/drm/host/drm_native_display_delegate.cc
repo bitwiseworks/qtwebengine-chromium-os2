@@ -4,6 +4,8 @@
 
 #include "ui/ozone/platform/drm/host/drm_native_display_delegate.h"
 
+#include <utility>
+
 #include "ui/display/types/display_snapshot.h"
 #include "ui/display/types/native_display_observer.h"
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
@@ -87,6 +89,12 @@ bool DrmNativeDisplayDelegate::SetGammaCorrection(
   DrmDisplayHost* display = display_manager_->GetDisplay(display_id);
   display->SetGammaCorrection(degamma_lut, gamma_lut);
   return true;
+}
+
+void DrmNativeDisplayDelegate::SetPrivacyScreen(int64_t display_id,
+                                                bool enabled) {
+  DrmDisplayHost* display = display_manager_->GetDisplay(display_id);
+  display->SetPrivacyScreen(enabled);
 }
 
 void DrmNativeDisplayDelegate::AddObserver(

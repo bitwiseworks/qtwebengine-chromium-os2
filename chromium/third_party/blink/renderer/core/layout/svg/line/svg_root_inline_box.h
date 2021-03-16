@@ -24,6 +24,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LINE_SVG_ROOT_INLINE_BOX_H_
 
 #include "third_party/blink/renderer/core/layout/line/root_inline_box.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -45,11 +46,11 @@ class SVGRootInlineBox final : public RootInlineBox {
 
   void ComputePerCharacterLayoutInformation();
 
-  InlineBox* ClosestLeafChildForPosition(const LayoutPoint&);
+  InlineBox* ClosestLeafChildForPosition(const PhysicalOffset&);
 
   bool NodeAtPoint(HitTestResult&,
-                   const HitTestLocation& location_in_container,
-                   const LayoutPoint& accumulated_offset,
+                   const HitTestLocation&,
+                   const PhysicalOffset& accumulated_offset,
                    LayoutUnit line_top,
                    LayoutUnit line_bottom) final;
 
@@ -60,7 +61,12 @@ class SVGRootInlineBox final : public RootInlineBox {
   LayoutUnit logical_height_;
 };
 
-DEFINE_INLINE_BOX_TYPE_CASTS(SVGRootInlineBox);
+template <>
+struct DowncastTraits<SVGRootInlineBox> {
+  static bool AllowFrom(const InlineBox& box) {
+    return box.IsSVGRootInlineBox();
+  }
+};
 
 }  // namespace blink
 

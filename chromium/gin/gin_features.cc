@@ -10,4 +10,19 @@ namespace features {
 const base::Feature kV8OptimizeJavascript{"V8OptimizeJavascript",
                                           base::FEATURE_ENABLED_BY_DEFAULT};
 
+// Enables flushing of JS bytecode in V8.
+const base::Feature kV8FlushBytecode{"V8FlushBytecode",
+                                     base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enables lazy feedback allocation in V8.
+const base::Feature kV8LazyFeedbackAllocation{"V8LazyFeedbackAllocation",
+                                              base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Enable concurrent inlining in TurboFan.
+const base::Feature kV8ConcurrentInlining{"V8ConcurrentInlining",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enable per-context marking worklists in V8 GC.
+const base::Feature kV8PerContextMarkingWorklist{
+    "V8PerContextMarkingWorklist", base::FEATURE_DISABLED_BY_DEFAULT};
 }  // namespace features

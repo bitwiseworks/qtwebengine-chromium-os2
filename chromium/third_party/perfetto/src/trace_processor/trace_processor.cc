@@ -15,7 +15,8 @@
  */
 
 #include "perfetto/trace_processor/trace_processor.h"
-#include "src/trace_processor/table.h"
+
+#include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/trace_processor_impl.h"
 
 namespace perfetto {
@@ -29,11 +30,41 @@ std::unique_ptr<TraceProcessor> TraceProcessor::CreateInstance(
 
 TraceProcessor::~TraceProcessor() = default;
 
+TraceProcessor::Iterator::Iterator(std::unique_ptr<IteratorImpl> iterator)
+    : iterator_(std::move(iterator)) {}
+TraceProcessor::Iterator::~Iterator() = default;
+
+TraceProcessor::Iterator::Iterator(TraceProcessor::Iterator&&) noexcept =
+    default;
+TraceProcessor::Iterator& TraceProcessor::Iterator::operator=(
+    TraceProcessor::Iterator&&) = default;
+
+bool TraceProcessor::Iterator::Next() {
+  return iterator_->Next();
+}
+
+SqlValue TraceProcessor::Iterator::Get(uint32_t col) {
+  return iterator_->Get(col);
+}
+
+std::string TraceProcessor::Iterator::GetColumnName(uint32_t col) {
+  return iterator_->GetColumnName(col);
+}
+
+uint32_t TraceProcessor::Iterator::ColumnCount() {
+  return iterator_->ColumnCount();
+}
+
+util::Status TraceProcessor::Iterator::Status() {
+  return iterator_->Status();
+}
+
 // static
 void EnableSQLiteVtableDebugging() {
   // This level of indirection is required to avoid clients to depend on table.h
   // which in turn requires sqlite headers.
-  Table::debug = true;
+  SqliteTable::debug = true;
 }
+
 }  // namespace trace_processor
 }  // namespace perfetto

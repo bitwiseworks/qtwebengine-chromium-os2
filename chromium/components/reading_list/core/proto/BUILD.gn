@@ -5,10 +5,5 @@
 import("//third_party/protobuf/proto_library.gni")
 
 proto_library("proto") {
-  sources = [
-    "reading_list.proto",
-  ]
-  deps = [
-    "//components/sync/protocol",
-  ]
+  sources = [ "reading_list.proto" ]
 }

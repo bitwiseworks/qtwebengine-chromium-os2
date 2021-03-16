@@ -71,6 +71,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AuthenticatorMakeCredentialResponse
     return transport_used_;
   }
 
+  const base::Optional<std::vector<uint8_t>>& android_client_data_ext() const {
+    return android_client_data_ext_;
+  }
+  void set_android_client_data_ext(const std::vector<uint8_t>& data) {
+    android_client_data_ext_ = data;
+  }
+
  private:
   AttestationObject attestation_object_;
 
@@ -78,11 +85,20 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AuthenticatorMakeCredentialResponse
   // nullopt for cases where we cannot determine the transport (Windows).
   base::Optional<FidoTransportProtocol> transport_used_;
 
+  // If not base::nullopt, the content of the googleAndroidClientData extension
+  // authenticator output.
+  base::Optional<std::vector<uint8_t>> android_client_data_ext_;
+
   DISALLOW_COPY_AND_ASSIGN(AuthenticatorMakeCredentialResponse);
 };
 
+// Through cbor::Writer, produces a CTAP style CBOR-encoded byte array
+// that conforms to the format CTAP2 devices sends to the client as a response.
+// {01: attestation format name,
+//  02: authenticator data bytes,
+//  03: attestation statement bytes }
 COMPONENT_EXPORT(DEVICE_FIDO)
-std::vector<uint8_t> GetSerializedCtapDeviceResponse(
+std::vector<uint8_t> AsCTAPStyleCBORBytes(
     const AuthenticatorMakeCredentialResponse& response);
 
 }  // namespace device

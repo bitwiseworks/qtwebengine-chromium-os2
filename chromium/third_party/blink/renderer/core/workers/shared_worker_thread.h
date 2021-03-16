@@ -32,7 +32,6 @@
 
 #include <memory>
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/workers/worker_thread.h"
 
 namespace blink {
@@ -41,8 +40,8 @@ struct GlobalScopeCreationParams;
 
 class CORE_EXPORT SharedWorkerThread : public WorkerThread {
  public:
-  SharedWorkerThread(const String& name,
-                     WorkerReportingProxy&);
+  SharedWorkerThread(WorkerReportingProxy&,
+                     const base::UnguessableToken& appcache_host_id);
   ~SharedWorkerThread() override;
 
   WorkerBackingThread& GetWorkerBackingThread() override {
@@ -54,12 +53,12 @@ class CORE_EXPORT SharedWorkerThread : public WorkerThread {
   WorkerOrWorkletGlobalScope* CreateWorkerGlobalScope(
       std::unique_ptr<GlobalScopeCreationParams>) override;
 
-  WebThreadType GetThreadType() const override {
-    return WebThreadType::kSharedWorkerThread;
+  ThreadType GetThreadType() const override {
+    return ThreadType::kSharedWorkerThread;
   }
 
   std::unique_ptr<WorkerBackingThread> worker_backing_thread_;
-  String name_;
+  const base::UnguessableToken appcache_host_id_;
 };
 
 }  // namespace blink

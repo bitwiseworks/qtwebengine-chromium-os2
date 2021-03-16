@@ -12,7 +12,6 @@
 
 namespace ui {
 class ContextFactory;
-class ContextFactoryPrivate;
 }
 
 namespace content {
@@ -38,18 +37,8 @@ class CONTENT_EXPORT ImageTransportFactory {
   // disabled.
   virtual void DisableGpuCompositing() = 0;
 
-  // Whether gpu compositing is being used or is disabled for software
-  // compositing. Clients of the compositor should give resources that match
-  // the appropriate mode.
-  virtual bool IsGpuCompositingDisabled() = 0;
-
   // Gets the image transport factory as a context factory for the compositor.
   virtual ui::ContextFactory* GetContextFactory() = 0;
-
-  // Gets the image transport factory as the privileged context factory for the
-  // compositor. TODO(fsamuel): This interface should eventually go away once
-  // Mus subsumes this functionality.
-  virtual ui::ContextFactoryPrivate* GetContextFactoryPrivate() = 0;
 };
 
 }  // namespace content

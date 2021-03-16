@@ -33,10 +33,6 @@ namespace blink {
 
 class ChildNodeList final : public NodeList {
  public:
-  static ChildNodeList* Create(ContainerNode& root_node) {
-    return MakeGarbageCollected<ChildNodeList>(root_node);
-  }
-
   explicit ChildNodeList(ContainerNode& root_node);
   ~ChildNodeList() override;
 
@@ -74,11 +70,12 @@ class ChildNodeList final : public NodeList {
   mutable CollectionIndexCache<ChildNodeList, Node> collection_index_cache_;
 };
 
-DEFINE_TYPE_CASTS(ChildNodeList,
-                  NodeList,
-                  nodeList,
-                  nodeList->IsChildNodeList(),
-                  nodeList.IsChildNodeList());
+template <>
+struct DowncastTraits<ChildNodeList> {
+  static bool AllowFrom(const NodeList& nodeList) {
+    return nodeList.IsChildNodeList();
+  }
+};
 
 }  // namespace blink
 

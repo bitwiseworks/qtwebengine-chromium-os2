@@ -12,8 +12,7 @@
 #include <set>
 #include <vector>
 
-#include "base/macros.h"
-#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/aura/client/focus_change_observer.h"
 #include "ui/views/views_export.h"
 
@@ -34,12 +33,14 @@ class Widget;
 // A cache responsible for assigning id's to a set of interesting Aura views.
 class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
  public:
-  // Get the single instance of this class.
-  static AXAuraObjCache* GetInstance();
+  AXAuraObjCache();
+  AXAuraObjCache(const AXAuraObjCache&) = delete;
+  AXAuraObjCache& operator=(const AXAuraObjCache&) = delete;
+  ~AXAuraObjCache() override;
 
   class Delegate {
    public:
-    virtual ~Delegate() {}
+    virtual ~Delegate() = default;
 
     virtual void OnChildWindowRemoved(AXAuraObjWrapper* parent) = 0;
     virtual void OnEvent(AXAuraObjWrapper* aura_obj,
@@ -53,6 +54,11 @@ class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
   // Get or create an entry in the cache.
   AXAuraObjWrapper* GetOrCreate(Widget* widget);
   AXAuraObjWrapper* GetOrCreate(aura::Window* window);
+
+  // Creates an entry in this cache given a wrapper object. Use this method when
+  // creating a wrapper not backed by any of the supported views above. This
+  // cache will take ownership. Will replace an existing entry with the same id.
+  void CreateOrReplace(std::unique_ptr<AXAuraObjWrapper> obj);
 
   // Gets an id given an Aura view.
   int32_t GetID(View* view) const;
@@ -104,9 +110,6 @@ class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
  private:
   friend class base::NoDestructor<AXAuraObjCache>;
 
-  AXAuraObjCache();
-  ~AXAuraObjCache() override;
-
   View* GetFocusedView();
 
   // aura::client::FocusChangeObserver override.
@@ -116,7 +119,7 @@ class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
   template <typename AuraViewWrapper, typename AuraView>
   AXAuraObjWrapper* CreateInternal(
       AuraView* aura_view,
-      std::map<AuraView*, int32_t>& aura_view_to_id_map);
+      std::map<AuraView*, int32_t>* aura_view_to_id_map);
 
   template <typename AuraView>
   int32_t GetIDInternal(
@@ -125,7 +128,7 @@ class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
 
   template <typename AuraView>
   void RemoveInternal(AuraView* aura_view,
-                      std::map<AuraView*, int32_t>& aura_view_to_id_map);
+                      std::map<AuraView*, int32_t>* aura_view_to_id_map);
 
   std::map<views::View*, int32_t> view_to_id_map_;
   std::map<views::Widget*, int32_t> widget_to_id_map_;
@@ -138,8 +141,6 @@ class VIEWS_EXPORT AXAuraObjCache : public aura::client::FocusChangeObserver {
   std::set<aura::Window*> root_windows_;
 
   views::Widget* focused_widget_for_testing_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(AXAuraObjCache);
 };
 
 }  // namespace views

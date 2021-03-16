@@ -37,7 +37,7 @@
 namespace blink {
 
 ShapeCache* CachingWordShaper::GetShapeCache() const {
-  return font_.font_fallback_list_->GetShapeCache(font_.font_description_);
+  return font_.GetShapeCache();
 }
 
 // Returns the total advance width of the TextRun run. If glyph_bounds
@@ -56,7 +56,7 @@ float CachingWordShaper::Width(const TextRun& run,
       if (run.Rtl())
         width -= word_result->Width();
       if (glyph_bounds) {
-        FloatRect adjusted_bounds = word_result->Bounds();
+        FloatRect adjusted_bounds = word_result->DeprecatedInkBounds();
         // Translate glyph bounds to the current glyph position which
         // is the total width before this glyph.
         adjusted_bounds.SetX(adjusted_bounds.X() + width);
@@ -157,7 +157,7 @@ GlyphData CachingWordShaper::EmphasisMarkGlyphData(
   ShapeResultBuffer buffer;
   ShapeResultsForRun(GetShapeCache(), &font_, emphasis_mark_run, &buffer);
 
-  return buffer.EmphasisMarkGlyphData(font_.font_description_);
+  return buffer.EmphasisMarkGlyphData(font_.GetFontDescription());
 }
 
-};  // namespace blink
+}  // namespace blink

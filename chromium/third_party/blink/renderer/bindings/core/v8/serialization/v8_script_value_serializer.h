@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SERIALIZATION_V8_SCRIPT_VALUE_SERIALIZER_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_SERIALIZATION_V8_SCRIPT_VALUE_SERIALIZER_H_
 
+#include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialization_tag.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_color_params.h"
@@ -12,8 +13,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "v8/include/v8.h"
 
@@ -23,7 +23,7 @@ class File;
 class Transferables;
 
 // Serializes V8 values according to the HTML structured clone algorithm:
-// https://html.spec.whatwg.org/multipage/infrastructure.html#structured-clone
+// https://html.spec.whatwg.org/C/#structured-clone
 //
 // Supports only basic JavaScript objects and core DOM types. Support for
 // modules types is implemented in a subclass.
@@ -33,7 +33,6 @@ class Transferables;
 class CORE_EXPORT V8ScriptValueSerializer
     : public v8::ValueSerializer::Delegate {
   STACK_ALLOCATED();
-  WTF_MAKE_NONCOPYABLE(V8ScriptValueSerializer);
 
  public:
   using Options = SerializedScriptValue::SerializeOptions;
@@ -47,6 +46,8 @@ class CORE_EXPORT V8ScriptValueSerializer
   // If false is returned and no more specific exception is thrown, a generic
   // DataCloneError message will be used.
   virtual bool WriteDOMObject(ScriptWrappable*, ExceptionState&);
+
+  ScriptState* GetScriptState() const { return script_state_; }
 
   void WriteTag(SerializationTag tag) {
     uint8_t tag_byte = tag;
@@ -69,6 +70,12 @@ class CORE_EXPORT V8ScriptValueSerializer
         "Only enums backed by uint32_t are accepted.");
     WriteUint32(static_cast<uint32_t>(value));
   }
+
+  SerializedScriptValue* GetSerializedScriptValue() {
+    return serialized_script_value_.get();
+  }
+
+  bool IsForStorage() const { return for_storage_; }
 
  private:
   // Transfer is split into two phases: scanning the transferables so that we
@@ -101,7 +108,9 @@ class CORE_EXPORT V8ScriptValueSerializer
                                size_t* actual_size) override;
   void FreeBufferMemory(void* buffer) override;
 
-  Member<ScriptState> script_state_;
+  bool TransferableStreamsEnabled() const;
+
+  ScriptState* script_state_;
   scoped_refptr<SerializedScriptValue> serialized_script_value_;
   v8::ValueSerializer serializer_;
   const Transferables* transferables_ = nullptr;
@@ -113,6 +122,8 @@ class CORE_EXPORT V8ScriptValueSerializer
 #if DCHECK_IS_ON()
   bool serialize_invoked_ = false;
 #endif
+
+  DISALLOW_COPY_AND_ASSIGN(V8ScriptValueSerializer);
 };
 
 // For code testing V8ScriptValueSerializer

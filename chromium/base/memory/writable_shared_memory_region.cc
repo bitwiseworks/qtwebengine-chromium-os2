@@ -6,13 +6,18 @@
 
 #include <utility>
 
-#include "base/memory/shared_memory.h"
 #include "build/build_config.h"
 
 namespace base {
 
+WritableSharedMemoryRegion::CreateFunction*
+    WritableSharedMemoryRegion::create_hook_ = nullptr;
+
 // static
 WritableSharedMemoryRegion WritableSharedMemoryRegion::Create(size_t size) {
+  if (create_hook_)
+    return create_hook_(size);
+
   subtle::PlatformSharedMemoryRegion handle =
       subtle::PlatformSharedMemoryRegion::CreateWritable(size);
 

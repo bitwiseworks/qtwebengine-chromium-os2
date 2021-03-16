@@ -12,8 +12,8 @@
 
 namespace gfx {
 
-class Point;
 class Rect;
+class RectF;
 
 // Returns a scale transform at |anchor| point.
 GEOMETRY_SKIA_EXPORT Transform GetScaleTransform(const Point& anchor,
@@ -26,10 +26,10 @@ struct GEOMETRY_SKIA_EXPORT DecomposedTransform {
   // if used with Compose below, will produce the identity transform.
   DecomposedTransform();
 
-  SkMScalar translate[3];
-  SkMScalar scale[3];
-  SkMScalar skew[3];
-  SkMScalar perspective[4];
+  SkScalar translate[3];
+  SkScalar scale[3];
+  SkScalar skew[3];
+  SkScalar perspective[4];
   Quaternion quaternion;
 
   std::string ToString() const;
@@ -65,8 +65,12 @@ GEOMETRY_SKIA_EXPORT bool SnapTransform(Transform* out,
 // Calculates a transform with a transformed origin. The resulting tranform is
 // created by composing P * T * P^-1 where P is a constant transform to the new
 // origin.
-GEOMETRY_SKIA_EXPORT Transform
-TransformAboutPivot(const gfx::Point& pivot, const gfx::Transform& transform);
+GEOMETRY_SKIA_EXPORT Transform TransformAboutPivot(const Point& pivot,
+                                                   const Transform& transform);
+
+// Calculates a transform which would transform |src| to |dst|.
+GEOMETRY_SKIA_EXPORT Transform TransformBetweenRects(const RectF& src,
+                                                     const RectF& dst);
 
 }  // namespace gfx
 

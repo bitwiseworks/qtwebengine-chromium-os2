@@ -6,12 +6,14 @@
 
 #include <stdint.h>
 
+#include <string>
 #include <vector>
 
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -27,6 +29,10 @@
 
 #if defined(OS_CHROMEOS)
 #include "components/metrics/system_memory_stats_recorder.h"
+#endif
+
+#if defined(OS_ANDROID)
+#include "base/android/application_status_listener.h"
 #endif
 
 namespace metrics {
@@ -195,6 +201,7 @@ void StabilityMetricsHelper::RegisterPrefs(PrefRegistrySimple* registry) {
 
 void StabilityMetricsHelper::IncreaseRendererCrashCount() {
   IncrementPrefValue(prefs::kStabilityRendererCrashCount);
+  RecordStabilityEvent(StabilityEventType::kRendererCrash);
 }
 
 void StabilityMetricsHelper::IncreaseGpuCrashCount() {
@@ -210,12 +217,10 @@ void StabilityMetricsHelper::BrowserUtilityProcessLaunched(
 void StabilityMetricsHelper::BrowserUtilityProcessCrashed(
     const std::string& metrics_name,
     int exit_code) {
-  // TODO(wfh): there doesn't appear to be a good way to log these exit_codes
-  // without adding something into the stability proto, so for now only log the
-  // crash and if the numbers are high enough, logging exit codes can be added
-  // later.
   uint32_t hash = variations::HashName(metrics_name);
   base::UmaHistogramSparse("ChildProcess.Crashed.UtilityProcessHash", hash);
+  base::UmaHistogramSparse("ChildProcess.Crashed.UtilityProcessExitCode",
+                           exit_code);
 }
 
 void StabilityMetricsHelper::BrowserChildProcessCrashed() {
@@ -223,10 +228,10 @@ void StabilityMetricsHelper::BrowserChildProcessCrashed() {
 }
 
 void StabilityMetricsHelper::LogLoadStarted() {
+  base::RecordAction(base::UserMetricsAction("PageLoad"));
   IncrementPrefValue(prefs::kStabilityPageLoadCount);
   IncrementLongPrefsValue(prefs::kUninstallMetricsPageLoadCount);
-  // We need to save the prefs, as page load count is a critical stat, and it
-  // might be lost due to a crash :-(.
+  RecordStabilityEvent(StabilityEventType::kPageLoad);
 }
 
 void StabilityMetricsHelper::LogRendererCrash(
@@ -248,6 +253,7 @@ void StabilityMetricsHelper::LogRendererCrash(
         NOTREACHED();
 #endif
         IncrementPrefValue(prefs::kStabilityExtensionRendererCrashCount);
+        RecordStabilityEvent(StabilityEventType::kExtensionCrash);
 
         base::UmaHistogramSparse("CrashExitCodes.Extension",
                                  MapCrashExitCodeForHistogram(exit_code));
@@ -256,7 +262,7 @@ void StabilityMetricsHelper::LogRendererCrash(
               "Stability.CrashedProcessAge.Extension", uptime.value());
         }
       } else {
-        IncrementPrefValue(prefs::kStabilityRendererCrashCount);
+        IncreaseRendererCrashCount();
 
         base::UmaHistogramSparse("CrashExitCodes.Renderer",
                                  MapCrashExitCodeForHistogram(exit_code));
@@ -301,6 +307,13 @@ void StabilityMetricsHelper::LogRendererCrash(
       else
         IncrementPrefValue(prefs::kStabilityRendererFailedLaunchCount);
       break;
+#if defined(OS_WIN)
+    case base::TERMINATION_STATUS_INTEGRITY_FAILURE:
+      UMA_HISTOGRAM_ENUMERATION(
+          "BrowserRenderProcessHost.ChildCodeIntegrityFailures", histogram_type,
+          RENDERER_TYPE_COUNT);
+      break;
+#endif
     case base::TERMINATION_STATUS_MAX_ENUM:
       NOTREACHED();
       break;
@@ -324,9 +337,26 @@ void StabilityMetricsHelper::IncrementLongPrefsValue(const char* path) {
   local_state_->SetInt64(path, value + 1);
 }
 
-void StabilityMetricsHelper::LogRendererHang(RendererHangCause hang_cause) {
-  UMA_HISTOGRAM_ENUMERATION("ChildProcess.HungRendererCause", hang_cause);
+void StabilityMetricsHelper::LogRendererHang() {
+#if defined(OS_ANDROID)
+  base::android::ApplicationState app_state =
+      base::android::ApplicationStatusListener::GetState();
+  bool is_foreground =
+      app_state == base::android::APPLICATION_STATE_HAS_RUNNING_ACTIVITIES ||
+      app_state == base::android::APPLICATION_STATE_HAS_PAUSED_ACTIVITIES;
+  UMA_HISTOGRAM_BOOLEAN("ChildProcess.HungRendererInForeground", is_foreground);
+#endif
+  UMA_HISTOGRAM_MEMORY_MB(
+      "ChildProcess.HungRendererAvailableMemoryMB",
+      base::SysInfo::AmountOfAvailablePhysicalMemory() / 1024 / 1024);
   IncrementPrefValue(prefs::kStabilityRendererHangCount);
+}
+
+// static
+void StabilityMetricsHelper::RecordStabilityEvent(
+    StabilityEventType stability_event_type) {
+  UMA_STABILITY_HISTOGRAM_ENUMERATION("Stability.Experimental.Counts",
+                                      stability_event_type);
 }
 
 }  // namespace metrics

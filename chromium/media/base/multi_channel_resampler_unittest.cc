@@ -66,8 +66,9 @@ class MultiChannelResamplerTest
                         double expected_max_error) {
     InitializeAudioData(channels, frames);
     MultiChannelResampler resampler(
-        channels, kScaleFactor, SincResampler::kDefaultRequestSize, base::Bind(
-            &MultiChannelResamplerTest::ProvideInput, base::Unretained(this)));
+        channels, kScaleFactor, SincResampler::kDefaultRequestSize,
+        base::BindRepeating(&MultiChannelResamplerTest::ProvideInput,
+                            base::Unretained(this)));
 
     // First prime the resampler with some junk data, so we can verify Flush().
     fill_junk_values_ = true;
@@ -134,8 +135,8 @@ TEST_P(MultiChannelResamplerTest, LowLatency) {
 }
 
 // Test common channel layouts: mono, stereo, 5.1, 7.1.
-INSTANTIATE_TEST_CASE_P(
-    MultiChannelResamplerTest, MultiChannelResamplerTest,
-    testing::Values(1, 2, 6, 8));
+INSTANTIATE_TEST_SUITE_P(MultiChannelResamplerTest,
+                         MultiChannelResamplerTest,
+                         testing::Values(1, 2, 6, 8));
 
 }  // namespace media

@@ -17,7 +17,7 @@ namespace device {
 FidoDeviceDiscovery::Observer::~Observer() = default;
 
 FidoDeviceDiscovery::FidoDeviceDiscovery(FidoTransportProtocol transport)
-    : FidoDiscoveryBase(transport), weak_factory_(this) {}
+    : FidoDiscoveryBase(transport) {}
 
 FidoDeviceDiscovery::~FidoDeviceDiscovery() = default;
 
@@ -25,7 +25,7 @@ void FidoDeviceDiscovery::Start() {
   DCHECK_EQ(state_, State::kIdle);
   state_ = State::kStarting;
 
-  // To ensure that that NotifiyStarted() is never invoked synchronously,
+  // To ensure that that NotifyStarted() is never invoked synchronously,
   // post task asynchronously.
   base::SequencedTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::BindOnce(&FidoDeviceDiscovery::StartInternal,
@@ -33,18 +33,26 @@ void FidoDeviceDiscovery::Start() {
 }
 
 void FidoDeviceDiscovery::NotifyDiscoveryStarted(bool success) {
-  DCHECK_EQ(state_, State::kStarting);
+  if (state_ == State::kStopped)
+    return;
+
+  DCHECK(state_ == State::kStarting);
   if (success)
     state_ = State::kRunning;
   if (!observer())
     return;
-  observer()->DiscoveryStarted(this, success);
+
+  std::vector<FidoAuthenticator*> authenticators;
+  authenticators.reserve(authenticators_.size());
+  for (const auto& authenticator : authenticators_)
+    authenticators.push_back(authenticator.second.get());
+  observer()->DiscoveryStarted(this, success, std::move(authenticators));
 }
 
 void FidoDeviceDiscovery::NotifyAuthenticatorAdded(
     FidoAuthenticator* authenticator) {
   DCHECK_NE(state_, State::kIdle);
-  if (!observer())
+  if (!observer() || state_ != State::kRunning)
     return;
   observer()->AuthenticatorAdded(this, authenticator);
 }
@@ -52,7 +60,7 @@ void FidoDeviceDiscovery::NotifyAuthenticatorAdded(
 void FidoDeviceDiscovery::NotifyAuthenticatorRemoved(
     FidoAuthenticator* authenticator) {
   DCHECK_NE(state_, State::kIdle);
-  if (!observer())
+  if (!observer() || state_ != State::kRunning)
     return;
   observer()->AuthenticatorRemoved(this, authenticator);
 }
@@ -87,6 +95,9 @@ FidoDeviceAuthenticator* FidoDeviceDiscovery::GetAuthenticator(
 }
 
 bool FidoDeviceDiscovery::AddDevice(std::unique_ptr<FidoDevice> device) {
+  if (state_ == State::kStopped)
+    return false;
+
   auto authenticator =
       std::make_unique<FidoDeviceAuthenticator>(std::move(device));
   const auto result =
@@ -100,6 +111,9 @@ bool FidoDeviceDiscovery::AddDevice(std::unique_ptr<FidoDevice> device) {
 }
 
 bool FidoDeviceDiscovery::RemoveDevice(base::StringPiece device_id) {
+  if (state_ == State::kStopped)
+    return false;
+
   auto found = authenticators_.find(device_id);
   if (found == authenticators_.end())
     return false;
@@ -107,6 +121,11 @@ bool FidoDeviceDiscovery::RemoveDevice(base::StringPiece device_id) {
   auto authenticator = std::move(found->second);
   authenticators_.erase(found);
   NotifyAuthenticatorRemoved(authenticator.get());
+  return true;
+}
+
+bool FidoDeviceDiscovery::MaybeStop() {
+  state_ = State::kStopped;
   return true;
 }
 

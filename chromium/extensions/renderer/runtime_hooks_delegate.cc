@@ -89,6 +89,28 @@ RuntimeHooksDelegate::RuntimeHooksDelegate(
     : messaging_service_(messaging_service) {}
 RuntimeHooksDelegate::~RuntimeHooksDelegate() {}
 
+// static
+RequestResult RuntimeHooksDelegate::GetURL(
+    ScriptContext* script_context,
+    const std::vector<v8::Local<v8::Value>>& arguments) {
+  DCHECK_EQ(1u, arguments.size());
+  DCHECK(arguments[0]->IsString());
+  DCHECK(script_context->extension());
+
+  v8::Isolate* isolate = script_context->isolate();
+  std::string path = gin::V8ToString(isolate, arguments[0]);
+
+  RequestResult result(RequestResult::HANDLED);
+  std::string url = base::StringPrintf(
+      "chrome-extension://%s%s%s", script_context->extension()->id().c_str(),
+      !path.empty() && path[0] == '/' ? "" : "/", path.c_str());
+  // GURL considers any possible path valid. Since the argument is only appended
+  // as part of the path, there should be no way this could conceivably fail.
+  DCHECK(GURL(url).is_valid());
+  result.return_value = gin::StringToV8(isolate, url);
+  return result;
+}
+
 RequestResult RuntimeHooksDelegate::HandleRequest(
     const std::string& method_name,
     const APISignature* signature,
@@ -139,16 +161,15 @@ RequestResult RuntimeHooksDelegate::HandleRequest(
                                                 allow_options, arguments);
   }
 
-  std::string error;
-  std::vector<v8::Local<v8::Value>> parsed_arguments;
-  if (!signature->ParseArgumentsToV8(context, *arguments, refs,
-                                     &parsed_arguments, &error)) {
+  APISignature::V8ParseResult parse_result =
+      signature->ParseArgumentsToV8(context, *arguments, refs);
+  if (!parse_result.succeeded()) {
     RequestResult result(RequestResult::INVALID_INVOCATION);
-    result.error = std::move(error);
+    result.error = std::move(*parse_result.error);
     return result;
   }
 
-  return (this->*handler)(script_context, parsed_arguments);
+  return (this->*handler)(script_context, *parse_result.arguments);
 }
 
 void RuntimeHooksDelegate::InitializeTemplate(
@@ -175,20 +196,7 @@ RequestResult RuntimeHooksDelegate::HandleGetManifest(
 RequestResult RuntimeHooksDelegate::HandleGetURL(
     ScriptContext* script_context,
     const std::vector<v8::Local<v8::Value>>& arguments) {
-  DCHECK_EQ(1u, arguments.size());
-  DCHECK(arguments[0]->IsString());
-  DCHECK(script_context->extension());
-
-  v8::Isolate* isolate = script_context->isolate();
-  std::string path = gin::V8ToString(isolate, arguments[0]);
-
-  RequestResult result(RequestResult::HANDLED);
-  std::string url = base::StringPrintf(
-      "chrome-extension://%s%s%s", script_context->extension()->id().c_str(),
-      !path.empty() && path[0] == '/' ? "" : "/", path.c_str());
-  result.return_value = gin::StringToV8(isolate, url);
-
-  return result;
+  return GetURL(script_context, arguments);
 }
 
 RequestResult RuntimeHooksDelegate::HandleSendMessage(
@@ -207,12 +215,6 @@ RequestResult RuntimeHooksDelegate::HandleSendMessage(
   }
 
   v8::Local<v8::Context> v8_context = script_context->v8_context();
-  messaging_util::MessageOptions options;
-  if (!arguments[2]->IsNull()) {
-    options = messaging_util::ParseMessageOptions(
-        v8_context, arguments[2].As<v8::Object>(),
-        messaging_util::PARSE_INCLUDE_TLS_CHANNEL_ID);
-  }
 
   v8::Local<v8::Value> v8_message = arguments[1];
   std::unique_ptr<Message> message =
@@ -223,14 +225,18 @@ RequestResult RuntimeHooksDelegate::HandleSendMessage(
     return result;
   }
 
+  // Note: arguments[2] is the options argument. However, the only available
+  // option for sendMessage() is includeTlsChannelId. That option has no effect
+  // since M72, but it is still part of the public spec for compatibility and is
+  // parsed into |arguments|. See crbug.com/1045232.
+
   v8::Local<v8::Function> response_callback;
   if (!arguments[3]->IsNull())
     response_callback = arguments[3].As<v8::Function>();
 
   messaging_service_->SendOneTimeMessage(
       script_context, MessageTarget::ForExtension(target_id),
-      messaging_util::kSendMessageChannel, options.include_tls_channel_id,
-      *message, response_callback);
+      messaging_util::kSendMessageChannel, *message, response_callback);
 
   return RequestResult(RequestResult::HANDLED);
 }
@@ -260,7 +266,7 @@ RequestResult RuntimeHooksDelegate::HandleSendNativeMessage(
 
   messaging_service_->SendOneTimeMessage(
       script_context, MessageTarget::ForNativeApp(application_name),
-      std::string(), false, *message, response_callback);
+      std::string(), *message, response_callback);
 
   return RequestResult(RequestResult::HANDLED);
 }
@@ -284,13 +290,12 @@ RequestResult RuntimeHooksDelegate::HandleConnect(
   if (!arguments[1]->IsNull()) {
     options = messaging_util::ParseMessageOptions(
         script_context->v8_context(), arguments[1].As<v8::Object>(),
-        messaging_util::PARSE_INCLUDE_TLS_CHANNEL_ID |
             messaging_util::PARSE_CHANNEL_NAME);
   }
 
   gin::Handle<GinPort> port = messaging_service_->Connect(
       script_context, MessageTarget::ForExtension(target_id),
-      options.channel_name, options.include_tls_channel_id);
+      options.channel_name);
   DCHECK(!port.IsEmpty());
 
   RequestResult result(RequestResult::HANDLED);
@@ -308,7 +313,7 @@ RequestResult RuntimeHooksDelegate::HandleConnectNative(
       gin::V8ToString(script_context->isolate(), arguments[0]);
   gin::Handle<GinPort> port = messaging_service_->Connect(
       script_context, MessageTarget::ForNativeApp(application_name),
-      std::string(), false);
+      std::string());
 
   RequestResult result(RequestResult::HANDLED);
   result.return_value = port.ToV8();

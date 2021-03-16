@@ -25,9 +25,8 @@ class ImportCompletedTask : public Task {
                       bool success);
   ~ImportCompletedTask() override;
 
-  void Run() override;
-
  private:
+  void Run() override;
   void OnStateUpdatedToFinished(bool success);
 
   PrefetchDispatcher* prefetch_dispatcher_;  // Outlives this class.
@@ -36,7 +35,7 @@ class ImportCompletedTask : public Task {
   int64_t offline_id_;
   bool success_;
 
-  base::WeakPtrFactory<ImportCompletedTask> weak_ptr_factory_;
+  base::WeakPtrFactory<ImportCompletedTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImportCompletedTask);
 };

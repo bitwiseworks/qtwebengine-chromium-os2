@@ -98,7 +98,7 @@ class MODULES_EXPORT DynamicsCompressorNode final : public AudioNode {
 
   DynamicsCompressorNode(BaseAudioContext&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   AudioParam* threshold() const;
   AudioParam* knee() const;
@@ -106,6 +106,10 @@ class MODULES_EXPORT DynamicsCompressorNode final : public AudioNode {
   float reduction() const;
   AudioParam* attack() const;
   AudioParam* release() const;
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
 
  private:
   DynamicsCompressorHandler& GetDynamicsCompressorHandler() const;

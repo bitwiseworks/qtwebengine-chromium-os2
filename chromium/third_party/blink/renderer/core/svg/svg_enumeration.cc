@@ -30,12 +30,9 @@
 
 #include "third_party/blink/renderer/core/svg/svg_enumeration.h"
 
-#include "third_party/blink/renderer/core/svg/svg_animation_element.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
 
 namespace blink {
-
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGEnumerationBase);
 
 SVGEnumerationBase::~SVGEnumerationBase() = default;
 
@@ -54,13 +51,13 @@ String SVGEnumerationBase::ValueAsString() const {
   return g_empty_string;
 }
 
-void SVGEnumerationBase::SetValue(unsigned short value) {
+void SVGEnumerationBase::SetValue(uint16_t value) {
   value_ = value;
   NotifyChange();
 }
 
 SVGParsingError SVGEnumerationBase::SetValueAsString(const String& string) {
-  unsigned short value = map_.ValueFromName(string);
+  uint16_t value = map_.ValueFromName(string);
   if (value) {
     value_ = value;
     NotifyChange();
@@ -75,22 +72,14 @@ void SVGEnumerationBase::Add(SVGPropertyBase*, SVGElement*) {
 }
 
 void SVGEnumerationBase::CalculateAnimatedValue(
-    SVGAnimationElement* animation_element,
+    const SVGAnimateElement& animation_element,
     float percentage,
     unsigned repeat_count,
     SVGPropertyBase* from,
     SVGPropertyBase* to,
     SVGPropertyBase*,
     SVGElement*) {
-  DCHECK(animation_element);
-  unsigned short from_enumeration =
-      animation_element->GetAnimationMode() == kToAnimation
-          ? value_
-          : ToSVGEnumerationBase(from)->Value();
-  unsigned short to_enumeration = ToSVGEnumerationBase(to)->Value();
-
-  animation_element->AnimateDiscreteType<unsigned short>(
-      percentage, from_enumeration, to_enumeration, value_);
+  NOTREACHED();
 }
 
 float SVGEnumerationBase::CalculateDistance(SVGPropertyBase*, SVGElement*) {
@@ -98,11 +87,11 @@ float SVGEnumerationBase::CalculateDistance(SVGPropertyBase*, SVGElement*) {
   return -1;
 }
 
-unsigned short SVGEnumerationBase::MaxExposedEnumValue() const {
+uint16_t SVGEnumerationBase::MaxExposedEnumValue() const {
   return map_.MaxExposedValue();
 }
 
-unsigned short SVGEnumerationBase::MaxInternalEnumValue() const {
+uint16_t SVGEnumerationBase::MaxInternalEnumValue() const {
   return map_.ValueOfLast();
 }
 

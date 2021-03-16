@@ -7,32 +7,45 @@
 
 #include <memory>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/indexed_db/indexed_db_database.h"
-#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
+#include "content/browser/indexed_db/indexed_db_origin_state_handle.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-forward.h"
 
 namespace content {
 class IndexedDBDatabaseCallbacks;
 class IndexedDBDatabaseError;
 class IndexedDBObserver;
 class IndexedDBTransaction;
+class IndexedDBOriginStateHandle;
 
 class CONTENT_EXPORT IndexedDBConnection {
  public:
-  IndexedDBConnection(int child_process_id,
-                      scoped_refptr<IndexedDBDatabase> db,
+  IndexedDBConnection(IndexedDBOriginStateHandle origin_state_handle,
+                      IndexedDBClassFactory* indexed_db_class_factory,
+                      base::WeakPtr<IndexedDBDatabase> database,
+                      base::RepeatingClosure on_version_change_ignored,
+                      base::OnceCallback<void(IndexedDBConnection*)> on_close,
                       scoped_refptr<IndexedDBDatabaseCallbacks> callbacks);
   virtual ~IndexedDBConnection();
 
-  // These methods are virtual to allow subclassing in unit tests.
-  virtual void ForceClose();
-  virtual void Close();
-  virtual bool IsConnected();
+  enum class CloseErrorHandling {
+    // Returns from the function on the first encounter with an error.
+    kReturnOnFirstError,
+    // Continues to call Abort() on all transactions despite any errors.
+    // The last error encountered is returned.
+    kAbortAllReturnLastError,
+  };
+
+  leveldb::Status AbortTransactionsAndClose(CloseErrorHandling error_handling);
+
+  leveldb::Status CloseAndReportForceClose();
+  bool IsConnected();
 
   void VersionChangeIgnored();
 
@@ -44,9 +57,8 @@ class CONTENT_EXPORT IndexedDBConnection {
   virtual void RemoveObservers(const std::vector<int32_t>& remove_observer_ids);
 
   int32_t id() const { return id_; }
-  int child_process_id() const { return child_process_id_; }
 
-  IndexedDBDatabase* database() const { return database_.get(); }
+  base::WeakPtr<IndexedDBDatabase> database() const { return database_; }
   IndexedDBDatabaseCallbacks* callbacks() const { return callbacks_.get(); }
   const std::vector<std::unique_ptr<IndexedDBObserver>>& active_observers()
       const {
@@ -63,14 +75,14 @@ class CONTENT_EXPORT IndexedDBConnection {
       blink::mojom::IDBTransactionMode mode,
       IndexedDBBackingStore::Transaction* backing_store_transaction);
 
-  void AbortTransaction(IndexedDBTransaction* transaction,
-                        const IndexedDBDatabaseError& error);
+  void AbortTransactionAndTearDownOnError(IndexedDBTransaction* transaction,
+                                          const IndexedDBDatabaseError& error);
 
-  // Aborts or commits each transaction owned by this connection depending on
-  // the transaction's current state. Any transaction with is_commit_pending_
-  // false is aborted, and any transaction with is_commit_pending_ true is
-  // committed.
-  void FinishAllTransactions(const IndexedDBDatabaseError& error);
+  leveldb::Status AbortAllTransactions(const IndexedDBDatabaseError& error);
+
+  // Returns the last error that occurred, if there is any.
+  leveldb::Status AbortAllTransactionsAndIgnoreErrors(
+      const IndexedDBDatabaseError& error);
 
   IndexedDBTransaction* GetTransaction(int64_t id) const;
 
@@ -81,30 +93,37 @@ class CONTENT_EXPORT IndexedDBConnection {
   // TODO(dmurph): Change that so this doesn't need to ignore unknown ids.
   void RemoveTransaction(int64_t id);
 
-  const std::unordered_map<int64_t, std::unique_ptr<IndexedDBTransaction>>&
+  const base::flat_map<int64_t, std::unique_ptr<IndexedDBTransaction>>&
   transactions() const {
     return transactions_;
   }
 
  private:
+  void ClearStateAfterClose();
+
   const int32_t id_;
 
-  // The process id of the child process this connection is associated with.
-  // Tracked for IndexedDBContextImpl::GetAllOriginsDetails and debugging.
-  const int child_process_id_;
+  // Keeps the factory for this origin alive.
+  IndexedDBOriginStateHandle origin_state_handle_;
+  IndexedDBClassFactory* const indexed_db_class_factory_;
 
-  // NULL in some unit tests, and after the connection is closed.
-  scoped_refptr<IndexedDBDatabase> database_;
+  base::WeakPtr<IndexedDBDatabase> database_;
+  base::RepeatingClosure on_version_change_ignored_;
+  base::OnceCallback<void(IndexedDBConnection*)> on_close_;
 
   // The connection owns transactions created on this connection.
-  std::unordered_map<int64_t, std::unique_ptr<IndexedDBTransaction>>
-      transactions_;
+  // This is |flat_map| to preserve ordering, and because the vast majority of
+  // users have less than 200 transactions.
+  base::flat_map<int64_t, std::unique_ptr<IndexedDBTransaction>> transactions_;
 
   // The callbacks_ member is cleared when the connection is closed.
-  // May be NULL in unit tests.
+  // May be nullptr in unit tests.
   scoped_refptr<IndexedDBDatabaseCallbacks> callbacks_;
   std::vector<std::unique_ptr<IndexedDBObserver>> active_observers_;
-  base::WeakPtrFactory<IndexedDBConnection> weak_factory_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  base::WeakPtrFactory<IndexedDBConnection> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IndexedDBConnection);
 };

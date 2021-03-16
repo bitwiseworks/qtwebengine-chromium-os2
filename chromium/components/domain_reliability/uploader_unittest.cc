@@ -12,7 +12,7 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/domain_reliability/test_util.h"
@@ -134,8 +134,8 @@ class UploadInterceptor : public net::URLRequestInterceptor {
   void ExpectRequestAndReturnResponseHeaders(const char* headers) {
     MockUploadResult result;
     result.net_error = net::OK;
-    result.response_headers = new net::HttpResponseHeaders(
-        net::HttpUtil::AssembleRawHeaders(headers, strlen(headers)));
+    result.response_headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+        net::HttpUtil::AssembleRawHeaders(headers));
     results_.push_back(result);
   }
 
@@ -153,7 +153,8 @@ class TestUploadCallback {
   TestUploadCallback() : called_count_(0u) {}
 
   DomainReliabilityUploader::UploadCallback callback() {
-    return base::Bind(&TestUploadCallback::OnCalled, base::Unretained(this));
+    return base::BindOnce(&TestUploadCallback::OnCalled,
+                          base::Unretained(this));
   }
 
   unsigned called_count() const { return called_count_; }
@@ -196,8 +197,8 @@ class DomainReliabilityUploaderTest : public testing::Test {
   }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_{
-      base::test::ScopedTaskEnvironment::MainThreadType::IO};
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
   scoped_refptr<net::TestURLRequestContextGetter> url_request_context_getter_;
   UploadInterceptor* interceptor_;
   MockTime time_;

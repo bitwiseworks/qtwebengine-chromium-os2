@@ -25,7 +25,7 @@ class AudioPushFifoTest : public testing::TestWithParam<int> {
   int output_chunk_size() const { return GetParam(); }
 
   void SetUp() final {
-    fifo_.reset(new AudioPushFifo(base::Bind(
+    fifo_.reset(new AudioPushFifo(base::BindRepeating(
         &AudioPushFifoTest::ReceiveAndCheckNextChunk, base::Unretained(this))));
     fifo_->Reset(output_chunk_size());
     ASSERT_EQ(output_chunk_size(), fifo_->frames_per_buffer());
@@ -230,27 +230,27 @@ TEST_P(AudioPushFifoTest, PushArbitraryNumbersOfFramesAtATime) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        AudioPushFifoTest,
-                        ::testing::Values(
-                            // 1 ms output chunks at common sample rates.
-                            16,  // 16000 Hz
-                            22,  // 22050 Hz
-                            44,  // 44100 Hz
-                            48,  // 48000 Hz
+INSTANTIATE_TEST_SUITE_P(All,
+                         AudioPushFifoTest,
+                         ::testing::Values(
+                             // 1 ms output chunks at common sample rates.
+                             16,  // 16000 Hz
+                             22,  // 22050 Hz
+                             44,  // 44100 Hz
+                             48,  // 48000 Hz
 
-                            // 10 ms output chunks at common sample rates.
-                            160,  // 16000 Hz
-                            220,  // 22050 Hz
-                            441,  // 44100 Hz
-                            480,  // 48000 Hz
+                             // 10 ms output chunks at common sample rates.
+                             160,  // 16000 Hz
+                             220,  // 22050 Hz
+                             441,  // 44100 Hz
+                             480,  // 48000 Hz
 
-                            // 60 ms output chunks at common sample rates.
-                            960,   // 16000 Hz
-                            1323,  // 22050 Hz
-                            2646,  // 44100 Hz
-                            2880   // 48000 Hz
-                            ));
+                             // 60 ms output chunks at common sample rates.
+                             960,   // 16000 Hz
+                             1323,  // 22050 Hz
+                             2646,  // 44100 Hz
+                             2880   // 48000 Hz
+                             ));
 
 }  // namespace
 

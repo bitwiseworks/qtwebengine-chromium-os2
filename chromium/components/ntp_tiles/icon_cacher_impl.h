@@ -50,35 +50,34 @@ class IconCacherImpl : public IconCacher {
 
   void StartFetchPopularSites(
       PopularSites::Site site,
-      const base::Closure& icon_available,
-      const base::Closure& preliminary_icon_available) override;
+      base::OnceClosure icon_available,
+      base::OnceClosure preliminary_icon_available) override;
 
   // TODO(jkrcal): Rename all instances of "MostLikely" to "ChromeSuggestions".
   void StartFetchMostLikely(const GURL& page_url,
-                            const base::Closure& icon_available) override;
+                            base::OnceClosure icon_available) override;
 
  private:
   using CancelableImageCallback =
-      base::CancelableCallback<void(const gfx::Image&)>;
+      base::CancelableOnceCallback<void(const gfx::Image&)>;
 
   void OnGetFaviconImageForPageURLFinished(
       PopularSites::Site site,
-      const base::Closure& preliminary_icon_available,
+      base::OnceClosure preliminary_icon_available,
       const favicon_base::FaviconImageResult& result);
 
   void OnPopularSitesFaviconDownloaded(
       PopularSites::Site site,
       std::unique_ptr<CancelableImageCallback> preliminary_callback,
-      const std::string& id,
       const gfx::Image& fetched_image,
       const image_fetcher::RequestMetadata& metadata);
 
   std::unique_ptr<CancelableImageCallback> MaybeProvideDefaultIcon(
       const PopularSites::Site& site,
-      const base::Closure& preliminary_icon_available);
+      base::OnceClosure preliminary_icon_available);
   void SaveAndNotifyDefaultIconForSite(
       const PopularSites::Site& site,
-      const base::Closure& preliminary_icon_available,
+      base::OnceClosure preliminary_icon_available,
       const gfx::Image& image);
   void SaveIconForSite(const PopularSites::Site& site, const gfx::Image& image);
 
@@ -90,8 +89,7 @@ class IconCacherImpl : public IconCacher {
       const GURL& request_url,
       favicon_base::GoogleFaviconServerRequestStatus status);
 
-  bool StartRequest(const GURL& request_url,
-                    const base::Closure& icon_available);
+  bool StartRequest(const GURL& request_url, base::OnceClosure icon_available);
   void FinishRequestAndNotifyIconAvailable(const GURL& request_url,
                                            bool newly_available);
 
@@ -99,9 +97,9 @@ class IconCacherImpl : public IconCacher {
   favicon::FaviconService* const favicon_service_;
   favicon::LargeIconService* const large_icon_service_;
   std::unique_ptr<image_fetcher::ImageFetcher> const image_fetcher_;
-  std::map<GURL, std::vector<base::Closure>> in_flight_requests_;
+  std::map<GURL, std::vector<base::OnceClosure>> in_flight_requests_;
 
-  base::WeakPtrFactory<IconCacherImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<IconCacherImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IconCacherImpl);
 };

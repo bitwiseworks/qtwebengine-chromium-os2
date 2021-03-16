@@ -28,6 +28,7 @@
 
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
@@ -35,10 +36,6 @@ class TypeConversions final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static TypeConversions* Create() {
-    return MakeGarbageCollected<TypeConversions>();
-  }
-
   TypeConversions()
       : long_(0),
         unsigned_long_(0),

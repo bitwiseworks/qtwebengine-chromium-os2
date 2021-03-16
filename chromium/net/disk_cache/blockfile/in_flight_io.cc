@@ -6,8 +6,8 @@
 
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 
@@ -29,7 +29,7 @@ void BackgroundIO::Cancel() {
   // controller_ may be in use from the background thread at this time.
   base::AutoLock lock(controller_lock_);
   DCHECK(controller_);
-  controller_ = NULL;
+  controller_ = nullptr;
 }
 
 BackgroundIO::~BackgroundIO() = default;
@@ -77,7 +77,7 @@ void InFlightIO::OnIOComplete(BackgroundIO* operation) {
 #endif
 
   callback_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&BackgroundIO::OnIOSignalled, operation));
+      FROM_HERE, base::BindOnce(&BackgroundIO::OnIOSignalled, operation));
   operation->io_completed()->Signal();
 }
 

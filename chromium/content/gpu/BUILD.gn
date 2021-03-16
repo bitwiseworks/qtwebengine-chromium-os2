@@ -13,13 +13,9 @@ group("gpu") {
   visibility = [ "//content/*" ]  # This is an internal content API.
 
   if (is_component_build) {
-    public_deps = [
-      "//content",
-    ]
+    public_deps = [ "//content" ]
   } else {
-    public_deps = [
-      ":gpu_sources",
-    ]
+    public_deps = [ ":gpu_sources" ]
   }
 }
 
@@ -35,8 +31,11 @@ target(link_target_type, "gpu_sources") {
   visibility = [ "//content/*" ]
 
   sources = [
+    "browser_exposed_gpu_interfaces.cc",
+    "browser_exposed_gpu_interfaces.h",
     "gpu_child_thread.cc",
     "gpu_child_thread.h",
+    "gpu_child_thread_receiver_bindings.cc",
     "gpu_main.cc",
     "gpu_process.cc",
     "gpu_process.h",
@@ -53,7 +52,6 @@ target(link_target_type, "gpu_sources") {
   deps = [
     "//base",
     "//base/third_party/dynamic_annotations",
-    "//components/tracing",
     "//components/viz/service",
     "//content:export",
     "//content/child",
@@ -75,14 +73,14 @@ target(link_target_type, "gpu_sources") {
     "//components/viz/service/main",
     "//media/gpu/ipc/service",
     "//media/mojo/clients:clients",
-    "//media/mojo/interfaces:constants",
     "//services/service_manager/embedder",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/mojom",
     "//services/service_manager/sandbox:chromecast_sandbox_whitelist_buildflags",
     "//services/shape_detection:lib",
     "//services/shape_detection/public/mojom",
-    "//services/viz/privileged/interfaces",
+    "//services/tracing/public/cpp",
+    "//services/viz/privileged/mojom",
     "//skia",
     "//third_party/angle:angle_gpu_info_util",
     "//ui/gfx/ipc",
@@ -92,7 +90,10 @@ target(link_target_type, "gpu_sources") {
   ]
 
   if (is_android) {
-    deps += [ "//media" ]
+    deps += [
+      "//components/tracing:graphics_provider",
+      "//media",
+    ]
   }
 
   if (is_linux) {
@@ -103,22 +104,18 @@ target(link_target_type, "gpu_sources") {
     deps += [ "//media/mojo/services" ]
   }
 
-  if (is_win) {
-    configs += [
-      "//third_party/khronos:khronos_headers",
-      "//third_party/wtl:wtl_includes",
-    ]
-    libs = [ "setupapi.lib" ]
+  if (is_linux || is_mac || is_win) {
     deps += [ "//sandbox" ]
   }
 
-  if (is_linux || is_mac) {
-    deps += [ "//sandbox" ]
+  if (is_mac) {
+    deps += [ "//components/metal_util" ]
   }
 
   if (use_x11) {
     deps += [
       "//ui/events/platform/x11",
+      "//ui/gfx/linux:gpu_memory_buffer_support_x11",
       "//ui/gfx/x",
     ]
   }

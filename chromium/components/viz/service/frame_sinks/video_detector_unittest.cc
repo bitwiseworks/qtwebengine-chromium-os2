@@ -19,8 +19,11 @@
 #include "components/viz/service/frame_sinks/video_detector.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_compositor_frame_sink_client.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/viz/public/interfaces/compositing/video_detector_observer.mojom.h"
+#include "components/viz/test/surface_id_allocator_set.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "services/viz/public/mojom/compositing/video_detector_observer.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect.h"
@@ -32,25 +35,25 @@ namespace {
 // Implementation that just records video state changes.
 class TestObserver : public mojom::VideoDetectorObserver {
  public:
-  TestObserver() : binding_(this) {}
+  TestObserver() = default;
 
-  void Bind(mojom::VideoDetectorObserverRequest request) {
-    binding_.Bind(std::move(request));
+  void Bind(mojo::PendingReceiver<mojom::VideoDetectorObserver> receiver) {
+    receiver_.Bind(std::move(receiver));
   }
 
   bool IsEmpty() {
-    binding_.FlushForTesting();
+    receiver_.FlushForTesting();
     return states_.empty();
   }
 
   void Reset() {
-    binding_.FlushForTesting();
+    receiver_.FlushForTesting();
     states_.clear();
   }
 
   // Pops and returns the earliest-received state.
   bool PopState() {
-    binding_.FlushForTesting();
+    receiver_.FlushForTesting();
     CHECK(!states_.empty());
     uint8_t first_state = states_.front();
     states_.pop_front();
@@ -65,7 +68,7 @@ class TestObserver : public mojom::VideoDetectorObserver {
   // States in the order they were received.
   base::circular_deque<bool> states_;
 
-  mojo::Binding<mojom::VideoDetectorObserver> binding_;
+  mojo::Receiver<mojom::VideoDetectorObserver> receiver_{this};
 
   DISALLOW_COPY_AND_ASSIGN(TestObserver);
 };
@@ -78,9 +81,10 @@ class VideoDetectorTest : public testing::Test {
       : frame_sink_manager_(&shared_bitmap_manager_),
         surface_aggregator_(frame_sink_manager_.surface_manager(),
                             nullptr,
+                            false,
                             false) {}
 
-  ~VideoDetectorTest() override {}
+  ~VideoDetectorTest() override = default;
 
   void SetUp() override {
     mock_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
@@ -90,15 +94,16 @@ class VideoDetectorTest : public testing::Test {
     detector_ = frame_sink_manager_.CreateVideoDetectorForTesting(
         mock_task_runner_->GetMockTickClock(), mock_task_runner_);
 
-    mojom::VideoDetectorObserverPtr video_detector_observer;
-    observer_.Bind(mojo::MakeRequest(&video_detector_observer));
+    mojo::PendingRemote<mojom::VideoDetectorObserver> video_detector_observer;
+    observer_.Bind(video_detector_observer.InitWithNewPipeAndPassReceiver());
     detector_->AddObserver(std::move(video_detector_observer));
 
     root_frame_sink_ = CreateFrameSink();
-    parent_local_surface_id_allocator_.GenerateId();
+    ParentLocalSurfaceIdAllocator* allocator =
+        allocators_.GetAllocator(root_frame_sink_->frame_sink_id());
+    allocator->GenerateId();
     root_frame_sink_->SubmitCompositorFrame(
-        parent_local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
-            .local_surface_id(),
+        allocator->GetCurrentLocalSurfaceIdAllocation().local_surface_id(),
         MakeDefaultCompositorFrame());
   }
 
@@ -119,7 +124,8 @@ class VideoDetectorTest : public testing::Test {
 
   void CreateDisplayFrame() {
     surface_aggregator_.Aggregate(root_frame_sink_->last_activated_surface_id(),
-                                  mock_task_runner_->NowTicks());
+                                  mock_task_runner_->NowTicks(),
+                                  gfx::OVERLAY_TRANSFORM_NONE);
   }
 
   void EmbedClient(CompositorFrameSinkSupport* frame_sink) {
@@ -138,8 +144,7 @@ class VideoDetectorTest : public testing::Test {
       quad->SetNew(
           shared_quad_state, gfx::Rect(0, 0, 10, 10), gfx::Rect(0, 0, 5, 5),
           SurfaceRange(base::nullopt, frame_sink->last_activated_surface_id()),
-          SK_ColorMAGENTA, /*stretch_content_to_fill_bounds=*/false,
-          /*ignores_input_event=*/false);
+          SK_ColorMAGENTA, /*stretch_content_to_fill_bounds=*/false);
     }
     root_frame_sink_->SubmitCompositorFrame(
         root_frame_sink_->last_activated_local_surface_id(), std::move(frame));
@@ -150,10 +155,11 @@ class VideoDetectorTest : public testing::Test {
     LocalSurfaceId local_surface_id =
         frame_sink->last_activated_local_surface_id();
     if (!local_surface_id.is_valid()) {
-      parent_local_surface_id_allocator_.GenerateId();
-      local_surface_id = parent_local_surface_id_allocator_
-                             .GetCurrentLocalSurfaceIdAllocation()
-                             .local_surface_id();
+      ParentLocalSurfaceIdAllocator* allocator =
+          allocators_.GetAllocator(frame_sink->frame_sink_id());
+      allocator->GenerateId();
+      local_surface_id =
+          allocator->GetCurrentLocalSurfaceIdAllocation().local_surface_id();
     }
     frame_sink->SubmitCompositorFrame(local_surface_id,
                                       MakeDamagedCompositorFrame(damage));
@@ -177,14 +183,12 @@ class VideoDetectorTest : public testing::Test {
 
   std::unique_ptr<CompositorFrameSinkSupport> CreateFrameSink() {
     constexpr bool is_root = false;
-    constexpr bool needs_sync_points = true;
     static uint32_t client_id = 1;
     FrameSinkId frame_sink_id(client_id++, 0);
     frame_sink_manager_.RegisterFrameSinkId(frame_sink_id,
                                             true /* report_activation */);
     auto frame_sink = std::make_unique<CompositorFrameSinkSupport>(
-        &frame_sink_client_, &frame_sink_manager_, frame_sink_id, is_root,
-        needs_sync_points);
+        &frame_sink_client_, &frame_sink_manager_, frame_sink_id, is_root);
     SendUpdate(frame_sink.get(), gfx::Rect());
     return frame_sink;
   }
@@ -205,7 +209,7 @@ class VideoDetectorTest : public testing::Test {
   ServerSharedBitmapManager shared_bitmap_manager_;
   FrameSinkManagerImpl frame_sink_manager_;
   FakeCompositorFrameSinkClient frame_sink_client_;
-  ParentLocalSurfaceIdAllocator parent_local_surface_id_allocator_;
+  SurfaceIdAllocatorSet allocators_;
   SurfaceAggregator surface_aggregator_;
   std::unique_ptr<CompositorFrameSinkSupport> root_frame_sink_;
   std::set<CompositorFrameSinkSupport*> embedded_clients_;

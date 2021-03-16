@@ -8,18 +8,13 @@
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
 #include "third_party/blink/renderer/core/css/css_variable_reference_value.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
+namespace cssvalue {
 
 class CSSPendingSubstitutionValue : public CSSValue {
  public:
-  static CSSPendingSubstitutionValue* Create(
-      CSSPropertyID shorthand_property_id,
-      CSSVariableReferenceValue* shorthand_value) {
-    return MakeGarbageCollected<CSSPendingSubstitutionValue>(
-        shorthand_property_id, shorthand_value);
-  }
-
   CSSPendingSubstitutionValue(CSSPropertyID shorthand_property_id,
                               CSSVariableReferenceValue* shorthand_value)
       : CSSValue(kPendingSubstitutionValueClass),
@@ -37,15 +32,21 @@ class CSSPendingSubstitutionValue : public CSSValue {
   }
   String CustomCSSText() const;
 
-  void TraceAfterDispatch(blink::Visitor*);
+  void TraceAfterDispatch(blink::Visitor*) const;
 
  private:
   CSSPropertyID shorthand_property_id_;
   Member<CSSVariableReferenceValue> shorthand_value_;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSPendingSubstitutionValue,
-                            IsPendingSubstitutionValue());
+}  // namespace cssvalue
+
+template <>
+struct DowncastTraits<cssvalue::CSSPendingSubstitutionValue> {
+  static bool AllowFrom(const CSSValue& value) {
+    return value.IsPendingSubstitutionValue();
+  }
+};
 
 }  // namespace blink
 

@@ -5,16 +5,18 @@
 * found in the LICENSE file.
 */
 
-#include "GrPathProcessor.h"
+#include "src/gpu/GrPathProcessor.h"
 
-#include "GrShaderCaps.h"
-#include "SkTo.h"
-#include "gl/GrGLGpu.h"
-#include "gl/GrGLVaryingHandler.h"
-#include "glsl/GrGLSLFragmentShaderBuilder.h"
-#include "glsl/GrGLSLPrimitiveProcessor.h"
-#include "glsl/GrGLSLUniformHandler.h"
-#include "glsl/GrGLSLVarying.h"
+#include "include/private/SkTo.h"
+#include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/gl/GrGLGpu.h"
+#ifdef SK_GL
+#include "src/gpu/gl/GrGLVaryingHandler.h"
+#endif
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
+#include "src/gpu/glsl/GrGLSLPrimitiveProcessor.h"
+#include "src/gpu/glsl/GrGLSLUniformHandler.h"
+#include "src/gpu/glsl/GrGLSLVarying.h"
 
 class GrGLPathProcessor : public GrGLSLPrimitiveProcessor {
 public:
@@ -35,7 +37,8 @@ public:
         }
 
         // emit transforms
-        this->emitTransforms(args.fVaryingHandler, args.fFPCoordTransformHandler);
+        this->emitTransforms(args.fVaryingHandler, args.fUniformHandler,
+                             args.fFPCoordTransformHandler);
 
         // Setup uniform color
         const char* stagedLocalVarName;
@@ -49,63 +52,134 @@ public:
         fragBuilder->codeAppendf("%s = half4(1);", args.fOutputCoverage);
     }
 
+    SkString matrix_to_sksl(const SkMatrix& m) {
+        return SkStringPrintf("float3x3(%f, %f, %f, %f, %f, %f, %f, %f, %f)", m[0], m[1], m[2],
+                              m[3], m[4], m[5], m[6], m[7], m[8]);
+    }
+
     void emitTransforms(GrGLSLVaryingHandler* varyingHandler,
+                        GrGLSLUniformHandler* uniformHandler,
                         FPCoordTransformHandler* transformHandler) {
-        int i = 0;
-        while (const GrCoordTransform* coordTransform = transformHandler->nextCoordTransform()) {
-            GrSLType varyingType =
-                    coordTransform->getMatrix().hasPerspective() ? kHalf3_GrSLType
-                                                                 : kHalf2_GrSLType;
+        for (int i = 0; *transformHandler; ++*transformHandler, ++i) {
+            auto t = transformHandler->get();
+            const GrCoordTransform& coordTransform = t.first;
+            const GrFragmentProcessor& fp = t.second;
 
-            SkString strVaryingName;
-            strVaryingName.printf("TransformedCoord_%d", i);
-            GrGLSLVarying v(varyingType);
-            GrGLVaryingHandler* glVaryingHandler = (GrGLVaryingHandler*) varyingHandler;
-            fInstalledTransforms.push_back().fHandle =
-                    glVaryingHandler->addPathProcessingVarying(strVaryingName.c_str(),
-                                                               &v).toIndex();
-            fInstalledTransforms.back().fType = varyingType;
-
-            transformHandler->specifyCoordsForCurrCoordTransform(SkString(v.fsIn()), varyingType);
-            ++i;
+            SkString matrix;
+            GrShaderVar fragmentVar;
+            GrShaderVar transformVar;
+            if (fp.isSampledWithExplicitCoords()) {
+                if (coordTransform.isNoOp()) {
+                    transformHandler->omitCoordsForCurrCoordTransform();
+                    continue;
+                } else {
+                    const char* name;
+                    SkString strUniName;
+                    strUniName.printf("CoordTransformMatrix_%d", i);
+                    auto& uni = fUniformTransform.push_back();
+                    if (coordTransform.matrix().isScaleTranslate()) {
+                        uni.fType = kFloat4_GrSLType;
+                    } else {
+                        uni.fType = kFloat3x3_GrSLType;
+                    }
+                    uni.fHandle = uniformHandler
+                                          ->addUniform(kFragment_GrShaderFlag,
+                                                       uni.fType,
+                                                       strUniName.c_str(),
+                                                       &name)
+                                          .toIndex();
+                    transformVar = uniformHandler->getUniformVariable(uni.fHandle);
+                }
+            } else {
+                SkString strVaryingName;
+                strVaryingName.printf("TransformedCoord_%d", i);
+                GrSLType varyingType = coordTransform.matrix().hasPerspective() ? kHalf3_GrSLType
+                                                                                : kHalf2_GrSLType;
+                GrGLSLVarying v(varyingType);
+#ifdef SK_GL
+                GrGLVaryingHandler* glVaryingHandler = (GrGLVaryingHandler*)varyingHandler;
+                fVaryingTransform.push_back().fHandle =
+                        glVaryingHandler->addPathProcessingVarying(strVaryingName.c_str(), &v)
+                                .toIndex();
+#endif
+                fVaryingTransform.back().fType = varyingType;
+                matrix = matrix_to_sksl(coordTransform.matrix());
+                fragmentVar = {SkString(v.fsIn()), varyingType};
+            }
+            transformHandler->specifyCoordsForCurrCoordTransform(transformVar, fragmentVar);
         }
     }
 
     void setData(const GrGLSLProgramDataManager& pd,
                  const GrPrimitiveProcessor& primProc,
-                 FPCoordTransformIter&& transformIter) override {
+                 const CoordTransformRange& transformRange) override {
         const GrPathProcessor& pathProc = primProc.cast<GrPathProcessor>();
         if (pathProc.color() != fColor) {
             pd.set4fv(fColorUniform, 1, pathProc.color().vec());
             fColor = pathProc.color();
         }
 
-        int t = 0;
-        while (const GrCoordTransform* coordTransform = transformIter.next()) {
-            SkASSERT(fInstalledTransforms[t].fHandle.isValid());
-            const SkMatrix& m = GetTransformMatrix(pathProc.localMatrix(), *coordTransform);
-            if (fInstalledTransforms[t].fCurrentValue.cheapEqualTo(m)) {
-                continue;
+        int v = 0, u = 0;
+        const auto& rng = transformRange;
+        for (auto it = rng.begin(); it != rng.end(); ++it) {
+            const auto& tup = *it;
+            const GrCoordTransform& transform = tup.first;
+            const GrFragmentProcessor& fp = tup.second;
+            if (fp.isSampledWithExplicitCoords()) {
+                if (transform.isNoOp()) {
+                    continue;
+                }
+                if (fUniformTransform[u].fHandle.isValid()) {
+                    SkMatrix m = GetTransformMatrix(transform, SkMatrix::I());
+                    if (!SkMatrixPriv::CheapEqual(fUniformTransform[u].fCurrentValue, m)) {
+                        fUniformTransform[u].fCurrentValue = m;
+                        if (fUniformTransform[u].fType == kFloat4_GrSLType) {
+                            float values[4] = {m.getScaleX(), m.getTranslateX(),
+                                               m.getScaleY(), m.getTranslateY()};
+                            pd.set4fv(fUniformTransform[u].fHandle.toIndex(), 1, values);
+                        } else {
+                            SkASSERT(fUniformTransform[u].fType == kFloat3x3_GrSLType);
+                            pd.setSkMatrix(fUniformTransform[u].fHandle.toIndex(), m);
+                        }
+                    }
+                }
+                ++u;
+            } else {
+                SkASSERT(fVaryingTransform[v].fHandle.isValid());
+                SkMatrix m = GetTransformMatrix(transform, pathProc.localMatrix());
+                if (!SkMatrixPriv::CheapEqual(fVaryingTransform[v].fCurrentValue, m)) {
+                    fVaryingTransform[v].fCurrentValue = m;
+                    SkASSERT(fVaryingTransform[v].fType == kHalf2_GrSLType ||
+                             fVaryingTransform[v].fType == kHalf3_GrSLType);
+                    int components = fVaryingTransform[v].fType == kHalf2_GrSLType ? 2 : 3;
+                    pd.setPathFragmentInputTransform(fVaryingTransform[v].fHandle, components, m);
+                }
+                ++v;
             }
-            fInstalledTransforms[t].fCurrentValue = m;
-
-            SkASSERT(fInstalledTransforms[t].fType == kHalf2_GrSLType ||
-                     fInstalledTransforms[t].fType == kHalf3_GrSLType);
-            unsigned components = fInstalledTransforms[t].fType == kHalf2_GrSLType ? 2 : 3;
-            pd.setPathFragmentInputTransform(fInstalledTransforms[t].fHandle, components, m);
-            ++t;
         }
     }
 
 private:
-    typedef GrGLSLProgramDataManager::VaryingHandle VaryingHandle;
+    using VaryingHandle = GrGLSLProgramDataManager::VaryingHandle;
+
+    // Varying transforms are used for non-explicitly sampled FPs. We provide a matrix
+    // to GL as fixed function state and it uses it to compute a varying that we pick up
+    // in the FS as the output of the coord transform.
     struct TransformVarying {
-        VaryingHandle  fHandle;
-        SkMatrix       fCurrentValue = SkMatrix::InvalidMatrix();
-        GrSLType       fType = kVoid_GrSLType;
+        VaryingHandle fHandle;
+        SkMatrix      fCurrentValue = SkMatrix::InvalidMatrix();
+        GrSLType      fType = kVoid_GrSLType;
+    };
+    // For explicitly sampled FPs we stick a uniform in the FS and apply it to the explicit coords
+    // to implement the CoordTransform.
+    struct TransformUniform {
+        UniformHandle fHandle;
+        SkMatrix      fCurrentValue = SkMatrix::InvalidMatrix();
+        GrSLType      fType = kVoid_GrSLType;
     };
 
-    SkTArray<TransformVarying, true> fInstalledTransforms;
+    SkTArray<TransformVarying, true> fVaryingTransform;
+    SkTArray<TransformUniform, true> fUniformTransform;
 
     UniformHandle fColorUniform;
     SkPMColor4f fColor;

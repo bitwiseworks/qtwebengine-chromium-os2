@@ -22,7 +22,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SVG_SVG_PATH_DATA_H_
 
 #include "third_party/blink/renderer/platform/geometry/float_point.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -62,7 +62,7 @@ static inline bool IsAbsolutePathSegType(const SVGPathSegType type) {
 }
 
 struct PathSegmentData {
-  STACK_ALLOCATED();
+  DISALLOW_NEW();
 
  public:
   PathSegmentData()

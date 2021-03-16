@@ -8,8 +8,10 @@
 
 #include <utility>
 
+#include "build/build_config.h"
 #include "core/fxcrt/fx_extension.h"
 #include "core/fxcrt/fx_safe_types.h"
+#include "third_party/base/numerics/safe_conversions.h"
 
 namespace {
 
@@ -31,7 +33,7 @@ void MatchFloatRange(float f1, float f2, int* i1, int* i2) {
   }
 }
 
-#if _FX_PLATFORM_ == _FX_PLATFORM_WINDOWS_
+#if defined(OS_WIN)
 static_assert(sizeof(FX_RECT) == sizeof(RECT), "FX_RECT vs. RECT mismatch");
 static_assert(offsetof(FX_RECT, left) == offsetof(RECT, left),
               "FX_RECT vs. RECT mismatch");
@@ -73,12 +75,9 @@ void FX_RECT::Intersect(const FX_RECT& src) {
   }
 }
 
-CFX_FloatRect::CFX_FloatRect(const FX_RECT& rect) {
-  left = rect.left;
-  top = rect.bottom;
-  right = rect.right;
-  bottom = rect.top;
-}
+// Y-axis runs the opposite way in FX_RECT.
+CFX_FloatRect::CFX_FloatRect(const FX_RECT& rect)
+    : left(rect.left), bottom(rect.top), right(rect.right), top(rect.bottom) {}
 
 // static
 CFX_FloatRect CFX_FloatRect::GetBBox(const CFX_PointF* pPoints, int nPoints) {
@@ -129,20 +128,20 @@ void CFX_FloatRect::Union(const CFX_FloatRect& other_rect) {
 
 FX_RECT CFX_FloatRect::GetOuterRect() const {
   FX_RECT rect;
-  rect.left = static_cast<int>(floor(left));
-  rect.bottom = static_cast<int>(ceil(top));
-  rect.right = static_cast<int>(ceil(right));
-  rect.top = static_cast<int>(floor(bottom));
+  rect.left = pdfium::base::saturated_cast<int>(floor(left));
+  rect.bottom = pdfium::base::saturated_cast<int>(ceil(top));
+  rect.right = pdfium::base::saturated_cast<int>(ceil(right));
+  rect.top = pdfium::base::saturated_cast<int>(floor(bottom));
   rect.Normalize();
   return rect;
 }
 
 FX_RECT CFX_FloatRect::GetInnerRect() const {
   FX_RECT rect;
-  rect.left = static_cast<int>(ceil(left));
-  rect.bottom = static_cast<int>(floor(top));
-  rect.right = static_cast<int>(floor(right));
-  rect.top = static_cast<int>(ceil(bottom));
+  rect.left = pdfium::base::saturated_cast<int>(ceil(left));
+  rect.bottom = pdfium::base::saturated_cast<int>(floor(top));
+  rect.right = pdfium::base::saturated_cast<int>(floor(right));
+  rect.top = pdfium::base::saturated_cast<int>(ceil(bottom));
   rect.Normalize();
   return rect;
 }
@@ -266,8 +265,15 @@ FX_RECT CFX_FloatRect::ToFxRect() const {
 }
 
 FX_RECT CFX_FloatRect::ToRoundedFxRect() const {
-  return FX_RECT(FXSYS_round(left), FXSYS_round(top), FXSYS_round(right),
-                 FXSYS_round(bottom));
+  return FX_RECT(FXSYS_roundf(left), FXSYS_roundf(top), FXSYS_roundf(right),
+                 FXSYS_roundf(bottom));
+}
+
+FX_RECT CFX_RectF::GetOuterRect() const {
+  return FX_RECT(static_cast<int32_t>(floor(left)),
+                 static_cast<int32_t>(floor(top)),
+                 static_cast<int32_t>(ceil(right())),
+                 static_cast<int32_t>(ceil(bottom())));
 }
 
 #ifndef NDEBUG
@@ -283,11 +289,6 @@ std::ostream& operator<<(std::ostream& os, const CFX_RectF& rect) {
   return os;
 }
 #endif  // NDEBUG
-
-std::tuple<float, float, float, float, float, float> CFX_Matrix::AsTuple()
-    const {
-  return std::make_tuple(a, b, c, d, e, f);
-}
 
 CFX_Matrix CFX_Matrix::GetInverse() const {
   CFX_Matrix inverse;
@@ -336,10 +337,6 @@ void CFX_Matrix::Rotate(float fRadian) {
   float cosValue = cos(fRadian);
   float sinValue = sin(fRadian);
   Concat(CFX_Matrix(cosValue, sinValue, -sinValue, cosValue, 0, 0));
-}
-
-void CFX_Matrix::Shear(float fAlphaRadian, float fBetaRadian) {
-  Concat(CFX_Matrix(1, tan(fAlphaRadian), tan(fBetaRadian), 1, 0, 0));
 }
 
 void CFX_Matrix::MatchRect(const CFX_FloatRect& dest,

@@ -40,9 +40,9 @@ class LayerAnimationSequence;
 //      ui::LayerAnimator* animator_2 = layer_2->GetAnimator();
 //      CallbackLayerAnimationObserver* observer =
 //          new CallbackLayerAnimationObserver(
-//              base::Bind(&Foobar::AnimationStartedCallback),
+//              base::BindRepeating(&Foobar::AnimationStartedCallback),
 //              base::Unretained(this));
-//              base::Bind(&Foobar::AnimationEndedCallback),
+//              base::BindRepeating(&Foobar::AnimationEndedCallback),
 //              base::Unretained(this));
 //      animator_1->AddObserver(observer);
 //      animator_2->AddObserver(observer);
@@ -61,14 +61,14 @@ class COMPOSITOR_EXPORT CallbackLayerAnimationObserver
  public:
   // The Callback type that will be invoked when all animation sequences have
   // been started.
-  typedef base::Callback<void(const CallbackLayerAnimationObserver&)>
-      AnimationStartedCallback;
+  using AnimationStartedCallback =
+      base::RepeatingCallback<void(const CallbackLayerAnimationObserver&)>;
 
   // The Callback type that will be invoked when all animation sequences have
   // finished. |this| will be destroyed after invoking the Callback if it
   // returns true.
-  typedef base::Callback<bool(const CallbackLayerAnimationObserver&)>
-      AnimationEndedCallback;
+  using AnimationEndedCallback =
+      base::RepeatingCallback<bool(const CallbackLayerAnimationObserver&)>;
 
   // A dummy no-op AnimationStartedCallback.
   static void DummyAnimationStartedCallback(
@@ -81,9 +81,9 @@ class COMPOSITOR_EXPORT CallbackLayerAnimationObserver
   //
   //    ui::CallbackLayerAnimationObserver* animation_observer =
   //        new ui::CallbackLayerAnimationObserver(
-  //            base::Bind(&ui::CallbackLayerAnimationObserver::
+  //            base::BindRepeating(&ui::CallbackLayerAnimationObserver::
   //                DummyAnimationStartedCallback),
-  //            base::Bind(&ui::CallbackLayerAnimationObserver::
+  //            base::BindRepeating(&ui::CallbackLayerAnimationObserver::
   //                DummyAnimationEndedCallback, false));
   static bool DummyAnimationEndedCallback(
       bool should_delete_observer,
@@ -167,9 +167,8 @@ class COMPOSITOR_EXPORT CallbackLayerAnimationObserver
   // The callback to invoke once all the animation sequences have finished.
   AnimationEndedCallback animation_ended_callback_;
 
-  // Set to true in the destructor (if non-NULL). Used to detect deletion while
-  // calling out.
-  bool* destroyed_ = nullptr;
+  // Used to detect deletion while calling out.
+  base::WeakPtrFactory<CallbackLayerAnimationObserver> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CallbackLayerAnimationObserver);
 };

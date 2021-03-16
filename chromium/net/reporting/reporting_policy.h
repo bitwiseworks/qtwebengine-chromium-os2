@@ -30,8 +30,13 @@ struct NET_EXPORT ReportingPolicy {
   // Maximum number of reports to queue before evicting the oldest.
   size_t max_report_count;
 
-  // Maximum number of clients to remember before evicting least-recently-used.
-  size_t max_client_count;
+  // Maximum number of endpoints to remember before evicting
+  size_t max_endpoint_count;
+
+  // Maximum number of endpoints for a given origin before evicting
+  // TODO(chlily): This is actually a limit on the endpoints for a given client
+  // (for a NIK, origin pair), so rename this.
+  size_t max_endpoints_per_origin;
 
   // Minimum interval at which to attempt delivery of queued reports.
   base::TimeDelta delivery_interval;
@@ -55,6 +60,9 @@ struct NET_EXPORT ReportingPolicy {
 
   // Maximum age a report can be queued for before being discarded as expired.
   base::TimeDelta max_report_age;
+
+  // Maximum time an endpoint group can go unused before being deleted.
+  base::TimeDelta max_group_staleness;
 
   // Maximum number of delivery attempts a report can have before being
   // discarded as failed.

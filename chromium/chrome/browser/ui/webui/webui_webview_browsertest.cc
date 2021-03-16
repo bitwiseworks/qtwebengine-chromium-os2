@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,10 +16,10 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "chrome/test/base/web_ui_browser_test.h"
+#include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/context_menu_params.h"
 #include "content/public/common/drop_data.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/test/extension_test_message_listener.h"
@@ -125,7 +126,7 @@ class WebUIWebViewBrowserTest : public WebUIBrowserTest {
 #else
     return GURL(signin::GetEmbeddedPromoURL(
         signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
-        signin_metrics::Reason::REASON_SIGNIN_PRIMARY_ACCOUNT, false));
+        signin_metrics::Reason::REASON_FORCED_SIGNIN_PRIMARY_ACCOUNT, false));
 #endif
   }
 

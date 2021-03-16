@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//base/allocator/allocator.gni")
 import("//build/buildflag_header.gni")
 import("//build/config/allocator.gni")
 import("//build/config/compiler/compiler.gni")
@@ -77,11 +78,7 @@ config("tcmalloc_flags") {
 if (use_allocator == "tcmalloc") {
   # tcmalloc currently won't compile on Android.
   source_set("tcmalloc") {
-    if (use_new_tcmalloc) {
-      tcmalloc_dir = "//third_party/tcmalloc/chromium"
-    } else {
-      tcmalloc_dir = "//third_party/tcmalloc/gperftools-2.0/chromium"
-    }
+    tcmalloc_dir = "//third_party/tcmalloc/chromium"
 
     # Don't check tcmalloc's includes. These files include various files like
     # base/foo.h and they actually refer to tcmalloc's forked copy of base
@@ -109,7 +106,6 @@ if (use_allocator == "tcmalloc") {
       "$tcmalloc_dir/src/base/atomicops-internals-x86.h",
       "$tcmalloc_dir/src/base/atomicops.h",
       "$tcmalloc_dir/src/base/commandlineflags.h",
-      "$tcmalloc_dir/src/base/cycleclock.h",
 
       # We don't list dynamic_annotations.c since its copy is already
       # present in the dynamic_annotations target.
@@ -125,7 +121,6 @@ if (use_allocator == "tcmalloc") {
       "$tcmalloc_dir/src/base/spinlock.h",
       "$tcmalloc_dir/src/base/spinlock_internal.cc",
       "$tcmalloc_dir/src/base/spinlock_internal.h",
-      "$tcmalloc_dir/src/base/synchronization_profiling.h",
       "$tcmalloc_dir/src/base/sysinfo.cc",
       "$tcmalloc_dir/src/base/sysinfo.h",
       "$tcmalloc_dir/src/base/vdso_support.cc",
@@ -137,25 +132,22 @@ if (use_allocator == "tcmalloc") {
 
       # #included by debugallocation_shim.cc
       #"$tcmalloc_dir/src/debugallocation.cc",
+      "$tcmalloc_dir/src/fake_stacktrace_scope.cc",
       "$tcmalloc_dir/src/free_list.cc",
       "$tcmalloc_dir/src/free_list.h",
       "$tcmalloc_dir/src/gperftools/heap-profiler.h",
       "$tcmalloc_dir/src/gperftools/malloc_extension.h",
       "$tcmalloc_dir/src/gperftools/malloc_hook.h",
       "$tcmalloc_dir/src/gperftools/stacktrace.h",
-      "$tcmalloc_dir/src/heap-profile-table.cc",
-      "$tcmalloc_dir/src/heap-profile-table.h",
-      "$tcmalloc_dir/src/heap-profiler.cc",
       "$tcmalloc_dir/src/internal_logging.cc",
       "$tcmalloc_dir/src/internal_logging.h",
       "$tcmalloc_dir/src/linked_list.h",
       "$tcmalloc_dir/src/malloc_extension.cc",
       "$tcmalloc_dir/src/malloc_hook-inl.h",
       "$tcmalloc_dir/src/malloc_hook.cc",
+      "$tcmalloc_dir/src/maybe_emergency_malloc.h",
       "$tcmalloc_dir/src/maybe_threads.cc",
       "$tcmalloc_dir/src/maybe_threads.h",
-      "$tcmalloc_dir/src/memory_region_map.cc",
-      "$tcmalloc_dir/src/memory_region_map.h",
       "$tcmalloc_dir/src/page_heap.cc",
       "$tcmalloc_dir/src/page_heap.h",
       "$tcmalloc_dir/src/raw_printer.cc",
@@ -187,15 +179,6 @@ if (use_allocator == "tcmalloc") {
       #"generic_allocators.cc",
       #"win_allocator.cc",
     ]
-
-    # Account for file changes in the new tcmalloc version.
-    if (use_new_tcmalloc) {
-      sources -= [ "$tcmalloc_dir/src/base/cycleclock.h" ]
-      sources += [
-        "$tcmalloc_dir/src/emergency_malloc_for_stacktrace.cc",
-        "$tcmalloc_dir/src/fake_stacktrace_scope.cc",
-      ]
-    }
 
     # Not included on mips64el.
     if (current_cpu == "mips64el") {
@@ -230,14 +213,17 @@ if (use_allocator == "tcmalloc") {
       configs -= [ "//build/config/compiler:afdo" ]
     }
 
-    deps = [
-      ":buildflags",
-    ]
+    deps = [ ":buildflags" ]
 
     if (enable_profiling) {
       sources += [
         "$tcmalloc_dir/src/base/thread_lister.c",
         "$tcmalloc_dir/src/base/thread_lister.h",
+        "$tcmalloc_dir/src/heap-profile-table.cc",
+        "$tcmalloc_dir/src/heap-profile-table.h",
+        "$tcmalloc_dir/src/heap-profiler.cc",
+        "$tcmalloc_dir/src/memory_region_map.cc",
+        "$tcmalloc_dir/src/memory_region_map.h",
         "$tcmalloc_dir/src/profile-handler.cc",
         "$tcmalloc_dir/src/profile-handler.h",
         "$tcmalloc_dir/src/profiledata.cc",
@@ -290,10 +276,12 @@ if (use_allocator == "tcmalloc") {
 
 buildflag_header("buildflags") {
   header = "buildflags.h"
-  flags = [
-    "USE_ALLOCATOR_SHIM=$use_allocator_shim",
-    "USE_NEW_TCMALLOC=$use_new_tcmalloc",
-  ]
+  flags = [ "USE_ALLOCATOR_SHIM=$use_allocator_shim" ]
+  if (use_allocator == "tcmalloc") {
+    flags += [ "USE_TCMALLOC=1" ]
+  } else {
+    flags += [ "USE_TCMALLOC=0" ]
+  }
 }
 
 # Used to shim malloc symbols on Android. see //base/allocator/README.md.

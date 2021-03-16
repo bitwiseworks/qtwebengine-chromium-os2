@@ -6,20 +6,29 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/containers/span.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/risk_data_loader.h"
+#include "components/autofill/core/browser/payments/legal_message_line.h"
+#include "components/autofill/core/browser/payments/risk_data_loader.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/popup_types.h"
 #include "components/security_state/core/security_state.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
+
+#if !defined(OS_IOS)
+#include "components/autofill/core/browser/payments/internal_authenticator.h"
+#endif
 
 class PrefService;
 
@@ -31,7 +40,7 @@ namespace gfx {
 class RectF;
 }
 
-namespace identity {
+namespace signin {
 class IdentityManager;
 }
 
@@ -57,10 +66,12 @@ class CardUnmaskDelegate;
 class CreditCard;
 class FormDataImporter;
 class FormStructure;
-class LegacyStrikeDatabase;
+class LogManager;
 class MigratableCreditCard;
 class PersonalDataManager;
 class StrikeDatabase;
+enum class WebauthnDialogCallbackType;
+enum class WebauthnDialogState;
 struct Suggestion;
 
 namespace payments {
@@ -115,12 +126,56 @@ class AutofillClient : public RiskDataLoader {
     UNMASK_FOR_AUTOFILL,
   };
 
+  // Authentication methods for card unmasking.
+  enum UnmaskAuthMethod {
+    UNKNOWN = 0,
+    // Require user to unmask via CVC.
+    CVC = 1,
+    // Suggest use of FIDO authenticator for card unmasking.
+    FIDO = 2,
+  };
+
   // Used for explicitly requesting the user to enter/confirm cardholder name,
   // expiration date month and year.
   struct UserProvidedCardDetails {
     base::string16 cardholder_name;
     base::string16 expiration_date_month;
     base::string16 expiration_date_year;
+  };
+
+  // Used for options of upload prompt.
+  struct SaveCreditCardOptions {
+    SaveCreditCardOptions& with_from_dynamic_change_form(bool b) {
+      from_dynamic_change_form = b;
+      return *this;
+    }
+
+    SaveCreditCardOptions& with_has_non_focusable_field(bool b) {
+      has_non_focusable_field = b;
+      return *this;
+    }
+
+    SaveCreditCardOptions& with_should_request_name_from_user(bool b) {
+      should_request_name_from_user = b;
+      return *this;
+    }
+
+    SaveCreditCardOptions& with_should_request_expiration_date_from_user(
+        bool b) {
+      should_request_expiration_date_from_user = b;
+      return *this;
+    }
+
+    SaveCreditCardOptions& with_show_prompt(bool b = true) {
+      show_prompt = b;
+      return *this;
+    }
+
+    bool from_dynamic_change_form = false;
+    bool has_non_focusable_field = false;
+    bool should_request_name_from_user = false;
+    bool should_request_expiration_date_from_user = false;
+    bool show_prompt = false;
   };
 
   // Callback to run after local credit card save is offered. Sends whether the
@@ -136,7 +191,7 @@ class AutofillClient : public RiskDataLoader {
       const UserProvidedCardDetails& user_provided_card_details)>
       UploadSaveCardPromptCallback;
 
-  typedef base::Callback<void(const CreditCard&)> CreditCardScanCallback;
+  typedef base::OnceCallback<void(const CreditCard&)> CreditCardScanCallback;
 
   // Callback to run if user presses the Save button in the migration dialog.
   // Will pass a vector of GUIDs of cards that the user selected to upload to
@@ -150,6 +205,11 @@ class AutofillClient : public RiskDataLoader {
   // storage.
   typedef base::RepeatingCallback<void(const std::string&)>
       MigrationDeleteCardCallback;
+
+  // Callback to run if the OK button or the cancel button in a
+  // Webauthn dialog is clicked.
+  typedef base::RepeatingCallback<void(WebauthnDialogCallbackType)>
+      WebauthnDialogCallback;
 
   ~AutofillClient() override {}
 
@@ -172,17 +232,13 @@ class AutofillClient : public RiskDataLoader {
   virtual syncer::SyncService* GetSyncService() = 0;
 
   // Gets the IdentityManager associated with the client.
-  virtual identity::IdentityManager* GetIdentityManager() = 0;
+  virtual signin::IdentityManager* GetIdentityManager() = 0;
 
   // Gets the FormDataImporter instance owned by the client.
   virtual FormDataImporter* GetFormDataImporter() = 0;
 
   // Gets the payments::PaymentsClient instance owned by the client.
   virtual payments::PaymentsClient* GetPaymentsClient() = 0;
-
-  // Gets the LegacyStrikeDatabase associated with the client.
-  // TODO(crbug.com/884817): Delete this once v2 of StrikeDatabase is launched.
-  virtual LegacyStrikeDatabase* GetLegacyStrikeDatabase() = 0;
 
   // Gets the StrikeDatabase associated with the client.
   virtual StrikeDatabase* GetStrikeDatabase() = 0;
@@ -203,6 +259,24 @@ class AutofillClient : public RiskDataLoader {
   // Returns the current best guess as to the page's display language.
   virtual std::string GetPageLanguage() const;
 
+  // Retrieves the country code of the user from Chrome variation service.
+  // If the variation service is not available, return an empty string.
+  virtual std::string GetVariationConfigCountryCode() const;
+
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
+  // Returns the whitelists for virtual cards. Used on desktop platforms only.
+  virtual std::vector<std::string> GetMerchantWhitelistForVirtualCards() = 0;
+  virtual std::vector<std::string> GetBinRangeWhitelistForVirtualCards() = 0;
+#endif
+
+#if !defined(OS_IOS)
+  // Creates the appropriate implementation of InternalAuthenticator. May be
+  // null for platforms that don't support this, in which case standard CVC
+  // authentication will be used instead.
+  virtual std::unique_ptr<InternalAuthenticator>
+  CreateCreditCardInternalAuthenticator(content::RenderFrameHost* rfh);
+#endif
+
   // Causes the Autofill settings UI to be shown. If |show_credit_card_settings|
   // is true, will show the credit card specific subpage.
   virtual void ShowAutofillSettings(bool show_credit_card_settings) = 0;
@@ -219,11 +293,11 @@ class AutofillClient : public RiskDataLoader {
   virtual void ShowLocalCardMigrationDialog(
       base::OnceClosure show_migration_dialog_closure) = 0;
 
-  // Shows a dialog with the given |legal_message| and the |user_email|. Runs
-  // |start_migrating_cards_callback| if the user would like the selected cards
-  // in the |migratable_credit_cards| to be uploaded to cloud.
+  // Shows a dialog with the given |legal_message_lines| and the |user_email|.
+  // Runs |start_migrating_cards_callback| if the user would like the selected
+  // cards in the |migratable_credit_cards| to be uploaded to cloud.
   virtual void ConfirmMigrateLocalCardToCloud(
-      std::unique_ptr<base::DictionaryValue> legal_message,
+      const LegalMessageLines& legal_message_lines,
       const std::string& user_email,
       const std::vector<MigratableCreditCard>& migratable_credit_cards,
       LocalCardMigrationCallback start_migrating_cards_callback) = 0;
@@ -241,42 +315,94 @@ class AutofillClient : public RiskDataLoader {
       const std::vector<MigratableCreditCard>& migratable_credit_cards,
       MigrationDeleteCardCallback delete_local_card_callback) = 0;
 
+#if !defined(OS_ANDROID) && !defined(OS_IOS)
+  // TODO(crbug.com/991037): Find a way to merge these two functions. Shouldn't
+  // use WebauthnDialogState as that state is a purely UI state (should not be
+  // accessible for managers?), and some of the states |KInactive| may be
+  // confusing here. Do we want to add another Enum?
+
+  // Will show a dialog offering the option to use device's platform
+  // authenticator in the future instead of CVC to verify the card being
+  // unmasked. Runs |offer_dialog_callback| if the OK button or the cancel
+  // button in the dialog is clicked.
+  virtual void ShowWebauthnOfferDialog(
+      WebauthnDialogCallback offer_dialog_callback) = 0;
+
+  // Will show a dialog indicating the card verification is in progress. It is
+  // shown after verification starts only if the WebAuthn is enabled.
+  virtual void ShowWebauthnVerifyPendingDialog(
+      WebauthnDialogCallback verify_pending_dialog_callback) = 0;
+
+  // Will update the WebAuthn dialog content when there is an error fetching the
+  // challenge.
+  virtual void UpdateWebauthnOfferDialogWithError() = 0;
+
+  // Will close the current visible WebAuthn dialog. Returns true if dialog was
+  // visible and has been closed.
+  virtual bool CloseWebauthnDialog() = 0;
+
+  // Prompt the user to confirm the saving of a UPI ID.
+  virtual void ConfirmSaveUpiIdLocally(
+      const std::string& upi_id,
+      base::OnceCallback<void(bool user_decision)> callback) = 0;
+
+  // Shows the dialog including all credit cards that are available to be used
+  // as a virtual card. |candidates| must not be empty and has at least one
+  // card. Runs |callback| when a card is selected.
+  virtual void OfferVirtualCardOptions(
+      const std::vector<CreditCard*>& candidates,
+      base::OnceCallback<void(const std::string&)> callback) = 0;
+#endif
+
   // Runs |callback| if the |profile| should be imported as personal data.
   virtual void ConfirmSaveAutofillProfile(const AutofillProfile& profile,
                                           base::OnceClosure callback) = 0;
 
   // Runs |callback| once the user makes a decision with respect to the
   // offer-to-save prompt. On desktop, shows the offer-to-save bubble if
-  // |show_prompt| is true; otherwise only shows the omnibox icon. On mobile,
-  // shows the offer-to-save infobar if |show_prompt| is true; otherwise does
-  // not offer to save at all.
+  // |options.show_prompt| is true; otherwise only shows the
+  // omnibox icon. On mobile, shows the offer-to-save infobar if
+  // |options.show_prompt| is true; otherwise does not offer to
+  // save at all.
   virtual void ConfirmSaveCreditCardLocally(
       const CreditCard& card,
-      bool show_prompt,
+      AutofillClient::SaveCreditCardOptions options,
       LocalSaveCardPromptCallback callback) = 0;
 
-#if defined(OS_ANDROID)
-  // Run |callback| if the card should be uploaded to payments with updated
-  // name from the user.
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  // Display the cardholder name fix flow prompt and run the |callback| if
+  // the card should be uploaded to payments with updated name from the user.
   virtual void ConfirmAccountNameFixFlow(
       base::OnceCallback<void(const base::string16&)> callback) = 0;
-#endif  // defined(OS_ANDROID)
+
+  // Display the expiration date fix flow prompt with the |card| details
+  // and run the |callback| if the card should be uploaded to payments with
+  // updated expiration date from the user.
+  virtual void ConfirmExpirationDateFixFlow(
+      const CreditCard& card,
+      base::OnceCallback<void(const base::string16&, const base::string16&)>
+          callback) = 0;
+#endif  // defined(OS_ANDROID) || defined(OS_IOS)
 
   // Runs |callback| once the user makes a decision with respect to the
-  // offer-to-save prompt. Displays the contents of |legal_message| to the user.
-  // Displays a cardholder name textfield in the bubble if
-  // |should_request_name_from_user| is true. Displays a pair of expiration date
-  // dropdowns in the bubble if |should_request_expiration_date_from_user| is
-  // true. On desktop, shows the offer-to-save bubble if |show_prompt| is true;
+  // offer-to-save prompt. Displays the contents of |legal_message_lines|
+  // to the user. Displays a cardholder name textfield in the bubble if
+  // |options.should_request_name_from_user| is true. Displays
+  // a pair of expiration date dropdowns in the bubble if
+  // |should_request_expiration_date_from_user| is true. On desktop, shows the
+  // offer-to-save bubble if |options.show_prompt| is true;
   // otherwise only shows the omnibox icon. On mobile, shows the offer-to-save
-  // infobar if |show_prompt| is true; otherwise does not offer to save at all.
+  // infobar if |options.show_prompt| is true; otherwise does
+  // not offer to save at all.
   virtual void ConfirmSaveCreditCardToCloud(
       const CreditCard& card,
-      std::unique_ptr<base::DictionaryValue> legal_message,
-      bool should_request_name_from_user,
-      bool should_request_expiration_date_from_user,
-      bool show_prompt,
+      const LegalMessageLines& legal_message_lines,
+      SaveCreditCardOptions options,
       UploadSaveCardPromptCallback callback) = 0;
+
+  // Called after credit card upload is finished. Will show upload result to
+  // users. |card_saved| indicates if the card is successfully saved.
+  virtual void CreditCardUploadCompleted(bool card_saved) = 0;
 
   // Will show an infobar to get user consent for Credit Card assistive filling.
   // Will run |callback| on success.
@@ -290,7 +416,7 @@ class AutofillClient : public RiskDataLoader {
   // Shows the user interface for scanning a credit card. Invokes the |callback|
   // when a credit card is scanned successfully. Should be called only if
   // HasCreditCardScanFeature() returns true.
-  virtual void ScanCreditCard(const CreditCardScanCallback& callback) = 0;
+  virtual void ScanCreditCard(CreditCardScanCallback callback) = 0;
 
   // Shows an Autofill popup with the given |values|, |labels|, |icons|, and
   // |identifiers| for the element at |element_bounds|. |delegate| will be
@@ -300,6 +426,7 @@ class AutofillClient : public RiskDataLoader {
       base::i18n::TextDirection text_direction,
       const std::vector<Suggestion>& suggestions,
       bool autoselect_first_suggestion,
+      PopupType popup_type,
       base::WeakPtr<AutofillPopupDelegate> delegate) = 0;
 
   // Update the data list values shown by the Autofill popup, if visible.
@@ -307,8 +434,19 @@ class AutofillClient : public RiskDataLoader {
       const std::vector<base::string16>& values,
       const std::vector<base::string16>& labels) = 0;
 
+  // Informs the client that the popup needs to be kept alive. Call before
+  // |UpdatePopup| to update the open popup in-place.
+  virtual void PinPopupView() = 0;
+
+  // Returns (not elided) suggestions currently held by the UI.
+  virtual base::span<const Suggestion> GetPopupSuggestions() const = 0;
+
+  // Updates the popup contents with the newly given suggestions.
+  virtual void UpdatePopup(const std::vector<autofill::Suggestion>& suggestions,
+                           PopupType popup_type) = 0;
+
   // Hide the Autofill popup if one is currently showing.
-  virtual void HideAutofillPopup() = 0;
+  virtual void HideAutofillPopup(PopupHidingReason reason) = 0;
 
   // Whether the Autocomplete feature of Autofill should be enabled.
   virtual bool IsAutocompleteEnabled() = 0;
@@ -336,6 +474,10 @@ class AutofillClient : public RiskDataLoader {
 
   // Handles simple actions for the autofill popups.
   virtual void ExecuteCommand(int id) = 0;
+
+  // Returns a LogManager instance. May be null for platforms that don't support
+  // this.
+  virtual LogManager* GetLogManager() const;
 };
 
 }  // namespace autofill

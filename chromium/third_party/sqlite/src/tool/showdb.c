@@ -104,7 +104,7 @@ static void fileOpen(const char *zPrg, const char *zName){
     g.pDb = openDatabase(zPrg, zName);
     rc = sqlite3_file_control(g.pDb, "main", SQLITE_FCNTL_FILE_POINTER, pArg);
     if( rc!=SQLITE_OK ){
-      fprintf(stderr,
+      fprintf(stderr, 
           "%s: failed to obtain fd for %s (SQLite too old?)\n", zPrg, zName
       );
       exit(1);
@@ -135,7 +135,7 @@ static void fileClose(){
 /*
 ** Read content from the file.
 **
-** Space to hold the content is obtained from sqlite3_malloc() and needs
+** Space to hold the content is obtained from sqlite3_malloc() and needs 
 ** to be freed by the caller.
 */
 static unsigned char *fileRead(sqlite3_int64 ofst, int nByte){
@@ -392,7 +392,7 @@ static i64 localPayload(i64 nPayload, char cType){
   }
   return nLocal;
 }
-
+  
 
 /*
 ** Create a description for a single cell.
@@ -828,16 +828,27 @@ static void page_usage_cell(
     while( ovfl && (cnt++)<g.mxPage ){
       page_usage_msg(ovfl, "overflow %d from cell %d of page %d",
                      cnt, cellno, pgno);
-      a = fileRead((ovfl-1)*g.pagesize, 4);
+      a = fileRead((ovfl-1)*(sqlite3_int64)g.pagesize, 4);
       ovfl = decodeInt32(a);
       sqlite3_free(a);
     }
   }
 }
 
+/*
+** True if the memory is all zeros
+*/
+static int allZero(unsigned char *a, int n){
+  while( n && (a++)[0]==0 ){ n--; }
+  return n==0;
+}
+
 
 /*
-** Describe the usages of a b-tree page
+** Describe the usages of a b-tree page.
+**
+** If parent==0, then this is the root of a btree.  If parent<0 then
+** this is an orphan page.
 */
 static void page_usage_btree(
   int pgno,             /* Page to describe */
@@ -850,22 +861,44 @@ static void page_usage_btree(
   int nCell;
   int i;
   int hdr = pgno==1 ? 100 : 0;
+  char zEntry[30];
 
   if( pgno<=0 || pgno>g.mxPage ) return;
   a = fileRead((pgno-1)*g.pagesize, g.pagesize);
   switch( a[hdr] ){
+    case 0: {
+      if( allZero(a, g.pagesize) ){
+        zType = "zeroed page";
+      }else if( parent<0 ){
+        return;
+      }else{
+        zType = "corrupt node";
+      }
+      break;
+    }
     case 2:  zType = "interior node of index";  break;
     case 5:  zType = "interior node of table";  break;
     case 10: zType = "leaf of index";           break;
     case 13: zType = "leaf of table";           break;
-  }
-  if( parent ){
-    page_usage_msg(pgno, "%s [%s], child %d of page %d",
-                   zType, zName, idx, parent);
-  }else{
-    page_usage_msg(pgno, "root %s [%s]", zType, zName);
+    default: {
+      if( parent<0 ) return;
+      zType = "corrupt node";
+    }
   }
   nCell = a[hdr+3]*256 + a[hdr+4];
+  if( nCell==1 ){
+    sqlite3_snprintf(sizeof(zEntry),zEntry,"1 row");
+  }else{
+    sqlite3_snprintf(sizeof(zEntry),zEntry,"%d rows", nCell);
+  }
+  if( parent>0 ){
+    page_usage_msg(pgno, "%s [%s], child %d of page %d, %s",
+                   zType, zName, idx, parent, zEntry);
+  }else if( parent==0 ){
+    page_usage_msg(pgno, "root %s [%s], %s", zType, zName, zEntry);
+  }else{
+    page_usage_msg(pgno, "orphaned %s, %s", zType, zEntry);
+  }
   if( a[hdr]==2 || a[hdr]==5 ){
     int cellstart = hdr+12;
     unsigned int child;
@@ -923,7 +956,7 @@ static void page_usage_freelist(int pgno){
 ** Determine pages used as PTRMAP pages
 */
 static void page_usage_ptrmap(unsigned char *a){
-  if( a[55] ){
+  if( decodeInt32(a+52) ){
     int usable = g.pagesize - a[20];
     int pgno = 2;
     int perPage = usable/5;
@@ -988,6 +1021,7 @@ static void page_usage_report(const char *zPrg, const char *zDbName){
 
   /* Print the report and free memory used */
   for(i=1; i<=g.mxPage; i++){
+    if( zPageUse[i]==0 ) page_usage_btree(i, -1, 0, 0);
     printf("%5d: %s\n", i, zPageUse[i] ? zPageUse[i] : "???");
     sqlite3_free(zPageUse[i]);
   }
@@ -1075,7 +1109,7 @@ int main(int argc, char **argv){
 
   /* Check for the "--uri" or "-uri" switch. */
   if( nArg>1 ){
-    if( sqlite3_stricmp("-raw", azArg[1])==0
+    if( sqlite3_stricmp("-raw", azArg[1])==0 
      || sqlite3_stricmp("--raw", azArg[1])==0
     ){
       g.bRaw = 1;

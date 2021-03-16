@@ -19,7 +19,7 @@
 
 namespace IPC {
 class Message;
-};
+}
 
 namespace content {
 
@@ -71,9 +71,10 @@ class CONTENT_EXPORT FrameSwapMessageQueue
   // |messages| depending on |reason| it may make sense to deliver certain
   //            messages asynchronously. This vector will contain those
   //            messages.
-  void DidNotSwap(int source_frame_number,
-                  cc::SwapPromise::DidNotSwapReason reason,
-                  std::vector<std::unique_ptr<IPC::Message>>* messages);
+  cc::SwapPromise::DidNotSwapAction DidNotSwap(
+      int source_frame_number,
+      cc::SwapPromise::DidNotSwapReason reason,
+      std::vector<std::unique_ptr<IPC::Message>>* messages);
 
   // A SendMessageScope object must be held by the caller when this method is
   // called.
@@ -96,9 +97,6 @@ class CONTENT_EXPORT FrameSwapMessageQueue
 
   int32_t routing_id() const { return routing_id_; }
 
-  void NotifyFramesAreDiscarded(bool frames_are_discarded);
-  bool AreFramesDiscarded();
-
  private:
   friend class base::RefCountedThreadSafe<FrameSwapMessageQueue>;
 
@@ -108,7 +106,6 @@ class CONTENT_EXPORT FrameSwapMessageQueue
   std::unique_ptr<FrameSwapMessageSubQueue> visual_state_queue_;
   std::vector<std::unique_ptr<IPC::Message>> next_drain_messages_;
   int32_t routing_id_ = 0;
-  bool frames_are_discarded_ = false;
   THREAD_CHECKER(impl_thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(FrameSwapMessageQueue);

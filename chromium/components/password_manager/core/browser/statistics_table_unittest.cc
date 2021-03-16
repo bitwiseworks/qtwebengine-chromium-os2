@@ -3,14 +3,17 @@
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/statistics_table.h"
+#include <functional>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/utf_string_conversions.h"
 #include "sql/database.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 namespace password_manager {
 namespace {
@@ -21,6 +24,7 @@ const char kTestDomain3[] = "https://example.org";
 const char kTestDomain4[] = "http://localhost";
 const char kUsername1[] = "user1";
 const char kUsername2[] = "user2";
+const char kUsername3[] = "user3";
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
@@ -134,9 +138,8 @@ TEST_F(StatisticsTableTest, RemoveStatsByOriginAndTime) {
   EXPECT_THAT(db()->GetRows(stats4.origin_domain), ElementsAre(stats4));
 
   // Remove the entry with the timestamp 1 with no origin filter.
-  EXPECT_TRUE(
-      db()->RemoveStatsByOriginAndTime(base::Callback<bool(const GURL&)>(),
-                                       base::Time(), base::Time::FromTimeT(2)));
+  EXPECT_TRUE(db()->RemoveStatsByOriginAndTime(
+      base::NullCallback(), base::Time(), base::Time::FromTimeT(2)));
   EXPECT_THAT(db()->GetAllRows(), UnorderedElementsAre(stats2, stats3, stats4));
   EXPECT_THAT(db()->GetRows(stats1.origin_domain), IsEmpty());
   EXPECT_THAT(db()->GetRows(stats2.origin_domain), ElementsAre(stats2));
@@ -146,8 +149,7 @@ TEST_F(StatisticsTableTest, RemoveStatsByOriginAndTime) {
   // Remove the entries with the timestamp 2 that are NOT matching
   // |kTestDomain3|.
   EXPECT_TRUE(db()->RemoveStatsByOriginAndTime(
-      base::Bind(static_cast<bool (*)(const GURL&, const GURL&)>(operator!=),
-                 stats3.origin_domain),
+      base::BindRepeating(std::not_equal_to<GURL>(), stats3.origin_domain),
       base::Time::FromTimeT(2), base::Time()));
   EXPECT_THAT(db()->GetAllRows(), ElementsAre(stats3));
   EXPECT_THAT(db()->GetRows(stats1.origin_domain), IsEmpty());
@@ -157,9 +159,8 @@ TEST_F(StatisticsTableTest, RemoveStatsByOriginAndTime) {
 
   // Remove the entries with the timestamp 2 with no origin filter.
   // This should delete the remaining entry.
-  EXPECT_TRUE(
-      db()->RemoveStatsByOriginAndTime(base::Callback<bool(const GURL&)>(),
-                                       base::Time::FromTimeT(2), base::Time()));
+  EXPECT_TRUE(db()->RemoveStatsByOriginAndTime(
+      base::NullCallback(), base::Time::FromTimeT(2), base::Time()));
   EXPECT_THAT(db()->GetAllRows(), IsEmpty());
   EXPECT_THAT(db()->GetRows(stats1.origin_domain), IsEmpty());
   EXPECT_THAT(db()->GetRows(stats2.origin_domain), IsEmpty());
@@ -181,6 +182,36 @@ TEST_F(StatisticsTableTest, EmptyURL) {
   EXPECT_THAT(db()->GetAllRows(), IsEmpty());
   EXPECT_THAT(db()->GetRows(test_data().origin_domain), IsEmpty());
   EXPECT_FALSE(db()->RemoveRow(test_data().origin_domain));
+}
+
+TEST_F(StatisticsTableTest, GetDomainsAndAccountsDomainsWithNDismissals) {
+  struct {
+    const char* origin;
+    const char* username;
+    int dismissal_count;
+  } const stats_database_entries[] = {
+      {kTestDomain, kUsername1, 10},   // A
+      {kTestDomain, kUsername2, 10},   // B
+      {kTestDomain, kUsername3, 1},    // C
+      {kTestDomain2, kUsername1, 1},   // D
+      {kTestDomain3, kUsername1, 10},  // E
+  };
+  for (const auto& entry : stats_database_entries) {
+    EXPECT_TRUE(db()->AddRow({
+        .origin_domain = GURL(entry.origin),
+        .username_value = base::ASCIIToUTF16(entry.username),
+        .dismissal_count = entry.dismissal_count,
+        .update_time = base::Time::FromTimeT(1),
+    }));
+  }
+
+  EXPECT_EQ(5, db()->GetNumAccounts());  // A,B,C,D,E
+
+  EXPECT_EQ(3, db()->GetNumDomainsWithAtLeastNDismissals(1));   // (A,B,C), D, E
+  EXPECT_EQ(2, db()->GetNumDomainsWithAtLeastNDismissals(10));  // (A,B), E
+
+  EXPECT_EQ(5, db()->GetNumAccountsWithAtLeastNDismissals(1));   // A,B,C,D,E
+  EXPECT_EQ(3, db()->GetNumAccountsWithAtLeastNDismissals(10));  // A,B,E
 }
 
 }  // namespace

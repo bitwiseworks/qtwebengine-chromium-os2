@@ -5,8 +5,10 @@
 #include "printing/printed_document.h"
 
 #include "base/logging.h"
+#include "printing/metafile_skia.h"
 #include "printing/page_number.h"
 #include "printing/printed_page_win.h"
+#include "printing/printing_context_win.h"
 #include "printing/units.h"
 #include "skia/ext/skia_utils_win.h"
 
@@ -16,7 +18,7 @@ void SimpleModifyWorldTransform(HDC context,
                                 int offset_x,
                                 int offset_y,
                                 float shrink_factor) {
-  XFORM xform = { 0 };
+  XFORM xform = {0};
   xform.eDx = static_cast<float>(offset_x);
   xform.eDy = static_cast<float>(offset_y);
   xform.eM11 = xform.eM22 = 1.f / shrink_factor;
@@ -41,7 +43,7 @@ void PrintedDocument::RenderPrintedPage(
 
   DCHECK(context);
 
-  const PageSetup& page_setup = immutable_.settings_.page_setup_device_units();
+  const PageSetup& page_setup = immutable_.settings_->page_setup_device_units();
   gfx::Rect content_area = GetCenteredPageContentRect(
       page_setup.physical_size(), page.page_size(), page.page_content_rect());
 
@@ -60,8 +62,7 @@ void PrintedDocument::RenderPrintedPage(
     // Note that the printing output is relative to printable area of the page.
     // That is 0,0 is offset by PHYSICALOFFSETX/Y from the page.
     SimpleModifyWorldTransform(
-        context,
-        content_area.x() - page_setup.printable_area().x(),
+        context, content_area.x() - page_setup.printable_area().x(),
         content_area.y() - page_setup.printable_area().y(),
         page.shrink_factor());
 
@@ -76,6 +77,20 @@ void PrintedDocument::RenderPrintedPage(
 
   BOOL res = RestoreDC(context, saved_state);
   DCHECK_NE(res, 0);
+}
+
+bool PrintedDocument::RenderPrintedDocument(PrintingContext* context) {
+  if (context->NewPage() != PrintingContext::OK)
+    return false;
+
+  base::string16 device_name = immutable_.settings_->device_name();
+  {
+    base::AutoLock lock(lock_);
+    const MetafilePlayer* metafile = GetMetafile();
+    static_cast<PrintingContextWin*>(context)->PrintDocument(
+        device_name, *(static_cast<const MetafileSkia*>(metafile)));
+  }
+  return context->PageDone() == PrintingContext::OK;
 }
 
 }  // namespace printing

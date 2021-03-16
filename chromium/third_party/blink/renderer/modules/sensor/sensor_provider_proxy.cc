@@ -4,8 +4,7 @@
 
 #include "third_party/blink/renderer/modules/sensor/sensor_provider_proxy.h"
 
-#include "services/device/public/mojom/constants.mojom-blink.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
+#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_proxy_impl.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_proxy_inspector_impl.h"
 #include "third_party/blink/renderer/platform/mojo/mojo_helper.h"
@@ -14,15 +13,18 @@ namespace blink {
 
 // SensorProviderProxy
 SensorProviderProxy::SensorProviderProxy(Document& document)
-    : Supplement<Document>(document), inspector_mode_(false) {}
+    : Supplement<Document>(document),
+      sensor_provider_(document.ToExecutionContext()),
+      inspector_mode_(false) {}
 
 void SensorProviderProxy::InitializeIfNeeded() {
   if (IsInitialized())
     return;
 
-  GetSupplementable()->GetInterfaceProvider()->GetInterface(
-      mojo::MakeRequest(&sensor_provider_));
-  sensor_provider_.set_connection_error_handler(
+  GetSupplementable()->GetBrowserInterfaceBroker().GetInterface(
+      sensor_provider_.BindNewPipeAndPassReceiver(
+          GetSupplementable()->GetTaskRunner(TaskType::kSensor)));
+  sensor_provider_.set_disconnect_handler(
       WTF::Bind(&SensorProviderProxy::OnSensorProviderConnectionError,
                 WrapWeakPersistent(this)));
 }
@@ -45,8 +47,9 @@ SensorProviderProxy* SensorProviderProxy::From(Document* document) {
 
 SensorProviderProxy::~SensorProviderProxy() = default;
 
-void SensorProviderProxy::Trace(blink::Visitor* visitor) {
+void SensorProviderProxy::Trace(Visitor* visitor) {
   visitor->Trace(sensor_proxies_);
+  visitor->Trace(sensor_provider_);
   Supplement<Document>::Trace(visitor);
 }
 

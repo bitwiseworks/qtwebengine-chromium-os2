@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_VIDEO_FRAME_SUBMITTER_H_
 
 #include "cc/layers/video_frame_provider.h"
+#include "cc/metrics/video_playback_roughness_reporter.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/blink/public/platform/web_common.h"
 
@@ -18,19 +19,19 @@ enum VideoRotation : int;
 }
 
 namespace viz {
-class ContextProvider;
+class RasterContextProvider;
 }  // namespace viz
 
 namespace blink {
 
 // Sets the proper context_provider and compositing mode onto the Submitter.
 using WebSubmitterConfigurationCallback =
-    base::OnceCallback<void(bool, scoped_refptr<viz::ContextProvider>)>;
+    base::OnceCallback<void(bool, scoped_refptr<viz::RasterContextProvider>)>;
 
-// Callback to obtain the media ContextProvider and a bool indicating whether
-// we are in software compositing mode.
+// Callback to obtain the media RasterContextProvider and a bool indicating
+// whether we are in software compositing mode.
 using WebContextProviderCallback =
-    base::RepeatingCallback<void(scoped_refptr<viz::ContextProvider>,
+    base::RepeatingCallback<void(scoped_refptr<viz::RasterContextProvider>,
                                  WebSubmitterConfigurationCallback)>;
 
 // Exposes the VideoFrameSubmitter, which submits CompositorFrames containing
@@ -41,6 +42,7 @@ class BLINK_PLATFORM_EXPORT WebVideoFrameSubmitter
  public:
   static std::unique_ptr<WebVideoFrameSubmitter> Create(
       WebContextProviderCallback,
+      cc::PlaybackRoughnessReportingCallback,
       const cc::LayerTreeSettings&,
       bool use_sync_primitives);
   ~WebVideoFrameSubmitter() override = default;

@@ -32,17 +32,22 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_ERROR_EVENT_H_
 
 #include <memory>
+
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
+#include "third_party/blink/renderer/bindings/core/v8/world_safe_v8_reference.h"
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/events/error_event_init.h"
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_v8_reference.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-class ErrorEvent final : public Event {
+class ErrorEventInit;
+
+class CORE_EXPORT ErrorEvent final : public Event {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -79,15 +84,14 @@ class ErrorEvent final : public Event {
   ErrorEvent(ScriptState*, const AtomicString&, const ErrorEventInit*);
   ~ErrorEvent() override;
 
-  // As 'message' is exposed to JavaScript, never return unsanitizedMessage.
+  // As |message| is exposed to JavaScript, never return |unsanitized_message_|.
   const String& message() const { return sanitized_message_; }
   const String& filename() const { return location_->Url(); }
   unsigned lineno() const { return location_->LineNumber(); }
   unsigned colno() const { return location_->ColumnNumber(); }
   ScriptValue error(ScriptState*) const;
 
-  // 'messageForConsole' is not exposed to JavaScript, and prefers
-  // 'm_unsanitizedMessage'.
+  // Not exposed to JavaScript, prefers |unsanitized_message_|.
   const String& MessageForConsole() const {
     return !unsanitized_message_.IsEmpty() ? unsanitized_message_
                                            : sanitized_message_;
@@ -102,18 +106,20 @@ class ErrorEvent final : public Event {
 
   void SetUnsanitizedMessage(const String&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   String unsanitized_message_;
   String sanitized_message_;
   std::unique_ptr<SourceLocation> location_;
-  TraceWrapperV8Reference<v8::Value> error_;
-
+  WorldSafeV8Reference<v8::Value> error_;
   scoped_refptr<DOMWrapperWorld> world_;
 };
 
-DEFINE_EVENT_TYPE_CASTS(ErrorEvent);
+template <>
+struct DowncastTraits<ErrorEvent> {
+  static bool AllowFrom(const Event& event) { return event.IsErrorEvent(); }
+};
 
 }  // namespace blink
 

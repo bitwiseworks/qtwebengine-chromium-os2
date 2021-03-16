@@ -58,7 +58,7 @@ inline Element* LayoutTextControlSingleLine::EditingViewPortElement() const {
 
 inline HTMLElement* LayoutTextControlSingleLine::InnerSpinButtonElement()
     const {
-  return ToHTMLElement(InputElement()->UserAgentShadowRoot()->getElementById(
+  return To<HTMLElement>(InputElement()->UserAgentShadowRoot()->getElementById(
       shadow_element_names::SpinButton()));
 }
 
@@ -138,12 +138,16 @@ void LayoutTextControlSingleLine::UpdateLayout() {
 
 bool LayoutTextControlSingleLine::NodeAtPoint(
     HitTestResult& result,
-    const HitTestLocation& location_in_container,
-    const LayoutPoint& accumulated_offset,
+    const HitTestLocation& hit_test_location,
+    const PhysicalOffset& accumulated_offset,
     HitTestAction hit_test_action) {
-  if (!LayoutTextControl::NodeAtPoint(result, location_in_container,
+  if (!LayoutTextControl::NodeAtPoint(result, hit_test_location,
                                       accumulated_offset, hit_test_action))
     return false;
+
+  const LayoutObject* stop_node = result.GetHitTestRequest().GetStopNode();
+  if (stop_node && stop_node->NodeForHitTest() == result.InnerNode())
+    return true;
 
   // Say that we hit the inner text element if
   //  - we hit a node inside the inner text element,
@@ -153,15 +157,18 @@ bool LayoutTextControlSingleLine::NodeAtPoint(
   if (result.InnerNode()->IsDescendantOf(InnerEditorElement()) ||
       result.InnerNode() == GetNode() ||
       (container && container == result.InnerNode())) {
-    LayoutPoint point_in_parent = location_in_container.Point();
+    PhysicalOffset inner_editor_accumulated_offset = accumulated_offset;
     if (container && EditingViewPortElement()) {
-      if (EditingViewPortElement()->GetLayoutBox())
-        point_in_parent -=
-            ToLayoutSize(EditingViewPortElement()->GetLayoutBox()->Location());
-      if (container->GetLayoutBox())
-        point_in_parent -= ToLayoutSize(container->GetLayoutBox()->Location());
+      if (EditingViewPortElement()->GetLayoutBox()) {
+        inner_editor_accumulated_offset +=
+            EditingViewPortElement()->GetLayoutBox()->PhysicalLocation();
+      }
+      if (container->GetLayoutBox()) {
+        inner_editor_accumulated_offset +=
+            container->GetLayoutBox()->PhysicalLocation();
+      }
     }
-    HitInnerEditorElement(result, point_in_parent, accumulated_offset);
+    HitInnerEditorElement(result, hit_test_location, accumulated_offset);
   }
   return true;
 }
@@ -190,29 +197,6 @@ void LayoutTextControlSingleLine::CapsLockStateMayHaveChanged() {
   }
 }
 
-bool LayoutTextControlSingleLine::HasControlClip() const {
-  return true;
-}
-
-LayoutRect LayoutTextControlSingleLine::ControlClipRect(
-    const LayoutPoint& additional_offset) const {
-  LayoutRect clip_rect = PhysicalPaddingBoxRect();
-  clip_rect.MoveBy(additional_offset);
-  return clip_rect;
-}
-
-float LayoutTextControlSingleLine::GetAvgCharWidth(
-    const AtomicString& family) const {
-  // Match the default system font to the width of MS Shell Dlg, the default
-  // font for textareas in Firefox, Safari Win and IE for some encodings (in
-  // IE, the default font is encoding specific). 901 is the avgCharWidth value
-  // in the OS/2 table for MS Shell Dlg.
-  if (LayoutTheme::GetTheme().NeedsHackForTextControlWithFontFamily(family))
-    return ScaleEmToUnits(901);
-
-  return LayoutTextControl::GetAvgCharWidth(family);
-}
-
 LayoutUnit LayoutTextControlSingleLine::PreferredContentLogicalWidth(
     float char_width) const {
   int factor;
@@ -226,13 +210,7 @@ LayoutUnit LayoutTextControlSingleLine::PreferredContentLogicalWidth(
   float max_char_width = 0.f;
   const Font& font = StyleRef().GetFont();
   AtomicString family = font.GetFontDescription().Family().Family();
-  // Match the default system font to the width of MS Shell Dlg, the default
-  // font for textareas in Firefox, Safari Win and IE for some encodings (in
-  // IE, the default font is encoding specific). 4027 is the (xMax - xMin)
-  // value in the "head" font table for MS Shell Dlg.
-  if (LayoutTheme::GetTheme().NeedsHackForTextControlWithFontFamily(family))
-    max_char_width = ScaleEmToUnits(4027);
-  else if (HasValidAvgCharWidth(font.PrimaryFont(), family))
+  if (HasValidAvgCharWidth(font.PrimaryFont(), family))
     max_char_width = roundf(font.PrimaryFont()->MaxCharWidth());
 
   // For text inputs, IE adds some extra width.
@@ -260,15 +238,12 @@ LayoutUnit LayoutTextControlSingleLine::ComputeControlLogicalHeight(
   return line_height + non_content_height;
 }
 
-void LayoutTextControlSingleLine::Autoscroll(const IntPoint& position) {
-  LayoutBox* layout_object = InnerEditorElement()->GetLayoutBox();
-  if (!layout_object)
-    return;
-
-  layout_object->Autoscroll(position);
-}
-
 LayoutUnit LayoutTextControlSingleLine::ScrollWidth() const {
+  // If in preview state, fake the scroll width to prevent that any information
+  // about the suggested content can be derived from the size.
+  if (!GetTextControlElement()->SuggestedValue().IsEmpty())
+    return ClientWidth();
+
   if (LayoutBox* inner = InnerEditorElement()
                              ? InnerEditorElement()->GetLayoutBox()
                              : nullptr) {
@@ -281,6 +256,11 @@ LayoutUnit LayoutTextControlSingleLine::ScrollWidth() const {
 }
 
 LayoutUnit LayoutTextControlSingleLine::ScrollHeight() const {
+  // If in preview state, fake the scroll height to prevent that any information
+  // about the suggested content can be derived from the size.
+  if (!GetTextControlElement()->SuggestedValue().IsEmpty())
+    return ClientHeight();
+
   if (LayoutBox* inner = InnerEditorElement()
                              ? InnerEditorElement()->GetLayoutBox()
                              : nullptr) {
@@ -292,30 +272,8 @@ LayoutUnit LayoutTextControlSingleLine::ScrollHeight() const {
   return LayoutBlockFlow::ScrollHeight();
 }
 
-LayoutUnit LayoutTextControlSingleLine::ScrollLeft() const {
-  if (InnerEditorElement())
-    return LayoutUnit(InnerEditorElement()->scrollLeft());
-  return LayoutBlockFlow::ScrollLeft();
-}
-
-LayoutUnit LayoutTextControlSingleLine::ScrollTop() const {
-  if (InnerEditorElement())
-    return LayoutUnit(InnerEditorElement()->scrollTop());
-  return LayoutBlockFlow::ScrollTop();
-}
-
-void LayoutTextControlSingleLine::SetScrollLeft(LayoutUnit new_left) {
-  if (InnerEditorElement())
-    InnerEditorElement()->setScrollLeft(new_left);
-}
-
-void LayoutTextControlSingleLine::SetScrollTop(LayoutUnit new_top) {
-  if (InnerEditorElement())
-    InnerEditorElement()->setScrollTop(new_top);
-}
-
 HTMLInputElement* LayoutTextControlSingleLine::InputElement() const {
-  return ToHTMLInputElement(GetNode());
+  return To<HTMLInputElement>(GetNode());
 }
 
 void LayoutTextControlSingleLine::ComputeVisualOverflow(
@@ -332,6 +290,7 @@ void LayoutTextControlSingleLine::ComputeVisualOverflow(
     AddVisualOverflowFromFloats();
 
   if (VisualOverflowRect() != previous_visual_overflow_rect) {
+    InvalidateIntersectionObserverCachedRects();
     SetShouldCheckForPaintInvalidation();
     GetFrameView()->SetIntersectionObservationState(LocalFrameView::kDesired);
   }

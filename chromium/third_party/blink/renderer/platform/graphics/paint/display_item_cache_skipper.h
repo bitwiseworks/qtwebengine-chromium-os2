@@ -8,15 +8,16 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 class DisplayItemCacheSkipper final {
-  DISALLOW_NEW();
+  STACK_ALLOCATED();
 
  public:
-  DisplayItemCacheSkipper(GraphicsContext& context) : context_(context) {
+  explicit DisplayItemCacheSkipper(GraphicsContext& context)
+      : context_(context) {
     context.GetPaintController().BeginSkippingCache();
   }
   ~DisplayItemCacheSkipper() {

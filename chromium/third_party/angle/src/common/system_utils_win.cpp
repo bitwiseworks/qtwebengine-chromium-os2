@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -51,75 +51,58 @@ bool SetCWD(const char *dirName)
     return (SetCurrentDirectoryA(dirName) == TRUE);
 }
 
-bool UnsetEnvironmentVar(const char *variableName)
-{
-    return (SetEnvironmentVariableA(variableName, nullptr) == TRUE);
-}
-
-bool SetEnvironmentVar(const char *variableName, const char *value)
-{
-    return (SetEnvironmentVariableA(variableName, value) == TRUE);
-}
-
-std::string GetEnvironmentVar(const char *variableName)
-{
-    std::array<char, MAX_PATH> oldValue;
-    DWORD result =
-        GetEnvironmentVariableA(variableName, oldValue.data(), static_cast<DWORD>(oldValue.size()));
-    if (result == 0)
-    {
-        return std::string();
-    }
-    else
-    {
-        return std::string(oldValue.data());
-    }
-}
-
-const char *GetPathSeparator()
+const char *GetPathSeparatorForEnvironmentVar()
 {
     return ";";
 }
 
-class Win32Library : public Library
+double GetCurrentTime()
 {
-  public:
-    Win32Library(const char *libraryName)
-    {
-        char buffer[MAX_PATH];
-        int ret = snprintf(buffer, MAX_PATH, "%s.%s", libraryName, GetSharedLibraryExtension());
-        if (ret > 0 && ret < MAX_PATH)
-        {
-            mModule = LoadLibraryA(buffer);
-        }
-    }
+    LARGE_INTEGER frequency = {};
+    QueryPerformanceFrequency(&frequency);
 
-    ~Win32Library() override
-    {
-        if (mModule)
-        {
-            FreeLibrary(mModule);
-        }
-    }
+    LARGE_INTEGER curTime;
+    QueryPerformanceCounter(&curTime);
 
-    void *getSymbol(const char *symbolName) override
-    {
-        if (!mModule)
-        {
-            return nullptr;
-        }
+    return static_cast<double>(curTime.QuadPart) / frequency.QuadPart;
+}
 
-        return reinterpret_cast<void *>(GetProcAddress(mModule, symbolName));
-    }
-
-    void *getNative() const override { return reinterpret_cast<void *>(mModule); }
-
-  private:
-    HMODULE mModule = nullptr;
-};
-
-Library *OpenSharedLibrary(const char *libraryName)
+bool IsDirectory(const char *filename)
 {
-    return new Win32Library(libraryName);
+    WIN32_FILE_ATTRIBUTE_DATA fileInformation;
+
+    BOOL result = GetFileAttributesExA(filename, GetFileExInfoStandard, &fileInformation);
+    if (result)
+    {
+        DWORD attribs = fileInformation.dwFileAttributes;
+        return (attribs != INVALID_FILE_ATTRIBUTES) && ((attribs & FILE_ATTRIBUTE_DIRECTORY) > 0);
+    }
+
+    return false;
+}
+
+bool IsDebuggerAttached()
+{
+    return !!::IsDebuggerPresent();
+}
+
+void BreakDebugger()
+{
+    __debugbreak();
+}
+
+const char *GetExecutableExtension()
+{
+    return ".exe";
+}
+
+char GetPathSeparator()
+{
+    return '\\';
+}
+
+std::string GetHelperExecutableDir()
+{
+    return "";
 }
 }  // namespace angle

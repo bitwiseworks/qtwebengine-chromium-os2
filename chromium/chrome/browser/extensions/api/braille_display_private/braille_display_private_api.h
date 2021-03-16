@@ -92,7 +92,7 @@ class BrailleDisplayPrivateGetDisplayStateFunction : public AsyncApiFunction {
 
 class BrailleDisplayPrivateWriteDotsFunction : public AsyncApiFunction {
   DECLARE_EXTENSION_FUNCTION("brailleDisplayPrivate.writeDots",
-                             BRAILLEDISPLAYPRIVATE_WRITEDOTS);
+                             BRAILLEDISPLAYPRIVATE_WRITEDOTS)
  public:
   BrailleDisplayPrivateWriteDotsFunction();
 
@@ -107,7 +107,7 @@ class BrailleDisplayPrivateWriteDotsFunction : public AsyncApiFunction {
 };
 
 class BrailleDisplayPrivateUpdateBluetoothBrailleDisplayAddressFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
   ~BrailleDisplayPrivateUpdateBluetoothBrailleDisplayAddressFunction()
       override {}
   ResponseAction Run() override;

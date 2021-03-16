@@ -5,9 +5,13 @@
 #ifndef COMPONENTS_VIZ_SERVICE_GL_GPU_SERVICE_IMPL_H_
 #define COMPONENTS_VIZ_SERVICE_GL_GPU_SERVICE_IMPL_H_
 
+#include <memory>
+#include <string>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/observer_list.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/atomic_flag.h"
 #include "base/synchronization/waitable_event.h"
@@ -18,6 +22,8 @@
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/activity_flags.h"
 #include "gpu/command_buffer/service/sequence_id.h"
+#include "gpu/config/device_perf_info.h"
+#include "gpu/config/gpu_extra_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/config/gpu_preferences.h"
 #include "gpu/ipc/common/surface_handle.h"
@@ -27,9 +33,13 @@
 #include "gpu/ipc/service/gpu_config.h"
 #include "gpu/ipc/service/x_util.h"
 #include "gpu/vulkan/buildflags.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/viz/privileged/interfaces/gl/gpu_host.mojom.h"
-#include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/shared_remote.h"
+#include "services/viz/privileged/mojom/gl/gpu_host.mojom.h"
+#include "services/viz/privileged/mojom/gl/gpu_service.mojom.h"
+#include "skia/buildflags.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -42,8 +52,10 @@ class ProtectedBufferManager;
 namespace gpu {
 class GpuMemoryBufferFactory;
 class GpuWatchdogThread;
+class ImageDecodeAcceleratorWorker;
 class Scheduler;
 class SyncPointManager;
+class SharedImageManager;
 class VulkanImplementation;
 }  // namespace gpu
 
@@ -58,6 +70,8 @@ class SharedContextState;
 namespace viz {
 
 class VulkanContextProvider;
+class MetalContextProvider;
+class DawnContextProvider;
 
 // This runs in the GPU process, and communicates with the gpu host (which is
 // the window server) over the mojom APIs. This is responsible for setting up
@@ -73,30 +87,145 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
                  const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
                  const base::Optional<gpu::GpuFeatureInfo>&
                      gpu_feature_info_for_hardware_gpu,
+                 const gpu::GpuExtraInfo& gpu_extra_info,
+                 const base::Optional<gpu::DevicePerfInfo>& device_perf_info,
                  gpu::VulkanImplementation* vulkan_implementation,
-                 base::OnceClosure exit_callback);
+                 base::OnceCallback<void(bool /*immediately*/)> exit_callback);
 
   ~GpuServiceImpl() override;
 
   void UpdateGPUInfo();
 
   void InitializeWithHost(
-      mojom::GpuHostPtr gpu_host,
+      mojo::PendingRemote<mojom::GpuHost> gpu_host,
       gpu::GpuProcessActivityFlags activity_flags,
       scoped_refptr<gl::GLSurface> default_offscreen_surface,
       gpu::SyncPointManager* sync_point_manager = nullptr,
+      gpu::SharedImageManager* shared_image_manager = nullptr,
       base::WaitableEvent* shutdown_event = nullptr);
-  void Bind(mojom::GpuServiceRequest request);
+  void Bind(mojo::PendingReceiver<mojom::GpuService> pending_receiver);
 
-  scoped_refptr<gpu::SharedContextState> GetContextStateForGLSurface(
-      gl::GLSurface* surface);
-  scoped_refptr<gpu::SharedContextState> GetContextStateForVulkan();
+  scoped_refptr<gpu::SharedContextState> GetContextState();
 
   // Notifies the GpuHost to stop using GPU compositing. This should be called
   // in response to an error in the GPU process that occurred after
   // InitializeWithHost() was called, otherwise GpuFeatureInfo should be set
   // accordingly. This can safely be called from any thread.
   void DisableGpuCompositing();
+
+  // mojom::GpuService:
+  void EstablishGpuChannel(int32_t client_id,
+                           uint64_t client_tracing_id,
+                           bool is_gpu_host,
+                           bool cache_shaders_on_disk,
+                           EstablishGpuChannelCallback callback) override;
+  void CloseChannel(int32_t client_id) override;
+#if defined(OS_CHROMEOS)
+  void CreateArcVideoDecodeAccelerator(
+      mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver)
+      override;
+  void CreateArcVideoEncodeAccelerator(
+      mojo::PendingReceiver<arc::mojom::VideoEncodeAccelerator> vea_receiver)
+      override;
+  void CreateArcVideoProtectedBufferAllocator(
+      mojo::PendingReceiver<arc::mojom::VideoProtectedBufferAllocator>
+          pba_receiver) override;
+  void CreateArcProtectedBufferManager(
+      mojo::PendingReceiver<arc::mojom::ProtectedBufferManager> pbm_receiver)
+      override;
+  void CreateJpegDecodeAccelerator(
+      mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
+          jda_receiver) override;
+  void CreateJpegEncodeAccelerator(
+      mojo::PendingReceiver<chromeos_camera::mojom::JpegEncodeAccelerator>
+          jea_receiver) override;
+#endif  // defined(OS_CHROMEOS)
+
+  void CreateVideoEncodeAcceleratorProvider(
+      mojo::PendingReceiver<media::mojom::VideoEncodeAcceleratorProvider>
+          vea_provider_receiver) override;
+  void CreateGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
+                             const gfx::Size& size,
+                             gfx::BufferFormat format,
+                             gfx::BufferUsage usage,
+                             int client_id,
+                             gpu::SurfaceHandle surface_handle,
+                             CreateGpuMemoryBufferCallback callback) override;
+  void DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
+                              int client_id,
+                              const gpu::SyncToken& sync_token) override;
+  void GetVideoMemoryUsageStats(
+      GetVideoMemoryUsageStatsCallback callback) override;
+  void StartPeakMemoryMonitor(uint32_t sequence_num) override;
+  void GetPeakMemoryUsage(uint32_t sequence_num,
+                          GetPeakMemoryUsageCallback callback) override;
+
+#if defined(OS_WIN)
+  void RequestCompleteGpuInfo(RequestCompleteGpuInfoCallback callback) override;
+  void GetGpuSupportedRuntimeVersionAndDevicePerfInfo(
+      GetGpuSupportedRuntimeVersionAndDevicePerfInfoCallback callback) override;
+#endif
+  void RequestHDRStatus(RequestHDRStatusCallback callback) override;
+  void LoadedShader(int32_t client_id,
+                    const std::string& key,
+                    const std::string& data) override;
+  void WakeUpGpu() override;
+  void GpuSwitched(gl::GpuPreference active_gpu_heuristic) override;
+  void DisplayAdded() override;
+  void DisplayRemoved() override;
+  void DestroyAllChannels() override;
+  void OnBackgroundCleanup() override;
+  void OnBackgrounded() override;
+  void OnForegrounded() override;
+#if !defined(OS_ANDROID)
+  void OnMemoryPressure(
+      base::MemoryPressureListener::MemoryPressureLevel level) override;
+#endif
+#if defined(OS_MACOSX)
+  void BeginCATransaction() override;
+  void CommitCATransaction(CommitCATransactionCallback callback) override;
+#endif
+  void Crash() override;
+  void Hang() override;
+  void ThrowJavaException() override;
+  void Stop(StopCallback callback) override;
+
+  // gpu::GpuChannelManagerDelegate:
+  void RegisterDisplayContext(gpu::DisplayContext* display_context) override;
+  void UnregisterDisplayContext(gpu::DisplayContext* display_context) override;
+  void LoseAllContexts() override;
+  void DidCreateContextSuccessfully() override;
+  void DidCreateOffscreenContext(const GURL& active_url) override;
+  void DidDestroyChannel(int client_id) override;
+  void DidDestroyAllChannels() override;
+  void DidDestroyOffscreenContext(const GURL& active_url) override;
+  void DidLoseContext(bool offscreen,
+                      gpu::error::ContextLostReason reason,
+                      const GURL& active_url) override;
+#if defined(OS_WIN)
+  void DidUpdateOverlayInfo(const gpu::OverlayInfo& overlay_info) override;
+#endif
+  void StoreShaderToDisk(int client_id,
+                         const std::string& key,
+                         const std::string& shader) override;
+  void MaybeExitOnContextLost() override;
+  bool IsExiting() const override;
+  gpu::Scheduler* GetGpuScheduler() override;
+
+#if defined(OS_WIN)
+  void SendCreatedChildWindow(gpu::SurfaceHandle parent_window,
+                              gpu::SurfaceHandle child_window) override;
+#endif
+
+  // Installs a base::LogMessageHandlerFunction which ensures messages are sent
+  // to the mojom::GpuHost once InitializeWithHost() completes.
+  //
+  // In the event of aborted initialization, FlushPreInitializeLogMessages() may
+  // be called to flush the accumulated logs to the remote host.
+  //
+  // Note: ~GpuServiceImpl() will clear installed log handlers.
+  static void InstallPreInitializeLogHandler();
+  static void FlushPreInitializeLogMessages(mojom::GpuHost* gpu_host);
 
   bool is_initialized() const { return !!gpu_host_; }
 
@@ -129,8 +258,13 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
     return gpu_channel_manager_->gr_shader_cache();
   }
 
-  gpu::SyncPointManager* sync_point_manager() { return sync_point_manager_; }
-  gpu::Scheduler* scheduler() { return scheduler_.get(); }
+  gpu::SyncPointManager* sync_point_manager() {
+    return gpu_channel_manager_->sync_point_manager();
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner>& main_runner() {
+    return main_runner_;
+  }
 
   gpu::GpuWatchdogThread* watchdog_thread() { return watchdog_thread_.get(); }
 
@@ -147,12 +281,11 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
     return gpu_preferences_;
   }
 
-  gpu::SequenceId skia_output_surface_sequence_id() const {
-    return skia_output_surface_sequence_id_;
-  }
-
 #if BUILDFLAG(ENABLE_VULKAN)
-  bool is_using_vulkan() const { return !!vulkan_context_provider_; }
+  bool is_using_vulkan() const {
+    return !!vulkan_context_provider_ &&
+           gpu_preferences_.gr_context_type == gpu::GrContextType::kVulkan;
+  }
   VulkanContextProvider* vulkan_context_provider() {
     return vulkan_context_provider_.get();
   }
@@ -161,119 +294,62 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   VulkanContextProvider* vulkan_context_provider() { return nullptr; }
 #endif
 
-  void set_oopd_enabled() { oopd_enabled_ = true; }
+#if BUILDFLAG(SKIA_USE_DAWN)
+  bool is_using_dawn() const { return !!dawn_context_provider_; }
+  DawnContextProvider* dawn_context_provider() {
+    return dawn_context_provider_.get();
+  }
+#else
+  bool is_using_dawn() const { return false; }
+  DawnContextProvider* dawn_context_provider() { return nullptr; }
+#endif
 
  private:
   void RecordLogMessage(int severity,
-                        size_t message_start,
+                        const std::string& header,
                         const std::string& message);
 
   void UpdateGpuInfoPlatform(base::OnceClosure on_gpu_info_updated);
 
-  // gpu::GpuChannelManagerDelegate:
-  void DidCreateContextSuccessfully() override;
-  void DidCreateOffscreenContext(const GURL& active_url) override;
-  void DidDestroyChannel(int client_id) override;
-  void DidDestroyOffscreenContext(const GURL& active_url) override;
-  void DidLoseContext(bool offscreen,
-                      gpu::error::ContextLostReason reason,
-                      const GURL& active_url) override;
-  void StoreShaderToDisk(int client_id,
-                         const std::string& key,
-                         const std::string& shader) override;
-  void MaybeExitOnContextLost() override;
-  bool IsExiting() const override;
-#if defined(OS_WIN)
-  void SendCreatedChildWindow(gpu::SurfaceHandle parent_window,
-                              gpu::SurfaceHandle child_window) override;
-#endif
-  void SetActiveURL(const GURL& url) override;
-
-  // mojom::GpuService:
-  void EstablishGpuChannel(int32_t client_id,
-                           uint64_t client_tracing_id,
-                           bool is_gpu_host,
-                           bool cache_shaders_on_disk,
-                           EstablishGpuChannelCallback callback) override;
-  void CloseChannel(int32_t client_id) override;
-#if defined(OS_CHROMEOS)
-  void CreateArcVideoDecodeAccelerator(
-      arc::mojom::VideoDecodeAcceleratorRequest vda_request) override;
-  void CreateArcVideoEncodeAccelerator(
-      arc::mojom::VideoEncodeAcceleratorRequest vea_request) override;
-  void CreateArcVideoProtectedBufferAllocator(
-      arc::mojom::VideoProtectedBufferAllocatorRequest pba_request) override;
-  void CreateArcProtectedBufferManager(
-      arc::mojom::ProtectedBufferManagerRequest pbm_request) override;
-#endif  // defined(OS_CHROMEOS)
-  void CreateJpegDecodeAccelerator(
-      media::mojom::JpegDecodeAcceleratorRequest jda_request) override;
-  void CreateJpegEncodeAccelerator(
-      media::mojom::JpegEncodeAcceleratorRequest jea_request) override;
-  void CreateVideoEncodeAcceleratorProvider(
-      media::mojom::VideoEncodeAcceleratorProviderRequest vea_provider_request)
-      override;
-  void CreateGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
-                             const gfx::Size& size,
-                             gfx::BufferFormat format,
-                             gfx::BufferUsage usage,
-                             int client_id,
-                             gpu::SurfaceHandle surface_handle,
-                             CreateGpuMemoryBufferCallback callback) override;
-  void DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
-                              int client_id,
-                              const gpu::SyncToken& sync_token) override;
-  void GetVideoMemoryUsageStats(
-      GetVideoMemoryUsageStatsCallback callback) override;
-#if defined(OS_WIN)
-  void RequestCompleteGpuInfo(RequestCompleteGpuInfoCallback callback) override;
-  void GetGpuSupportedRuntimeVersion(
-      GetGpuSupportedRuntimeVersionCallback callback) override;
-#endif
-  void RequestHDRStatus(RequestHDRStatusCallback callback) override;
-  void LoadedShader(int32_t client_id,
-                    const std::string& key,
-                    const std::string& data) override;
-  void WakeUpGpu() override;
-  void GpuSwitched() override;
-  void DestroyAllChannels() override;
-  void OnBackgroundCleanup() override;
-  void OnBackgrounded() override;
-  void OnForegrounded() override;
-#if defined(OS_MACOSX)
-  void BeginCATransaction() override;
-  void CommitCATransaction(CommitCATransactionCallback callback) override;
-#endif
-  void Crash() override;
-  void Hang() override;
-  void ThrowJavaException() override;
-  void Stop(StopCallback callback) override;
-
 #if defined(OS_CHROMEOS)
   void CreateArcVideoDecodeAcceleratorOnMainThread(
-      arc::mojom::VideoDecodeAcceleratorRequest vda_request);
+      mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver);
   void CreateArcVideoEncodeAcceleratorOnMainThread(
-      arc::mojom::VideoEncodeAcceleratorRequest vea_request);
+      mojo::PendingReceiver<arc::mojom::VideoEncodeAccelerator> vea_receiver);
   void CreateArcVideoProtectedBufferAllocatorOnMainThread(
-      arc::mojom::VideoProtectedBufferAllocatorRequest pba_request);
+      mojo::PendingReceiver<arc::mojom::VideoProtectedBufferAllocator>
+          pba_receiver);
   void CreateArcProtectedBufferManagerOnMainThread(
-      arc::mojom::ProtectedBufferManagerRequest pbm_request);
+      mojo::PendingReceiver<arc::mojom::ProtectedBufferManager> pbm_receiver);
 #endif  // defined(OS_CHROMEOS)
 
   void RequestHDRStatusOnMainThread(RequestHDRStatusCallback callback);
 
   void OnBackgroundedOnMainThread();
 
+  // Ensure that all peak memory tracking occurs on the main thread as all
+  // MemoryTracker are created on that thread. All requests made before
+  // GpuServiceImpl::InitializeWithHost will be enqueued.
+  void StartPeakMemoryMonitorOnMainThread(uint32_t sequence_num);
+  void GetPeakMemoryUsageOnMainThread(uint32_t sequence_num,
+                                      GetPeakMemoryUsageCallback callback);
+
   // Attempts to cleanly exit the process but only if not running in host
   // process. If |for_context_loss| is true an error message will be logged.
   void MaybeExit(bool for_context_loss);
 
+  // Update overlay info on the GPU process and send the updated info back
+  // to the browser process if there is a change.
+#if defined(OS_WIN)
+  void UpdateOverlayInfo();
+#endif
+
   scoped_refptr<base::SingleThreadTaskRunner> main_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> io_runner_;
 
+  // Do not change the class member order here. watchdog_thread_ should be the
+  // last one to be destroyed before main_runner_ and io_runner_.
   std::unique_ptr<gpu::GpuWatchdogThread> watchdog_thread_;
-
-  std::unique_ptr<gpu::GpuMemoryBufferFactory> gpu_memory_buffer_factory_;
 
   const gpu::GpuPreferences gpu_preferences_;
 
@@ -288,24 +364,35 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   base::Optional<gpu::GPUInfo> gpu_info_for_hardware_gpu_;
   base::Optional<gpu::GpuFeatureInfo> gpu_feature_info_for_hardware_gpu_;
 
-  scoped_refptr<mojom::ThreadSafeGpuHostPtr> gpu_host_;
+  // Information about the GPU process populated on creation.
+  gpu::GpuExtraInfo gpu_extra_info_;
+
+  // Information related to device perf category, only collected on the second
+  // unsandboxed GPU process.
+  base::Optional<gpu::DevicePerfInfo> device_perf_info_;
+
+  mojo::SharedRemote<mojom::GpuHost> gpu_host_;
   std::unique_ptr<gpu::GpuChannelManager> gpu_channel_manager_;
   std::unique_ptr<media::MediaGpuChannelManager> media_gpu_channel_manager_;
 
-  // On some platforms (e.g. android webview), the SyncPointManager comes from
-  // external sources.
+  // On some platforms (e.g. android webview), the SyncPointManager and
+  // SharedImageManager comes from external sources.
   std::unique_ptr<gpu::SyncPointManager> owned_sync_point_manager_;
-  gpu::SyncPointManager* sync_point_manager_ = nullptr;
+
+  std::unique_ptr<gpu::SharedImageManager> owned_shared_image_manager_;
 
   std::unique_ptr<gpu::Scheduler> scheduler_;
-
-  // sequence id for running tasks from SkiaOutputSurface;
-  gpu::SequenceId skia_output_surface_sequence_id_;
 
 #if BUILDFLAG(ENABLE_VULKAN)
   gpu::VulkanImplementation* vulkan_implementation_;
   scoped_refptr<VulkanContextProvider> vulkan_context_provider_;
 #endif
+  std::unique_ptr<MetalContextProvider> metal_context_provider_;
+#if BUILDFLAG(SKIA_USE_DAWN)
+  std::unique_ptr<DawnContextProvider> dawn_context_provider_;
+#endif
+
+  std::unique_ptr<gpu::GpuMemoryBufferFactory> gpu_memory_buffer_factory_;
 
   // An event that will be signalled when we shutdown. On some platforms it
   // comes from external sources.
@@ -313,23 +400,30 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl : public gpu::GpuChannelManagerDelegate,
   base::WaitableEvent* shutdown_event_ = nullptr;
 
   // Callback that safely exits GPU process.
-  base::OnceClosure exit_callback_;
+  base::OnceCallback<void(bool)> exit_callback_;
   base::AtomicFlag is_exiting_;
+
+  // Used for performing hardware decode acceleration of images. This is shared
+  // by all the GPU channels.
+  std::unique_ptr<gpu::ImageDecodeAcceleratorWorker>
+      image_decode_accelerator_worker_;
 
   base::Time start_time_;
 
-  // Used to track the task to bind a GpuServiceRequest on the io thread.
+  // Used to track the task to bind |receiver_| on the IO thread.
   base::CancelableTaskTracker bind_task_tracker_;
-  std::unique_ptr<mojo::BindingSet<mojom::GpuService>> bindings_;
+  // Should only be accessed on the IO thread after creation.
+  mojo::Receiver<mojom::GpuService> receiver_{this};
 
 #if defined(OS_CHROMEOS)
   scoped_refptr<arc::ProtectedBufferManager> protected_buffer_manager_;
 #endif  // defined(OS_CHROMEOS)
 
-  bool oopd_enabled_ = false;
+  // Display compositor contexts that don't have a corresponding GPU channel.
+  base::ObserverList<gpu::DisplayContext>::Unchecked display_contexts_;
 
   base::WeakPtr<GpuServiceImpl> weak_ptr_;
-  base::WeakPtrFactory<GpuServiceImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<GpuServiceImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(GpuServiceImpl);
 };

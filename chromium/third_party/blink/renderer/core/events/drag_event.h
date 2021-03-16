@@ -6,12 +6,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_DRAG_EVENT_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/events/drag_event_init.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
 class DataTransfer;
+class DragEventInit;
 
 class CORE_EXPORT DragEvent final : public MouseEvent {
   DEFINE_WRAPPERTYPEINFO();
@@ -21,7 +22,7 @@ class CORE_EXPORT DragEvent final : public MouseEvent {
 
   static DragEvent* Create(const AtomicString& type,
                            const DragEventInit* initializer,
-                           TimeTicks platform_time_stamp,
+                           base::TimeTicks platform_time_stamp,
                            SyntheticEventType synthetic_event_type) {
     return MakeGarbageCollected<DragEvent>(
         type, initializer, platform_time_stamp, synthetic_event_type);
@@ -30,13 +31,13 @@ class CORE_EXPORT DragEvent final : public MouseEvent {
   static DragEvent* Create(const AtomicString& type,
                            const DragEventInit* initializer) {
     return MakeGarbageCollected<DragEvent>(
-        type, initializer, CurrentTimeTicks(), kRealOrIndistinguishable);
+        type, initializer, base::TimeTicks::Now(), kRealOrIndistinguishable);
   }
 
   DragEvent();
   DragEvent(const AtomicString& type,
             const DragEventInit*,
-            TimeTicks platform_time_stamp,
+            base::TimeTicks platform_time_stamp,
             SyntheticEventType);
 
   DataTransfer* getDataTransfer() const override {
@@ -48,13 +49,16 @@ class CORE_EXPORT DragEvent final : public MouseEvent {
 
   DispatchEventResult DispatchEvent(EventDispatcher&) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<DataTransfer> data_transfer_;
 };
 
-DEFINE_EVENT_TYPE_CASTS(DragEvent);
+template <>
+struct DowncastTraits<DragEvent> {
+  static bool AllowFrom(const Event& event) { return event.IsDragEvent(); }
+};
 
 }  // namespace blink
 

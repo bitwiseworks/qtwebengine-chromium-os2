@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 // https://immersive-web.github.io/webxr/#xrsession-interface
+
 enum XRSessionMode {
   "inline",
-  "legacy-inline-ar",
   "immersive-vr",
   "immersive-ar",
 };
@@ -16,34 +16,50 @@ enum XREnvironmentBlendMode {
   "alpha-blend",
 };
 
+enum XRVisibilityState {
+  "visible",
+  "visible-blurred",
+  "hidden",
+};
+
 [
     ActiveScriptWrappable,
     SecureContext,
     Exposed=Window,
-    OriginTrialEnabled=WebXR
+    RuntimeEnabled=WebXR
 ] interface XRSession : EventTarget {
-  readonly attribute XRSessionMode mode;
-  readonly attribute XRPresentationContext outputContext;
-  readonly attribute XREnvironmentBlendMode environmentBlendMode;
+  [RuntimeEnabled=WebXRARModule] readonly attribute XREnvironmentBlendMode environmentBlendMode;
+  readonly attribute XRVisibilityState visibilityState;
+  [SameObject] readonly attribute XRRenderState renderState;
+  [MeasureAs=XRSessionGetInputSources, SameObject] readonly attribute XRInputSourceArray inputSources;
+  [SameObject] readonly attribute XRDOMOverlayState domOverlayState;
 
-  attribute double depthNear;
-  attribute double depthFar;
-
-  attribute XRLayer baseLayer;
-
-  attribute EventHandler onblur;
-  attribute EventHandler onfocus;
-  attribute EventHandler onresetpose;
   attribute EventHandler onend;
+  attribute EventHandler onselect;
+  attribute EventHandler oninputsourceschange;
+  attribute EventHandler onselectstart;
+  attribute EventHandler onselectend;
+  attribute EventHandler onvisibilitychange;
+  attribute EventHandler onsqueeze;
+  attribute EventHandler onsqueezestart;
+  attribute EventHandler onsqueezeend;
 
-  [CallWith=ScriptState] Promise<XRReferenceSpace> requestReferenceSpace([PermissiveDictionaryConversion] XRReferenceSpaceOptions options);
+  [RaisesException] void updateRenderState(optional XRRenderStateInit init = {});
+
+  [CallWith=ScriptState, RaisesException] Promise<XRReferenceSpace> requestReferenceSpace(XRReferenceSpaceType type);
 
   long requestAnimationFrame(XRFrameRequestCallback callback);
   void cancelAnimationFrame(long handle);
 
-  [MeasureAs=XRSessionGetInputSources] FrozenArray<XRInputSource> getInputSources();
+  // https://github.com/immersive-web/real-world-geometry/blob/master/plane-detection-explainer.md
+  [RuntimeEnabled=WebXRIncubations] readonly attribute XRWorldTrackingState worldTrackingState;
+  [RuntimeEnabled=WebXRIncubations, RaisesException] void updateWorldTrackingState(optional XRWorldTrackingStateInit state = {});
 
-  [RuntimeEnabled=WebXRHitTest, CallWith=ScriptState] Promise<FrozenArray<XRHitResult>> requestHitTest(Float32Array origin, Float32Array direction, XRSpace space);
+  [CallWith=ScriptState, Measure, RaisesException] Promise<void> end();
 
-  [CallWith=ScriptState] Promise<void> end();
+  // https://github.com/immersive-web/hit-test/blob/master/hit-testing-explainer.md
+  [RuntimeEnabled=WebXRHitTest, CallWith=ScriptState, MeasureAs=XRSessionRequestHitTestSource, RaisesException]
+  Promise<XRHitTestSource> requestHitTestSource(XRHitTestOptionsInit options);
+  [RuntimeEnabled=WebXRHitTest, CallWith=ScriptState, MeasureAs=XRSessionRequestHitTestSourceForTransientInput, RaisesException]
+  Promise<XRTransientInputHitTestSource> requestHitTestSourceForTransientInput(XRTransientInputHitTestOptionsInit options);
 };

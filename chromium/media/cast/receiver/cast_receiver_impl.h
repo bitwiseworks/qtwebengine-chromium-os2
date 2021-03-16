@@ -39,12 +39,8 @@ class CastReceiverImpl : public CastReceiver {
   void ReceivePacket(std::unique_ptr<Packet> packet) final;
   void RequestDecodedAudioFrame(
       const AudioFrameDecodedCallback& callback) final;
-  void RequestEncodedAudioFrame(
-      const ReceiveEncodedFrameCallback& callback) final;
   void RequestDecodedVideoFrame(
       const VideoFrameDecodedCallback& callback) final;
-  void RequestEncodedVideoFrame(
-      const ReceiveEncodedFrameCallback& callback) final;
 
  private:
   // Feeds an EncodedFrame into |audio_decoder_|.  RequestDecodedAudioFrame()
@@ -82,7 +78,7 @@ class CastReceiverImpl : public CastReceiver {
       FrameId frame_id,
       RtpTimeTicks rtp_timestamp,
       const base::TimeTicks& playout_time,
-      const scoped_refptr<VideoFrame>& video_frame,
+      scoped_refptr<VideoFrame> video_frame,
       bool is_continuous);
 
   const scoped_refptr<CastEnvironment> cast_environment_;

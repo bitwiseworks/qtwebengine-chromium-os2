@@ -20,6 +20,7 @@
 #include "components/webdata/common/web_data_service_consumer.h"
 #include "content/public/browser/payment_app_provider.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "url/origin.h"
 
 class GURL;
 
@@ -46,6 +47,11 @@ class PaymentManifestWebDataService;
 //   ManifestVerifer verifier(std::move(downloader), std::move(parser), cache);
 //   verifier.Verify(std::move(apps), base::BindOnce(&OnFinishedVerification),
 //                   base::BindOnce(&OnFinishedUsingResources));
+//
+// The command line must be initialized to use this class in tests, because it
+// checks for --unsafely-treat-insecure-origin-as-secure=<origin> flag. For
+// example:
+//  base::CommandLine::Init(0, nullptr);
 class ManifestVerifier final : public WebDataServiceConsumer {
  public:
   // The callback that will be invoked with the validated payment handlers.
@@ -53,13 +59,20 @@ class ManifestVerifier final : public WebDataServiceConsumer {
   // remaining. If a payment handler does not have any valid payment method
   // names, then it's not included in the returned set of handlers.
   using VerifyCallback =
-      base::OnceCallback<void(content::PaymentAppProvider::PaymentApps)>;
+      base::OnceCallback<void(content::PaymentAppProvider::PaymentApps,
+                              const std::string& error_message)>;
 
   // Creates the verifier and starts up the parser utility process.
+  //
+  // |merchant_origin| should be the origin of the iframe that created the
+  // PaymentRequest object. It is used by security features like
+  // 'Sec-Fetch-Site' and 'Cross-Origin-Resource-Policy'.
+  //
   // The owner of ManifestVerifier owns |downloader|, |parser| and
   // |cache|. They should live until |finished_using_resources| parameter to
   // Verify() method is called.
-  ManifestVerifier(content::WebContents* web_contents,
+  ManifestVerifier(const url::Origin& merchant_origin,
+                   content::WebContents* web_contents,
                    PaymentManifestDownloader* downloader,
                    PaymentManifestParser* parser,
                    PaymentManifestWebDataService* cache);
@@ -83,7 +96,8 @@ class ManifestVerifier final : public WebDataServiceConsumer {
   void OnPaymentMethodManifestDownloaded(
       const GURL& method_manifest_url,
       const GURL& unused_method_manifest_url_after_redirects,
-      const std::string& content);
+      const std::string& content,
+      const std::string& error_message);
 
   // Called when a manifest is parsed.
   void OnPaymentMethodManifestParsed(
@@ -95,6 +109,7 @@ class ManifestVerifier final : public WebDataServiceConsumer {
   // Called immediately preceding the verification callback invocation.
   void RemoveInvalidPaymentApps();
 
+  const url::Origin merchant_origin_;
   DeveloperConsoleLogger log_;
 
   // Downloads the manifests.
@@ -148,7 +163,11 @@ class ManifestVerifier final : public WebDataServiceConsumer {
   // Once this number reaches 0, the resource usage callback is invoked.
   size_t number_of_manifests_to_download_;
 
-  base::WeakPtrFactory<ManifestVerifier> weak_ptr_factory_;
+  // The first error message (if any) to be forwarded to the merchant when
+  // rejecting the promise returned from PaymentRequest.show().
+  std::string first_error_message_;
+
+  base::WeakPtrFactory<ManifestVerifier> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ManifestVerifier);
 };

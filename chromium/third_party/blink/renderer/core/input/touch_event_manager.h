@@ -6,15 +6,15 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INPUT_TOUCH_EVENT_MANAGER_H_
 
 #include "base/macros.h"
+#include "third_party/blink/public/common/input/web_pointer_event.h"
+#include "third_party/blink/public/common/input/web_touch_event.h"
 #include "third_party/blink/public/platform/web_coalesced_input_event.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
-#include "third_party/blink/public/platform/web_pointer_event.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/events/pointer_event_factory.h"
 #include "third_party/blink/renderer/core/input/event_handling_util.h"
 #include "third_party/blink/renderer/platform/graphics/touch_action.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -26,12 +26,12 @@ class Touch;
 
 // This class takes care of dispatching all touch events and
 // maintaining related states.
-class CORE_EXPORT TouchEventManager
-    : public GarbageCollectedFinalized<TouchEventManager> {
+class CORE_EXPORT TouchEventManager final
+    : public GarbageCollected<TouchEventManager> {
  public:
 
   explicit TouchEventManager(LocalFrame&);
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   void HandleTouchPoint(const WebPointerEvent&,
                         const Vector<WebPointerEvent>&,
@@ -48,10 +48,10 @@ class CORE_EXPORT TouchEventManager
  private:
   // Class represending one touch point event with its coalesced events and
   // related attributes.
-  class TouchPointAttributes
-      : public GarbageCollectedFinalized<TouchPointAttributes> {
+  class TouchPointAttributes final
+      : public GarbageCollected<TouchPointAttributes> {
    public:
-    void Trace(blink::Visitor* visitor) { visitor->Trace(target_); }
+    void Trace(Visitor* visitor) { visitor->Trace(target_); }
 
     TouchPointAttributes() = default;
     explicit TouchPointAttributes(WebPointerEvent event)

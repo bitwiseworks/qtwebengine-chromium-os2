@@ -38,7 +38,7 @@ void AddEnabledStateToPing(std::string* ping_value,
     for (int enum_value = 1; enum_value < disable_reason::DISABLE_REASON_LAST;
          enum_value <<= 1) {
       if (ping_data->disable_reasons & enum_value)
-        *ping_value += "&dr=" + base::IntToString(enum_value);
+        *ping_value += "&dr=" + base::NumberToString(enum_value);
     }
   }
 }
@@ -97,8 +97,7 @@ ManifestFetchData::ManifestFetchData(const GURL& update_url,
   request_ids_.insert(request_id);
 }
 
-ManifestFetchData::~ManifestFetchData() {
-}
+ManifestFetchData::~ManifestFetchData() = default;
 
 // The format for request parameters in update checks is:
 //
@@ -127,7 +126,7 @@ bool ManifestFetchData::AddExtension(const std::string& id,
                                      const PingData* ping_data,
                                      const std::string& update_url_data,
                                      const std::string& install_source,
-                                     const std::string& install_location,
+                                     Manifest::Location extension_location,
                                      FetchPriority fetch_priority) {
   if (extension_ids_.find(id) != extension_ids_.end()) {
     NOTREACHED() << "Duplicate extension id " << id;
@@ -137,6 +136,9 @@ bool ManifestFetchData::AddExtension(const std::string& id,
   if (fetch_priority_ != FOREGROUND) {
     fetch_priority_ = fetch_priority;
   }
+
+  const std::string install_location =
+      GetSimpleLocationString(extension_location);
 
   // Compute the string we'd append onto the full_url_, and see if it fits.
   std::vector<std::string> parts;
@@ -165,7 +167,7 @@ bool ManifestFetchData::AddExtension(const std::string& id,
     if (ping_data) {
       if (ping_data->rollcall_days == kNeverPinged ||
           ping_data->rollcall_days > 0) {
-        ping_value += "r=" + base::IntToString(ping_data->rollcall_days);
+        ping_value += "r=" + base::NumberToString(ping_data->rollcall_days);
         if (ping_mode_ == PING_WITH_ENABLED_STATE)
           AddEnabledStateToPing(&ping_value, ping_data);
         pings_[id].rollcall_days = ping_data->rollcall_days;
@@ -175,7 +177,7 @@ bool ManifestFetchData::AddExtension(const std::string& id,
           ping_data->active_days > 0) {
         if (!ping_value.empty())
           ping_value += "&";
-        ping_value += "a=" + base::IntToString(ping_data->active_days);
+        ping_value += "a=" + base::NumberToString(ping_data->active_days);
         pings_[id].active_days = ping_data->active_days;
       }
     }

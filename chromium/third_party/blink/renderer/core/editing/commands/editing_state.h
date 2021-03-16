@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 
 namespace blink {
@@ -27,7 +27,6 @@ class CORE_EXPORT EditingState final {
 
  public:
   EditingState();
-  ~EditingState();
 
   void Abort();
   bool IsAborted() const { return is_aborted_; }

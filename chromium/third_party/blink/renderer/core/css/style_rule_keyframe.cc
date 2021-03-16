@@ -48,7 +48,7 @@ const Vector<double>& StyleRuleKeyframe::Keys() const {
 MutableCSSPropertyValueSet& StyleRuleKeyframe::MutableProperties() {
   if (!properties_->IsMutable())
     properties_ = properties_->MutableCopy();
-  return *ToMutableCSSPropertyValueSet(properties_.Get());
+  return *To<MutableCSSPropertyValueSet>(properties_.Get());
 }
 
 String StyleRuleKeyframe::CssText() const {
@@ -63,7 +63,7 @@ String StyleRuleKeyframe::CssText() const {
   return result.ToString();
 }
 
-void StyleRuleKeyframe::TraceAfterDispatch(blink::Visitor* visitor) {
+void StyleRuleKeyframe::TraceAfterDispatch(blink::Visitor* visitor) const {
   visitor->Trace(properties_);
   StyleRuleBase::TraceAfterDispatch(visitor);
 }

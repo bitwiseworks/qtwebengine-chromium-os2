@@ -15,7 +15,6 @@
 #include "xfa/fgas/font/cfgas_fontmgr.h"
 #include "xfa/fwl/cfwl_notedriver.h"
 #include "xfa/fwl/cfwl_widgetmgr.h"
-#include "xfa/fwl/ifwl_adaptertimermgr.h"
 #include "xfa/fxfa/cxfa_ffdoc.h"
 #include "xfa/fxfa/cxfa_ffwidgethandler.h"
 #include "xfa/fxfa/cxfa_fontmgr.h"
@@ -60,14 +59,14 @@ CXFA_FWLTheme* CXFA_FFApp::GetFWLTheme(CXFA_FFDoc* doc) {
   return m_pFWLTheme.get();
 }
 
-CXFA_FWLAdapterWidgetMgr* CXFA_FFApp::GetFWLAdapterWidgetMgr() {
+CFWL_WidgetMgr::AdapterIface* CXFA_FFApp::GetWidgetMgrAdapter() {
   if (!m_pAdapterWidgetMgr)
     m_pAdapterWidgetMgr = pdfium::MakeUnique<CXFA_FWLAdapterWidgetMgr>();
   return m_pAdapterWidgetMgr.get();
 }
 
-std::unique_ptr<IFWL_AdapterTimerMgr> CXFA_FFApp::NewTimerMgr() const {
-  return m_pProvider->NewTimerMgr();
+TimerHandlerIface* CXFA_FFApp::GetTimerHandler() {
+  return m_pProvider->GetTimerHandler();
 }
 
 void CXFA_FFApp::ClearEventTargets() {

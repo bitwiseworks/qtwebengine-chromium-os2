@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
 #include "base/stl_util.h"
@@ -44,7 +45,7 @@ std::unique_ptr<SpdyBufferProducer> StringToProducer(const std::string& s) {
 // Makes a SpdyBufferProducer producing a frame with the data in the
 // given int (converted to a string).
 std::unique_ptr<SpdyBufferProducer> IntToProducer(int i) {
-  return StringToProducer(base::IntToString(i));
+  return StringToProducer(base::NumberToString(i));
 }
 
 // Producer whose produced buffer will enqueue yet another buffer into the
@@ -54,7 +55,7 @@ class RequeingBufferProducer : public SpdyBufferProducer {
   explicit RequeingBufferProducer(SpdyWriteQueue* queue) {
     buffer_ = std::make_unique<SpdyBuffer>(kOriginal, base::size(kOriginal));
     buffer_->AddConsumeCallback(
-        base::Bind(RequeingBufferProducer::ConsumeCallback, queue));
+        base::BindRepeating(RequeingBufferProducer::ConsumeCallback, queue));
   }
 
   std::unique_ptr<SpdyBuffer> ProduceBuffer() override {

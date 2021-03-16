@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-**
+** 
 ** This file implements a utility program used to help determine which
 ** indexes in a database schema are used and unused, and how often specific
 ** indexes are used.
@@ -112,7 +112,7 @@ int main(int argc, char **argv){
   }
   sqlite3_finalize(pStmt);
   pStmt = 0;
-  rc = sqlite3_exec(db,
+  rc = sqlite3_exec(db, 
      "CREATE TABLE temp.idxu(\n"
      "  tbl TEXT COLLATE nocase,\n"
      "  idx TEXT COLLATE nocase,\n"
@@ -216,7 +216,7 @@ int main(int argc, char **argv){
     goto errorOut;
   }
   while( sqlite3_step(pStmt)==SQLITE_ROW ){
-    printf("%10d %s on %s(%s)\n",
+    printf("%10d %s on %s(%s)\n", 
        sqlite3_column_int(pStmt, 2),
        sqlite3_column_text(pStmt, 1),
        sqlite3_column_text(pStmt, 0),

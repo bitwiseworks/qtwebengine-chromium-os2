@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2011 The ANGLE Project Authors. All rights reserved.
+// Copyright 2011 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -74,7 +74,7 @@ MacroExpander::ScopedMacroReenabler::ScopedMacroReenabler(MacroExpander *expande
 MacroExpander::ScopedMacroReenabler::~ScopedMacroReenabler()
 {
     mExpander->mDeferReenablingMacros = false;
-    for (auto macro : mExpander->mMacrosToReenable)
+    for (const std::shared_ptr<Macro> &macro : mExpander->mMacrosToReenable)
     {
         // Copying the string here by using substr is a check for use-after-free. It detects
         // use-after-free more reliably than just toggling the disabled flag.

@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/geometry/length_functions.h"
 #include "third_party/blink/renderer/platform/transforms/transform_operation.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -91,6 +92,8 @@ class PLATFORM_EXPORT TranslateTransformOperation final
     return x_ == t->x_ && y_ == t->y_ && z_ == t->z_;
   }
 
+  scoped_refptr<TransformOperation> Accumulate(
+      const TransformOperation& other) override;
   scoped_refptr<TransformOperation> Blend(
       const TransformOperation* from,
       double progress,
@@ -98,6 +101,8 @@ class PLATFORM_EXPORT TranslateTransformOperation final
   scoped_refptr<TransformOperation> Zoom(double factor) final {
     return ZoomTranslate(factor);
   }
+
+  bool PreservesAxisAlignment() const final { return true; }
 
   TranslateTransformOperation(const Length& tx,
                               const Length& ty,
@@ -115,7 +120,13 @@ class PLATFORM_EXPORT TranslateTransformOperation final
   OperationType type_;
 };
 
-DEFINE_TRANSFORM_TYPE_CASTS(TranslateTransformOperation);
+template <>
+struct DowncastTraits<TranslateTransformOperation> {
+  static bool AllowFrom(const TransformOperation& transform) {
+    return TranslateTransformOperation::IsMatchingOperationType(
+        transform.GetType());
+  }
+};
 
 }  // namespace blink
 

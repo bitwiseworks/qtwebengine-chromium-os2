@@ -2,7 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/buildflag_header.gni")
 import("//build/config/allocator.gni")
 import("//testing/test.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
@@ -64,16 +63,15 @@ component("gin") {
     "v8_isolate_memory_dump_provider.cc",
     "v8_isolate_memory_dump_provider.h",
     "v8_platform.cc",
+    "v8_shared_memory_dump_provider.cc",
+    "v8_shared_memory_dump_provider.h",
     "wrappable.cc",
     "wrappable.h",
     "wrapper_info.cc",
   ]
 
   if (v8_use_external_startup_data) {
-    data = [
-      "$root_out_dir/natives_blob.bin",
-      "$root_out_dir/snapshot_blob.bin",
-    ]
+    data = [ "$root_out_dir/snapshot_blob.bin" ]
   }
 
   defines = [ "GIN_IMPLEMENTATION" ]
@@ -82,9 +80,7 @@ component("gin") {
     "//base",
     "//v8",
   ]
-  deps = [
-    "//base/third_party/dynamic_annotations",
-  ]
+  deps = [ "//base/third_party/dynamic_annotations" ]
 
   if (is_mac) {
     libs = [ "CoreFoundation.framework" ]
@@ -94,9 +90,7 @@ component("gin") {
 }
 
 executable("gin_shell") {
-  sources = [
-    "shell/gin_main.cc",
-  ]
+  sources = [ "shell/gin_main.cc" ]
 
   deps = [
     ":gin",
@@ -140,6 +134,7 @@ test("gin_unittests") {
     "test/run_all_unittests.cc",
     "v8_isolate_memory_dump_provider_unittest.cc",
     "v8_platform_unittest.cc",
+    "v8_shared_memory_dump_provider_unittest.cc",
     "wrappable_unittest.cc",
   ]
 
@@ -156,9 +151,7 @@ test("gin_unittests") {
     "//v8:external_startup_data",
   ]
 
-  data_deps = [
-    "//tools/v8_context_snapshot:v8_context_snapshot",
-  ]
+  data_deps = [ "//tools/v8_context_snapshot:v8_context_snapshot" ]
   data = []
 
   # gin_shell is not an Android app.

@@ -21,7 +21,11 @@
 
 namespace content {
 
-class BrowserThreadDelegate;
+// TODO(1026641): Include browser_task_traits.h directly when the migration to
+// Get(UI|IO)ThreadTaskrunner() is complete and the cyclic dependency of
+// browser_task_traits.h on BrowserThread::ID is broken.
+class BrowserTaskTraits;
+
 class BrowserThreadImpl;
 
 // Use DCHECK_CURRENTLY_ON(BrowserThread::ID) to assert that a function can only
@@ -31,34 +35,45 @@ class BrowserThreadImpl;
    << ::content::BrowserThread::GetDCheckCurrentlyOnErrorMessage(   \
           thread_identifier))
 
+// The main entry point to post tasks to the UI thread. Tasks posted with the
+// same |traits| will run in posting order (i.e. according to the
+// SequencedTaskRunner contract). Tasks posted with different |traits| can be
+// re-ordered. You may keep a reference to this task runner, it's always
+// thread-safe to post to it though it may start returning false at some point
+// during shutdown when it definitely is no longer accepting tasks.
+//
+// In unit tests, there must be a content::BrowserTaskEnvironment in scope for
+// this API to be available.
+//
+// TODO(1026641): Make default traits |{}| the default param when it's possible
+// to include browser_task_traits.h in this file (see note above on the
+// BrowserTaskTraits fwd-decl).
+CONTENT_EXPORT scoped_refptr<base::SingleThreadTaskRunner>
+GetUIThreadTaskRunner(const BrowserTaskTraits& traits);
+
+// The BrowserThread::IO counterpart to GetUIThreadTaskRunner().
+CONTENT_EXPORT scoped_refptr<base::SingleThreadTaskRunner>
+GetIOThreadTaskRunner(const BrowserTaskTraits& traits);
+
 ///////////////////////////////////////////////////////////////////////////////
 // BrowserThread
 //
-// Utility functions for threads that are known by a browser-wide name.  For
-// example, there is one IO thread for the entire browser process, and various
-// pieces of code find it useful to retrieve a pointer to the IO thread's
-// message loop.
-//
-// See browser_task_traits.h for posting Tasks to a BrowserThread.
-//
-// This class automatically handles the lifetime of different threads. You
-// should never need to cache pointers to MessageLoops, since they're not thread
-// safe.
+// Utility functions for threads that are known by a browser-wide name.
 class CONTENT_EXPORT BrowserThread {
  public:
   // An enumeration of the well-known threads.
-  // NOTE: threads must be listed in the order of their life-time, with each
-  // thread outliving every other thread below it.
   enum ID {
-    // The main thread in the browser.
+    // The main thread in the browser. It stops running tasks during shutdown
+    // and is never joined.
     UI,
 
-    // This is the thread that processes non-blocking IO, i.e. IPC and network.
-    // Blocking I/O should happen in TaskScheduler.
+    // This is the thread that processes non-blocking I/O, i.e. IPC and network.
+    // Blocking I/O should happen in base::ThreadPool. It is joined on shutdown
+    // (and thus any task posted to it may block shutdown).
     IO,
 
     // NOTE: do not add new threads here. Instead you should just use
-    // base::Create*TaskRunnerWithTraits to run tasks on the TaskScheduler.
+    // base::ThreadPool::Create*TaskRunner to run tasks on the base::ThreadPool.
 
     // This identifier does not represent a thread.  Instead it counts the
     // number of well-known threads.  Insert new well-known threads before this
@@ -66,11 +81,13 @@ class CONTENT_EXPORT BrowserThread {
     ID_COUNT
   };
 
-  // NOTE: Task posting APIs have moved to post_task.h. See
-  // browser_task_traits.h.
+  // Delete/ReleaseSoon() helpers allow future deletion of an owned object on
+  // its associated thread. If you already have a task runner bound to a
+  // BrowserThread you should use its SequencedTaskRunner::DeleteSoon() member
+  // method.
+  // TODO(1026641): Get rid of the last few callers to these in favor of an
+  // explicit call to content::GetUIThreadTaskRunner({})->DeleteSoon(...).
 
-  // TODO(crbug.com/878356): Consider replacing callsites of this with
-  // base::CreateTaskRunnerWithTraits({id})->DeleteSoon(..).
   template <class T>
   static bool DeleteSoon(ID identifier,
                          const base::Location& from_here,
@@ -93,20 +110,16 @@ class CONTENT_EXPORT BrowserThread {
         ->ReleaseSoon(from_here, std::move(object));
   }
 
-  // For use with scheduling non-critical tasks for execution after startup.
-  // The order or execution of tasks posted here is unspecified even when
-  // posting to a SequencedTaskRunner and tasks are not guaranteed to be run
-  // prior to browser shutdown.
-  // When called after the browser startup is complete, will post |task|
-  // to |task_runner| immediately.
-  // Note: see related ContentBrowserClient::PostAfterStartupTask.
+  // Posts a |task| to run at BEST_EFFORT priority using an arbitrary
+  // |task_runner| for which we do not control the priority.
   //
-  // TODO(crbug.com/887407): Replace callsites with PostTaskWithTraits and
-  // appropriate traits (TBD).
-  static void PostAfterStartupTask(
-      const base::Location& from_here,
-      const scoped_refptr<base::TaskRunner>& task_runner,
-      base::OnceClosure task);
+  // This is useful when a task needs to run on |task_runner| (for thread-safety
+  // reasons) but should be delayed until after critical phases (e.g. startup).
+  // TODO(crbug.com/793069): Add support for sequence-funneling and remove this
+  // method.
+  static void PostBestEffortTask(const base::Location& from_here,
+                                 scoped_refptr<base::TaskRunner> task_runner,
+                                 base::OnceClosure task);
 
   // Callable on any thread.  Returns whether the given well-known thread is
   // initialized.
@@ -120,16 +133,6 @@ class CONTENT_EXPORT BrowserThread {
   // sets identifier to its ID.  Otherwise returns false.
   static bool GetCurrentThreadIdentifier(ID* identifier) WARN_UNUSED_RESULT;
 
-  // Sets the delegate for BrowserThread::IO.
-  //
-  // Only one delegate may be registered at a time. The delegate may be
-  // unregistered by providing a nullptr pointer.
-  //
-  // The delegate can only be registered through this call before
-  // BrowserThreadImpl(BrowserThread::IO) is created and unregistered after
-  // it was destroyed and its underlying thread shutdown.
-  static void SetIOThreadDelegate(BrowserThreadDelegate* delegate);
-
   // Use these templates in conjunction with RefCountedThreadSafe or scoped_ptr
   // when you want to ensure that an object is deleted on a specific thread.
   // This is needed when an object can hop between threads (i.e. UI -> IO ->
@@ -140,9 +143,9 @@ class CONTENT_EXPORT BrowserThread {
   // creating thread etc). Note: see base::OnTaskRunnerDeleter and
   // base::RefCountedDeleteOnSequence to bind to SequencedTaskRunner instead of
   // specific BrowserThreads.
-  template<ID thread>
+  template <ID thread>
   struct DeleteOnThread {
-    template<typename T>
+    template <typename T>
     static void Destruct(const T* x) {
       if (CurrentlyOn(thread)) {
         delete x;
@@ -180,11 +183,23 @@ class CONTENT_EXPORT BrowserThread {
   //
   // Note: see base::OnTaskRunnerDeleter and base::RefCountedDeleteOnSequence to
   // bind to SequencedTaskRunner instead of specific BrowserThreads.
-  struct DeleteOnUIThread : public DeleteOnThread<UI> { };
-  struct DeleteOnIOThread : public DeleteOnThread<IO> { };
+  struct DeleteOnUIThread : public DeleteOnThread<UI> {};
+  struct DeleteOnIOThread : public DeleteOnThread<IO> {};
 
   // Returns an appropriate error message for when DCHECK_CURRENTLY_ON() fails.
   static std::string GetDCheckCurrentlyOnErrorMessage(ID expected);
+
+  // Runs all pending tasks for the given thread. Tasks posted after this method
+  // is called (in particular any task posted from within any of the pending
+  // tasks) will be queued but not run. Conceptually this call will disable all
+  // queues, run any pending tasks, and re-enable all the queues.
+  //
+  // If any of the pending tasks posted a task, these could be run by calling
+  // this method again or running a regular RunLoop. But if that were the case
+  // you should probably rewrite you tests to wait for a specific event instead.
+  //
+  // NOTE: Can only be called from the UI thread.
+  static void RunAllPendingTasksOnThreadForTesting(ID identifier);
 
  protected:
   // For DeleteSoon(). Requires that the BrowserThread with the provided
@@ -194,10 +209,19 @@ class CONTENT_EXPORT BrowserThread {
 
  private:
   friend class BrowserThreadImpl;
+  BrowserThread() = default;
 
-  BrowserThread() {}
   DISALLOW_COPY_AND_ASSIGN(BrowserThread);
 };
+
+// Runs |task| on the thread specified by |thread_id| if already on that thread,
+// otherwise posts a task to that thread.
+//
+// This is intended to be a temporary helper function for the IO/UI thread
+// simplification effort.
+CONTENT_EXPORT void RunOrPostTaskOnThread(const base::Location& location,
+                                          BrowserThread::ID thread_id,
+                                          base::OnceClosure task);
 
 }  // namespace content
 

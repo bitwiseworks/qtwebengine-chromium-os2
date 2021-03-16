@@ -53,9 +53,9 @@ void TextureLayerImpl::PushPropertiesTo(LayerImpl* layer) {
   texture_layer->SetFlipped(flipped_);
   texture_layer->SetUVTopLeft(uv_top_left_);
   texture_layer->SetUVBottomRight(uv_bottom_right_);
-  texture_layer->SetVertexOpacity(vertex_opacity_);
   texture_layer->SetPremultipliedAlpha(premultiplied_alpha_);
   texture_layer->SetBlendBackgroundColor(blend_background_color_);
+  texture_layer->SetForceTextureToOpaque(force_texture_to_opaque_);
   texture_layer->SetNearestNeighbor(nearest_neighbor_);
   if (own_resource_) {
     texture_layer->SetTransferableResource(transferable_resource_,
@@ -110,15 +110,8 @@ void TextureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
 
   LayerTreeFrameSink* sink = layer_tree_impl()->layer_tree_frame_sink();
   for (const auto& pair : to_register_bitmaps_) {
-    // Because we may want to notify a display compositor about this
-    // base::SharedMemory more than one time, we need to be able to keep
-    // making handles to share with it, so we can't close the
-    // base::SharedMemory.
-    mojo::ScopedSharedBufferHandle handle =
-        viz::bitmap_allocation::DuplicateWithoutClosingMappedBitmap(
-            pair.second->shared_memory(), pair.second->size(),
-            pair.second->format());
-    sink->DidAllocateSharedBitmap(std::move(handle), pair.first);
+    sink->DidAllocateSharedBitmap(pair.second->shared_region().Duplicate(),
+                                  pair.first);
   }
   // All |to_register_bitmaps_| have been registered above, so we can move them
   // all to the |registered_bitmaps_|.
@@ -129,6 +122,11 @@ void TextureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
 
   SkColor bg_color =
       blend_background_color_ ? background_color() : SK_ColorTRANSPARENT;
+
+  if (force_texture_to_opaque_) {
+    bg_color = SK_ColorBLACK;
+  }
+
   bool are_contents_opaque =
       contents_opaque() || (SkColorGetA(bg_color) == 0xFF);
 
@@ -147,22 +145,22 @@ void TextureLayerImpl::AppendQuads(viz::RenderPass* render_pass,
   if (visible_quad_rect.IsEmpty())
     return;
 
-  if (!vertex_opacity_[0] && !vertex_opacity_[1] && !vertex_opacity_[2] &&
-      !vertex_opacity_[3])
-    return;
-
+  float vertex_opacity[] = {1.0f, 1.0f, 1.0f, 1.0f};
   auto* quad = render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
   quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect, needs_blending,
                resource_id_, premultiplied_alpha_, uv_top_left_,
-               uv_bottom_right_, bg_color, vertex_opacity_, flipped_,
+               uv_bottom_right_, bg_color, vertex_opacity, flipped_,
                nearest_neighbor_, /*secure_output_only=*/false,
-               ui::ProtectedVideoType::kClear);
+               gfx::ProtectedVideoType::kClear);
   quad->set_resource_size_in_pixels(transferable_resource_.size);
   ValidateQuadResources(quad);
 }
 
 SimpleEnclosedRegion TextureLayerImpl::VisibleOpaqueRegion() const {
   if (contents_opaque())
+    return SimpleEnclosedRegion(visible_layer_rect());
+
+  if (force_texture_to_opaque_)
     return SimpleEnclosedRegion(visible_layer_rect());
 
   if (blend_background_color_ && (SkColorGetA(background_color()) == 0xFF))
@@ -198,12 +196,20 @@ void TextureLayerImpl::ReleaseResources() {
   // all) instead.
 }
 
+gfx::ContentColorUsage TextureLayerImpl::GetContentColorUsage() const {
+  return transferable_resource_.color_space.GetContentColorUsage();
+}
+
 void TextureLayerImpl::SetPremultipliedAlpha(bool premultiplied_alpha) {
   premultiplied_alpha_ = premultiplied_alpha;
 }
 
 void TextureLayerImpl::SetBlendBackgroundColor(bool blend) {
   blend_background_color_ = blend;
+}
+
+void TextureLayerImpl::SetForceTextureToOpaque(bool opaque) {
+  force_texture_to_opaque_ = opaque;
 }
 
 void TextureLayerImpl::SetFlipped(bool flipped) {
@@ -220,16 +226,6 @@ void TextureLayerImpl::SetUVTopLeft(const gfx::PointF& top_left) {
 
 void TextureLayerImpl::SetUVBottomRight(const gfx::PointF& bottom_right) {
   uv_bottom_right_ = bottom_right;
-}
-
-// 1--2
-// |  |
-// 0--3
-void TextureLayerImpl::SetVertexOpacity(const float vertex_opacity[4]) {
-  vertex_opacity_[0] = vertex_opacity[0];
-  vertex_opacity_[1] = vertex_opacity[1];
-  vertex_opacity_[2] = vertex_opacity[2];
-  vertex_opacity_[3] = vertex_opacity[3];
 }
 
 void TextureLayerImpl::SetTransferableResource(

@@ -32,13 +32,24 @@
 #include "third_party/blink/renderer/core/layout/layout_frame.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/frame_set_painter.h"
-#include "third_party/blink/renderer/platform/cursor.h"
+#include "third_party/blink/renderer/platform/cursors.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 
 namespace blink {
 
+// Adjusts proportionally the size with remaining size.
+static int AdjustSizeToRemainingSize(int current,
+                                     int remaining,
+                                     int64_t total) {
+  // Performs the math operations step by step to avoid the overflow.
+  base::CheckedNumeric<int64_t> temp_product = current;
+  temp_product *= remaining;
+  temp_product /= total;
+  return base::checked_cast<int>(temp_product.ValueOrDie());
+}
+
 LayoutFrameSet::LayoutFrameSet(HTMLFrameSetElement* frame_set)
-    : LayoutBox(frame_set), is_resizing_(false), is_child_resizing_(false) {
+    : LayoutBox(frame_set), is_resizing_(false) {
   SetInline(false);
 }
 
@@ -47,17 +58,11 @@ LayoutFrameSet::~LayoutFrameSet() = default;
 LayoutFrameSet::GridAxis::GridAxis() : split_being_resized_(kNoSplit) {}
 
 HTMLFrameSetElement* LayoutFrameSet::FrameSet() const {
-  return ToHTMLFrameSetElement(GetNode());
+  return To<HTMLFrameSetElement>(GetNode());
 }
 
 void LayoutFrameSet::Paint(const PaintInfo& paint_info) const {
   FrameSetPainter(*this).Paint(paint_info);
-}
-
-void LayoutFrameSet::ComputePreferredLogicalWidths() {
-  min_preferred_logical_width_ = LayoutUnit();
-  max_preferred_logical_width_ = LayoutUnit();
-  ClearPreferredLogicalWidthsDirty();
 }
 
 void LayoutFrameSet::GridAxis::Resize(int size) {
@@ -89,9 +94,9 @@ void LayoutFrameSet::LayOutAxis(GridAxis& axis,
   int grid_len = axis.sizes_.size();
   DCHECK(grid_len);
 
-  int total_relative = 0;
-  int total_fixed = 0;
-  int total_percent = 0;
+  int64_t total_relative = 0;
+  int64_t total_fixed = 0;
+  int64_t total_percent = 0;
   int count_relative = 0;
   int count_fixed = 0;
   int count_percent = 0;
@@ -136,9 +141,8 @@ void LayoutFrameSet::LayOutAxis(GridAxis& axis,
 
     for (int i = 0; i < grid_len; ++i) {
       if (grid[i].IsAbsolute()) {
-        long long temp_product =
-            static_cast<long long>(grid_layout[i]) * remaining_fixed;
-        grid_layout[i] = static_cast<int>(temp_product / total_fixed);
+        grid_layout[i] = AdjustSizeToRemainingSize(
+            grid_layout[i], remaining_fixed, total_fixed);
         remaining_len -= grid_layout[i];
       }
     }
@@ -156,9 +160,8 @@ void LayoutFrameSet::LayOutAxis(GridAxis& axis,
 
     for (int i = 0; i < grid_len; ++i) {
       if (grid[i].IsPercentage()) {
-        long long temp_product =
-            static_cast<long long>(grid_layout[i]) * remaining_percent;
-        grid_layout[i] = static_cast<int>(temp_product / total_percent);
+        grid_layout[i] = AdjustSizeToRemainingSize(
+            grid_layout[i], remaining_percent, total_percent);
         remaining_len -= grid_layout[i];
       }
     }
@@ -206,9 +209,8 @@ void LayoutFrameSet::LayOutAxis(GridAxis& axis,
 
       for (int i = 0; i < grid_len; ++i) {
         if (grid[i].IsPercentage()) {
-          long long temp_product =
-              static_cast<long long>(grid_layout[i]) * remaining_percent;
-          change_percent = static_cast<int>(temp_product / total_percent);
+          change_percent = AdjustSizeToRemainingSize(
+              grid_layout[i], remaining_percent, total_percent);
           grid_layout[i] += change_percent;
           remaining_len -= change_percent;
         }
@@ -222,9 +224,8 @@ void LayoutFrameSet::LayOutAxis(GridAxis& axis,
 
       for (int i = 0; i < grid_len; ++i) {
         if (grid[i].IsAbsolute()) {
-          long long temp_product =
-              static_cast<long long>(grid_layout[i]) * remaining_fixed;
-          change_fixed = static_cast<int>(temp_product / total_fixed);
+          change_fixed = AdjustSizeToRemainingSize(
+              grid_layout[i], remaining_fixed, total_fixed);
           grid_layout[i] += change_fixed;
           remaining_len -= change_fixed;
         }
@@ -476,9 +477,9 @@ bool LayoutFrameSet::UserResize(const MouseEvent& evt) {
       return false;
     if (evt.type() == event_type_names::kMousedown &&
         evt.button() ==
-            static_cast<short>(WebPointerProperties::Button::kLeft)) {
+            static_cast<int16_t>(WebPointerProperties::Button::kLeft)) {
       FloatPoint local_pos =
-          AbsoluteToLocal(FloatPoint(evt.AbsoluteLocation()), kUseTransforms);
+          AbsoluteToLocalFloatPoint(FloatPoint(evt.AbsoluteLocation()));
       StartResizing(cols_, local_pos.X());
       StartResizing(rows_, local_pos.Y());
       if (cols_.split_being_resized_ != kNoSplit ||
@@ -491,14 +492,14 @@ bool LayoutFrameSet::UserResize(const MouseEvent& evt) {
     if (evt.type() == event_type_names::kMousemove ||
         (evt.type() == event_type_names::kMouseup &&
          evt.button() ==
-             static_cast<short>(WebPointerProperties::Button::kLeft))) {
+             static_cast<int16_t>(WebPointerProperties::Button::kLeft))) {
       FloatPoint local_pos =
-          AbsoluteToLocal(FloatPoint(evt.AbsoluteLocation()), kUseTransforms);
+          AbsoluteToLocalFloatPoint(FloatPoint(evt.AbsoluteLocation()));
       ContinueResizing(cols_, local_pos.X());
       ContinueResizing(rows_, local_pos.Y());
       if (evt.type() == event_type_names::kMouseup &&
           evt.button() ==
-              static_cast<short>(WebPointerProperties::Button::kLeft)) {
+              static_cast<int16_t>(WebPointerProperties::Button::kLeft)) {
         SetIsResizing(false);
         return true;
       }
@@ -510,11 +511,6 @@ bool LayoutFrameSet::UserResize(const MouseEvent& evt) {
 
 void LayoutFrameSet::SetIsResizing(bool is_resizing) {
   is_resizing_ = is_resizing;
-  for (LayoutObject* ancestor = Parent(); ancestor;
-       ancestor = ancestor->Parent()) {
-    if (ancestor->IsFrameSet())
-      ToLayoutFrameSet(ancestor)->is_child_resizing_ = is_resizing;
-  }
   if (LocalFrame* frame = GetFrame()) {
     frame->GetEventHandler().SetResizingFrameSet(is_resizing ? FrameSet()
                                                              : nullptr);
@@ -574,8 +570,8 @@ bool LayoutFrameSet::IsChildAllowed(LayoutObject* child,
   return child->IsFrame() || child->IsFrameSet();
 }
 
-CursorDirective LayoutFrameSet::GetCursor(const LayoutPoint& point,
-                                          Cursor& cursor) const {
+CursorDirective LayoutFrameSet::GetCursor(const PhysicalOffset& point,
+                                          ui::Cursor& cursor) const {
   IntPoint rounded_point = RoundedIntPoint(point);
   if (CanResizeRow(rounded_point)) {
     cursor = RowResizeCursor();

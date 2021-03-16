@@ -27,13 +27,17 @@ class InputMethodSurface : public ClientControlledShellSurface {
   // Overridden from SurfaceDelegate:
   void OnSurfaceCommit() override;
 
+  // Overridden from ShellSurfaceBase:
+  void SetWidgetBounds(const gfx::Rect& bounds) override;
+
   gfx::Rect GetBounds() const;
 
  private:
   InputMethodSurfaceManager* const manager_;
   bool added_to_manager_ = false;
+  // The bounds of this surface in DIP.
   gfx::Rect input_method_bounds_;
-  double default_device_scale_factore_;
+  double default_device_scale_factor_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodSurface);
 };

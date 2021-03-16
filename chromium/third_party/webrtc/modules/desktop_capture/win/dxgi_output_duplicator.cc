@@ -10,12 +10,11 @@
 
 #include "modules/desktop_capture/win/dxgi_output_duplicator.h"
 
+#include <dxgi.h>
+#include <dxgiformat.h>
 #include <string.h>
-
-#include <DXGI.h>
-#include <DXGIFormat.h>
-#include <Windows.h>
 #include <unknwn.h>
+#include <windows.h>
 
 #include <algorithm>
 
@@ -276,7 +275,7 @@ bool DxgiOutputDuplicator::DoDetectUpdatedRegion(
 
   if (metadata_.capacity() < frame_info.TotalMetadataBufferSize) {
     metadata_.clear();  // Avoid data copy
-    metadata_.reserve(frame_info.TotalMetadataBufferSize);
+    metadata_.resize(frame_info.TotalMetadataBufferSize);
   }
 
   UINT buff_size = 0;

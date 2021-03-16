@@ -5,16 +5,18 @@
 #include "components/viz/service/frame_sinks/external_begin_frame_source_android.h"
 
 #include "base/android/jni_android.h"
-#include "jni/ExternalBeginFrameSourceAndroid_jni.h"
+#include "components/viz/service/service_jni_headers/ExternalBeginFrameSourceAndroid_jni.h"
 
 namespace viz {
 
 ExternalBeginFrameSourceAndroid::ExternalBeginFrameSourceAndroid(
-    uint32_t restart_id)
+    uint32_t restart_id,
+    float refresh_rate)
     : ExternalBeginFrameSource(this, restart_id),
       j_object_(Java_ExternalBeginFrameSourceAndroid_Constructor(
           base::android::AttachCurrentThread(),
-          reinterpret_cast<jlong>(this))) {}
+          reinterpret_cast<jlong>(this),
+          refresh_rate)) {}
 
 ExternalBeginFrameSourceAndroid::~ExternalBeginFrameSourceAndroid() {
   SetEnabled(false);
@@ -25,9 +27,6 @@ void ExternalBeginFrameSourceAndroid::OnVSync(
     const base::android::JavaParamRef<jobject>& obj,
     jlong time_micros,
     jlong period_micros) {
-  // TODO(ericrk): This logic is ported from window_android.cc. Once OOP-D
-  // conversion is complete, we can delete the logic there.
-
   // Warning: It is generally unsafe to manufacture TimeTicks values. The
   // following assumption is being made, AND COULD EASILY BREAK AT ANY TIME:
   // Upstream, Java code is providing "System.nanos() / 1000," and this is the
@@ -38,14 +37,17 @@ void ExternalBeginFrameSourceAndroid::OnVSync(
       base::TimeTicks() + base::TimeDelta::FromMicroseconds(time_micros);
   base::TimeDelta vsync_period(
       base::TimeDelta::FromMicroseconds(period_micros));
-
   // Calculate the next frame deadline:
   base::TimeTicks deadline = frame_time + vsync_period;
-  auto begin_frame_args = BeginFrameArgs::Create(
-      BEGINFRAME_FROM_HERE, source_id(), next_sequence_number_++, frame_time,
-      deadline, vsync_period, BeginFrameArgs::NORMAL);
 
+  auto begin_frame_args = begin_frame_args_generator_.GenerateBeginFrameArgs(
+      source_id(), frame_time, deadline, vsync_period);
   OnBeginFrame(begin_frame_args);
+}
+
+void ExternalBeginFrameSourceAndroid::UpdateRefreshRate(float refresh_rate) {
+  Java_ExternalBeginFrameSourceAndroid_updateRefreshRate(
+      base::android::AttachCurrentThread(), j_object_, refresh_rate);
 }
 
 void ExternalBeginFrameSourceAndroid::OnNeedsBeginFrames(

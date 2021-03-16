@@ -16,9 +16,7 @@ namespace test_data {
 
 const int kIndex = 3;
 const int kUniqueID = 50;
-const GURL kReferrerURL = GURL("http://www.referrer.com");
 const int kReferrerPolicy = 0;
-const GURL kVirtualURL= GURL("http://www.virtual-url.com");
 const base::string16 kTitle = base::ASCIIToUTF16("title");
 const std::string kEncodedPageState = "page state";
 const ui::PageTransition kTransitionType =
@@ -28,21 +26,47 @@ const ui::PageTransition kTransitionType =
         ui::PAGE_TRANSITION_CLIENT_REDIRECT);
 const bool kHasPostData = true;
 const int64_t kPostID = 100;
-const GURL kOriginalRequestURL = GURL("http://www.original-request.com");
 const bool kIsOverridingUserAgent = true;
 const base::Time kTimestamp =
     base::Time::UnixEpoch() + base::TimeDelta::FromMilliseconds(100);
-const GURL kFaviconURL = GURL("http://virtual-url.com/favicon.ico");
 const int kHttpStatusCode = 404;
-const GURL kRedirectURL0 = GURL("http://go/redirect0");
-const GURL kRedirectURL1 = GURL("http://go/redirect1");
-const GURL kOtherURL = GURL("http://other.com");
 const SerializedNavigationEntry::PasswordState kPasswordState =
     SerializedNavigationEntry::HAS_PASSWORD_FIELD;
 const std::string kExtendedInfoKey1 = "key 1";
 const std::string kExtendedInfoKey2 = "key 2";
 const std::string kExtendedInfoValue1 = "value 1";
 const std::string kExtendedInfoValue2 = "value 2";
+const int64_t kTaskId = 2;
+const int64_t kParentTaskId = 1;
+const int64_t kRootTaskId = 0;
+const std::vector<int64_t> kChildrenTaskIds{3, 4, 5};
+
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL ReferrerUrl() {
+  return GURL("http://www.referrer.com");
+}
+GURL Url() {
+  return GURL("http://www.url.com");
+}
+GURL VirtualUrl() {
+  return GURL("http://www.virtual-url.com");
+}
+GURL OriginalRequestUrl() {
+  return GURL("http://www.original-request.com");
+}
+GURL FaviconUrl() {
+  return GURL("http://virtual-url.com/favicon.ico");
+}
+GURL RedirectUrl0() {
+  return GURL("http://go/redirect0");
+}
+GURL RedirectUrl1() {
+  return GURL("http://go/redirect1");
+}
+GURL OtherUrl() {
+  return GURL("http://other.com");
+}
 
 }  // namespace test_data
 
@@ -64,38 +88,23 @@ void SerializedNavigationEntryTestHelper::ExpectNavigationEquals(
 }
 
 // static
-SerializedNavigationEntry SerializedNavigationEntryTestHelper::CreateNavigation(
-    const std::string& virtual_url,
-    const std::string& title) {
-  SerializedNavigationEntry navigation;
-  navigation.index_ = 0;
-  navigation.referrer_url_ = GURL("http://www.referrer.com");
-  navigation.virtual_url_ = GURL(virtual_url);
-  navigation.title_ = base::UTF8ToUTF16(title);
-  navigation.encoded_page_state_ = "fake state";
-  navigation.timestamp_ = base::Time::Now();
-  navigation.http_status_code_ = 200;
-  return navigation;
-}
-
-// static
 SerializedNavigationEntry
 SerializedNavigationEntryTestHelper::CreateNavigationForTest() {
   SerializedNavigationEntry navigation;
   navigation.index_ = test_data::kIndex;
   navigation.unique_id_ = test_data::kUniqueID;
-  navigation.referrer_url_ = test_data::kReferrerURL;
+  navigation.referrer_url_ = test_data::ReferrerUrl();
   navigation.referrer_policy_ = test_data::kReferrerPolicy;
-  navigation.virtual_url_ = test_data::kVirtualURL;
+  navigation.virtual_url_ = test_data::VirtualUrl();
   navigation.title_ = test_data::kTitle;
   navigation.encoded_page_state_ = test_data::kEncodedPageState;
   navigation.transition_type_ = test_data::kTransitionType;
   navigation.has_post_data_ = test_data::kHasPostData;
   navigation.post_id_ = test_data::kPostID;
-  navigation.original_request_url_ = test_data::kOriginalRequestURL;
+  navigation.original_request_url_ = test_data::OriginalRequestUrl();
   navigation.is_overriding_user_agent_ = test_data::kIsOverridingUserAgent;
   navigation.timestamp_ = test_data::kTimestamp;
-  navigation.favicon_url_ = test_data::kFaviconURL;
+  navigation.favicon_url_ = test_data::FaviconUrl();
   navigation.http_status_code_ = test_data::kHttpStatusCode;
   navigation.password_state_ = test_data::kPasswordState;
 
@@ -104,9 +113,13 @@ SerializedNavigationEntryTestHelper::CreateNavigationForTest() {
   navigation.extended_info_map_[test_data::kExtendedInfoKey2] =
       test_data::kExtendedInfoValue2;
 
-  navigation.redirect_chain_.push_back(test_data::kRedirectURL0);
-  navigation.redirect_chain_.push_back(test_data::kRedirectURL1);
-  navigation.redirect_chain_.push_back(test_data::kVirtualURL);
+  navigation.redirect_chain_.push_back(test_data::RedirectUrl0());
+  navigation.redirect_chain_.push_back(test_data::RedirectUrl1());
+  navigation.redirect_chain_.push_back(test_data::VirtualUrl());
+  navigation.task_id_ = test_data::kTaskId;
+  navigation.parent_task_id_ = test_data::kParentTaskId;
+  navigation.root_task_id_ = test_data::kRootTaskId;
+  navigation.children_task_ids_ = test_data::kChildrenTaskIds;
   return navigation;
 }
 

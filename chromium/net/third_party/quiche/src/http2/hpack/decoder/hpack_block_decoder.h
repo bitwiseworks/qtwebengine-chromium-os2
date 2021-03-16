@@ -10,17 +10,19 @@
 // or dynamic table support, so table indices remain indices at this level.
 // Reports the entries to an HpackEntryDecoderListener.
 
-#include "base/logging.h"
+#include <string>
+
 #include "net/third_party/quiche/src/http2/decoder/decode_buffer.h"
 #include "net/third_party/quiche/src/http2/decoder/decode_status.h"
+#include "net/third_party/quiche/src/http2/hpack/decoder/hpack_decoding_error.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_entry_decoder.h"
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_entry_decoder_listener.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_export.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
 
 namespace http2 {
 
-class HTTP2_EXPORT_PRIVATE HpackBlockDecoder {
+class QUICHE_EXPORT_PRIVATE HpackBlockDecoder {
  public:
   explicit HpackBlockDecoder(HpackEntryDecoderListener* listener)
       : listener_(listener) {
@@ -35,7 +37,7 @@ class HTTP2_EXPORT_PRIVATE HpackBlockDecoder {
   // to be called from an implementation of Http2FrameDecoderListener's
   // OnHeadersStart or OnPushPromiseStart methods.
   void Reset() {
-    DVLOG(2) << "HpackBlockDecoder::Reset";
+    HTTP2_DVLOG(2) << "HpackBlockDecoder::Reset";
     before_entry_ = true;
   }
 
@@ -48,7 +50,10 @@ class HTTP2_EXPORT_PRIVATE HpackBlockDecoder {
   // first byte of a new HPACK entry)?
   bool before_entry() const { return before_entry_; }
 
-  Http2String DebugString() const;
+  // Return error code after decoding error occurred in HpackEntryDecoder.
+  HpackDecodingError error() const { return entry_decoder_.error(); }
+
+  std::string DebugString() const;
 
  private:
   HpackEntryDecoder entry_decoder_;
@@ -56,8 +61,8 @@ class HTTP2_EXPORT_PRIVATE HpackBlockDecoder {
   bool before_entry_ = true;
 };
 
-HTTP2_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                              const HpackBlockDecoder& v);
+QUICHE_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
+                                               const HpackBlockDecoder& v);
 
 }  // namespace http2
 

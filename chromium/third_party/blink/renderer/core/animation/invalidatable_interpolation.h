@@ -31,14 +31,6 @@ namespace blink {
 // objects.
 class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
  public:
-  static InvalidatableInterpolation* Create(
-      const PropertyHandle& property,
-      PropertySpecificKeyframe* start_keyframe,
-      PropertySpecificKeyframe* end_keyframe) {
-    return MakeGarbageCollected<InvalidatableInterpolation>(
-        property, start_keyframe, end_keyframe);
-  }
-
   InvalidatableInterpolation(const PropertyHandle& property,
                              PropertySpecificKeyframe* start_keyframe,
                              PropertySpecificKeyframe* end_keyframe)
@@ -106,11 +98,12 @@ class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
   mutable std::unique_ptr<TypedInterpolationValue> cached_value_;
 };
 
-DEFINE_TYPE_CASTS(InvalidatableInterpolation,
-                  Interpolation,
-                  value,
-                  value->IsInvalidatableInterpolation(),
-                  value.IsInvalidatableInterpolation());
+template <>
+struct DowncastTraits<InvalidatableInterpolation> {
+  static bool AllowFrom(const Interpolation& value) {
+    return value.IsInvalidatableInterpolation();
+  }
+};
 
 }  // namespace blink
 

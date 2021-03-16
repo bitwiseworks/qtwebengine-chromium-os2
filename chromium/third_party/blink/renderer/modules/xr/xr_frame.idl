@@ -6,11 +6,24 @@
 [
     SecureContext,
     Exposed=Window,
-    OriginTrialEnabled=WebXR
+    RuntimeEnabled=WebXR
 ] interface XRFrame {
-  readonly attribute XRSession session;
+  [SameObject] readonly attribute XRSession session;
 
-  XRViewerPose? getViewerPose(XRReferenceSpace referenceSpace);
-  XRInputPose? getInputPose(XRInputSource inputSource,
-                            XRReferenceSpace referenceSpace);
+  // More details about the real-world understanding APIs can be found here:
+  // https://github.com/immersive-web/real-world-geometry/blob/master/plane-detection-explainer.md
+  [RuntimeEnabled=WebXRIncubations] readonly attribute XRWorldInformation worldInformation;
+
+  [RuntimeEnabled=WebXRIncubations]
+  readonly attribute XRAnchorSet trackedAnchors;
+  [RuntimeEnabled=WebXRIncubations, CallWith=ScriptState, RaisesException]
+  Promise<XRAnchor> createAnchor(XRRigidTransform initial_pose, XRSpace space);
+
+  [RaisesException] XRViewerPose? getViewerPose(XRReferenceSpace referenceSpace);
+  [RaisesException] XRPose? getPose(XRSpace space, XRSpace relativeTo);
+
+  [RuntimeEnabled=WebXRHitTest, RaisesException]
+  FrozenArray<XRHitTestResult> getHitTestResults(XRHitTestSource hitTestSource);
+  [RuntimeEnabled=WebXRHitTest, RaisesException]
+  FrozenArray<XRTransientInputHitTestResult> getHitTestResultsForTransientInput(XRTransientInputHitTestSource hitTestSource);
 };

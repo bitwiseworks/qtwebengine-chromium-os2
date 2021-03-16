@@ -22,6 +22,7 @@
 
 #include "third_party/blink/renderer/core/svg/gradient_attributes.h"
 #include "third_party/blink/renderer/core/svg/svg_length.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 struct RadialGradientAttributes final : GradientAttributes {
@@ -29,12 +30,12 @@ struct RadialGradientAttributes final : GradientAttributes {
 
  public:
   RadialGradientAttributes()
-      : cx_(SVGLength::Create(SVGLengthMode::kWidth)),
-        cy_(SVGLength::Create(SVGLengthMode::kHeight)),
-        r_(SVGLength::Create(SVGLengthMode::kOther)),
-        fx_(SVGLength::Create(SVGLengthMode::kWidth)),
-        fy_(SVGLength::Create(SVGLengthMode::kHeight)),
-        fr_(SVGLength::Create(SVGLengthMode::kOther)),
+      : cx_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kWidth)),
+        cy_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kHeight)),
+        r_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kOther)),
+        fx_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kWidth)),
+        fy_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kHeight)),
+        fr_(MakeGarbageCollected<SVGLength>(SVGLengthMode::kOther)),
         cx_set_(false),
         cy_set_(false),
         r_set_(false),
@@ -85,7 +86,7 @@ struct RadialGradientAttributes final : GradientAttributes {
   bool HasFy() const { return fy_set_; }
   bool HasFr() const { return fr_set_; }
 
-  void Trace(blink::Visitor* visitor) {
+  void Trace(Visitor* visitor) {
     visitor->Trace(cx_);
     visitor->Trace(cy_);
     visitor->Trace(r_);
@@ -113,20 +114,16 @@ struct RadialGradientAttributes final : GradientAttributes {
 };
 
 // Wrapper object for the RadialGradientAttributes part object.
-class RadialGradientAttributesWrapper
-    : public GarbageCollectedFinalized<RadialGradientAttributesWrapper> {
+class RadialGradientAttributesWrapper final
+    : public GarbageCollected<RadialGradientAttributesWrapper> {
  public:
-  static RadialGradientAttributesWrapper* Create() {
-    return MakeGarbageCollected<RadialGradientAttributesWrapper>();
-  }
-
   RadialGradientAttributesWrapper() = default;
 
   RadialGradientAttributes& Attributes() { return attributes_; }
   void Set(const RadialGradientAttributes& attributes) {
     attributes_ = attributes;
   }
-  void Trace(blink::Visitor* visitor) { visitor->Trace(attributes_); }
+  void Trace(Visitor* visitor) { visitor->Trace(attributes_); }
 
  private:
   RadialGradientAttributes attributes_;

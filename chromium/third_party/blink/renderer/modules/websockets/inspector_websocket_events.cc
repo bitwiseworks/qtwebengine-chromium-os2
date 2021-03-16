@@ -17,14 +17,14 @@ namespace blink {
 
 std::unique_ptr<TracedValue> InspectorWebSocketCreateEvent::Data(
     ExecutionContext* execution_context,
-    unsigned long identifier,
+    uint64_t identifier,
     const KURL& url,
     const String& protocol) {
   DCHECK(execution_context->IsContextThread());
-  std::unique_ptr<TracedValue> value = TracedValue::Create();
+  auto value = std::make_unique<TracedValue>();
   value->SetInteger("identifier", static_cast<int>(identifier));
   value->SetString("url", url.GetString());
-  if (auto* document = DynamicTo<Document>(execution_context)) {
+  if (auto* document = Document::DynamicFrom(execution_context)) {
     value->SetString("frame",
                      IdentifiersFactory::FrameId(document->GetFrame()));
   } else if (auto* scope = DynamicTo<WorkerGlobalScope>(execution_context)) {
@@ -43,11 +43,11 @@ std::unique_ptr<TracedValue> InspectorWebSocketCreateEvent::Data(
 
 std::unique_ptr<TracedValue> InspectorWebSocketEvent::Data(
     ExecutionContext* execution_context,
-    unsigned long identifier) {
+    uint64_t identifier) {
   DCHECK(execution_context->IsContextThread());
-  std::unique_ptr<TracedValue> value = TracedValue::Create();
+  auto value = std::make_unique<TracedValue>();
   value->SetInteger("identifier", static_cast<int>(identifier));
-  if (auto* document = DynamicTo<Document>(execution_context)) {
+  if (auto* document = Document::DynamicFrom(execution_context)) {
     value->SetString("frame",
                      IdentifiersFactory::FrameId(document->GetFrame()));
   } else if (auto* scope = DynamicTo<WorkerGlobalScope>(execution_context)) {

@@ -5,8 +5,9 @@
  * found in the LICENSE file.
  */
 
-#include "SkNWayCanvas.h"
-#include "SkCanvasPriv.h"
+#include "include/core/SkShader.h"
+#include "include/utils/SkNWayCanvas.h"
+#include "src/core/SkCanvasPriv.h"
 
 SkNWayCanvas::SkNWayCanvas(int width, int height) : INHERITED(width, height) {}
 
@@ -92,12 +93,18 @@ void SkNWayCanvas::willRestore() {
     this->INHERITED::willRestore();
 }
 
+void SkNWayCanvas::didConcat44(const SkScalar m[16]) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->concat44(m);
+    }
+}
+
 void SkNWayCanvas::didConcat(const SkMatrix& matrix) {
     Iter iter(fList);
     while (iter.next()) {
         iter->concat(matrix);
     }
-    this->INHERITED::didConcat(matrix);
 }
 
 void SkNWayCanvas::didSetMatrix(const SkMatrix& matrix) {
@@ -105,7 +112,20 @@ void SkNWayCanvas::didSetMatrix(const SkMatrix& matrix) {
     while (iter.next()) {
         iter->setMatrix(matrix);
     }
-    this->INHERITED::didSetMatrix(matrix);
+}
+
+void SkNWayCanvas::didTranslate(SkScalar x, SkScalar y) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->translate(x, y);
+    }
+}
+
+void SkNWayCanvas::didScale(SkScalar x, SkScalar y) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->scale(x, y);
+    }
 }
 
 void SkNWayCanvas::onClipRect(const SkRect& rect, SkClipOp op, ClipEdgeStyle edgeStyle) {
@@ -132,6 +152,14 @@ void SkNWayCanvas::onClipPath(const SkPath& path, SkClipOp op, ClipEdgeStyle edg
     this->INHERITED::onClipPath(path, op, edgeStyle);
 }
 
+void SkNWayCanvas::onClipShader(sk_sp<SkShader> sh, SkClipOp op) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->clipShader(sh, op);
+    }
+    this->INHERITED::onClipShader(std::move(sh), op);
+}
+
 void SkNWayCanvas::onClipRegion(const SkRegion& deviceRgn, SkClipOp op) {
     Iter iter(fList);
     while (iter.next()) {
@@ -147,6 +175,13 @@ void SkNWayCanvas::onDrawPaint(const SkPaint& paint) {
     }
 }
 
+void SkNWayCanvas::onDrawBehind(const SkPaint& paint) {
+    Iter iter(fList);
+    while (iter.next()) {
+        SkCanvasPriv::DrawBehind(iter.get(), paint);
+    }
+}
+
 void SkNWayCanvas::onDrawPoints(PointMode mode, size_t count, const SkPoint pts[],
                                 const SkPaint& paint) {
     Iter iter(fList);
@@ -159,14 +194,6 @@ void SkNWayCanvas::onDrawRect(const SkRect& rect, const SkPaint& paint) {
     Iter iter(fList);
     while (iter.next()) {
         iter->drawRect(rect, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawEdgeAARect(const SkRect& rect, SkCanvas::QuadAAFlags aa, SkColor color,
-                                    SkBlendMode mode) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->experimental_DrawEdgeAARectV1(rect, aa, color, mode);
     }
 }
 
@@ -213,38 +240,6 @@ void SkNWayCanvas::onDrawPath(const SkPath& path, const SkPaint& paint) {
     }
 }
 
-void SkNWayCanvas::onDrawBitmap(const SkBitmap& bitmap, SkScalar x, SkScalar y,
-                                const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmap(bitmap, x, y, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapRect(const SkBitmap& bitmap, const SkRect* src, const SkRect& dst,
-                                    const SkPaint* paint, SrcRectConstraint constraint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->legacy_drawBitmapRect(bitmap, src, dst, paint, (SrcRectConstraint)constraint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapNine(const SkBitmap& bitmap, const SkIRect& center,
-                                    const SkRect& dst, const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmapNine(bitmap, center, dst, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapLattice(const SkBitmap& bitmap, const Lattice& lattice,
-                                       const SkRect& dst, const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmapLattice(bitmap, lattice, dst, paint);
-    }
-}
-
 void SkNWayCanvas::onDrawImage(const SkImage* image, SkScalar left, SkScalar top,
                                const SkPaint* paint) {
     Iter iter(fList);
@@ -277,14 +272,6 @@ void SkNWayCanvas::onDrawImageLattice(const SkImage* image, const Lattice& latti
     }
 }
 
-void SkNWayCanvas::onDrawImageSet(const SkCanvas::ImageSetEntry set[], int count,
-                                  SkFilterQuality filterQuality, SkBlendMode mode) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->experimental_DrawImageSetV1(set, count, filterQuality, mode);
-    }
-}
-
 void SkNWayCanvas::onDrawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y,
                                   const SkPaint &paint) {
     Iter iter(fList);
@@ -308,11 +295,11 @@ void SkNWayCanvas::onDrawDrawable(SkDrawable* drawable, const SkMatrix* matrix) 
     }
 }
 
-void SkNWayCanvas::onDrawVerticesObject(const SkVertices* vertices, const SkVertices::Bone bones[],
-                                        int boneCount, SkBlendMode bmode, const SkPaint& paint) {
+void SkNWayCanvas::onDrawVerticesObject(const SkVertices* vertices,
+                                        SkBlendMode bmode, const SkPaint& paint) {
     Iter iter(fList);
     while (iter.next()) {
-        iter->drawVertices(vertices, bones, boneCount, bmode, paint);
+        iter->drawVertices(vertices, bmode, paint);
     }
 }
 
@@ -345,6 +332,24 @@ void SkNWayCanvas::onDrawAnnotation(const SkRect& rect, const char key[], SkData
     Iter iter(fList);
     while (iter.next()) {
         iter->drawAnnotation(rect, key, data);
+    }
+}
+
+void SkNWayCanvas::onDrawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4],
+                                    QuadAAFlags aa, const SkColor4f& color, SkBlendMode mode) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->experimental_DrawEdgeAAQuad(rect, clip, aa, color, mode);
+    }
+}
+
+void SkNWayCanvas::onDrawEdgeAAImageSet(const ImageSetEntry set[], int count,
+                                        const SkPoint dstClips[], const SkMatrix preViewMatrices[],
+                                        const SkPaint* paint, SrcRectConstraint constraint) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->experimental_DrawEdgeAAImageSet(
+                set, count, dstClips, preViewMatrices, paint, constraint);
     }
 }
 

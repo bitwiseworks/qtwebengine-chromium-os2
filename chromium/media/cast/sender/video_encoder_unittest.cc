@@ -252,9 +252,10 @@ TEST_P(VideoEncoderTest, MAYBE_EncodesVariedFrameSizes) {
              encoded_frames[encoded_frames.size() - 4])) {
       auto video_frame = CreateTestVideoFrame(frame_size);
       const base::TimeTicks reference_time = Now();
+      const base::TimeDelta timestamp = video_frame->timestamp();
       const bool accepted_request = video_encoder()->EncodeVideoFrame(
           std::move(video_frame), reference_time,
-          base::BindRepeating(
+          base::BindOnce(
               [](base::WeakPtr<EncodedFrames> encoded_frames,
                  RtpTimeTicks expected_rtp_timestamp,
                  base::TimeTicks expected_reference_time,
@@ -271,8 +272,7 @@ TEST_P(VideoEncoderTest, MAYBE_EncodesVariedFrameSizes) {
                 encoded_frames->emplace_back(std::move(encoded_frame));
               },
               encoded_frames_weak_factory.GetWeakPtr(),
-              RtpTimeTicks::FromTimeDelta(video_frame->timestamp(),
-                                          kVideoFrequency),
+              RtpTimeTicks::FromTimeDelta(timestamp, kVideoFrequency),
               reference_time));
       if (accepted_request) {
         ++count_frames_accepted;
@@ -343,8 +343,7 @@ TEST_P(VideoEncoderTest, MAYBE_CanBeDestroyedBeforeVEAIsCreated) {
   // Send a frame to spawn creation of the ExternalVideoEncoder instance.
   video_encoder()->EncodeVideoFrame(
       CreateTestVideoFrame(gfx::Size(128, 72)), Now(),
-      base::BindRepeating(
-          [](std::unique_ptr<SenderEncodedFrame> encoded_frame) {}));
+      base::BindOnce([](std::unique_ptr<SenderEncodedFrame> encoded_frame) {}));
 
   // Destroy the encoder, and confirm the VEA Factory did not respond yet.
   DestroyEncoder();
@@ -379,8 +378,9 @@ std::vector<std::pair<Codec, bool>> DetermineEncodersToTest() {
 }
 }  // namespace
 
-INSTANTIATE_TEST_CASE_P(
-    , VideoEncoderTest, ::testing::ValuesIn(DetermineEncodersToTest()));
+INSTANTIATE_TEST_SUITE_P(All,
+                         VideoEncoderTest,
+                         ::testing::ValuesIn(DetermineEncodersToTest()));
 
 }  // namespace cast
 }  // namespace media

@@ -31,7 +31,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_COLOR_CHOOSER_CLIENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_COLOR_CHOOSER_CLIENT_H_
 
-#include "third_party/blink/public/mojom/color_chooser/color_chooser.mojom-blink.h"
+#include "third_party/blink/public/mojom/choosers/color_chooser.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
@@ -42,12 +42,15 @@ namespace blink {
 
 class Element;
 
+// This class is the client for the ColorChooser.
 class CORE_EXPORT ColorChooserClient : public GarbageCollectedMixin {
  public:
   virtual ~ColorChooserClient();
   void Trace(Visitor* visitor) override {}
 
+  // Called when a color is chosen by the user in the ColorChooser UI.
   virtual void DidChooseColor(const Color&) = 0;
+  // Called when ColorChooser UI was closed by the user.
   virtual void DidEndChooser() = 0;
   virtual Element& OwnerElement() const = 0;
   virtual IntRect ElementRectRelativeToViewport() const = 0;

@@ -458,12 +458,6 @@ static int h264_frame_start(H264Context *h)
     H264Picture *pic;
     int i, ret;
     const int pixel_shift = h->pixel_shift;
-    int c[4] = {
-        1<<(h->ps.sps->bit_depth_luma-1),
-        1<<(h->ps.sps->bit_depth_chroma-1),
-        1<<(h->ps.sps->bit_depth_chroma-1),
-        -1
-    };
 
     if (!ff_thread_can_start_frame(h->avctx)) {
         av_log(h->avctx, AV_LOG_ERROR, "Attempt to start a frame outside SETUP state\n");
@@ -504,8 +498,6 @@ static int h264_frame_start(H264Context *h)
 
     if ((ret = alloc_picture(h, pic)) < 0)
         return ret;
-    if(!h->frame_recovered && !h->avctx->hwaccel)
-        ff_color_frame(pic->f, c);
 
     h->cur_pic_ptr = pic;
     ff_h264_unref_picture(h, &h->cur_pic);
@@ -678,7 +670,7 @@ static void implicit_weight_table(const H264Context *h, H264SliceContext *sl, in
             cur_poc = h->cur_pic_ptr->field_poc[h->picture_structure - 1];
         }
         if (sl->ref_count[0] == 1 && sl->ref_count[1] == 1 && !FRAME_MBAFF(h) &&
-            sl->ref_list[0][0].poc + (int64_t)sl->ref_list[1][0].poc == 2 * cur_poc) {
+            sl->ref_list[0][0].poc + (int64_t)sl->ref_list[1][0].poc == 2LL * cur_poc) {
             sl->pwt.use_weight        = 0;
             sl->pwt.use_weight_chroma = 0;
             return;
@@ -1092,6 +1084,12 @@ static int h264_init_ps(H264Context *h, const H264SliceContext *sl, int first_sl
                 h->avctx->colorspace      = sps->colorspace;
             }
         }
+
+        if (h->sei.alternative_transfer.present &&
+            av_color_transfer_name(h->sei.alternative_transfer.preferred_transfer_characteristics) &&
+            h->sei.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
+            h->avctx->color_trc = h->sei.alternative_transfer.preferred_transfer_characteristics;
+        }
     }
 
     if (!h->context_initialized || must_reinit || needs_reinit) {
@@ -1330,12 +1328,6 @@ static int h264_export_frame_props(H264Context *h)
             tc_sd[i + 1] = tc;
         }
         h->sei.picture_timing.timecode_cnt = 0;
-    }
-
-    if (h->sei.alternative_transfer.present &&
-        av_color_transfer_name(h->sei.alternative_transfer.preferred_transfer_characteristics) &&
-        h->sei.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
-        h->avctx->color_trc = cur->f->color_trc = h->sei.alternative_transfer.preferred_transfer_characteristics;
     }
 
     return 0;
@@ -1582,6 +1574,13 @@ static int h264_field_start(H264Context *h, const H264SliceContext *sl,
          * vectors.  Given we are concealing a lost frame, this probably
          * is not noticeable by comparison, but it should be fixed. */
         if (h->short_ref_count) {
+            int c[4] = {
+                1<<(h->ps.sps->bit_depth_luma-1),
+                1<<(h->ps.sps->bit_depth_chroma-1),
+                1<<(h->ps.sps->bit_depth_chroma-1),
+                -1
+            };
+
             if (prev &&
                 h->short_ref[0]->f->width == prev->f->width &&
                 h->short_ref[0]->f->height == prev->f->height &&
@@ -1597,7 +1596,8 @@ static int h264_field_start(H264Context *h, const H264SliceContext *sl,
                               prev->f->width,
                               prev->f->height);
                 h->short_ref[0]->poc = prev->poc + 2;
-            }
+            } else if (!h->frame_recovered && !h->avctx->hwaccel)
+                ff_color_frame(h->short_ref[0]->f, c);
             h->short_ref[0]->frame_num = h->poc.prev_frame_num;
         }
     }

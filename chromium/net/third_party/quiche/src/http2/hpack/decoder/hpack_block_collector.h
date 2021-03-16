@@ -15,6 +15,7 @@
 
 #include <stddef.h>
 
+#include <string>
 #include <vector>
 
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,9 +23,8 @@
 #include "net/third_party/quiche/src/http2/hpack/decoder/hpack_entry_decoder_listener.h"
 #include "net/third_party/quiche/src/http2/hpack/http2_hpack_constants.h"
 #include "net/third_party/quiche/src/http2/hpack/tools/hpack_block_builder.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string_piece.h"
 #include "net/third_party/quiche/src/http2/test_tools/http2_random.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 
 namespace http2 {
 namespace test {
@@ -66,14 +66,14 @@ class HpackBlockCollector : public HpackEntryDecoderListener {
   void ExpectNameIndexAndLiteralValue(HpackEntryType type,
                                       size_t index,
                                       bool value_huffman,
-                                      const Http2String& value);
+                                      const std::string& value);
 
   // Add an HPACK entry for a header entry with a literal name and value.
   void ExpectLiteralNameAndValue(HpackEntryType type,
                                  bool name_huffman,
-                                 const Http2String& name,
+                                 const std::string& name,
                                  bool value_huffman,
-                                 const Http2String& value);
+                                 const std::string& value);
 
   // Shuffle the entries, in support of generating an HPACK block of entries
   // in some random order.
@@ -97,16 +97,16 @@ class HpackBlockCollector : public HpackEntryDecoderListener {
       HpackEntryType expected_type,
       size_t expected_index,
       bool expected_value_huffman,
-      Http2StringPiece expected_value) const;
+      quiche::QuicheStringPiece expected_value) const;
 
   // Return AssertionSuccess if there is just one entry, and it is a Header
   // with a literal name and literal value.
   ::testing::AssertionResult ValidateSoleLiteralNameValueHeader(
       HpackEntryType expected_type,
       bool expected_name_huffman,
-      Http2StringPiece expected_name,
+      quiche::QuicheStringPiece expected_name,
       bool expected_value_huffman,
-      Http2StringPiece expected_value) const;
+      quiche::QuicheStringPiece expected_value) const;
 
   bool IsNotPending() const { return pending_entry_.IsClear(); }
   bool IsClear() const { return IsNotPending() && entries_.empty(); }

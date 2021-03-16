@@ -17,7 +17,7 @@ namespace extensions {
 // AsyncApiFunction
 AsyncApiFunction::AsyncApiFunction()
     : work_task_runner_(
-          base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO})) {}
+          base::CreateSingleThreadTaskRunner({BrowserThread::IO})) {}
 
 AsyncApiFunction::~AsyncApiFunction() {}
 
@@ -58,9 +58,9 @@ ExtensionFunction::ResponseAction AsyncApiFunction::Run() {
 
 void AsyncApiFunction::AsyncWorkCompleted() {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    bool rv = base::PostTaskWithTraits(
+    bool rv = base::PostTask(
         FROM_HERE, {BrowserThread::UI},
-        base::Bind(&AsyncApiFunction::RespondOnUIThread, this));
+        base::BindOnce(&AsyncApiFunction::RespondOnUIThread, this));
     DCHECK(rv);
   } else {
     SendResponse(Respond());
@@ -81,7 +81,7 @@ void AsyncApiFunction::SetError(const std::string& error) {
 }
 
 const std::string& AsyncApiFunction::GetError() const {
-  return error_.empty() ? UIThreadExtensionFunction::GetError() : error_;
+  return error_.empty() ? ExtensionFunction::GetError() : error_;
 }
 
 void AsyncApiFunction::WorkOnWorkThread() {
@@ -102,7 +102,7 @@ void AsyncApiFunction::SendResponse(bool success) {
     response = results_ ? ErrorWithArguments(std::move(results_), error_)
                         : Error(error_);
   }
-  UIThreadExtensionFunction::Respond(std::move(response));
+  ExtensionFunction::Respond(std::move(response));
 }
 
 }  // namespace extensions

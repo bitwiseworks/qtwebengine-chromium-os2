@@ -11,13 +11,17 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/omnibox/omnibox.mojom.h"
-#include "components/omnibox/browser/autocomplete_controller_delegate.h"
+#include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_controller_emitter.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 
 class AutocompleteController;
 class Profile;
@@ -26,25 +30,22 @@ class Profile;
 // private AutocompleteController. It also listens for updates from the
 // AutocompleteController to OnResultChanged() and passes those results to
 // the OmniboxPage.
-class OmniboxPageHandler : public AutocompleteControllerDelegate,
-                           public mojom::OmniboxPageHandler,
-                           public OmniboxControllerEmitter::Observer {
+class OmniboxPageHandler : public AutocompleteController::Observer,
+                           public mojom::OmniboxPageHandler {
  public:
   // OmniboxPageHandler is deleted when the supplied pipe is destroyed.
   OmniboxPageHandler(Profile* profile,
-                     mojo::InterfaceRequest<mojom::OmniboxPageHandler> request);
+                     mojo::PendingReceiver<mojom::OmniboxPageHandler> receiver);
   ~OmniboxPageHandler() override;
 
-  // AutocompleteControllerDelegate overrides:
-  void OnResultChanged(bool default_match_changed) override;
-
-  // OmniboxControllerEmitter::Observer overrides:
-  void OnOmniboxQuery(AutocompleteController* controller) override;
-  void OnOmniboxResultChanged(bool default_match_changed,
-                              AutocompleteController* controller) override;
+  // AutocompleteController::Observer overrides:
+  void OnStart(AutocompleteController* controller,
+               const AutocompleteInput& input) override;
+  void OnResultChanged(AutocompleteController* controller,
+                       bool default_match_changed) override;
 
   // mojom::OmniboxPageHandler overrides:
-  void SetClientPage(mojom::OmniboxPagePtr page) override;
+  void SetClientPage(mojo::PendingRemote<mojom::OmniboxPage> page) override;
   // current_url may be invalid, in which case, autocomplete input's url won't
   // be set.
   void StartOmniboxQuery(const std::string& input_string,
@@ -57,6 +58,8 @@ class OmniboxPageHandler : public AutocompleteControllerDelegate,
                          int32_t page_classification) override;
 
  private:
+  void OnBitmapFetched(const std::string& image_url, const SkBitmap& bitmap);
+
   // Looks up whether the hostname is a typed host (i.e., has received
   // typed visits).  Return true if the lookup succeeded; if so, the
   // value of |is_typed_host| is set appropriately.
@@ -79,15 +82,17 @@ class OmniboxPageHandler : public AutocompleteControllerDelegate,
   AutocompleteInput input_;
 
   // Handle back to the page by which we can pass results.
-  mojom::OmniboxPagePtr page_;
+  mojo::Remote<mojom::OmniboxPage> page_;
 
   // The Profile* handed to us in our constructor.
   Profile* profile_;
 
-  mojo::Binding<mojom::OmniboxPageHandler> binding_;
+  mojo::Receiver<mojom::OmniboxPageHandler> receiver_;
 
-  ScopedObserver<OmniboxControllerEmitter, OmniboxControllerEmitter::Observer>
+  ScopedObserver<OmniboxControllerEmitter, AutocompleteController::Observer>
       observer_;
+
+  base::WeakPtrFactory<OmniboxPageHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxPageHandler);
 };

@@ -10,6 +10,9 @@
 
 #include "base/compiler_specific.h"
 #include "base/stl_util.h"
+#include "base/strings/string16.h"
+#include "base/strings/utf_string_conversions.h"
+#include "gin/function_template.h"
 #include "gin/handle.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/test/v8_test.h"
@@ -79,6 +82,31 @@ TEST_F(ConverterTest, Bool) {
   }
 }
 
+TEST_F(ConverterTest, String16) {
+  v8::Isolate* isolate = instance_->isolate();
+
+  HandleScope handle_scope(isolate);
+
+  EXPECT_TRUE(Converter<base::string16>::ToV8(isolate, base::ASCIIToUTF16(""))
+                  ->StrictEquals(StringToV8(isolate, "")));
+  EXPECT_TRUE(
+      Converter<base::string16>::ToV8(isolate, base::ASCIIToUTF16("hello"))
+          ->StrictEquals(StringToV8(isolate, "hello")));
+
+  base::string16 result;
+
+  ASSERT_FALSE(
+      Converter<base::string16>::FromV8(isolate, v8::False(isolate), &result));
+  ASSERT_FALSE(
+      Converter<base::string16>::FromV8(isolate, v8::True(isolate), &result));
+  ASSERT_TRUE(Converter<base::string16>::FromV8(
+      isolate, v8::String::Empty(isolate), &result));
+  EXPECT_EQ(result, base::string16());
+  ASSERT_TRUE(Converter<base::string16>::FromV8(
+      isolate, StringToV8(isolate, "hello"), &result));
+  EXPECT_EQ(result, base::ASCIIToUTF16("hello"));
+}
+
 TEST_F(ConverterTest, Int32) {
   HandleScope handle_scope(instance_->isolate());
 
@@ -139,9 +167,12 @@ TEST_F(ConverterTest, Vector) {
       Converter<std::vector<int>>::ToV8(instance_->isolate(), expected)
           .As<Array>();
   EXPECT_EQ(3u, js_array->Length());
+  v8::Local<v8::Context> context = instance_->isolate()->GetCurrentContext();
   for (size_t i = 0; i < expected.size(); ++i) {
-    EXPECT_TRUE(Integer::New(instance_->isolate(), expected[i])
-                    ->StrictEquals(js_array->Get(static_cast<int>(i))));
+    EXPECT_TRUE(
+        Integer::New(instance_->isolate(), expected[i])
+            ->StrictEquals(
+                js_array->Get(context, static_cast<int>(i)).ToLocalChecked()));
   }
 }
 
@@ -192,6 +223,47 @@ TEST_F(ConverterTest, VectorOfWrappables) {
   std::vector<MyObject*> out_value2;
   ASSERT_TRUE(ConvertFromV8(isolate, array2, &out_value2));
   EXPECT_THAT(out_value2, testing::ContainerEq(vector));
+}
+
+namespace {
+
+class MoveOnlyObject {
+ public:
+  MoveOnlyObject() = default;
+  MoveOnlyObject(const MoveOnlyObject&) = delete;
+  MoveOnlyObject& operator=(const MoveOnlyObject&) = delete;
+
+  MoveOnlyObject(MoveOnlyObject&&) noexcept = default;
+  MoveOnlyObject& operator=(MoveOnlyObject&&) noexcept = default;
+};
+
+}  // namespace
+
+template <>
+struct Converter<MoveOnlyObject> {
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate, MoveOnlyObject in) {
+    return v8::Undefined(isolate);
+  }
+  static bool FromV8(v8::Isolate* isolate,
+                     v8::Local<v8::Value> val,
+                     MoveOnlyObject* out) {
+    *out = MoveOnlyObject();
+    return true;
+  }
+};
+
+TEST_F(ConverterTest, MoveOnlyParameters) {
+  v8::Isolate* isolate = instance_->isolate();
+  v8::HandleScope handle_scope(isolate);
+
+  auto receives_move_only_obj = [](MoveOnlyObject obj) {};
+  auto func_templ = gin::CreateFunctionTemplate(
+      isolate, base::BindRepeating(receives_move_only_obj));
+
+  v8::Local<v8::Context> context = instance_->isolate()->GetCurrentContext();
+  auto func = func_templ->GetFunction(context).ToLocalChecked();
+  v8::Local<v8::Value> argv[] = {v8::Undefined(isolate)};
+  func->Call(context, v8::Undefined(isolate), 1, argv).ToLocalChecked();
 }
 
 }  // namespace gin

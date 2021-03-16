@@ -39,6 +39,7 @@
 #include "pixdesc.h"
 #include "pixfmt.h"
 #include "thread.h"
+#include "compat/w32dlfcn.h"
 
 typedef HRESULT(WINAPI *PFN_CREATE_DXGI_FACTORY)(REFIID riid, void **ppFactory);
 
@@ -55,8 +56,8 @@ static av_cold void load_functions(void)
     // from too many LoadLibrary calls.
     HANDLE d3dlib, dxgilib;
 
-    d3dlib  = LoadLibrary("d3d11.dll");
-    dxgilib = LoadLibrary("dxgi.dll");
+    d3dlib  = dlopen("d3d11.dll", 0);
+    dxgilib = dlopen("dxgi.dll", 0);
     if (!d3dlib || !dxgilib)
         return;
 
@@ -410,7 +411,7 @@ static int d3d11va_transfer_data(AVHWFramesContext *ctx, AVFrame *dst,
 
         fill_texture_ptrs(map_data, map_linesize, ctx, &desc, &map);
 
-        av_image_copy(dst->data, dst->linesize, map_data, map_linesize,
+        av_image_copy(dst->data, dst->linesize, (const uint8_t **)map_data, map_linesize,
                       ctx->sw_format, w, h);
 
         ID3D11DeviceContext_Unmap(device_hwctx->device_context, staging, 0);
@@ -422,7 +423,7 @@ static int d3d11va_transfer_data(AVHWFramesContext *ctx, AVFrame *dst,
 
         fill_texture_ptrs(map_data, map_linesize, ctx, &desc, &map);
 
-        av_image_copy(map_data, map_linesize, src->data, src->linesize,
+        av_image_copy(map_data, map_linesize, (const uint8_t **)src->data, src->linesize,
                       ctx->sw_format, w, h);
 
         ID3D11DeviceContext_Unmap(device_hwctx->device_context, staging, 0);

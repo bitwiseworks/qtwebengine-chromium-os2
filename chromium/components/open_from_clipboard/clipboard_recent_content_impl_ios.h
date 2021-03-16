@@ -40,7 +40,7 @@
 // not been suppresed. Otherwise, returns nil.
 - (NSString*)recentTextFromClipboard;
 
-// Returns the copied string if the clipboard contains a recent string that has
+// Returns the copied image if the clipboard contains a recent image that has
 // not been suppressed. Otherwise, returns nil.
 - (UIImage*)recentImageFromClipboard;
 
@@ -54,7 +54,7 @@
 // Methods below are exposed for testing purposes.
 
 // Estimation of the date when the pasteboard changed.
-@property(nonatomic, strong) NSDate* lastPasteboardChangeDate;
+@property(nonatomic, copy) NSDate* lastPasteboardChangeDate;
 
 // Saves information to the user defaults about the latest pasteboard entry.
 - (void)saveToUserDefaults;

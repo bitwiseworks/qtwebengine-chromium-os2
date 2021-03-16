@@ -67,7 +67,7 @@ typedef unsigned long long int u64;
 #endif
 
 /*
-** Ideally, these should be in wrapper.c. But they are here instead so that
+** Ideally, these should be in wrapper.c. But they are here instead so that 
 ** they can be used by the C++ database wrappers in wrapper2.cc.
 */
 typedef struct DatabaseMethods DatabaseMethods;
@@ -89,7 +89,7 @@ struct DatabaseMethods {
   int (*xRollback)(TestDb *, int);
 };
 
-/*
+/* 
 ** Functions in wrapper2.cc (a C++ source file). wrapper2.cc contains the
 ** wrapper for Kyoto Cabinet. Kyoto cabinet has a C API, but
 ** the primary interface is the C++ API.
@@ -113,9 +113,9 @@ int test_mdb_scan(TestDb *, void *, int, void *, int, void *, int,
   void (*)(void *, void *, int , void *, int)
 );
 
-/*
+/* 
 ** Functions in wrapper3.c. This file contains the tdb wrapper for lsm.
-** The wrapper for lsm is a bit more involved than the others, as it
+** The wrapper for lsm is a bit more involved than the others, as it 
 ** includes code for a couple of different lsm configurations, and for
 ** various types of fault injection and robustness testing.
 */

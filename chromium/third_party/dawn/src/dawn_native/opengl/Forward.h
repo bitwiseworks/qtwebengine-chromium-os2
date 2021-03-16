@@ -17,26 +17,18 @@
 
 #include "dawn_native/ToBackend.h"
 
-namespace {
-    class BindGroupBase;
-    class BindGroup;
-    class RenderPassDescriptor;
-}  // namespace
-
 namespace dawn_native { namespace opengl {
 
     class Adapter;
-    using BindGroup = BindGroupBase;
-    using BindGroupLayout = BindGroupLayoutBase;
+    class BindGroup;
+    class BindGroupLayout;
     class Buffer;
     class CommandBuffer;
     class ComputePipeline;
     class Device;
-    class InputState;
     class PersistentPipelineState;
     class PipelineLayout;
     class Queue;
-    using RenderPassDescriptor = RenderPassDescriptorBase;
     class RenderPipeline;
     class Sampler;
     class ShaderModule;
@@ -52,10 +44,8 @@ namespace dawn_native { namespace opengl {
         using CommandBufferType = CommandBuffer;
         using ComputePipelineType = ComputePipeline;
         using DeviceType = Device;
-        using InputStateType = InputState;
         using PipelineLayoutType = PipelineLayout;
         using QueueType = Queue;
-        using RenderPassDescriptorType = RenderPassDescriptor;
         using RenderPipelineType = RenderPipeline;
         using SamplerType = Sampler;
         using ShaderModuleType = ShaderModule;

@@ -105,7 +105,7 @@ typedef struct AV1RawSequenceHeader {
     uint8_t use_128x128_superblock;
     uint8_t enable_filter_intra;
     uint8_t enable_intra_edge_filter;
-    uint8_t enable_intraintra_compound;
+    uint8_t enable_interintra_compound;
     uint8_t enable_masked_compound;
     uint8_t enable_warped_motion;
     uint8_t enable_dual_filter;
@@ -170,7 +170,7 @@ typedef struct AV1RawFrameHeader {
     uint8_t last_frame_idx;
     uint8_t golden_frame_idx;
     int8_t  ref_frame_idx[AV1_REFS_PER_FRAME];
-    uint8_t delta_frame_id_minus1;
+    uint32_t delta_frame_id_minus1[AV1_REFS_PER_FRAME];
 
     uint8_t allow_high_precision_mv;
     uint8_t is_filter_switchable;
@@ -256,20 +256,20 @@ typedef struct AV1RawFrameHeader {
     uint8_t  update_grain;
     uint8_t  film_grain_params_ref_idx;
     uint8_t  num_y_points;
-    uint8_t  point_y_value[16];
-    uint8_t  point_y_scaling[16];
+    uint8_t  point_y_value[14];
+    uint8_t  point_y_scaling[14];
     uint8_t  chroma_scaling_from_luma;
     uint8_t  num_cb_points;
-    uint8_t  point_cb_value[16];
-    uint8_t  point_cb_scaling[16];
+    uint8_t  point_cb_value[10];
+    uint8_t  point_cb_scaling[10];
     uint8_t  num_cr_points;
-    uint8_t  point_cr_value[16];
-    uint8_t  point_cr_scaling[16];
+    uint8_t  point_cr_value[10];
+    uint8_t  point_cr_scaling[10];
     uint8_t  grain_scaling_minus_8;
     uint8_t  ar_coeff_lag;
     uint8_t  ar_coeffs_y_plus_128[24];
-    uint8_t  ar_coeffs_cb_plus_128[24];
-    uint8_t  ar_coeffs_cr_plus_128[24];
+    uint8_t  ar_coeffs_cb_plus_128[25];
+    uint8_t  ar_coeffs_cr_plus_128[25];
     uint8_t  ar_coeff_shift_minus_6;
     uint8_t  grain_scale_shift;
     uint8_t  cb_mult;
@@ -325,7 +325,20 @@ typedef struct AV1RawMetadataHDRMDCV {
 
 typedef struct AV1RawMetadataScalability {
     uint8_t scalability_mode_idc;
-    // TODO: more stuff.
+    uint8_t spatial_layers_cnt_minus_1;
+    uint8_t spatial_layer_dimensions_present_flag;
+    uint8_t spatial_layer_description_present_flag;
+    uint8_t temporal_group_description_present_flag;
+    uint8_t scalability_structure_reserved_3bits;
+    uint16_t spatial_layer_max_width[4];
+    uint16_t spatial_layer_max_height[4];
+    uint8_t spatial_layer_ref_id[4];
+    uint8_t temporal_group_size;
+    uint8_t temporal_group_temporal_id[255];
+    uint8_t temporal_group_temporal_switching_up_point_flag[255];
+    uint8_t temporal_group_spatial_switching_up_point_flag[255];
+    uint8_t temporal_group_ref_cnt[255];
+    uint8_t temporal_group_ref_pic_diff[255][7];
 } AV1RawMetadataScalability;
 
 typedef struct AV1RawMetadataITUTT35 {
@@ -364,6 +377,12 @@ typedef struct AV1RawMetadata {
     } metadata;
 } AV1RawMetadata;
 
+typedef struct AV1RawPadding {
+    uint8_t     *payload;
+    size_t       payload_size;
+    AVBufferRef *payload_ref;
+} AV1RawPadding;
+
 
 typedef struct AV1RawOBU {
     AV1RawOBUHeader header;
@@ -377,6 +396,7 @@ typedef struct AV1RawOBU {
         AV1RawTileGroup      tile_group;
         AV1RawTileList       tile_list;
         AV1RawMetadata       metadata;
+        AV1RawPadding        padding;
     } obu;
 } AV1RawOBU;
 
@@ -421,11 +441,9 @@ typedef struct CodedBitstreamAV1Context {
     int tile_cols;
     int tile_rows;
 
-    AV1ReferenceFrameState ref[AV1_NUM_REF_FRAMES];
-
-    // Write buffer.
-    uint8_t *write_buffer;
-    size_t   write_buffer_size;
+    AV1ReferenceFrameState *ref;
+    AV1ReferenceFrameState read_ref[AV1_NUM_REF_FRAMES];
+    AV1ReferenceFrameState write_ref[AV1_NUM_REF_FRAMES];
 } CodedBitstreamAV1Context;
 
 

@@ -7,7 +7,7 @@ srcdir=`dirname $(dirname $(dirname $(dirname $0)))`
 
 echo ""
 
-for f in `ls $srcdir/ext/fts3/*.c`
+for f in `ls $srcdir/ext/fts3/*.c` 
 do
   f=`basename $f`
   echo -ne "$f: "

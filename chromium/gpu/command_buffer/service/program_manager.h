@@ -35,6 +35,39 @@ class ProgressReporter;
 class Shader;
 class ShaderManager;
 
+enum class UniformApiType : uint32_t {
+  kUniformNone = 0,
+  kUniform1i = 1 << 0,
+  kUniform2i = 1 << 1,
+  kUniform3i = 1 << 2,
+  kUniform4i = 1 << 3,
+  kUniform1f = 1 << 4,
+  kUniform2f = 1 << 5,
+  kUniform3f = 1 << 6,
+  kUniform4f = 1 << 7,
+  kUniformMatrix2f = 1 << 8,
+  kUniformMatrix3f = 1 << 9,
+  kUniformMatrix4f = 1 << 10,
+  kUniform1ui = 1 << 11,
+  kUniform2ui = 1 << 12,
+  kUniform3ui = 1 << 13,
+  kUniform4ui = 1 << 14,
+  kUniformMatrix2x3f = 1 << 15,
+  kUniformMatrix2x4f = 1 << 16,
+  kUniformMatrix3x2f = 1 << 17,
+  kUniformMatrix3x4f = 1 << 18,
+  kUniformMatrix4x2f = 1 << 19,
+  kUniformMatrix4x3f = 1 << 20,
+};
+
+inline constexpr UniformApiType operator|(UniformApiType a, UniformApiType b) {
+  return static_cast<UniformApiType>(uint32_t(a) | uint32_t(b));
+}
+
+inline constexpr UniformApiType operator&(UniformApiType a, UniformApiType b) {
+  return static_cast<UniformApiType>(uint32_t(a) & uint32_t(b));
+}
+
 // This is used to track which attributes a particular program needs
 // so we can verify at glDrawXXX time that every attribute is either disabled
 // or if enabled that it points to a valid source.
@@ -42,42 +75,8 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
  public:
   static const int kMaxAttachedShaders = 2;
 
-  enum VaryingsPackingOption {
-    kCountOnlyStaticallyUsed,
-    kCountAll
-  };
+  enum VaryingsPackingOption { kCountOnlyStaticallyUsed, kCountAll };
 
-  enum UniformApiType {
-    kUniformNone = 0,
-    kUniform1i = 1 << 0,
-    kUniform2i = 1 << 1,
-    kUniform3i = 1 << 2,
-    kUniform4i = 1 << 3,
-    kUniform1f = 1 << 4,
-    kUniform2f = 1 << 5,
-    kUniform3f = 1 << 6,
-    kUniform4f = 1 << 7,
-    kUniformMatrix2f = 1 << 8,
-    kUniformMatrix3f = 1 << 9,
-    kUniformMatrix4f = 1 << 10,
-    kUniform1ui = 1 << 11,
-    kUniform2ui = 1 << 12,
-    kUniform3ui = 1 << 13,
-    kUniform4ui = 1 << 14,
-    kUniformMatrix2x3f = 1 << 15,
-    kUniformMatrix2x4f = 1 << 16,
-    kUniformMatrix3x2f = 1 << 17,
-    kUniformMatrix3x4f = 1 << 18,
-    kUniformMatrix4x2f = 1 << 19,
-    kUniformMatrix4x3f = 1 << 20,
-  };
-  struct FragmentInputInfo {
-    FragmentInputInfo(GLenum _type, GLuint _location)
-        : type(_type), location(_location) {}
-    FragmentInputInfo() : type(GL_NONE), location(0) {}
-    GLenum type;
-    GLuint location;
-  };
   struct ProgramOutputInfo {
     ProgramOutputInfo(GLuint _color_name,
                       GLuint _index,
@@ -125,7 +124,7 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
     GLsizei size;
     GLenum type;
-    uint32_t accepts_api_type;
+    UniformApiType accepts_api_type;
     GLint fake_location_base;
     bool is_array;
     std::string name;
@@ -189,9 +188,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   typedef std::vector<ShaderVariableLocationEntry<UniformInfo>>
       UniformLocationVector;
   typedef std::vector<VertexAttrib> AttribInfoVector;
-  typedef std::vector<FragmentInputInfo> FragmentInputInfoVector;
-  typedef std::vector<ShaderVariableLocationEntry<FragmentInputInfo>>
-      FragmentInputLocationVector;
   typedef std::vector<ProgramOutputInfo> ProgramOutputInfoVector;
   typedef std::vector<int> SamplerIndices;
   typedef std::map<std::string, GLint> LocationMap;
@@ -251,11 +247,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // If the hashed name is not found, return nullptr.
   const sh::InterfaceBlock* GetInterfaceBlockInfo(
       const std::string& hashed_name) const;
-
-  const FragmentInputInfo* GetFragmentInputInfoByFakeLocation(
-      GLint fake_location) const;
-
-  bool IsInactiveFragmentInputLocationByFakeLocation(GLint fake_location) const;
 
   // Gets the fake location of a uniform by name.
   GLint GetUniformFakeLocation(const std::string& name) const;
@@ -354,10 +345,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // Detects if the shader version combination is not valid.
   bool DetectShaderVersionMismatch() const;
 
-  // Sets fragment input-location binding from a
-  // glBindFragmentInputLocationCHROMIUM() call.
-  void SetFragmentInputLocationBinding(const std::string& name, GLint location);
-
   // Sets program output variable location. Also sets color index to zero.
   void SetProgramOutputLocationBinding(const std::string& name,
                                        GLuint colorName);
@@ -390,11 +377,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // Return true if a varying is statically used in fragment shader, but it
   // is not declared in vertex shader.
   bool DetectVaryingsMismatch(std::string* conflicting_name) const;
-
-  // Detects if there are fragment input location conflicts from
-  // glBindFragmentInputLocationCHROMIUM() calls.
-  // We only consider the statically used fragment inputs in the program.
-  bool DetectFragmentInputLocationBindingConflicts() const;
 
   // Detects if there are program output location conflicts from
   // glBindFragDataLocation and ..LocationIndexedEXT calls.
@@ -430,6 +412,14 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   }
 
   GLint draw_id_uniform_location() const { return draw_id_uniform_location_; }
+
+  GLint base_vertex_uniform_location() const {
+    return base_vertex_uniform_location_;
+  }
+
+  GLint base_instance_uniform_location() const {
+    return base_instance_uniform_location_;
+  }
 
   // See member declaration for details.
   // The data are only valid after a successful link.
@@ -496,7 +486,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // Updates the program info after a successful link.
   void Update();
   bool UpdateUniforms();
-  void UpdateFragmentInputs();
   void UpdateProgramOutputs();
   void UpdateFragmentOutputBaseTypes();
   void UpdateVertexInputBaseTypes();
@@ -514,6 +503,12 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
   // Updates the draw id uniform location used by ANGLE_multi_draw
   void UpdateDrawIDUniformLocation();
+
+  // Updates the base vertex and base instance uniform location used by
+  // ANGLE_base_vertex_base_instance
+  void UpdateBaseVertexUniformLocation();
+
+  void UpdateBaseInstanceUniformLocation();
 
   // If long attribate names are mapped during shader translation, call
   // glBindAttribLocation() again with the mapped names.
@@ -569,9 +564,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // The indices of the uniforms that are samplers.
   SamplerIndices sampler_indices_;
 
-  FragmentInputInfoVector fragment_input_infos_;
-  FragmentInputLocationVector fragment_input_locations_;
-
   ProgramOutputInfoVector program_output_infos_;
 
   // The program this Program is tracking.
@@ -596,6 +588,10 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // ANGLE_multi_draw
   GLint draw_id_uniform_location_;
 
+  // ANGLE_base_vertex_base_instance
+  GLint base_vertex_uniform_location_;
+  GLint base_instance_uniform_location_;
+
   // Log info
   std::unique_ptr<std::string> log_info_;
 
@@ -617,10 +613,6 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   // The size requirement is per vertex. Total minimum buffer size requirment
   // is calculated at DrawArrays{Instanced} time by multiplying vertex count.
   std::vector<GLsizeiptr> transform_feedback_data_size_per_vertex_;
-
-  // Fragment input-location binding map from
-  // glBindFragmentInputLocationCHROMIUM() calls.
-  LocationMap bind_fragment_input_location_map_;
 
   // output variable - (location,index) binding map from
   // glBindFragDataLocation() and ..IndexedEXT() calls.
@@ -693,12 +685,23 @@ class GPU_GLES2_EXPORT ProgramManager {
   // Updates the draw id location for this program for ANGLE_multi_draw
   void UpdateDrawIDUniformLocation(Program* program);
 
+  // Updates the base vertex location for this program for
+  // ANGLE_base_vertex_base_instance
+  void UpdateBaseVertexUniformLocation(Program* program);
+
+  // Updates the base instance location for this program for
+  // ANGLE_base_vertex_base_instance
+  void UpdateBaseInstanceUniformLocation(Program* program);
+
   // Returns true if |name| has a prefix that is intended for GL built-in shader
   // variables.
   static bool HasBuiltInPrefix(const std::string& name);
 
   // Check if a Program is owned by this ProgramManager.
   bool IsOwned(Program* program) const;
+
+  // Return true if this shader has compiled status cached.
+  bool HasCachedCompileStatus(Shader* shader) const;
 
   static int32_t MakeFakeLocation(int32_t index, int32_t element);
 

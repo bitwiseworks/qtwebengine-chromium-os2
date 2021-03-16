@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/net_errors.h"
+#include "net/base/network_isolation_key.h"
 #include "net/proxy_resolution/proxy_resolver.h"
 #include "net/proxy_resolution/proxy_resolver_factory.h"
 #include "url/gurl.h"
@@ -30,7 +31,7 @@ class MockAsyncProxyResolver : public ProxyResolver {
 
     const GURL& url() const { return url_; }
     ProxyInfo* results() const { return results_; }
-    MockAsyncProxyResolver* Resolver() const { return resolver_; };
+    MockAsyncProxyResolver* Resolver() const { return resolver_; }
 
     void CompleteNow(int rv);
 
@@ -60,6 +61,7 @@ class MockAsyncProxyResolver : public ProxyResolver {
 
   // ProxyResolver implementation.
   int GetProxyForURL(const GURL& url,
+                     const NetworkIsolationKey& network_isolation_key,
                      ProxyInfo* results,
                      CompletionOnceCallback callback,
                      std::unique_ptr<Request>* request,
@@ -148,6 +150,7 @@ class ForwardingProxyResolver : public ProxyResolver {
 
   // ProxyResolver overrides.
   int GetProxyForURL(const GURL& query_url,
+                     const NetworkIsolationKey& network_isolation_key,
                      ProxyInfo* results,
                      CompletionOnceCallback callback,
                      std::unique_ptr<Request>* request,

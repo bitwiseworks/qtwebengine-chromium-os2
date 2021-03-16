@@ -7,6 +7,7 @@ import json
 import os.path
 import sys
 import optparse
+
 _script_path = os.path.realpath(__file__)
 
 sys.path.insert(0, os.path.normpath(_script_path + "/../../json_comment_eater"))
@@ -21,15 +22,30 @@ try:
 finally:
   sys.path.pop(0)
 
+sys.path.insert(
+    0,
+    os.path.normpath(_script_path + "/../../../components/variations/service"))
+try:
+  import generate_ui_string_overrider
+finally:
+  sys.path.pop(0)
+
 _platforms = [
-  'android',
-  'android_webview',
-  'chromeos',
-  'fuchsia',
-  'ios',
-  'linux',
-  'mac',
-  'windows',
+    'android',
+    'android_weblayer',
+    'android_webview',
+    'chromeos',
+    'fuchsia',
+    'ios',
+    'linux',
+    'mac',
+    'windows',
+]
+
+_form_factors = [
+    'desktop',
+    'phone',
+    'tablet',
 ]
 
 # Convert a platform argument to the matching Platform enum value in
@@ -38,9 +54,12 @@ def _PlatformEnumValue(platform):
   assert platform in _platforms
   return 'Study::PLATFORM_' + platform.upper()
 
+def _FormFactorEnumValue(form_factor):
+  assert form_factor in _form_factors
+  return 'Study::' + form_factor.upper()
+
 def _Load(filename):
-  """Loads a JSON file into a Python object and return this object.
-  """
+  """Loads a JSON file into a Python object and return this object."""
   with open(filename, 'r') as handle:
     result = json.loads(json_comment_eater.Nom(handle.read()))
   return result
@@ -51,11 +70,41 @@ def _LoadFieldTrialConfig(filename, platforms):
   """
   return _FieldTrialConfigToDescription(_Load(filename), platforms)
 
-def _CreateExperiment(experiment_data, platforms):
+def _ConvertOverrideUIStrings(override_ui_strings):
+  """Converts override_ui_strings to formatted dicts."""
+  overrides = []
+  for ui_string, override in override_ui_strings.iteritems():
+    overrides.append({
+        'name_hash': generate_ui_string_overrider.HashName(ui_string),
+        'value': override
+    })
+  return overrides
+
+def _CreateExperiment(experiment_data,
+                      platforms,
+                      form_factors,
+                      is_low_end_device):
+  """Creates an experiment dictionary with all necessary information.
+
+  Args:
+    experiment_data: An experiment json config.
+    platforms: A list of platforms for this trial. This should be
+      a subset of |_platforms|.
+    form_factors: A list of form factors for this trial. This should be
+      a subset of |_form_factors|.
+    is_low_end_device: An optional parameter. This can either be True or
+      False. None if not specified.
+
+  Returns:
+    An experiment dict.
+  """
   experiment = {
     'name': experiment_data['name'],
     'platforms': [_PlatformEnumValue(p) for p in platforms],
+    'form_factors': [_FormFactorEnumValue(f) for f in form_factors],
   }
+  if is_low_end_device is not None:
+    experiment['is_low_end_device'] = str(is_low_end_device).lower()
   forcing_flags_data = experiment_data.get('forcing_flag')
   if forcing_flags_data:
     experiment['forcing_flag'] = forcing_flags_data
@@ -69,18 +118,29 @@ def _CreateExperiment(experiment_data, platforms):
   disable_features_data = experiment_data.get('disable_features')
   if disable_features_data:
     experiment['disable_features'] = disable_features_data
+  override_ui_strings = experiment_data.get('override_ui_strings')
+  if override_ui_strings:
+    experiment['override_ui_string'] = _ConvertOverrideUIStrings(
+        override_ui_strings)
   return experiment
 
 def _CreateTrial(study_name, experiment_configs, platforms):
-  """Returns the applicable experiments for |study_name| and |platforms|. This
-  iterates through all of the experiment_configs for |study_name| and picks out
-  the applicable experiments based off of the valid platforms.
+  """Returns the applicable experiments for |study_name| and |platforms|.
+
+  This iterates through all of the experiment_configs for |study_name|
+  and picks out the applicable experiments based off of the valid platforms
+  and device type settings if specified.
   """
   experiments = []
   for config in experiment_configs:
     platform_intersection = [p for p in platforms if p in config['platforms']]
+
     if platform_intersection:
-      experiments += [_CreateExperiment(e, platform_intersection)
+      experiments += [_CreateExperiment(
+                          e,
+                          platform_intersection,
+                          config.get('form_factors', []),
+                          config.get('is_low_end_device'))
                       for e in config['experiments']]
   return {
     'name': study_name,

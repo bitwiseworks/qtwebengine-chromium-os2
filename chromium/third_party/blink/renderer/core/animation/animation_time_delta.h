@@ -5,15 +5,17 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_ANIMATION_TIME_DELTA_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_ANIMATION_ANIMATION_TIME_DELTA_H_
 
+#include "third_party/blink/renderer/core/animation/buildflags.h"
+
+#if BUILDFLAG(BLINK_ANIMATION_USE_TIME_DELTA)
+#include "base/time/time.h"
+#endif
+
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 #include <limits>
 #include <ostream>
-
-#if defined(BLINK_ANIMATION_USE_TIME_DELTA)
-#include "third_party/blink/renderer/platform/wtf/time.h"
-#endif
 
 namespace blink {
 
@@ -27,7 +29,7 @@ namespace blink {
 // double-precision. The second mode uses base::TimeDelta to represent time
 // instead.
 
-#if !defined(BLINK_ANIMATION_USE_TIME_DELTA)
+#if !BUILDFLAG(BLINK_ANIMATION_USE_TIME_DELTA)
 
 // The double-based version of AnimationTimeDelta. Internally, time is stored as
 // double-precision seconds.
@@ -67,6 +69,9 @@ class CORE_EXPORT AnimationTimeDelta {
   AnimationTimeDelta& operator+=(AnimationTimeDelta other) {
     return *this = (*this + other);
   }
+  AnimationTimeDelta operator-(AnimationTimeDelta other) const {
+    return AnimationTimeDelta(delta_ - other.delta_);
+  }
   template <typename T>
   AnimationTimeDelta operator*(T a) const {
     return AnimationTimeDelta(delta_ * a);
@@ -96,6 +101,8 @@ bool CORE_EXPORT operator!=(const AnimationTimeDelta& lhs,
                             const AnimationTimeDelta& rhs);
 bool CORE_EXPORT operator>(const AnimationTimeDelta& lhs,
                            const AnimationTimeDelta& rhs);
+bool CORE_EXPORT operator<(const AnimationTimeDelta& lhs,
+                           const AnimationTimeDelta& rhs);
 bool CORE_EXPORT operator>=(const AnimationTimeDelta& lhs,
                             const AnimationTimeDelta& rhs);
 bool CORE_EXPORT operator<=(const AnimationTimeDelta& lhs,
@@ -105,11 +112,11 @@ bool CORE_EXPORT operator<=(const AnimationTimeDelta& lhs,
 CORE_EXPORT std::ostream& operator<<(std::ostream& os,
                                      const AnimationTimeDelta& time);
 
-#else  // !defined(BLINK_ANIMATION_USE_TIME_DELTA)
+#else  // !BUILDFLAG(BLINK_ANIMATION_USE_TIME_DELTA)
 
 // When compiling in TimeDelta-based mode, AnimationTimeDelta is equivalent to
 // base::TimeDelta.
-using AnimationTimeDelta = TimeDelta;
+using AnimationTimeDelta = base::TimeDelta;
 
 #endif
 

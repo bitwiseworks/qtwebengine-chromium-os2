@@ -112,6 +112,10 @@ class AppLauncherHandler
   // [extension_id].
   void HandleCreateAppShortcut(const base::ListValue* args);
 
+  // Handles the "installAppLocally" message with |args| containing
+  // [extension_id].
+  void HandleInstallAppLocally(const base::ListValue* args);
+
   // Handles the "showAppInfo" message with |args| containing [extension_id].
   void HandleShowAppInfo(const base::ListValue* args);
 
@@ -149,6 +153,12 @@ class AppLauncherHandler
 
   // Prompts the user to re-enable the app for |extension_id|.
   void PromptToEnableApp(const std::string& extension_id);
+
+  // Registers file handlers for |extension_id|, after shortcuts have been
+  // created.
+  void OnExtensionShortcutsCreatedRegisterFileHandlers(
+      const extensions::ExtensionId& extension_id,
+      bool shortcuts_created);
 
   // ExtensionUninstallDialog::Delegate:
   void OnExtensionUninstallDialogClosed(bool did_start_uninstall,
@@ -223,6 +233,9 @@ class AppLauncherHandler
 
   // Used for favicon loading tasks.
   base::CancelableTaskTracker cancelable_task_tracker_;
+
+  // Used to register file handlers after shortcuts have been created.
+  base::WeakPtrFactory<AppLauncherHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AppLauncherHandler);
 };

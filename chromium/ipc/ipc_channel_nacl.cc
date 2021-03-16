@@ -83,8 +83,9 @@ class ChannelNacl::ReaderThreadRunner
   //                      above callbacks.
   ReaderThreadRunner(
       int pipe,
-      base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback,
-      base::Callback<void()> failure_callback,
+      base::RepeatingCallback<void(std::unique_ptr<MessageContents>)>
+          data_read_callback,
+      base::RepeatingCallback<void()> failure_callback,
       scoped_refptr<base::SingleThreadTaskRunner> main_task_runner);
 
   // DelegateSimpleThread implementation. Reads data from the pipe in a loop
@@ -93,8 +94,9 @@ class ChannelNacl::ReaderThreadRunner
 
  private:
   int pipe_;
-  base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback_;
-  base::Callback<void ()> failure_callback_;
+  base::RepeatingCallback<void(std::unique_ptr<MessageContents>)>
+      data_read_callback_;
+  base::RepeatingCallback<void()> failure_callback_;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(ReaderThreadRunner);
@@ -102,8 +104,9 @@ class ChannelNacl::ReaderThreadRunner
 
 ChannelNacl::ReaderThreadRunner::ReaderThreadRunner(
     int pipe,
-    base::Callback<void(std::unique_ptr<MessageContents>)> data_read_callback,
-    base::Callback<void()> failure_callback,
+    base::RepeatingCallback<void(std::unique_ptr<MessageContents>)>
+        data_read_callback,
+    base::RepeatingCallback<void()> failure_callback,
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner)
     : pipe_(pipe),
       data_read_callback_(data_read_callback),
@@ -117,7 +120,7 @@ void ChannelNacl::ReaderThreadRunner::Run() {
     if (success) {
       main_task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(data_read_callback_, base::Passed(&msg_contents)));
+          base::BindOnce(data_read_callback_, std::move(msg_contents)));
     } else {
       main_task_runner_->PostTask(FROM_HERE, failure_callback_);
       // Because the read failed, we know we're going to quit. Don't bother
@@ -163,8 +166,10 @@ bool ChannelNacl::Connect() {
   // ReaderThreadRunner.
   reader_thread_runner_.reset(new ReaderThreadRunner(
       pipe_,
-      base::Bind(&ChannelNacl::DidRecvMsg, weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&ChannelNacl::ReadDidFail, weak_ptr_factory_.GetWeakPtr()),
+      base::BindRepeating(&ChannelNacl::DidRecvMsg,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindRepeating(&ChannelNacl::ReadDidFail,
+                          weak_ptr_factory_.GetWeakPtr()),
       base::ThreadTaskRunnerHandle::Get()));
   reader_thread_.reset(
       new base::DelegateSimpleThread(reader_thread_runner_.get(),
@@ -174,8 +179,8 @@ bool ChannelNacl::Connect() {
   // If there were any messages queued before connection, send them.
   ProcessOutgoingMessages();
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ChannelNacl::CallOnChannelConnected,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&ChannelNacl::CallOnChannelConnected,
+                                weak_ptr_factory_.GetWeakPtr()));
 
   return true;
 }
@@ -207,9 +212,8 @@ bool ChannelNacl::Send(Message* message) {
   Logging::GetInstance()->OnSendMessage(message_ptr.get());
 #endif  // BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 
-  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("ipc.flow"),
-                         "ChannelNacl::Send",
-                         message->header()->flags,
+  TRACE_EVENT_WITH_FLOW0(TRACE_DISABLED_BY_DEFAULT("toplevel.flow"),
+                         "ChannelNacl::Send", message->header()->flags,
                          TRACE_EVENT_FLAG_FLOW_OUT);
   output_queue_.push_back(std::move(message_ptr));
   if (!waiting_connect_)

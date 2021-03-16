@@ -4,10 +4,14 @@
 
 #include "content/browser/service_worker/service_worker_registration_object_host.h"
 
+#include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/service_worker_consts.h"
+#include "content/browser/service_worker/service_worker_container_host.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
+#include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_object_host.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/common/service_worker/service_worker_utils.h"
@@ -26,10 +30,10 @@ constexpr base::TimeDelta kMaxSelfUpdateDelay = base::TimeDelta::FromMinutes(3);
 // Returns an object info to send over Mojo. The info must be sent immediately.
 // See ServiceWorkerObjectHost::CreateCompleteObjectInfoToSend() for details.
 blink::mojom::ServiceWorkerObjectInfoPtr CreateCompleteObjectInfoToSend(
-    ServiceWorkerProviderHost* provider_host,
+    ServiceWorkerContainerHost* container_host,
     ServiceWorkerVersion* version) {
   base::WeakPtr<ServiceWorkerObjectHost> service_worker_object_host =
-      provider_host->GetOrCreateServiceWorkerObjectHost(version);
+      container_host->GetOrCreateServiceWorkerObjectHost(version);
   if (!service_worker_object_host)
     return nullptr;
   return service_worker_object_host->CreateCompleteObjectInfoToSend();
@@ -39,9 +43,11 @@ void ExecuteUpdate(base::WeakPtr<ServiceWorkerContextCore> context,
                    int64_t registration_id,
                    bool force_bypass_cache,
                    bool skip_script_comparison,
+                   blink::mojom::FetchClientSettingsObjectPtr
+                       outside_fetch_client_settings_object,
                    ServiceWorkerContextCore::UpdateCallback callback,
                    blink::ServiceWorkerStatusCode status) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(ServiceWorkerContext::GetCoreThreadId());
 
   if (status != blink::ServiceWorkerStatusCode::kOk) {
     // The delay was already very long and update() is rejected immediately.
@@ -70,26 +76,26 @@ void ExecuteUpdate(base::WeakPtr<ServiceWorkerContextCore> context,
     return;
   }
 
-  context->UpdateServiceWorker(registration, force_bypass_cache,
-                               skip_script_comparison, std::move(callback));
+  context->UpdateServiceWorker(
+      registration, force_bypass_cache, skip_script_comparison,
+      std::move(outside_fetch_client_settings_object), std::move(callback));
 }
 
 }  // anonymous namespace
 
 ServiceWorkerRegistrationObjectHost::ServiceWorkerRegistrationObjectHost(
     base::WeakPtr<ServiceWorkerContextCore> context,
-    ServiceWorkerProviderHost* provider_host,
+    ServiceWorkerContainerHost* container_host,
     scoped_refptr<ServiceWorkerRegistration> registration)
-    : provider_host_(provider_host),
+    : container_host_(container_host),
       context_(context),
-      registration_(registration),
-      weak_ptr_factory_(this) {
+      registration_(registration) {
   DCHECK(registration_.get());
-  DCHECK(provider_host_);
+  DCHECK(container_host_);
   registration_->AddListener(this);
-  bindings_.set_connection_error_handler(
-      base::Bind(&ServiceWorkerRegistrationObjectHost::OnConnectionError,
-                 base::Unretained(this)));
+  receivers_.set_disconnect_handler(base::BindRepeating(
+      &ServiceWorkerRegistrationObjectHost::OnConnectionError,
+      base::Unretained(this)));
 }
 
 ServiceWorkerRegistrationObjectHost::~ServiceWorkerRegistrationObjectHost() {
@@ -103,15 +109,17 @@ ServiceWorkerRegistrationObjectHost::CreateObjectInfo() {
   info->registration_id = registration_->id();
   info->scope = registration_->scope();
   info->update_via_cache = registration_->update_via_cache();
-  bindings_.AddBinding(this, mojo::MakeRequest(&info->host_ptr_info));
-  info->request = mojo::MakeRequest(&remote_registration_);
+  receivers_.Add(this, info->host_remote.InitWithNewEndpointAndPassReceiver());
+
+  remote_registration_.reset();
+  info->receiver = remote_registration_.BindNewEndpointAndPassReceiver();
 
   info->installing = CreateCompleteObjectInfoToSend(
-      provider_host_, registration_->installing_version());
+      container_host_, registration_->installing_version());
   info->waiting = CreateCompleteObjectInfoToSend(
-      provider_host_, registration_->waiting_version());
+      container_host_, registration_->waiting_version());
   info->active = CreateCompleteObjectInfoToSend(
-      provider_host_, registration_->active_version());
+      container_host_, registration_->active_version());
   return info;
 }
 
@@ -144,41 +152,74 @@ void ServiceWorkerRegistrationObjectHost::OnUpdateFound(
   remote_registration_->UpdateFound();
 }
 
-void ServiceWorkerRegistrationObjectHost::Update(UpdateCallback callback) {
-  if (!CanServeRegistrationObjectHostMethods(&callback,
-                                             kServiceWorkerUpdateErrorPrefix)) {
+void ServiceWorkerRegistrationObjectHost::Update(
+    blink::mojom::FetchClientSettingsObjectPtr
+        outside_fetch_client_settings_object,
+    UpdateCallback callback) {
+  // Run steps according to section 3.2.7:
+  // https://w3c.github.io/ServiceWorker/#service-worker-registration-update
+
+  // 1. Let |registration| be the service worker registration.
+  ServiceWorkerRegistration* registration = registration_.get();
+  DCHECK(registration);
+
+  // 2. Let |newest_worker| be the result of running Get Newest Worker algorithm
+  // passing |registration| as its argument.
+  ServiceWorkerVersion* newest_worker = registration->GetNewestVersion();
+
+  if (!CanServeRegistrationObjectHostMethods(
+          &callback, ComposeUpdateErrorMessagePrefix(newest_worker))) {
     return;
   }
 
-  if (!registration_->GetNewestVersion()) {
+  // 3. If |newest_worker| is null, return a promise rejected with an
+  // "InvalidStateError" DOMException and abort these steps.
+  if (!newest_worker) {
     // This can happen if update() is called during initial script evaluation.
-    // Abort the following steps according to the spec.
-    std::move(callback).Run(
-        blink::mojom::ServiceWorkerErrorType::kState,
-        std::string(kServiceWorkerUpdateErrorPrefix) +
-            std::string(ServiceWorkerConsts::kInvalidStateErrorMessage));
+    std::move(callback).Run(blink::mojom::ServiceWorkerErrorType::kState,
+                            ComposeUpdateErrorMessagePrefix(nullptr) +
+                                ServiceWorkerConsts::kInvalidStateErrorMessage);
     return;
+  }
+
+  // 4. If the context object’s relevant settings object’s global object
+  // globalObject is a ServiceWorkerGlobalScope object, and globalObject’s
+  // associated service worker's state is installing, return a promise rejected
+  // with an "InvalidStateError" DOMException and abort these steps.
+  ServiceWorkerVersion* version = nullptr;
+  if (container_host_->IsContainerForServiceWorker()) {
+    version = container_host_->service_worker_host()->running_hosted_version();
+    DCHECK(version);
+    if (ServiceWorkerVersion::Status::INSTALLING == version->status()) {
+      // This can happen if update() is called during execution of the
+      // install-event-handler.
+      std::move(callback).Run(
+          blink::mojom::ServiceWorkerErrorType::kState,
+          ComposeUpdateErrorMessagePrefix(version) +
+              ServiceWorkerConsts::kInvalidStateErrorMessage);
+      return;
+    }
   }
 
   DelayUpdate(
-      provider_host_->provider_type(), registration_.get(),
-      provider_host_->running_hosted_version(),
+      container_host_->type(), registration, version,
       base::BindOnce(
-          &ExecuteUpdate, context_, registration_->id(),
+          &ExecuteUpdate, context_, registration->id(),
           false /* force_bypass_cache */, false /* skip_script_comparison */,
+          std::move(outside_fetch_client_settings_object),
           base::BindOnce(&ServiceWorkerRegistrationObjectHost::UpdateComplete,
                          weak_ptr_factory_.GetWeakPtr(), std::move(callback))));
 }
 
 void ServiceWorkerRegistrationObjectHost::DelayUpdate(
-    blink::mojom::ServiceWorkerProviderType provider_type,
+    blink::mojom::ServiceWorkerContainerType container_type,
     ServiceWorkerRegistration* registration,
     ServiceWorkerVersion* version,
     StatusCallback update_function) {
   DCHECK(registration);
 
-  if (provider_type !=
-          blink::mojom::ServiceWorkerProviderType::kForServiceWorker ||
+  if (container_type !=
+          blink::mojom::ServiceWorkerContainerType::kForServiceWorker ||
       (version && version->HasControllee())) {
     // Don't delay update() if called by non-workers or by workers with
     // controllees.
@@ -205,22 +246,23 @@ void ServiceWorkerRegistrationObjectHost::DelayUpdate(
     return;
   }
 
-  base::PostDelayedTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::BindOnce(std::move(update_function),
-                     blink::ServiceWorkerStatusCode::kOk),
-      delay);
+  base::PostDelayedTask(FROM_HERE, {ServiceWorkerContext::GetCoreThreadId()},
+                        base::BindOnce(std::move(update_function),
+                                       blink::ServiceWorkerStatusCode::kOk),
+                        delay);
 }
 
 void ServiceWorkerRegistrationObjectHost::Unregister(
     UnregisterCallback callback) {
   if (!CanServeRegistrationObjectHostMethods(
-          &callback, kServiceWorkerUnregisterErrorPrefix)) {
+          &callback,
+          std::string(
+              ServiceWorkerConsts::kServiceWorkerUnregisterErrorPrefix))) {
     return;
   }
 
   context_->UnregisterServiceWorker(
-      registration_->scope(),
+      registration_->scope(), /*is_immediate=*/false,
       base::AdaptCallbackForRepeating(base::BindOnce(
           &ServiceWorkerRegistrationObjectHost::UnregistrationComplete,
           weak_ptr_factory_.GetWeakPtr(), std::move(callback))));
@@ -231,7 +273,8 @@ void ServiceWorkerRegistrationObjectHost::EnableNavigationPreload(
     EnableNavigationPreloadCallback callback) {
   if (!CanServeRegistrationObjectHostMethods(
           &callback,
-          ServiceWorkerConsts::kEnableNavigationPreloadErrorPrefix)) {
+          std::string(
+              ServiceWorkerConsts::kEnableNavigationPreloadErrorPrefix))) {
     return;
   }
 
@@ -243,7 +286,7 @@ void ServiceWorkerRegistrationObjectHost::EnableNavigationPreload(
     return;
   }
 
-  context_->storage()->UpdateNavigationPreloadEnabled(
+  context_->registry()->UpdateNavigationPreloadEnabled(
       registration_->id(), registration_->scope().GetOrigin(), enable,
       base::AdaptCallbackForRepeating(base::BindOnce(
           &ServiceWorkerRegistrationObjectHost::
@@ -254,7 +297,9 @@ void ServiceWorkerRegistrationObjectHost::EnableNavigationPreload(
 void ServiceWorkerRegistrationObjectHost::GetNavigationPreloadState(
     GetNavigationPreloadStateCallback callback) {
   if (!CanServeRegistrationObjectHostMethods(
-          &callback, ServiceWorkerConsts::kGetNavigationPreloadStateErrorPrefix,
+          &callback,
+          std::string(
+              ServiceWorkerConsts::kGetNavigationPreloadStateErrorPrefix),
           nullptr)) {
     return;
   }
@@ -269,7 +314,8 @@ void ServiceWorkerRegistrationObjectHost::SetNavigationPreloadHeader(
     SetNavigationPreloadHeaderCallback callback) {
   if (!CanServeRegistrationObjectHostMethods(
           &callback,
-          ServiceWorkerConsts::kSetNavigationPreloadHeaderErrorPrefix)) {
+          std::string(
+              ServiceWorkerConsts::kSetNavigationPreloadHeaderErrorPrefix))) {
     return;
   }
 
@@ -285,12 +331,12 @@ void ServiceWorkerRegistrationObjectHost::SetNavigationPreloadHeader(
   // TODO(falken): Ideally this would match Blink's isValidHTTPHeaderValue.
   // Chrome's check is less restrictive: it allows non-latin1 characters.
   if (!net::HttpUtil::IsValidHeaderValue(value)) {
-    bindings_.ReportBadMessage(
+    receivers_.ReportBadMessage(
         ServiceWorkerConsts::kBadNavigationPreloadHeaderValue);
     return;
   }
 
-  context_->storage()->UpdateNavigationPreloadHeader(
+  context_->registry()->UpdateNavigationPreloadHeader(
       registration_->id(), registration_->scope().GetOrigin(), value,
       base::AdaptCallbackForRepeating(base::BindOnce(
           &ServiceWorkerRegistrationObjectHost::
@@ -308,8 +354,9 @@ void ServiceWorkerRegistrationObjectHost::UpdateComplete(
     blink::mojom::ServiceWorkerErrorType error_type;
     GetServiceWorkerErrorTypeForRegistration(status, status_message,
                                              &error_type, &error_message);
-    std::move(callback).Run(error_type,
-                            kServiceWorkerUpdateErrorPrefix + error_message);
+    std::move(callback).Run(error_type, ComposeUpdateErrorMessagePrefix(
+                                            registration_->GetNewestVersion()) +
+                                            error_message);
     return;
   }
 
@@ -326,7 +373,8 @@ void ServiceWorkerRegistrationObjectHost::UnregistrationComplete(
     GetServiceWorkerErrorTypeForRegistration(status, std::string(), &error_type,
                                              &error_message);
     std::move(callback).Run(
-        error_type, kServiceWorkerUnregisterErrorPrefix + error_message);
+        error_type, ServiceWorkerConsts::kServiceWorkerUnregisterErrorPrefix +
+                        error_message);
     return;
   }
 
@@ -385,12 +433,12 @@ void ServiceWorkerRegistrationObjectHost::SetServiceWorkerObjects(
   blink::mojom::ServiceWorkerObjectInfoPtr active;
   if (changed_mask->installing) {
     installing =
-        CreateCompleteObjectInfoToSend(provider_host_, installing_version);
+        CreateCompleteObjectInfoToSend(container_host_, installing_version);
   }
   if (changed_mask->waiting)
-    waiting = CreateCompleteObjectInfoToSend(provider_host_, waiting_version);
+    waiting = CreateCompleteObjectInfoToSend(container_host_, waiting_version);
   if (changed_mask->active)
-    active = CreateCompleteObjectInfoToSend(provider_host_, active_version);
+    active = CreateCompleteObjectInfoToSend(container_host_, active_version);
 
   DCHECK(remote_registration_);
   remote_registration_->SetServiceWorkerObjects(
@@ -399,55 +447,64 @@ void ServiceWorkerRegistrationObjectHost::SetServiceWorkerObjects(
 }
 
 void ServiceWorkerRegistrationObjectHost::OnConnectionError() {
-  // If there are still bindings, |this| is still being used.
-  if (!bindings_.empty())
+  // If there are still receivers, |this| is still being used.
+  if (!receivers_.empty())
     return;
   // Will destroy |this|.
-  provider_host_->RemoveServiceWorkerRegistrationObjectHost(
+  container_host_->RemoveServiceWorkerRegistrationObjectHost(
       registration()->id());
 }
 
 template <typename CallbackType, typename... Args>
 bool ServiceWorkerRegistrationObjectHost::CanServeRegistrationObjectHostMethods(
     CallbackType* callback,
-    const char* error_prefix,
+    const std::string& error_prefix,
     Args... args) {
   if (!context_) {
     std::move(*callback).Run(
         blink::mojom::ServiceWorkerErrorType::kAbort,
-        std::string(error_prefix) +
-            std::string(ServiceWorkerConsts::kShutdownErrorMessage),
-        args...);
+        error_prefix + ServiceWorkerConsts::kShutdownErrorMessage, args...);
     return false;
   }
 
   // TODO(falken): This check can be removed once crbug.com/439697 is fixed.
   // (Also see crbug.com/776408)
-  if (provider_host_->url().is_empty()) {
+  if (container_host_->url().is_empty()) {
     std::move(*callback).Run(
         blink::mojom::ServiceWorkerErrorType::kSecurity,
-        std::string(error_prefix) +
-            std::string(ServiceWorkerConsts::kNoDocumentURLErrorMessage),
+        error_prefix + ServiceWorkerConsts::kNoDocumentURLErrorMessage,
         args...);
     return false;
   }
 
-  std::vector<GURL> urls = {provider_host_->url(), registration_->scope()};
+  std::vector<GURL> urls = {container_host_->url(), registration_->scope()};
   if (!ServiceWorkerUtils::AllOriginsMatchAndCanAccessServiceWorkers(urls)) {
-    bindings_.ReportBadMessage(ServiceWorkerConsts::kBadMessageImproperOrigins);
+    receivers_.ReportBadMessage(
+        ServiceWorkerConsts::kBadMessageImproperOrigins);
     return false;
   }
 
-  if (!provider_host_->AllowServiceWorker(registration_->scope())) {
+  if (!container_host_->AllowServiceWorker(registration_->scope(), GURL())) {
     std::move(*callback).Run(
         blink::mojom::ServiceWorkerErrorType::kDisabled,
-        std::string(error_prefix) +
-            std::string(ServiceWorkerConsts::kUserDeniedPermissionMessage),
+        error_prefix + ServiceWorkerConsts::kUserDeniedPermissionMessage,
         args...);
     return false;
   }
 
   return true;
+}
+
+std::string
+ServiceWorkerRegistrationObjectHost::ComposeUpdateErrorMessagePrefix(
+    const ServiceWorkerVersion* version_to_update) const {
+  DCHECK(registration_);
+  const char* script_url = version_to_update
+                               ? version_to_update->script_url().spec().c_str()
+                               : "Unknown";
+  return base::StringPrintf(
+      ServiceWorkerConsts::kServiceWorkerUpdateErrorPrefix,
+      registration_->scope().spec().c_str(), script_url);
 }
 
 }  // namespace content

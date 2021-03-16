@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/values.h"
 #include "cc/raster/raster_buffer_provider.h"
 
@@ -22,7 +21,11 @@ class LayerTreeFrameSink;
 
 class CC_EXPORT BitmapRasterBufferProvider : public RasterBufferProvider {
  public:
+  BitmapRasterBufferProvider(const BitmapRasterBufferProvider&) = delete;
   ~BitmapRasterBufferProvider() override;
+
+  BitmapRasterBufferProvider& operator=(const BitmapRasterBufferProvider&) =
+      delete;
 
   explicit BitmapRasterBufferProvider(LayerTreeFrameSink* frame_sink);
 
@@ -30,10 +33,12 @@ class CC_EXPORT BitmapRasterBufferProvider : public RasterBufferProvider {
   std::unique_ptr<RasterBuffer> AcquireBufferForRaster(
       const ResourcePool::InUsePoolResource& resource,
       uint64_t resource_content_id,
-      uint64_t previous_content_id) override;
+      uint64_t previous_content_id,
+      bool depends_on_at_raster_decodes,
+      bool depends_on_hardware_accelerated_jpeg_candidates,
+      bool depends_on_hardware_accelerated_webp_candidates) override;
   void Flush() override;
   viz::ResourceFormat GetResourceFormat() const override;
-  bool IsResourceSwizzleRequired() const override;
   bool IsResourcePremultiplied() const override;
   bool CanPartialRasterIntoProvidedResource() const override;
   bool IsResourceReadyToDraw(
@@ -50,8 +55,6 @@ class CC_EXPORT BitmapRasterBufferProvider : public RasterBufferProvider {
       const;
 
   LayerTreeFrameSink* const frame_sink_;
-
-  DISALLOW_COPY_AND_ASSIGN(BitmapRasterBufferProvider);
 };
 
 }  // namespace cc

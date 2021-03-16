@@ -7,26 +7,13 @@
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
-ApplyConstraintsRequest* ApplyConstraintsRequest::Create(
-    const WebMediaStreamTrack& track,
-    const WebMediaConstraints& constraints,
-    ScriptPromiseResolver* resolver) {
-  return MakeGarbageCollected<ApplyConstraintsRequest>(track, constraints,
-                                                       resolver);
-}
-
-ApplyConstraintsRequest* ApplyConstraintsRequest::CreateForTesting(
-    const WebMediaStreamTrack& track,
-    const WebMediaConstraints& constraints) {
-  return Create(track, constraints, nullptr);
-}
-
 ApplyConstraintsRequest::ApplyConstraintsRequest(
     const WebMediaStreamTrack& track,
-    const WebMediaConstraints& constraints,
+    const MediaConstraints& constraints,
     ScriptPromiseResolver* resolver)
     : track_(track), constraints_(constraints), resolver_(resolver) {}
 
@@ -34,7 +21,7 @@ WebMediaStreamTrack ApplyConstraintsRequest::Track() const {
   return track_;
 }
 
-WebMediaConstraints ApplyConstraintsRequest::Constraints() const {
+MediaConstraints ApplyConstraintsRequest::Constraints() const {
   return constraints_;
 }
 
@@ -47,12 +34,14 @@ void ApplyConstraintsRequest::RequestSucceeded() {
 
 void ApplyConstraintsRequest::RequestFailed(const String& constraint,
                                             const String& message) {
-  if (resolver_)
-    resolver_->Reject(OverconstrainedError::Create(constraint, message));
+  if (resolver_) {
+    resolver_->Reject(
+        MakeGarbageCollected<OverconstrainedError>(constraint, message));
+  }
   track_.Reset();
 }
 
-void ApplyConstraintsRequest::Trace(blink::Visitor* visitor) {
+void ApplyConstraintsRequest::Trace(Visitor* visitor) {
   visitor->Trace(resolver_);
 }
 

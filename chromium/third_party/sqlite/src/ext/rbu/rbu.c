@@ -10,7 +10,7 @@
 **
 *************************************************************************
 **
-** This file contains a command-line application that uses the RBU
+** This file contains a command-line application that uses the RBU 
 ** extension. See the usage() function below for an explanation.
 */
 
@@ -23,7 +23,7 @@
 ** Print a usage message and exit.
 */
 void usage(const char *zArgv0){
-  fprintf(stderr,
+  fprintf(stderr, 
 "Usage: %s ?OPTIONS? TARGET-DB RBU-DB\n"
 "\n"
 "Where options are:\n"
@@ -94,15 +94,15 @@ int main(int argc, char **argv){
     int nArg = strlen(zArg);
     if( nArg>1 && nArg<=8 && 0==memcmp(zArg, "-vacuum", nArg) ){
       bVacuum = 1;
-    }else if( nArg>1 && nArg<=7
+    }else if( nArg>1 && nArg<=7 
            && 0==memcmp(zArg, "-presql", nArg) && i<nArg-1 ){
       i++;
       zPreSql = argv[i];
     }else if( nArg>1 && nArg<=5 && 0==memcmp(zArg, "-step", nArg) && i<nArg-1 ){
       i++;
       nStep = atoi(argv[i]);
-    }else if( nArg>1 && nArg<=9
-           && 0==memcmp(zArg, "-statstep", nArg) && i<nArg-1
+    }else if( nArg>1 && nArg<=9 
+           && 0==memcmp(zArg, "-statstep", nArg) && i<nArg-1 
     ){
       i++;
       nStatStep = atoi(argv[i]);

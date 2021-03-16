@@ -17,7 +17,7 @@ ExecutionContext* RemoteDOMWindow::GetExecutionContext() const {
   return nullptr;
 }
 
-void RemoteDOMWindow::Trace(blink::Visitor* visitor) {
+void RemoteDOMWindow::Trace(Visitor* visitor) {
   DOMWindow::Trace(visitor);
 }
 
@@ -35,16 +35,6 @@ void RemoteDOMWindow::SchedulePostMessage(
     MessageEvent* event,
     scoped_refptr<const SecurityOrigin> target,
     Document* source) {
-  // Restrict the user gesture to be forwarded cross-process at most once. This
-  // helps avoid unbounded usage of the same user gesture by issuing multiple
-  // postMessages to OOPIFs from this process.  A complementary restriction on
-  // the receiver side prevents unbounded chaining of user gestures across
-  // processes.
-  bool has_user_gesture = UserGestureIndicator::ProcessingUserGesture() &&
-                          !UserGestureIndicator::WasForwardedCrossProcess();
-  if (has_user_gesture)
-    UserGestureIndicator::SetWasForwardedCrossProcess();
-
   // To match same-process behavior, the IPC to forward postMessage
   // cross-process should only be sent after the current script finishes
   // running, to preserve relative ordering of IPCs.  See
@@ -56,25 +46,26 @@ void RemoteDOMWindow::SchedulePostMessage(
   // postMessage. We might consider forcing layout in ForwardPostMessage or
   // further delaying postMessage forwarding until after the next BeginFrame.
   source->GetTaskRunner(TaskType::kPostedMessage)
-      ->PostTask(
-          FROM_HERE,
-          WTF::Bind(&RemoteDOMWindow::ForwardPostMessage, WrapPersistent(this),
-                    WrapPersistent(event), std::move(target),
-                    WrapPersistent(source), has_user_gesture));
+      ->PostTask(FROM_HERE,
+                 WTF::Bind(&RemoteDOMWindow::ForwardPostMessage,
+                           WrapPersistent(this), WrapPersistent(event),
+                           std::move(target), WrapPersistent(source)));
 }
 
 void RemoteDOMWindow::ForwardPostMessage(
     MessageEvent* event,
     scoped_refptr<const SecurityOrigin> target,
-    Document* source,
-    bool has_user_gesture) {
+    Document* source) {
   // If the target frame was detached after the message was scheduled,
   // don't deliver the message.
   if (!GetFrame())
     return;
 
-  GetFrame()->Client()->ForwardPostMessage(
-      event, std::move(target), source->GetFrame(), has_user_gesture);
+  base::Optional<base::UnguessableToken> agent_cluster;
+  if (event->IsLockedToAgentCluster())
+    agent_cluster = source->GetExecutionContext()->GetAgentClusterID();
+  GetFrame()->Client()->ForwardPostMessage(event, std::move(target),
+                                           agent_cluster, source->GetFrame());
 }
 
 }  // namespace blink

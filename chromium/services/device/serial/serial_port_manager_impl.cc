@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/sequenced_task_runner.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/device/serial/serial_device_enumerator.h"
@@ -22,32 +23,56 @@ SerialPortManagerImpl::SerialPortManagerImpl(
 
 SerialPortManagerImpl::~SerialPortManagerImpl() = default;
 
-void SerialPortManagerImpl::Bind(mojom::SerialPortManagerRequest request) {
-  bindings_.AddBinding(this, std::move(request));
+void SerialPortManagerImpl::Bind(
+    mojo::PendingReceiver<mojom::SerialPortManager> receiver) {
+  receivers_.Add(this, std::move(receiver));
 }
 
 void SerialPortManagerImpl::SetSerialEnumeratorForTesting(
     std::unique_ptr<SerialDeviceEnumerator> fake_enumerator) {
   DCHECK(fake_enumerator);
   enumerator_ = std::move(fake_enumerator);
+  observed_enumerator_.Add(enumerator_.get());
+}
+
+void SerialPortManagerImpl::SetClient(
+    mojo::PendingRemote<mojom::SerialPortManagerClient> client) {
+  clients_.Add(std::move(client));
 }
 
 void SerialPortManagerImpl::GetDevices(GetDevicesCallback callback) {
-  if (!enumerator_)
-    enumerator_ = SerialDeviceEnumerator::Create();
+  if (!enumerator_) {
+    enumerator_ = SerialDeviceEnumerator::Create(ui_task_runner_);
+    observed_enumerator_.Add(enumerator_.get());
+  }
   std::move(callback).Run(enumerator_->GetDevices());
 }
 
-void SerialPortManagerImpl::GetPort(const base::UnguessableToken& token,
-                                    mojom::SerialPortRequest request) {
-  if (!enumerator_)
-    enumerator_ = SerialDeviceEnumerator::Create();
+void SerialPortManagerImpl::GetPort(
+    const base::UnguessableToken& token,
+    mojo::PendingReceiver<mojom::SerialPort> receiver,
+    mojo::PendingRemote<mojom::SerialPortConnectionWatcher> watcher) {
+  if (!enumerator_) {
+    enumerator_ = SerialDeviceEnumerator::Create(ui_task_runner_);
+    observed_enumerator_.Add(enumerator_.get());
+  }
   base::Optional<base::FilePath> path = enumerator_->GetPathFromToken(token);
   if (path) {
     io_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&SerialPortImpl::Create, *path,
-                                  std::move(request), ui_task_runner_));
+        FROM_HERE,
+        base::BindOnce(&SerialPortImpl::Create, *path, std::move(receiver),
+                       std::move(watcher), ui_task_runner_));
   }
+}
+
+void SerialPortManagerImpl::OnPortAdded(const mojom::SerialPortInfo& port) {
+  for (auto& client : clients_)
+    client->OnPortAdded(port.Clone());
+}
+
+void SerialPortManagerImpl::OnPortRemoved(const mojom::SerialPortInfo& port) {
+  for (auto& client : clients_)
+    client->OnPortRemoved(port.Clone());
 }
 
 }  // namespace device

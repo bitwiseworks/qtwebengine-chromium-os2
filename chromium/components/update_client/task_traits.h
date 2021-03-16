@@ -9,6 +9,8 @@
 
 namespace update_client {
 
+// Task traits for tasks posted to base::ThreadPool from update_client.
+
 constexpr base::TaskTraits kTaskTraits = {
     base::MayBlock(), base::TaskPriority::BEST_EFFORT,
     base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN};

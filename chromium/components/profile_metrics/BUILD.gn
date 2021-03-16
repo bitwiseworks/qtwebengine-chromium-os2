@@ -4,11 +4,12 @@
 
 static_library("profile_metrics") {
   sources = [
+    "browser_profile_type.h",
     "counts.cc",
     "counts.h",
+    "state.cc",
+    "state.h",
   ]
 
-  deps = [
-    "//base",
-  ]
+  deps = [ "//base" ]
 }

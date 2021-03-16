@@ -40,6 +40,23 @@ namespace net {
 
 namespace {
 
+// This turns all rules with a hostname into wildcard matches, which will
+// match not just the indicated hostname but also any hostname that ends with
+// it.
+void RewriteRulesForSuffixMatching(ProxyBypassRules* out) {
+  // Prepend a wildcard (*) to any hostname based rules, provided it isn't an IP
+  // address.
+  for (size_t i = 0; i < out->rules().size(); ++i) {
+    if (!out->rules()[i]->IsHostnamePatternRule())
+      continue;
+
+    const SchemeHostPortMatcherHostnamePatternRule* prev_rule =
+        static_cast<const SchemeHostPortMatcherHostnamePatternRule*>(
+            out->rules()[i].get());
+    out->ReplaceRule(i, prev_rule->GenerateSuffixMatchingRule());
+  }
+}
+
 // Given a proxy hostname from a setting, returns that hostname with
 // an appropriate proxy server scheme prefix.
 // scheme indicates the desired proxy scheme: usually http, with
@@ -199,8 +216,9 @@ ProxyConfigServiceLinux::Delegate::GetConfigFromEnv() {
   }
   // Note that this uses "suffix" matching. So a bypass of "google.com"
   // is understood to mean a bypass of "*google.com".
-  config.proxy_rules().bypass_rules.ParseFromString(
-      no_proxy, ProxyBypassRules::ParseFormat::kHostnameSuffixMatching);
+  config.proxy_rules().bypass_rules.ParseFromString(no_proxy);
+  RewriteRulesForSuffixMatching(&config.proxy_rules().bypass_rules);
+
   return ProxyConfigWithAnnotation(
       config, NetworkTrafficAnnotationTag(traffic_annotation_));
 }
@@ -381,9 +399,7 @@ class SettingGetterImplGSettings
     return false;
   }
 
-  ProxyBypassRules::ParseFormat GetBypassListFormat() override {
-    return ProxyBypassRules::ParseFormat::kDefault;
-  }
+  bool UseSuffixMatching() override { return false; }
 
  private:
   bool GetStringByPath(GSettings* client,
@@ -600,7 +616,7 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter {
 
     constexpr base::TaskTraits kTraits = {base::TaskPriority::USER_VISIBLE,
                                           base::MayBlock()};
-    file_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(kTraits);
+    file_task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(kTraits);
 
     // The initial read is done on the current thread, not
     // |file_task_runner_|, since we will need to have it for
@@ -635,8 +651,9 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter {
     }
     notify_delegate_ = delegate;
     inotify_watcher_ = base::FileDescriptorWatcher::WatchReadable(
-        inotify_fd_, base::Bind(&SettingGetterImplKDE::OnChangeNotification,
-                                base::Unretained(this)));
+        inotify_fd_,
+        base::BindRepeating(&SettingGetterImplKDE::OnChangeNotification,
+                            base::Unretained(this)));
     // Simulate a change to avoid possibly losing updates before this point.
     OnChangeNotification();
     return true;
@@ -673,9 +690,7 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter {
 
   bool BypassListIsReversed() override { return reversed_bypass_list_; }
 
-  ProxyBypassRules::ParseFormat GetBypassListFormat() override {
-    return ProxyBypassRules::ParseFormat::kHostnameSuffixMatching;
-  }
+  bool UseSuffixMatching() override { return true; }
 
  private:
   void ResetCachedSettings() {
@@ -1004,7 +1019,7 @@ bool ProxyConfigServiceLinux::Delegate::GetProxyFromSettings(
   setting_getter_->GetInt(port_key, &port);
   if (port != 0) {
     // If a port is set and non-zero:
-    host += ":" + base::IntToString(port);
+    host += ":" + base::NumberToString(port);
   }
 
   // gsettings settings do not appear to distinguish between SOCKS version. We
@@ -1141,16 +1156,19 @@ ProxyConfigServiceLinux::Delegate::GetConfigFromSettings() {
   }
 
   // Now the bypass list.
-  auto format = setting_getter_->GetBypassListFormat();
-
   std::vector<std::string> ignore_hosts_list;
   config.proxy_rules().bypass_rules.Clear();
   if (setting_getter_->GetStringList(SettingGetter::PROXY_IGNORE_HOSTS,
                                      &ignore_hosts_list)) {
     for (const auto& rule : ignore_hosts_list) {
-      config.proxy_rules().bypass_rules.AddRuleFromString(rule, format);
+      config.proxy_rules().bypass_rules.AddRuleFromString(rule);
     }
   }
+
+  if (setting_getter_->UseSuffixMatching()) {
+    RewriteRulesForSuffixMatching(&config.proxy_rules().bypass_rules);
+  }
+
   // Note that there are no settings with semantics corresponding to
   // bypass of local names in GNOME. In KDE, "<local>" is supported
   // as a hostname rule.
@@ -1227,7 +1245,7 @@ void ProxyConfigServiceLinux::Delegate::SetUpAndFetchInitialConfig(
   // cached_config_, where GetLatestProxyConfig() running on the main TaskRunner
   // will expect to find it. This is safe to do because we return
   // before this ProxyConfigServiceLinux is passed on to
-  // the ProxyResolutionService.
+  // the ConfiguredProxyResolutionService.
 
   // Note: It would be nice to prioritize environment variables
   // and only fall back to gsettings if env vars were unset. But
@@ -1268,8 +1286,10 @@ void ProxyConfigServiceLinux::Delegate::SetUpAndFetchInitialConfig(
         SetUpNotifications();
       } else {
         // Post a task to set up notifications. We don't wait for success.
-        required_loop->PostTask(FROM_HERE, base::Bind(
-            &ProxyConfigServiceLinux::Delegate::SetUpNotifications, this));
+        required_loop->PostTask(
+            FROM_HERE,
+            base::BindOnce(
+                &ProxyConfigServiceLinux::Delegate::SetUpNotifications, this));
       }
     }
   }
@@ -1340,8 +1360,8 @@ void ProxyConfigServiceLinux::Delegate::OnCheckProxyConfigSettings() {
     // update |cached_config_|.
     main_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&ProxyConfigServiceLinux::Delegate::SetNewProxyConfig, this,
-                   new_config));
+        base::BindOnce(&ProxyConfigServiceLinux::Delegate::SetNewProxyConfig,
+                       this, new_config));
     // Update the thread-private copy in |reference_config_| as well.
     reference_config_ = new_config;
   } else {
@@ -1373,8 +1393,9 @@ void ProxyConfigServiceLinux::Delegate::PostDestroyTask() {
   } else {
     // Post to shutdown thread. Note that on browser shutdown, we may quit
     // this MessageLoop and exit the program before ever running this.
-    shutdown_loop->PostTask(FROM_HERE, base::Bind(
-        &ProxyConfigServiceLinux::Delegate::OnDestroy, this));
+    shutdown_loop->PostTask(
+        FROM_HERE,
+        base::BindOnce(&ProxyConfigServiceLinux::Delegate::OnDestroy, this));
   }
 }
 void ProxyConfigServiceLinux::Delegate::OnDestroy() {

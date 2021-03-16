@@ -76,17 +76,20 @@ class WebFrameSerializerImpl {
   // individual chunks of data to be saved.
   WebFrameSerializerImpl(WebLocalFrame*,
                          WebFrameSerializerClient*,
-                         WebFrameSerializer::LinkRewritingDelegate*);
+                         WebFrameSerializer::LinkRewritingDelegate*,
+                         bool);
 
  private:
   // Specified frame which need to be serialized;
-  Member<WebLocalFrameImpl> specified_web_local_frame_impl_;
+  WebLocalFrameImpl* specified_web_local_frame_impl_;
   // Pointer of WebFrameSerializerClient
   WebFrameSerializerClient* client_;
   // Pointer of WebFrameSerializer::LinkRewritingDelegate
   WebFrameSerializer::LinkRewritingDelegate* delegate_;
   // Data buffer for saving result of serialized DOM data.
   StringBuilder data_buffer_;
+  // Whether frame url should be shown in MOTW in the serialized html.
+  bool save_with_empty_url_;
 
   // Web entities conversion maps.
   WebEntities html_entities_;
@@ -100,12 +103,12 @@ class WebFrameSerializerImpl {
 
     const KURL& url;
     const WTF::TextEncoding& text_encoding;
-    Member<Document> document;
+    Document* document;
     bool is_html_document;  // document.isHTMLDocument()
     bool have_seen_doc_type;
     bool have_added_charset_declaration;
     // This meta element need to be skipped when serializing DOM.
-    Member<const Element> skip_meta_element;
+    const Element* skip_meta_element;
     bool have_added_xml_processing_directive;
     // Flag indicates whether we have added additional contents before end tag.
     // This flag will be re-assigned in each call of function

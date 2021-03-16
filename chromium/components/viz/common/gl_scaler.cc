@@ -185,17 +185,16 @@ bool GLScaler::Configure(const Parameters& new_params) {
       params_.scale_from != params_.scale_to) {
     // Ensure the scaling color space is using a linear transfer function.
     constexpr auto kLinearFunction = std::make_tuple(1, 0, 1, 0, 0, 0, 1);
-    SkColorSpaceTransferFn fn;
+    skcms_TransferFunction fn;
     if (params_.source_color_space.GetTransferFunction(&fn) &&
-        std::make_tuple(fn.fA, fn.fB, fn.fC, fn.fD, fn.fE, fn.fF, fn.fG) ==
+        std::make_tuple(fn.a, fn.b, fn.c, fn.d, fn.e, fn.f, fn.g) ==
             kLinearFunction) {
       scaling_color_space_ = params_.source_color_space;
     } else {
       // Use the source color space, but with a linear transfer function.
       skcms_Matrix3x3 to_XYZD50;
       params_.source_color_space.GetPrimaryMatrix(&to_XYZD50);
-      std::tie(fn.fA, fn.fB, fn.fC, fn.fD, fn.fE, fn.fF, fn.fG) =
-          kLinearFunction;
+      std::tie(fn.a, fn.b, fn.c, fn.d, fn.e, fn.f, fn.g) = kLinearFunction;
       scaling_color_space_ = gfx::ColorSpace::CreateCustom(to_XYZD50, fn);
     }
     intermediate_texture_type = GL_HALF_FLOAT_OES;
@@ -211,12 +210,6 @@ bool GLScaler::Configure(const Parameters& new_params) {
     transform = gfx::ColorTransform::NewColorTransform(
         scaling_color_space_, params_.output_color_space,
         gfx::ColorTransform::Intent::INTENT_PERCEPTUAL);
-    if (!transform->CanGetShaderSource()) {
-      NOTIMPLEMENTED() << "color transform from "
-                       << scaling_color_space_.ToString() << " to "
-                       << params_.output_color_space.ToString();
-      return false;
-    }
   }
   ScalerStage* const final_stage = chain.get();
   final_stage->set_shader_program(
@@ -248,12 +241,6 @@ bool GLScaler::Configure(const Parameters& new_params) {
     transform = gfx::ColorTransform::NewColorTransform(
         params_.source_color_space, scaling_color_space_,
         gfx::ColorTransform::Intent::INTENT_PERCEPTUAL);
-    if (!transform->CanGetShaderSource()) {
-      NOTIMPLEMENTED() << "color transform from "
-                       << params_.source_color_space.ToString() << " to "
-                       << scaling_color_space_.ToString();
-      return false;
-    }
     input_stage->set_shader_program(
         GetShaderProgram(input_stage->shader(), intermediate_texture_type,
                          transform.get(), kNoSwizzle));
@@ -1390,6 +1377,7 @@ void GLScaler::ScalerStage::ScaleToMultipleOutputs(
   // It would be better to stash the existing parameter values, and restore them
   // back later. However, glGetTexParameteriv() currently requires a blocking
   // call to the GPU service, which is extremely costly performance-wise.
+  gl_->ActiveTexture(GL_TEXTURE0);
   gl_->BindTexture(GL_TEXTURE_2D, src_texture);
   gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   gl_->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);

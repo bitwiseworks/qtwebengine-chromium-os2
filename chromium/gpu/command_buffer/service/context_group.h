@@ -33,7 +33,6 @@ namespace gpu {
 class ImageFactory;
 struct GpuPreferences;
 class MailboxManager;
-class TransferBufferManager;
 class SharedImageManager;
 class SharedImageRepresentationFactory;
 class ServiceDiscardableManager;
@@ -47,7 +46,6 @@ class ProgramCache;
 class BufferManager;
 class ImageManager;
 class RenderbufferManager;
-class PathManager;
 class ProgramManager;
 class SamplerManager;
 class ShaderManager;
@@ -90,6 +88,10 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   void Destroy(DecoderContext* decoder, bool have_context);
 
   MailboxManager* mailbox_manager() const { return mailbox_manager_; }
+
+  gpu::SharedImageManager* shared_image_manager() const {
+    return shared_image_manager_;
+  }
 
   MemoryTracker* memory_tracker() const { return memory_tracker_.get(); }
 
@@ -181,8 +183,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
     return texture_manager_.get();
   }
 
-  PathManager* path_manager() const { return path_manager_.get(); }
-
   ProgramManager* program_manager() const {
     return program_manager_.get();
   }
@@ -197,10 +197,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
 
   ShaderManager* shader_manager() const {
     return shader_manager_.get();
-  }
-
-  TransferBufferManager* transfer_buffer_manager() const {
-    return transfer_buffer_manager_.get();
   }
 
   SamplerManager* sampler_manager() const {
@@ -274,7 +270,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   std::unique_ptr<MemoryTracker> memory_tracker_;
   ShaderTranslatorCache* shader_translator_cache_;
   FramebufferCompletenessCache* framebuffer_completeness_cache_;
-  std::unique_ptr<TransferBufferManager> transfer_buffer_manager_;
 
   bool enforce_gl_minimums_;
   bool bind_generates_resource_;
@@ -306,8 +301,6 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
   std::unique_ptr<RenderbufferManager> renderbuffer_manager_;
 
   std::unique_ptr<TextureManager> texture_manager_;
-
-  std::unique_ptr<PathManager> path_manager_;
 
   std::unique_ptr<ProgramManager> program_manager_;
 
@@ -341,6 +334,8 @@ class GPU_GLES2_EXPORT ContextGroup : public base::RefCounted<ContextGroup> {
 
   std::unique_ptr<SharedImageRepresentationFactory>
       shared_image_representation_factory_;
+
+  gpu::SharedImageManager* shared_image_manager_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ContextGroup);
 };

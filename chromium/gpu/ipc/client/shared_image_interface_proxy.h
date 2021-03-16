@@ -8,42 +8,65 @@
 #include "base/memory/read_only_shared_memory_region.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "build/build_config.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/buffer.h"
 
 namespace gpu {
 class GpuChannelHost;
 
-// Implementation of SharedImageInterface that sends commands over GPU channel
-// IPCs.
-class SharedImageInterfaceProxy : public SharedImageInterface {
+// Proxy that sends commands over GPU channel IPCs for managing shared images.
+class SharedImageInterfaceProxy {
  public:
   explicit SharedImageInterfaceProxy(GpuChannelHost* host, int32_t route_id);
-  ~SharedImageInterfaceProxy() override;
+  ~SharedImageInterfaceProxy();
   Mailbox CreateSharedImage(viz::ResourceFormat format,
                             const gfx::Size& size,
                             const gfx::ColorSpace& color_space,
-                            uint32_t usage) override;
+                            uint32_t usage);
   Mailbox CreateSharedImage(viz::ResourceFormat format,
                             const gfx::Size& size,
                             const gfx::ColorSpace& color_space,
                             uint32_t usage,
-                            base::span<const uint8_t> pixel_data) override;
+                            base::span<const uint8_t> pixel_data);
   Mailbox CreateSharedImage(gfx::GpuMemoryBuffer* gpu_memory_buffer,
                             GpuMemoryBufferManager* gpu_memory_buffer_manager,
                             const gfx::ColorSpace& color_space,
-                            uint32_t usage) override;
+                            uint32_t usage);
+  void UpdateSharedImage(const SyncToken& sync_token, const Mailbox& mailbox);
   void UpdateSharedImage(const SyncToken& sync_token,
-                         const Mailbox& mailbox) override;
+                         std::unique_ptr<gfx::GpuFence> acquire_fence,
+                         const Mailbox& mailbox);
 
-  void DestroySharedImage(const SyncToken& sync_token,
-                          const Mailbox& mailbox) override;
-  SyncToken GenUnverifiedSyncToken() override;
+  void DestroySharedImage(const SyncToken& sync_token, const Mailbox& mailbox);
+  SyncToken GenVerifiedSyncToken();
+  SyncToken GenUnverifiedSyncToken();
+  void Flush();
+
+  SharedImageInterface::SwapChainMailboxes CreateSwapChain(
+      viz::ResourceFormat format,
+      const gfx::Size& size,
+      const gfx::ColorSpace& color_space,
+      uint32_t usage);
+  void PresentSwapChain(const SyncToken& sync_token, const Mailbox& mailbox);
+
+#if defined(OS_FUCHSIA)
+  void RegisterSysmemBufferCollection(gfx::SysmemBufferCollectionId id,
+                                      zx::channel token);
+  void ReleaseSysmemBufferCollection(gfx::SysmemBufferCollectionId id);
+#endif  // defined(OS_FUCHSIA)
+
+  scoped_refptr<gfx::NativePixmap> GetNativePixmap(const gpu::Mailbox& mailbox);
+
+  uint32_t UsageForMailbox(const Mailbox& mailbox);
 
  private:
   bool GetSHMForPixelData(base::span<const uint8_t> pixel_data,
                           size_t* shm_offset,
                           bool* done_with_shm) EXCLUSIVE_LOCKS_REQUIRED(lock_);
+
+  void AddMailbox(const Mailbox& mailbox, uint32_t usage)
+      EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   GpuChannelHost* const host_;
   const int32_t route_id_;
@@ -55,6 +78,8 @@ class SharedImageInterfaceProxy : public SharedImageInterface {
   base::MappedReadOnlyRegion upload_buffer_ GUARDED_BY(lock_);
   // The offset into |upload_buffer_| at which data is no longer used.
   size_t upload_buffer_offset_ GUARDED_BY(lock_) = 0;
+
+  base::flat_map<Mailbox, uint32_t> mailbox_to_usage_ GUARDED_BY(lock_);
 };
 
 }  // namespace gpu

@@ -26,12 +26,13 @@
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
 #include "third_party/blink/renderer/core/svg/svg_resource_client.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
 namespace blink {
 
 class ComputedStyle;
+class FilterEffect;
 class LayoutObject;
 class LayoutSVGResourceClipper;
 class LayoutSVGResourceFilter;
@@ -39,6 +40,8 @@ class LayoutSVGResourceMarker;
 class LayoutSVGResourceMasker;
 class LayoutSVGResourcePaintServer;
 class SVGElement;
+class SVGElementResourceClient;
+class SVGFilterGraphNodeMap;
 
 // Holds a set of resources associated with a LayoutObject
 class SVGResources {
@@ -47,7 +50,8 @@ class SVGResources {
  public:
   SVGResources();
 
-  static SVGResourceClient* GetClient(const LayoutObject&);
+  static SVGElementResourceClient* GetClient(const LayoutObject&);
+  static FloatRect ReferenceBoxForEffects(const LayoutObject&);
 
   static std::unique_ptr<SVGResources> BuildResources(const LayoutObject&,
                                                       const ComputedStyle&);
@@ -110,13 +114,14 @@ class SVGResources {
   void BuildSetOfResources(HashSet<LayoutSVGResourceContainer*>&);
 
   // Methods operating on all cached resources
-  InvalidationModeMask RemoveClientFromCache(SVGResourceClient&) const;
   InvalidationModeMask RemoveClientFromCacheAffectingObjectBounds(
-      SVGResourceClient&) const;
+      SVGElementResourceClient&) const;
   void ResourceDestroyed(LayoutSVGResourceContainer*);
   void ClearReferencesTo(LayoutSVGResourceContainer*);
 
-#ifndef NDEBUG
+  static bool DifferenceNeedsLayout(const SVGResources*, const SVGResources*);
+
+#if DCHECK_IS_ON()
   void Dump(const LayoutObject*);
 #endif
 
@@ -147,10 +152,6 @@ class SVGResources {
     ClipperFilterMaskerData()
         : clipper(nullptr), filter(nullptr), masker(nullptr) {}
 
-    static std::unique_ptr<ClipperFilterMaskerData> Create() {
-      return base::WrapUnique(new ClipperFilterMaskerData);
-    }
-
     LayoutSVGResourceClipper* clipper;
     LayoutSVGResourceFilter* filter;
     LayoutSVGResourceMasker* masker;
@@ -164,10 +165,6 @@ class SVGResources {
    public:
     MarkerData()
         : marker_start(nullptr), marker_mid(nullptr), marker_end(nullptr) {}
-
-    static std::unique_ptr<MarkerData> Create() {
-      return std::make_unique<MarkerData>();
-    }
 
     LayoutSVGResourceMarker* marker_start;
     LayoutSVGResourceMarker* marker_mid;
@@ -185,10 +182,6 @@ class SVGResources {
    public:
     FillStrokeData() : fill(nullptr), stroke(nullptr) {}
 
-    static std::unique_ptr<FillStrokeData> Create() {
-      return std::make_unique<FillStrokeData>();
-    }
-
     LayoutSVGResourcePaintServer* fill;
     LayoutSVGResourcePaintServer* stroke;
   };
@@ -198,6 +191,51 @@ class SVGResources {
   std::unique_ptr<FillStrokeData> fill_stroke_data_;
   LayoutSVGResourceContainer* linked_resource_;
   DISALLOW_COPY_AND_ASSIGN(SVGResources);
+};
+
+class FilterData final : public GarbageCollected<FilterData> {
+ public:
+  FilterData(FilterEffect* last_effect, SVGFilterGraphNodeMap* node_map)
+      : last_effect_(last_effect),
+        node_map_(node_map),
+        state_(kRecordingContent) {}
+
+  void UpdateStateOnPrepare();
+  bool UpdateStateOnFinish();
+  bool ContentNeedsUpdate() const { return state_ == kRecordingContent; }
+  void UpdateContent(sk_sp<PaintRecord> content);
+  sk_sp<PaintFilter> CreateFilter();
+  FloatRect MapRect(const FloatRect& input_rect) const;
+  // Perform a finegrained invalidation of the filter chain for the
+  // specified filter primitive and attribute. Returns false if no
+  // further invalidation is required, otherwise true.
+  bool Invalidate(SVGFilterPrimitiveStandardAttributes& primitive,
+                  const QualifiedName& attribute);
+
+  void Dispose();
+
+  void Trace(Visitor*);
+
+ private:
+  Member<FilterEffect> last_effect_;
+  Member<SVGFilterGraphNodeMap> node_map_;
+
+  /*
+   * The state transitions should follow the following:
+   *
+   * RecordingContent->ReadyToPaint->GeneratingFilter->ReadyToPaint
+   *     |     ^                       |     ^
+   *     v     |                       v     |
+   * RecordingContentCycleDetected   GeneratingFilterCycleDetected
+   */
+  enum FilterDataState {
+    kRecordingContent,
+    kRecordingContentCycleDetected,
+    kReadyToPaint,
+    kGeneratingFilter,
+    kGeneratingFilterCycleDetected
+  };
+  FilterDataState state_;
 };
 
 class SVGElementResourceClient final
@@ -212,10 +250,18 @@ class SVGElementResourceClient final
   void ResourceElementChanged() override;
   void ResourceDestroyed(LayoutSVGResourceContainer*) override;
 
+  void FilterPrimitiveChanged(SVGFilterPrimitiveStandardAttributes& primitive,
+                              const QualifiedName& attribute) override;
+
+  void SetFilterData(FilterData*);
+  bool ClearFilterData();
+  FilterData* GetFilterData() const { return filter_data_; }
+
   void Trace(Visitor*) override;
 
  private:
   Member<SVGElement> element_;
+  Member<FilterData> filter_data_;
 };
 
 }  // namespace blink

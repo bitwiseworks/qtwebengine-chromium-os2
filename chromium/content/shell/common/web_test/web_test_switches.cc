@@ -4,21 +4,13 @@
 
 #include "content/shell/common/web_test/web_test_switches.h"
 
+#include "base/command_line.h"
+#include "base/strings/string_split.h"
+
 namespace switches {
 
 // Allow access to external pages during web tests.
 const char kAllowExternalPages[] = "allow-external-pages";
-
-#if defined(OS_ANDROID)
-// Redirect stderr to the given port. Only supported on Android.
-const char kAndroidStderrPort[] = "android-stderr-port";
-
-// Redirect stdin to the given port. Only supported on Android.
-const char kAndroidStdinPort[] = "android-stdin-port";
-
-// Redirect stdout to the given port. Only supported on Android.
-const char kAndroidStdoutPort[] = "android-stdout-port";
-#endif  // defined(OS_ANDROID)
 
 // When specified to "enable-leak-detection" command-line option,
 // causes the leak detector to cause immediate crash when found leak.
@@ -26,9 +18,6 @@ const char kCrashOnFailure[] = "crash-on-failure";
 
 // Run devtools tests in debug mode (not bundled and minified)
 const char kDebugDevTools[] = "debug-devtools";
-
-// Specify a custom path to devtools for devtools tests
-const char kCustomDevToolsFrontend[] = "custom-devtools-frontend";
 
 // Enable accelerated 2D canvas.
 const char kEnableAccelerated2DCanvas[] = "enable-accelerated-2d-canvas";
@@ -46,19 +35,34 @@ const char kEnableLeakDetection[] = "enable-leak-detection";
 // Encode binary web test results (images, audio) using base64.
 const char kEncodeBinary[] = "encode-binary";
 
-// Request the render trees of pages to be dumped as text once they have
-// finished loading.
-const char kRunWebTests[] = "run-web-tests";
-
 // This makes us disable some web-platform runtime features so that we test
 // content_shell as if it was a stable release. It is only followed when
 // kRunWebTest is set. For the features' level, see
 // http://dev.chromium.org/blink/runtime-enabled-features.
 const char kStableReleaseMode[] = "stable-release-mode";
 
-// Enable pixel dumps via "real" surface readbacks, instead of synchronously
-// compositing and reading back pixels.
-const char kEnableDisplayCompositorPixelDump[] =
-    "enable-display-compositor-pixel-dump";
+// Disables the shell from beginning in headless mode. Tests will then attempt
+// to use the hardware GPU for rendering. This is only followed when
+// kRunWebTests is set.
+const char kDisableHeadlessMode[] = "disable-headless-mode";
+
+#if defined(OS_WIN)
+// Registers additional font files on Windows (for fonts outside the usual
+// %WINDIR%\Fonts location). Multiple files can be used by separating them
+// with a semicolon (;).
+const char kRegisterFontFiles[] = "register-font-files";
+
+std::vector<std::string> GetSideloadFontFiles() {
+  std::vector<std::string> files;
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  if (command_line.HasSwitch(switches::kRegisterFontFiles)) {
+    files = base::SplitString(
+        command_line.GetSwitchValueASCII(switches::kRegisterFontFiles), ";",
+        base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  }
+  return files;
+}
+#endif
 
 }  // namespace switches

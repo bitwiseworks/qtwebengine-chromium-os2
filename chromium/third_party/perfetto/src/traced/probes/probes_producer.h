@@ -22,16 +22,16 @@
 #include <utility>
 
 #include "perfetto/base/task_runner.h"
-#include "perfetto/base/watchdog.h"
-#include "perfetto/base/weak_ptr.h"
-#include "perfetto/tracing/core/producer.h"
-#include "perfetto/tracing/core/trace_writer.h"
-#include "perfetto/tracing/core/tracing_service.h"
+#include "perfetto/ext/base/watchdog.h"
+#include "perfetto/ext/base/weak_ptr.h"
+#include "perfetto/ext/tracing/core/producer.h"
+#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
 #include "src/traced/probes/filesystem/inode_file_data_source.h"
 #include "src/traced/probes/ftrace/ftrace_controller.h"
 #include "src/traced/probes/ftrace/ftrace_metadata.h"
 
-#include "perfetto/trace/filesystem/inode_file_map.pbzero.h"
+#include "protos/perfetto/trace/filesystem/inode_file_map.pbzero.h"
 
 namespace perfetto {
 
@@ -54,6 +54,8 @@ class ProbesProducer : public Producer, public FtraceController::Observer {
   void Flush(FlushRequestID,
              const DataSourceInstanceID* data_source_ids,
              size_t num_data_sources) override;
+  void ClearIncrementalState(const DataSourceInstanceID* data_source_ids,
+                             size_t num_data_sources) override;
 
   // FtraceController::Observer implementation.
   void OnFtraceDataWrittenIntoDataSourceBuffers() override;
@@ -77,6 +79,12 @@ class ProbesProducer : public Producer, public FtraceController::Observer {
       TracingSessionID session_id,
       const DataSourceConfig& config);
   std::unique_ptr<ProbesDataSource> CreateAndroidLogDataSource(
+      TracingSessionID session_id,
+      const DataSourceConfig& config);
+  std::unique_ptr<ProbesDataSource> CreatePackagesListDataSource(
+      TracingSessionID session_id,
+      const DataSourceConfig& config);
+  std::unique_ptr<ProbesDataSource> CreateMetatraceDataSource(
       TracingSessionID session_id,
       const DataSourceConfig& config);
 

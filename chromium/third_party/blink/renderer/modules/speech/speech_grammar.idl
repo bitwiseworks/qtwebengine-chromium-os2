@@ -23,12 +23,15 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://dvcs.w3.org/hg/speech-api/raw-file/tip/webspeechapi.html#dfn-speechgrammar
+// https://w3c.github.io/speech-api/#speechgrammar
 
 [
-    Constructor,
+    LegacyWindowAlias=webkitSpeechGrammar,
+    LegacyWindowAlias_Measure,
+    LegacyWindowAlias_RuntimeEnabled=ScriptedSpeechRecognition,
     NoInterfaceObject
 ] interface SpeechGrammar {
+    [Measure] constructor();
     [URL,CallWith=ScriptState] attribute DOMString src;
     attribute float weight;
 };

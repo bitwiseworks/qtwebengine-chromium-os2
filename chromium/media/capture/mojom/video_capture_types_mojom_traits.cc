@@ -5,8 +5,8 @@
 #include "media/capture/mojom/video_capture_types_mojom_traits.h"
 
 #include "media/base/ipc/media_param_traits_macros.h"
-#include "ui/gfx/geometry/mojo/geometry.mojom.h"
-#include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
+#include "ui/gfx/geometry/mojom/geometry.mojom.h"
+#include "ui/gfx/geometry/mojom/geometry_mojom_traits.h"
 
 namespace mojo {
 
@@ -109,16 +109,14 @@ EnumTraits<media::mojom::VideoCapturePixelFormat,
       return media::mojom::VideoCapturePixelFormat::YUY2;
     case media::VideoPixelFormat::PIXEL_FORMAT_ARGB:
       return media::mojom::VideoCapturePixelFormat::ARGB;
+    case media::VideoPixelFormat::PIXEL_FORMAT_BGRA:
+      return media::mojom::VideoCapturePixelFormat::BGRA;
     case media::VideoPixelFormat::PIXEL_FORMAT_XRGB:
       return media::mojom::VideoCapturePixelFormat::XRGB;
     case media::VideoPixelFormat::PIXEL_FORMAT_RGB24:
       return media::mojom::VideoCapturePixelFormat::RGB24;
-    case media::VideoPixelFormat::PIXEL_FORMAT_RGB32:
-      return media::mojom::VideoCapturePixelFormat::RGB32;
     case media::VideoPixelFormat::PIXEL_FORMAT_MJPEG:
       return media::mojom::VideoCapturePixelFormat::MJPEG;
-    case media::VideoPixelFormat::PIXEL_FORMAT_MT21:
-      return media::mojom::VideoCapturePixelFormat::MT21;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV420P9:
       return media::mojom::VideoCapturePixelFormat::YUV420P9;
     case media::VideoPixelFormat::PIXEL_FORMAT_YUV420P10:
@@ -145,6 +143,10 @@ EnumTraits<media::mojom::VideoCapturePixelFormat,
       return media::mojom::VideoCapturePixelFormat::XBGR;
     case media::VideoPixelFormat::PIXEL_FORMAT_P016LE:
       return media::mojom::VideoCapturePixelFormat::P016LE;
+    case media::VideoPixelFormat::PIXEL_FORMAT_XR30:
+      return media::mojom::VideoCapturePixelFormat::XR30;
+    case media::VideoPixelFormat::PIXEL_FORMAT_XB30:
+      return media::mojom::VideoCapturePixelFormat::XB30;
   }
   NOTREACHED();
   return media::mojom::VideoCapturePixelFormat::I420;
@@ -195,14 +197,8 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
     case media::mojom::VideoCapturePixelFormat::RGB24:
       *output = media::PIXEL_FORMAT_RGB24;
       return true;
-    case media::mojom::VideoCapturePixelFormat::RGB32:
-      *output = media::PIXEL_FORMAT_RGB32;
-      return true;
     case media::mojom::VideoCapturePixelFormat::MJPEG:
       *output = media::PIXEL_FORMAT_MJPEG;
-      return true;
-    case media::mojom::VideoCapturePixelFormat::MT21:
-      *output = media::PIXEL_FORMAT_MT21;
       return true;
     case media::mojom::VideoCapturePixelFormat::YUV420P9:
       *output = media::PIXEL_FORMAT_YUV420P9;
@@ -243,6 +239,15 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
     case media::mojom::VideoCapturePixelFormat::P016LE:
       *output = media::PIXEL_FORMAT_P016LE;
       return true;
+    case media::mojom::VideoCapturePixelFormat::XR30:
+      *output = media::PIXEL_FORMAT_XR30;
+      return true;
+    case media::mojom::VideoCapturePixelFormat::XB30:
+      *output = media::PIXEL_FORMAT_XB30;
+      return true;
+    case media::mojom::VideoCapturePixelFormat::BGRA:
+      *output = media::PIXEL_FORMAT_BGRA;
+      return true;
   }
   NOTREACHED();
   return false;
@@ -261,6 +266,8 @@ EnumTraits<media::mojom::VideoCaptureBufferType,
           kSharedMemoryViaRawFileDescriptor;
     case media::VideoCaptureBufferType::kMailboxHolder:
       return media::mojom::VideoCaptureBufferType::kMailboxHolder;
+    case media::VideoCaptureBufferType::kGpuMemoryBuffer:
+      return media::mojom::VideoCaptureBufferType::kGpuMemoryBuffer;
   }
   NOTREACHED();
   return media::mojom::VideoCaptureBufferType::kSharedMemory;
@@ -282,6 +289,9 @@ bool EnumTraits<media::mojom::VideoCaptureBufferType,
       return true;
     case media::mojom::VideoCaptureBufferType::kMailboxHolder:
       *output = media::VideoCaptureBufferType::kMailboxHolder;
+      return true;
+    case media::mojom::VideoCaptureBufferType::kGpuMemoryBuffer:
+      *output = media::VideoCaptureBufferType::kGpuMemoryBuffer;
       return true;
   }
   NOTREACHED();
@@ -1260,6 +1270,43 @@ EnumTraits<media::mojom::VideoCaptureFrameDropReason,
     case media::VideoCaptureFrameDropReason::kBufferPoolBufferAllocationFailed:
       return media::mojom::VideoCaptureFrameDropReason::
           kBufferPoolBufferAllocationFailed;
+    case media::VideoCaptureFrameDropReason::kVideoCaptureImplNotInStartedState:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kVideoCaptureImplNotInStartedState;
+    case media::VideoCaptureFrameDropReason::
+        kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame;
+    case media::VideoCaptureFrameDropReason::
+        kVideoTrackAdapterHasNoResolutionAdapters:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kVideoTrackAdapterHasNoResolutionAdapters;
+    case media::VideoCaptureFrameDropReason::kResolutionAdapterFrameIsNotValid:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameIsNotValid;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterWrappingFrameForCroppingFailed:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterWrappingFrameForCroppingFailed;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterTimestampTooCloseToPrevious:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterTimestampTooCloseToPrevious;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameRateIsHigherThanRequested:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameRateIsHigherThanRequested;
+    case media::VideoCaptureFrameDropReason::kResolutionAdapterHasNoCallbacks:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterHasNoCallbacks;
+    case media::VideoCaptureFrameDropReason::
+        kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame;
+    case media::VideoCaptureFrameDropReason::
+        kRendererSinkFrameDelivererIsNotStarted:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kRendererSinkFrameDelivererIsNotStarted;
   }
   NOTREACHED();
   return media::mojom::VideoCaptureFrameDropReason::kNone;
@@ -1344,6 +1391,56 @@ bool EnumTraits<media::mojom::VideoCaptureFrameDropReason,
         kBufferPoolBufferAllocationFailed:
       *output =
           media::VideoCaptureFrameDropReason::kBufferPoolBufferAllocationFailed;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kVideoCaptureImplNotInStartedState:
+      *output = media::VideoCaptureFrameDropReason::
+          kVideoCaptureImplNotInStartedState;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame:
+      *output = media::VideoCaptureFrameDropReason::
+          kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kVideoTrackAdapterHasNoResolutionAdapters:
+      *output = media::VideoCaptureFrameDropReason::
+          kVideoTrackAdapterHasNoResolutionAdapters;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameIsNotValid:
+      *output =
+          media::VideoCaptureFrameDropReason::kResolutionAdapterFrameIsNotValid;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterWrappingFrameForCroppingFailed:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterWrappingFrameForCroppingFailed;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterTimestampTooCloseToPrevious:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterTimestampTooCloseToPrevious;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameRateIsHigherThanRequested:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameRateIsHigherThanRequested;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterHasNoCallbacks:
+      *output =
+          media::VideoCaptureFrameDropReason::kResolutionAdapterHasNoCallbacks;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame:
+      *output = media::VideoCaptureFrameDropReason::
+          kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kRendererSinkFrameDelivererIsNotStarted:
+      *output = media::VideoCaptureFrameDropReason::
+          kRendererSinkFrameDelivererIsNotStarted;
       return true;
   }
   NOTREACHED();
@@ -1531,20 +1628,6 @@ bool StructTraits<media::mojom::VideoCaptureParamsDataView,
 }
 
 // static
-bool StructTraits<
-    media::mojom::VideoCaptureDeviceDescriptorCameraCalibrationDataView,
-    media::VideoCaptureDeviceDescriptor::CameraCalibration>::
-    Read(media::mojom::VideoCaptureDeviceDescriptorCameraCalibrationDataView
-             data,
-         media::VideoCaptureDeviceDescriptor::CameraCalibration* output) {
-  output->focal_length_x = data.focal_length_x();
-  output->focal_length_y = data.focal_length_y();
-  output->depth_near = data.depth_near();
-  output->depth_far = data.depth_far();
-  return true;
-}
-
-// static
 bool StructTraits<media::mojom::VideoCaptureDeviceDescriptorDataView,
                   media::VideoCaptureDeviceDescriptor>::
     Read(media::mojom::VideoCaptureDeviceDescriptorDataView data,
@@ -1562,8 +1645,6 @@ bool StructTraits<media::mojom::VideoCaptureDeviceDescriptorDataView,
   if (!data.ReadCaptureApi(&(output->capture_api)))
     return false;
   if (!data.ReadTransportType(&(output->transport_type)))
-    return false;
-  if (!data.ReadCameraCalibration(&(output->camera_calibration)))
     return false;
   return true;
 }

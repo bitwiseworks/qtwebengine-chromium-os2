@@ -13,11 +13,11 @@
 
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "core/fxge/cfx_renderdevice.h"
 #include "core/fxge/fx_dib.h"
 #include "xfa/fgas/layout/cfx_txtbreak.h"
 
 class CFGAS_GEFont;
+class TextCharPos;
 
 struct FDE_TEXTEDITPIECE {
   FDE_TEXTEDITPIECE();
@@ -113,7 +113,6 @@ class CFDE_TextEditEngine : public CFX_TxtBreak::Engine {
   float GetFontSize() const { return font_size_; }
   void SetFontColor(FX_ARGB color) { font_color_ = color; }
   FX_ARGB GetFontColor() const { return font_color_; }
-  float GetFontAscent() const;
 
   void SetAlignment(uint32_t alignment);
   float GetLineSpace() const { return line_spacing_; }
@@ -178,7 +177,7 @@ class CFDE_TextEditEngine : public CFX_TxtBreak::Engine {
     return text_piece_info_;
   }
 
-  std::vector<FXTEXT_CHARPOS> GetDisplayPos(const FDE_TEXTEDITPIECE& info);
+  std::vector<TextCharPos> GetDisplayPos(const FDE_TEXTEDITPIECE& info);
 
   void SetMaxEditOperationsForTesting(size_t max);
 
@@ -214,8 +213,11 @@ class CFDE_TextEditEngine : public CFX_TxtBreak::Engine {
   float line_spacing_;
   std::vector<WideString::CharType> content_;
   size_t text_length_;
+
+  // See e.g. https://en.wikipedia.org/wiki/Gap_buffer
   size_t gap_position_;
   size_t gap_size_;
+
   size_t available_width_;
   size_t character_limit_;
   size_t visible_line_count_;

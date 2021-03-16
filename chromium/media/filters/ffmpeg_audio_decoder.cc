@@ -6,6 +6,9 @@
 
 #include <stdint.h>
 
+#include <functional>
+
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/single_thread_task_runner.h"
 #include "media/base/audio_buffer.h"
@@ -66,16 +69,27 @@ std::string FFmpegAudioDecoder::GetDisplayName() const {
 
 void FFmpegAudioDecoder::Initialize(const AudioDecoderConfig& config,
                                     CdmContext* /* cdm_context */,
-                                    const InitCB& init_cb,
+                                    InitCB init_cb,
                                     const OutputCB& output_cb,
                                     const WaitingCB& /* waiting_cb */) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(config.IsValidConfig());
 
-  InitCB bound_init_cb = BindToCurrentLoop(init_cb);
+  InitCB bound_init_cb = BindToCurrentLoop(std::move(init_cb));
 
   if (config.is_encrypted()) {
-    bound_init_cb.Run(false);
+    std::move(bound_init_cb)
+        .Run(Status(StatusCode::kEncryptedContentUnsupported,
+                    "FFmpegAudioDecoder does not support encrypted content"));
+    return;
+  }
+
+  // TODO(dalecurtis): Remove this if ffmpeg ever gets xHE-AAC support.
+  if (config.profile() == AudioCodecProfile::kXHE_AAC) {
+    std::move(bound_init_cb)
+        .Run(Status(StatusCode::kDecoderUnsupportedProfile)
+                 .WithData("decoder", "FFmpegAudioDecoder")
+                 .WithData("profile", config.profile()));
     return;
   }
 
@@ -83,7 +97,7 @@ void FFmpegAudioDecoder::Initialize(const AudioDecoderConfig& config,
 
   if (!ConfigureDecoder(config)) {
     av_sample_format_ = 0;
-    bound_init_cb.Run(false);
+    std::move(bound_init_cb).Run(StatusCode::kDecoderFailedInitialization);
     return;
   }
 
@@ -91,7 +105,7 @@ void FFmpegAudioDecoder::Initialize(const AudioDecoderConfig& config,
   config_ = config;
   output_cb_ = BindToCurrentLoop(output_cb);
   state_ = kNormal;
-  bound_init_cb.Run(true);
+  std::move(bound_init_cb).Run(OkStatus());
 }
 
 void FFmpegAudioDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
@@ -115,13 +129,13 @@ void FFmpegAudioDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
   DecodeBuffer(*buffer, decode_cb_bound);
 }
 
-void FFmpegAudioDecoder::Reset(const base::Closure& closure) {
+void FFmpegAudioDecoder::Reset(base::OnceClosure closure) {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
   avcodec_flush_buffers(codec_context_.get());
   state_ = kNormal;
   ResetTimestampState(config_);
-  task_runner_->PostTask(FROM_HERE, closure);
+  task_runner_->PostTask(FROM_HERE, std::move(closure));
 }
 
 void FFmpegAudioDecoder::DecodeBuffer(const DecoderBuffer& buffer,
@@ -166,12 +180,12 @@ bool FFmpegAudioDecoder::FFmpegDecode(const DecoderBuffer& buffer) {
   }
 
   bool decoded_frame_this_loop = false;
-  // base::Unretained and base::ConstRef are safe to use with the callback given
+  // base::Unretained and std::cref are safe to use with the callback given
   // to DecodePacket() since that callback is only used the function call.
   switch (decoding_loop_->DecodePacket(
-      &packet, base::BindRepeating(
-                   &FFmpegAudioDecoder::OnNewFrame, base::Unretained(this),
-                   base::ConstRef(buffer), &decoded_frame_this_loop))) {
+      &packet, base::BindRepeating(&FFmpegAudioDecoder::OnNewFrame,
+                                   base::Unretained(this), std::cref(buffer),
+                                   &decoded_frame_this_loop))) {
     case FFmpegDecodingLoop::DecodeStatus::kSendPacketFailed:
       MEDIA_LOG(ERROR, media_log_)
           << "Failed to send audio packet for decoding: "
@@ -266,7 +280,7 @@ bool FFmpegAudioDecoder::OnNewFrame(const DecoderBuffer& buffer,
     output->TrimEnd(unread_frames);
 
   *decoded_frame_this_loop = true;
-  if (discard_helper_->ProcessBuffers(buffer, output)) {
+  if (discard_helper_->ProcessBuffers(buffer, output.get())) {
     if (is_config_change &&
         output->sample_rate() != config_.samples_per_second()) {
       // At the boundary of the config change, FFmpeg's AAC decoder gives the
@@ -368,6 +382,11 @@ int FFmpegAudioDecoder::GetAudioBuffer(struct AVCodecContext* s,
   AVSampleFormat format = static_cast<AVSampleFormat>(frame->format);
   SampleFormat sample_format =
       AVSampleFormatToSampleFormat(format, s->codec_id);
+  if (sample_format == kUnknownSampleFormat) {
+    DLOG(ERROR) << "Unknown sample format: " << format;
+    return AVERROR(EINVAL);
+  }
+
   int channels = DetermineChannels(frame);
   if (channels <= 0 || channels >= limits::kMaxChannels) {
     DLOG(ERROR) << "Requested number of channels (" << channels

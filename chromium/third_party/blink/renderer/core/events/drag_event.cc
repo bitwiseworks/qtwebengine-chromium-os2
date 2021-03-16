@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/events/drag_event.h"
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_drag_event_init.h"
 #include "third_party/blink/renderer/core/clipboard/data_transfer.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/events/event_dispatcher.h"
@@ -15,7 +16,7 @@ DragEvent::DragEvent() : data_transfer_(nullptr) {}
 
 DragEvent::DragEvent(const AtomicString& type,
                      const DragEventInit* initializer,
-                     TimeTicks platform_time_stamp,
+                     base::TimeTicks platform_time_stamp,
                      SyntheticEventType synthetic_event_type)
     : MouseEvent(type, initializer, platform_time_stamp, synthetic_event_type),
       data_transfer_(initializer->getDataTransfer()) {}
@@ -28,7 +29,7 @@ bool DragEvent::IsMouseEvent() const {
   return false;
 }
 
-void DragEvent::Trace(blink::Visitor* visitor) {
+void DragEvent::Trace(Visitor* visitor) {
   visitor->Trace(data_transfer_);
   MouseEvent::Trace(visitor);
 }

@@ -9,14 +9,14 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/bind_test_util.h"
-#include "base/test/scoped_task_environment.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "base/test/task_environment.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/content/navigable_contents_delegate.h"
-#include "services/content/public/mojom/constants.mojom.h"
 #include "services/content/public/mojom/navigable_contents.mojom.h"
 #include "services/content/public/mojom/navigable_contents_factory.mojom.h"
 #include "services/content/service_delegate.h"
-#include "services/service_manager/public/cpp/test/test_connector_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -41,7 +41,10 @@ class TestNavigableContentsClient : public mojom::NavigableContentsClient {
   void DidSuppressNavigation(const GURL& url,
                              WindowOpenDisposition disposition,
                              bool from_user_gesture) override {}
+  void UpdateCanGoBack(bool can_go_back) override {}
   void UpdateContentAXTree(const ui::AXTreeID& id) override {}
+  void FocusedNodeChanged(bool is_editable_node,
+                          const gfx::Rect& node_bounds_in_screen) override {}
 
   DISALLOW_COPY_AND_ASSIGN(TestNavigableContentsClient);
 };
@@ -112,23 +115,16 @@ class TestServiceDelegate : public ServiceDelegate {
 
 class ContentServiceTest : public testing::Test {
  public:
-  ContentServiceTest()
-      : service_(&delegate_,
-                 connector_factory_.RegisterInstance(mojom::kServiceName)) {}
+  ContentServiceTest() : service_(&delegate_) {}
   ~ContentServiceTest() override = default;
 
  protected:
   TestServiceDelegate& delegate() { return delegate_; }
 
-  template <typename T>
-  void BindInterface(mojo::InterfaceRequest<T> request) {
-    connector_factory_.GetDefaultConnector()->BindInterface(
-        content::mojom::kServiceName, std::move(request));
-  }
+  Service& service() { return service_; }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
-  service_manager::TestConnectorFactory connector_factory_;
+  base::test::TaskEnvironment task_environment_;
   TestServiceDelegate delegate_;
   Service service_;
 
@@ -136,8 +132,8 @@ class ContentServiceTest : public testing::Test {
 };
 
 TEST_F(ContentServiceTest, NavigableContentsCreation) {
-  mojom::NavigableContentsFactoryPtr factory;
-  BindInterface(mojo::MakeRequest(&factory));
+  mojo::Remote<mojom::NavigableContentsFactory> factory;
+  service().BindNavigableContentsFactory(factory.BindNewPipeAndPassReceiver());
 
   base::RunLoop loop;
 
@@ -149,13 +145,12 @@ TEST_F(ContentServiceTest, NavigableContentsCreation) {
         loop.Quit();
       }));
 
-  mojom::NavigableContentsPtr contents;
+  mojo::Remote<mojom::NavigableContents> contents;
   TestNavigableContentsClient client_impl;
-  mojom::NavigableContentsClientPtr client;
-  mojo::Binding<mojom::NavigableContentsClient> client_binding(
-      &client_impl, mojo::MakeRequest(&client));
+  mojo::Receiver<mojom::NavigableContentsClient> client_receiver(&client_impl);
   factory->CreateContents(mojom::NavigableContentsParams::New(),
-                          mojo::MakeRequest(&contents), std::move(client));
+                          contents.BindNewPipeAndPassReceiver(),
+                          client_receiver.BindNewPipeAndPassRemote());
   loop.Run();
 
   base::RunLoop navigation_loop;

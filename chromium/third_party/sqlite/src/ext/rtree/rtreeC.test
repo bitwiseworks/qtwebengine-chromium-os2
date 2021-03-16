@@ -10,11 +10,11 @@
 #***********************************************************************
 # Make sure the rtreenode() testing function can handle entries with
 # 64-bit rowids.
-#
+# 
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]
-}
+} 
 source [file join [file dirname [info script]] rtree_util.tcl]
 source $testdir/tester.tcl
 ifcapable !rtree { finish_test ; return }
@@ -26,7 +26,7 @@ do_execsql_test 1.0 {
 }
 
 do_eqp_test 1.1 {
-  SELECT * FROM r_tree, t
+  SELECT * FROM r_tree, t 
   WHERE t.x>=min_x AND t.x<=max_x AND t.y>=min_y AND t.x<=max_y
 } {
   QUERY PLAN
@@ -83,7 +83,7 @@ db close
 sqlite3 db test.db
 
 do_eqp_test 2.1 {
-  SELECT * FROM r_tree, t
+  SELECT * FROM r_tree, t 
   WHERE t.x>=min_x AND t.x<=max_x AND t.y>=min_y AND t.x<=max_y
 } {
   QUERY PLAN
@@ -177,7 +177,7 @@ do_execsql_test 4.3 {
 #
 reset_db
 do_execsql_test 5.1 {
-  CREATE TABLE t1(x PRIMARY KEY, y);
+  CREATE TABLE t1(x INT PRIMARY KEY, y);
   CREATE VIRTUAL TABLE rt USING rtree(id, x1, x2, +d1);
 
   INSERT INTO t1(x) VALUES(1);
@@ -278,7 +278,7 @@ ifcapable rtree {
   db close
   sqlite3 db test.db
   do_execsql_test 6.2 { SELECT * FROM t1 } {1}
-
+  
   do_test 6.3 {
     sqlite3 db2 test.db
     db2 eval { DROP TABLE sqlite_stat1 }
@@ -322,7 +322,7 @@ proc do_eqp_execsql_test {tn sql res1 res2} {
 }
 
 do_eqp_execsql_test 7.1 {
-  SELECT id FROM xdir, rt, ydir
+  SELECT id FROM xdir, rt, ydir 
   ON (y1 BETWEEN ymin AND ymax)
   WHERE (x1 BETWEEN xmin AND xmax);
 } {
@@ -335,7 +335,7 @@ do_eqp_execsql_test 7.1 {
 }
 
 do_eqp_execsql_test 7.2 {
-  SELECT * FROM xdir, rt LEFT JOIN ydir
+  SELECT * FROM xdir, rt LEFT JOIN ydir 
   ON (y1 BETWEEN ymin AND ymax)
   WHERE (x1 BETWEEN xmin AND xmax);
 } {
@@ -350,7 +350,7 @@ do_eqp_execsql_test 7.2 {
 }
 
 do_eqp_execsql_test 7.3 {
-  SELECT id FROM xdir, rt CROSS JOIN ydir
+  SELECT id FROM xdir, rt CROSS JOIN ydir 
   ON (y1 BETWEEN ymin AND ymax)
   WHERE (x1 BETWEEN xmin AND xmax);
 } {
@@ -363,7 +363,7 @@ do_eqp_execsql_test 7.3 {
 }
 
 do_eqp_execsql_test 7.4 {
-  SELECT id FROM rt, xdir CROSS JOIN ydir
+  SELECT id FROM rt, xdir CROSS JOIN ydir 
   ON (y1 BETWEEN ymin AND ymax)
   WHERE (x1 BETWEEN xmin AND xmax);
 } {

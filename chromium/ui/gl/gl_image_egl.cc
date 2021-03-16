@@ -5,6 +5,7 @@
 #include "ui/gl/gl_image_egl.h"
 
 #include "ui/gl/egl_util.h"
+#include "ui/gl/gl_enums.h"
 #include "ui/gl/gl_surface_egl.h"
 
 namespace gl {
@@ -41,14 +42,20 @@ gfx::Size GLImageEGL::GetSize() {
   return size_;
 }
 
+GLImageEGL::BindOrCopy GLImageEGL::ShouldBindOrCopy() {
+  return egl_image_ == EGL_NO_IMAGE_KHR ? COPY : BIND;
+}
+
 bool GLImageEGL::BindTexImage(unsigned target) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (egl_image_ == EGL_NO_IMAGE_KHR)
-    return false;
+  DCHECK_EQ(BIND, ShouldBindOrCopy());
 
   glEGLImageTargetTexture2DOES(target, egl_image_);
-  DCHECK_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
-  return true;
+  const GLenum error = glGetError();
+
+  DLOG_IF(ERROR, error != GL_NO_ERROR)
+      << "Error binding EGLImage: " << GLEnums::GetStringError(error);
+  return error == GL_NO_ERROR;
 }
 
 }  // namespace gl

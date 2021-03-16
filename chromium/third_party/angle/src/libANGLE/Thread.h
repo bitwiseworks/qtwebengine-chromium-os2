@@ -1,5 +1,5 @@
 //
-// Copyright(c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -48,7 +48,7 @@ class Thread : public LabeledObject
     Surface *getCurrentReadSurface() const;
     gl::Context *getContext() const;
     gl::Context *getValidContext() const;
-    Display *getCurrentDisplay() const;
+    Display *getDisplay() const;
 
   private:
     EGLLabelKHR mLabel;

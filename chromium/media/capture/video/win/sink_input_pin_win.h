@@ -32,7 +32,7 @@ class SinkInputPin : public PinBase {
   bool IsMediaTypeValid(const AM_MEDIA_TYPE* media_type) override;
   bool GetValidMediaType(int index, AM_MEDIA_TYPE* media_type) override;
 
-  STDMETHOD(Receive)(IMediaSample* media_sample) override;
+  IFACEMETHODIMP Receive(IMediaSample* media_sample) override;
 
  private:
   ~SinkInputPin() override;
@@ -41,6 +41,7 @@ class SinkInputPin : public PinBase {
   float requested_frame_rate_;
   BITMAPINFOHEADER requested_info_header_;
   VideoCaptureFormat resulting_format_;
+  bool flip_y_;
   SinkFilterObserver* observer_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(SinkInputPin);

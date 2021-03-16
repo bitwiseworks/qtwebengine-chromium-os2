@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "core/fxge/render_defines.h"
 #include "third_party/base/ptr_util.h"
 #include "xfa/fde/cfde_textout.h"
 #include "xfa/fgas/font/cfgas_fontmgr.h"
@@ -23,24 +24,20 @@
 #include "xfa/fxgraphics/cxfa_gepath.h"
 #include "xfa/fxgraphics/cxfa_geshading.h"
 
-CFWL_WidgetTP::CFWL_WidgetTP()
-    : m_dwRefCount(1), m_pFDEFont(nullptr), m_pColorData(nullptr) {}
+namespace {
 
-CFWL_WidgetTP::~CFWL_WidgetTP() {}
+CFWL_FontManager* g_FontManager = nullptr;
 
-void CFWL_WidgetTP::Initialize() {}
+}  // namespace
 
-void CFWL_WidgetTP::Finalize() {
-  if (m_pTextOut)
-    FinalizeTTO();
-}
+CFWL_WidgetTP::CFWL_WidgetTP() = default;
+
+CFWL_WidgetTP::~CFWL_WidgetTP() = default;
 
 void CFWL_WidgetTP::DrawBackground(const CFWL_ThemeBackground& pParams) {}
 
 void CFWL_WidgetTP::DrawText(const CFWL_ThemeText& pParams) {
-  if (!m_pTextOut)
-    InitTTO();
-
+  EnsureTTOInitialized();
   int32_t iLen = pParams.m_wsText.GetLength();
   if (iLen <= 0)
     return;
@@ -84,8 +81,7 @@ void CFWL_WidgetTP::InitializeArrowColorData() {
   m_pColorData->clrSign[3] = ArgbEncode(255, 128, 128, 128);
 }
 
-
-void CFWL_WidgetTP::InitTTO() {
+void CFWL_WidgetTP::EnsureTTOInitialized() {
   if (m_pTextOut)
     return;
 
@@ -94,10 +90,6 @@ void CFWL_WidgetTP::InitTTO() {
   m_pTextOut->SetFont(m_pFDEFont);
   m_pTextOut->SetFontSize(FWLTHEME_CAPACITY_FontSize);
   m_pTextOut->SetTextColor(FWLTHEME_CAPACITY_TextColor);
-}
-
-void CFWL_WidgetTP::FinalizeTTO() {
-  m_pTextOut.reset();
 }
 
 void CFWL_WidgetTP::DrawBorder(CXFA_Graphics* pGraphics,
@@ -160,8 +152,8 @@ void CFWL_WidgetTP::DrawArrow(CXFA_Graphics* pGraphics,
                               const CFX_Matrix& matrix) {
   bool bVert =
       (eDict == FWLTHEME_DIRECTION_Up || eDict == FWLTHEME_DIRECTION_Down);
-  float fLeft = (float)(((rect.width - (bVert ? 9 : 6)) / 2 + rect.left) + 0.5);
-  float fTop = (float)(((rect.height - (bVert ? 6 : 9)) / 2 + rect.top) + 0.5);
+  float fLeft = ((rect.width - (bVert ? 9 : 6)) / 2 + rect.left) + 0.5f;
+  float fTop = ((rect.height - (bVert ? 6 : 9)) / 2 + rect.top) + 0.5f;
   CXFA_GEPath path;
   switch (eDict) {
     case FWLTHEME_DIRECTION_Down: {
@@ -261,21 +253,20 @@ RetainPtr<CFGAS_GEFont> CFWL_FontData::GetFont() const {
   return m_pFont;
 }
 
-CFWL_FontManager* CFWL_FontManager::s_FontManager = nullptr;
 CFWL_FontManager* CFWL_FontManager::GetInstance() {
-  if (!s_FontManager)
-    s_FontManager = new CFWL_FontManager;
-  return s_FontManager;
+  if (!g_FontManager)
+    g_FontManager = new CFWL_FontManager;
+  return g_FontManager;
 }
 
 void CFWL_FontManager::DestroyInstance() {
-  delete s_FontManager;
-  s_FontManager = nullptr;
+  delete g_FontManager;
+  g_FontManager = nullptr;
 }
 
-CFWL_FontManager::CFWL_FontManager() {}
+CFWL_FontManager::CFWL_FontManager() = default;
 
-CFWL_FontManager::~CFWL_FontManager() {}
+CFWL_FontManager::~CFWL_FontManager() = default;
 
 RetainPtr<CFGAS_GEFont> CFWL_FontManager::FindFont(WideStringView wsFontFamily,
                                                    uint32_t dwFontStyles,
@@ -292,6 +283,3 @@ RetainPtr<CFGAS_GEFont> CFWL_FontManager::FindFont(WideStringView wsFontFamily,
   return m_FontsArray.back()->GetFont();
 }
 
-void FWLTHEME_Release() {
-  CFWL_FontManager::DestroyInstance();
-}

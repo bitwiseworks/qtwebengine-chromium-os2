@@ -16,7 +16,7 @@
 #include "base/memory/discardable_shared_memory.h"
 #include "base/process/process_metrics.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/perf/perf_test.h"
+#include "testing/perf/perf_result_reporter.h"
 
 namespace discardable_memory {
 namespace {
@@ -41,7 +41,7 @@ TEST(DiscardableSharedMemoryHeapTest, SearchFreeLists) {
     ASSERT_TRUE(memory->CreateAndMap(segment_size));
     heap.MergeIntoFreeLists(heap.Grow(std::move(memory), segment_size,
                                       next_discardable_shared_memory_id++,
-                                      base::Bind(NullTask)));
+                                      base::BindOnce(NullTask)));
   }
 
   unsigned kSeed = 1;
@@ -92,8 +92,10 @@ TEST(DiscardableSharedMemoryHeapTest, SearchFreeLists) {
 
   spans.clear();
 
-  perf_test::PrintResult("search_free_list", "", "",
-                         count / accumulator.InSecondsF(), "runs/s", true);
+  perf_test::PerfResultReporter reporter("DiscardableSharedMemoryHeap.",
+                                         "search_free_list");
+  reporter.RegisterImportantMetric("throughput", "runs/s");
+  reporter.AddResult("throughput", count / accumulator.InSecondsF());
 }
 
 }  // namespace

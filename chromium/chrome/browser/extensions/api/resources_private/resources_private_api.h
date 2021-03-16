@@ -10,10 +10,10 @@
 
 namespace extensions {
 
-class ResourcesPrivateGetStringsFunction : public UIThreadExtensionFunction {
+class ResourcesPrivateGetStringsFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("resourcesPrivate.getStrings",
-                             RESOURCESPRIVATE_GETSTRINGS);
+                             RESOURCESPRIVATE_GETSTRINGS)
   ResourcesPrivateGetStringsFunction();
 
  protected:

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation.h"
@@ -25,8 +26,8 @@ namespace {
 
 void ClearImageBurner() {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
-                             base::BindOnce(&ClearImageBurner));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&ClearImageBurner));
     return;
   }
 
@@ -42,9 +43,9 @@ void Operation::Write(const base::Closure& continuation) {
   SetStage(image_writer_api::STAGE_WRITE);
 
   // Note this has to be run on the FILE thread to avoid concurrent access.
-  AddCleanUpFunction(base::Bind(&ClearImageBurner));
+  AddCleanUpFunction(base::BindOnce(&ClearImageBurner));
 
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&Operation::UnmountVolumes, this, continuation));
 }
@@ -60,7 +61,7 @@ void Operation::UnmountVolumes(const base::Closure& continuation) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DiskMountManager::GetInstance()->UnmountDeviceRecursively(
       device_path_.value(),
-      base::Bind(&Operation::UnmountVolumesCallback, this, continuation));
+      base::BindOnce(&Operation::UnmountVolumesCallback, this, continuation));
 }
 
 void Operation::UnmountVolumesCallback(const base::Closure& continuation,
@@ -69,7 +70,8 @@ void Operation::UnmountVolumesCallback(const base::Closure& continuation,
 
   if (error_code != chromeos::MOUNT_ERROR_NONE) {
     LOG(ERROR) << "Volume unmounting failed with error code " << error_code;
-    PostTask(base::Bind(&Operation::Error, this, error::kUnmountVolumesError));
+    PostTask(
+        base::BindOnce(&Operation::Error, this, error::kUnmountVolumesError));
     return;
   }
 
@@ -80,7 +82,8 @@ void Operation::UnmountVolumesCallback(const base::Closure& continuation,
 
   if (iter == disks.end()) {
     LOG(ERROR) << "Disk not found in disk list after unmounting volumes.";
-    PostTask(base::Bind(&Operation::Error, this, error::kUnmountVolumesError));
+    PostTask(
+        base::BindOnce(&Operation::Error, this, error::kUnmountVolumesError));
     return;
   }
 
@@ -99,9 +102,8 @@ void Operation::StartWriteOnUIThread(const std::string& target_path,
       base::Bind(&Operation::OnBurnFinished, this, continuation),
       base::Bind(&Operation::OnBurnProgress, this));
 
-  burner->BurnImage(image_path_.value(),
-                    target_path,
-                    base::Bind(&Operation::OnBurnError, this));
+  burner->BurnImage(image_path_.value(), target_path,
+                    base::BindOnce(&Operation::OnBurnError, this));
 }
 
 void Operation::OnBurnFinished(const base::Closure& continuation,

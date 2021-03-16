@@ -14,7 +14,7 @@
 #include "base/single_thread_task_runner.h"
 #include "content/child/child_process.h"
 #include "ipc/ipc_sender.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 
 namespace content {
@@ -24,24 +24,20 @@ ChildHistogramFetcherFactoryImpl::ChildHistogramFetcherFactoryImpl() {}
 ChildHistogramFetcherFactoryImpl::~ChildHistogramFetcherFactoryImpl() {}
 
 void ChildHistogramFetcherFactoryImpl::Create(
-    content::mojom::ChildHistogramFetcherFactoryRequest request) {
-  mojo::MakeStrongBinding(std::make_unique<ChildHistogramFetcherFactoryImpl>(),
-                          std::move(request));
+    mojo::PendingReceiver<content::mojom::ChildHistogramFetcherFactory>
+        receiver) {
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<ChildHistogramFetcherFactoryImpl>(),
+      std::move(receiver));
 }
 
 void ChildHistogramFetcherFactoryImpl::CreateFetcher(
-    mojo::ScopedSharedBufferHandle buffer_handle,
-    content::mojom::ChildHistogramFetcherRequest request) {
-  base::SharedMemoryHandle memory_handle;
-  size_t memory_size;
-  const MojoResult result = mojo::UnwrapSharedMemoryHandle(
-      std::move(buffer_handle), &memory_handle, &memory_size, nullptr);
-
-  if (result == MOJO_RESULT_OK && memory_handle.IsValid()) {
+    base::WritableSharedMemoryRegion shared_memory,
+    mojo::PendingReceiver<content::mojom::ChildHistogramFetcher> receiver) {
+  if (shared_memory.IsValid()) {
     // This message must be received only once. Multiple calls to create a
     // global allocator will cause a CHECK() failure.
-    base::GlobalHistogramAllocator::CreateWithSharedMemoryHandle(memory_handle,
-                                                                 memory_size);
+    base::GlobalHistogramAllocator::CreateWithSharedMemoryRegion(shared_memory);
   }
 
   base::PersistentHistogramAllocator* global_allocator =
@@ -49,9 +45,8 @@ void ChildHistogramFetcherFactoryImpl::CreateFetcher(
   if (global_allocator)
     global_allocator->CreateTrackingHistograms(global_allocator->Name());
 
-  content::mojom::ChildHistogramFetcherPtr child_histogram_interface;
-  mojo::MakeStrongBinding(std::make_unique<ChildHistogramFetcherImpl>(),
-                          std::move(request));
+  mojo::MakeSelfOwnedReceiver(std::make_unique<ChildHistogramFetcherImpl>(),
+                              std::move(receiver));
 }
 
 ChildHistogramFetcherImpl::ChildHistogramFetcherImpl() {}

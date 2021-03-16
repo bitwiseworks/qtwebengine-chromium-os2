@@ -4,6 +4,7 @@
 
 #include "mojo/public/cpp/bindings/message_dumper.h"
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -13,6 +14,7 @@
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "mojo/public/cpp/bindings/message.h"
 
 namespace {
@@ -75,7 +77,7 @@ bool MessageDumper::Accept(mojo::Message* message) {
                      message->interface_name(), message->method_name());
 
   static base::NoDestructor<scoped_refptr<base::TaskRunner>> task_runner(
-      base::CreateSequencedTaskRunnerWithTraits(
+      base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
 

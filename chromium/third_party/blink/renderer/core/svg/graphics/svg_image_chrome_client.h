@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
 #include "third_party/blink/renderer/platform/timer.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -41,8 +42,6 @@ class SVGImage;
 
 class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
  public:
-  static SVGImageChromeClient* Create(SVGImage*);
-
   explicit SVGImageChromeClient(SVGImage*);
 
   bool IsSVGImageChromeClient() const override;
@@ -58,7 +57,8 @@ class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
  private:
   void ChromeDestroyed() override;
   void InvalidateRect(const IntRect&) override;
-  void ScheduleAnimation(const LocalFrameView*) override;
+  void ScheduleAnimation(const LocalFrameView*,
+                         base::TimeDelta = base::TimeDelta()) override;
 
   void SetTimer(std::unique_ptr<TimerBase>);
   TimerBase* GetTimerForTesting() const { return animation_timer_.get(); }
@@ -77,11 +77,12 @@ class CORE_EXPORT SVGImageChromeClient final : public EmptyChromeClient {
   FRIEND_TEST_ALL_PREFIXES(SVGImageSimTest, PageVisibilityHiddenToVisible);
 };
 
-DEFINE_TYPE_CASTS(SVGImageChromeClient,
-                  ChromeClient,
-                  client,
-                  client->IsSVGImageChromeClient(),
-                  client.IsSVGImageChromeClient());
+template <>
+struct DowncastTraits<SVGImageChromeClient> {
+  static bool AllowFrom(const ChromeClient& client) {
+    return client.IsSVGImageChromeClient();
+  }
+};
 
 }  // namespace blink
 

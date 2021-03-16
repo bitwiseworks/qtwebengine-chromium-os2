@@ -4,15 +4,14 @@
 
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_huffman_table.h"
 
+#include <string>
 #include <utility>
 
-#include "base/macros.h"
-#include "testing/gmock/include/gmock/gmock.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "net/third_party/quiche/src/http2/hpack/huffman/hpack_huffman_decoder.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_arraysize.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_test.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_constants.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_output_stream.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_arraysize.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_string_utils.h"
 
 namespace spdy {
@@ -39,12 +38,12 @@ namespace {
 
 // Tests of the ability to encode some canonical Huffman code,
 // not just the one defined in the RFC 7541.
-class GenericHuffmanTableTest : public ::testing::Test {
+class GenericHuffmanTableTest : public QuicheTest {
  protected:
   GenericHuffmanTableTest() : table_(), peer_(table_) {}
 
-  SpdyString EncodeString(SpdyStringPiece input) {
-    SpdyString result;
+  std::string EncodeString(quiche::QuicheStringPiece input) {
+    std::string result;
     HpackOutputStream output_stream;
     table_.EncodeString(input, &output_stream);
 
@@ -70,7 +69,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
                                  {0b11000000000000000000000000000000, 3, 6},
                                  {0b11100000000000000000000000000000, 8, 7}};
     HpackHuffmanTable table;
-    EXPECT_TRUE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_TRUE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
   }
   {
     // But using 2 bits with one symbol overflows the code.
@@ -84,7 +83,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
         {0b11100000000000000000000000000000, 3, 6},
         {0b00000000000000000000000000000000, 8, 7}};  // Overflow.
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
     EXPECT_EQ(7, HpackHuffmanTablePeer(table).failed_symbol_id());
   }
   {
@@ -94,7 +93,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
                                  {0b11000000000000000000000000000000, 3, 2},
                                  {0b11100000000000000000000000000000, 8, 3}};
     HpackHuffmanTable table;
-    EXPECT_TRUE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_TRUE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
   }
   {
     // But repeating a length overflows the code.
@@ -104,7 +103,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
         {0b11000000000000000000000000000000, 2, 2},
         {0b00000000000000000000000000000000, 8, 3}};  // Overflow.
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
     EXPECT_EQ(3, HpackHuffmanTablePeer(table).failed_symbol_id());
   }
   {
@@ -115,7 +114,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
         {0b11000000000000000000000000000000, 3, 1},  // Repeat.
         {0b11100000000000000000000000000000, 8, 3}};
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
     EXPECT_EQ(2, HpackHuffmanTablePeer(table).failed_symbol_id());
   }
   {
@@ -125,7 +124,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
                                  {0b10100000000000000000000000000000, 4, 2},
                                  {0b10110000000000000000000000000000, 8, 3}};
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
     EXPECT_EQ(0, HpackHuffmanTablePeer(table).failed_symbol_id());
   }
   {
@@ -136,7 +135,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
         {0b11000000000000000000000000000000, 2, 2},  // Code not canonical.
         {0b10000000000000000000000000000000, 8, 3}};
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
     EXPECT_EQ(2, HpackHuffmanTablePeer(table).failed_symbol_id());
   }
   {
@@ -146,7 +145,7 @@ TEST_F(GenericHuffmanTableTest, InitializeEdgeCases) {
                                  {0b11000000000000000000000000000000, 3, 2},
                                  {0b11100000000000000000000000000000, 7, 3}};
     HpackHuffmanTable table;
-    EXPECT_FALSE(table.Initialize(code, SPDY_ARRAYSIZE(code)));
+    EXPECT_FALSE(table.Initialize(code, QUICHE_ARRAYSIZE(code)));
   }
 }
 
@@ -160,11 +159,11 @@ TEST_F(GenericHuffmanTableTest, ValidateInternalsWithSmallCode) {
       {0b10001000000000000000000000000000, 5, 5},   // 6th.
       {0b10011000000000000000000000000000, 8, 6},   // 8th.
       {0b10010000000000000000000000000000, 5, 7}};  // 7th.
-  EXPECT_TRUE(table_.Initialize(code, SPDY_ARRAYSIZE(code)));
+  EXPECT_TRUE(table_.Initialize(code, QUICHE_ARRAYSIZE(code)));
 
-  ASSERT_EQ(SPDY_ARRAYSIZE(code), peer_.code_by_id().size());
-  ASSERT_EQ(SPDY_ARRAYSIZE(code), peer_.length_by_id().size());
-  for (size_t i = 0; i < SPDY_ARRAYSIZE(code); ++i) {
+  ASSERT_EQ(QUICHE_ARRAYSIZE(code), peer_.code_by_id().size());
+  ASSERT_EQ(QUICHE_ARRAYSIZE(code), peer_.length_by_id().size());
+  for (size_t i = 0; i < QUICHE_ARRAYSIZE(code); ++i) {
     EXPECT_EQ(code[i].code, peer_.code_by_id()[i]);
     EXPECT_EQ(code[i].length, peer_.length_by_id()[i]);
   }
@@ -172,10 +171,12 @@ TEST_F(GenericHuffmanTableTest, ValidateInternalsWithSmallCode) {
   EXPECT_EQ(0b10011000, peer_.pad_bits());
 
   char input_storage[] = {2, 3, 2, 7, 4};
-  SpdyStringPiece input(input_storage, SPDY_ARRAYSIZE(input_storage));
+  quiche::QuicheStringPiece input(input_storage,
+                                  QUICHE_ARRAYSIZE(input_storage));
   // By symbol: (2) 00 (3) 010 (2) 00 (7) 10010 (4) 10000 (6 as pad) 1001100.
   char expect_storage[] = {0b00010001, 0b00101000, 0b01001100};
-  SpdyStringPiece expect(expect_storage, SPDY_ARRAYSIZE(expect_storage));
+  quiche::QuicheStringPiece expect(expect_storage,
+                                   QUICHE_ARRAYSIZE(expect_storage));
   EXPECT_EQ(expect, EncodeString(input));
 }
 
@@ -190,7 +191,7 @@ class HpackHuffmanTableTest : public GenericHuffmanTableTest {
   }
 
   // Use http2::HpackHuffmanDecoder for roundtrip tests.
-  void DecodeString(const SpdyString& encoded, SpdyString* out) {
+  void DecodeString(const std::string& encoded, std::string* out) {
     http2::HpackHuffmanDecoder decoder;
     out->clear();
     EXPECT_TRUE(decoder.Decode(encoded, out));
@@ -202,8 +203,8 @@ TEST_F(HpackHuffmanTableTest, InitializeHpackCode) {
 }
 
 TEST_F(HpackHuffmanTableTest, SpecRequestExamples) {
-  SpdyString buffer;
-  SpdyString test_table[] = {
+  std::string buffer;
+  std::string test_table[] = {
       SpdyHexDecode("f1e3c2e5f23a6ba0ab90f4ff"),
       "www.example.com",
       SpdyHexDecode("a8eb10649cbf"),
@@ -214,9 +215,9 @@ TEST_F(HpackHuffmanTableTest, SpecRequestExamples) {
       "custom-value",
   };
   // Round-trip each test example.
-  for (size_t i = 0; i != SPDY_ARRAYSIZE(test_table); i += 2) {
-    const SpdyString& encodedFixture(test_table[i]);
-    const SpdyString& decodedFixture(test_table[i + 1]);
+  for (size_t i = 0; i != QUICHE_ARRAYSIZE(test_table); i += 2) {
+    const std::string& encodedFixture(test_table[i]);
+    const std::string& decodedFixture(test_table[i + 1]);
     DecodeString(encodedFixture, &buffer);
     EXPECT_EQ(decodedFixture, buffer);
     buffer = EncodeString(decodedFixture);
@@ -225,8 +226,8 @@ TEST_F(HpackHuffmanTableTest, SpecRequestExamples) {
 }
 
 TEST_F(HpackHuffmanTableTest, SpecResponseExamples) {
-  SpdyString buffer;
-  SpdyString test_table[] = {
+  std::string buffer;
+  std::string test_table[] = {
       SpdyHexDecode("6402"),
       "302",
       SpdyHexDecode("aec3771a4b"),
@@ -243,9 +244,9 @@ TEST_F(HpackHuffmanTableTest, SpecResponseExamples) {
       "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1",
   };
   // Round-trip each test example.
-  for (size_t i = 0; i != SPDY_ARRAYSIZE(test_table); i += 2) {
-    const SpdyString& encodedFixture(test_table[i]);
-    const SpdyString& decodedFixture(test_table[i + 1]);
+  for (size_t i = 0; i != QUICHE_ARRAYSIZE(test_table); i += 2) {
+    const std::string& encodedFixture(test_table[i]);
+    const std::string& decodedFixture(test_table[i + 1]);
     DecodeString(encodedFixture, &buffer);
     EXPECT_EQ(decodedFixture, buffer);
     buffer = EncodeString(decodedFixture);
@@ -257,9 +258,9 @@ TEST_F(HpackHuffmanTableTest, RoundTripIndividualSymbols) {
   for (size_t i = 0; i != 256; i++) {
     char c = static_cast<char>(i);
     char storage[3] = {c, c, c};
-    SpdyStringPiece input(storage, SPDY_ARRAYSIZE(storage));
-    SpdyString buffer_in = EncodeString(input);
-    SpdyString buffer_out;
+    quiche::QuicheStringPiece input(storage, QUICHE_ARRAYSIZE(storage));
+    std::string buffer_in = EncodeString(input);
+    std::string buffer_out;
     DecodeString(buffer_in, &buffer_out);
     EXPECT_EQ(input, buffer_out);
   }
@@ -271,31 +272,31 @@ TEST_F(HpackHuffmanTableTest, RoundTripSymbolSequence) {
     storage[i] = static_cast<char>(i);
     storage[511 - i] = static_cast<char>(i);
   }
-  SpdyStringPiece input(storage, SPDY_ARRAYSIZE(storage));
-  SpdyString buffer_in = EncodeString(input);
-  SpdyString buffer_out;
+  quiche::QuicheStringPiece input(storage, QUICHE_ARRAYSIZE(storage));
+  std::string buffer_in = EncodeString(input);
+  std::string buffer_out;
   DecodeString(buffer_in, &buffer_out);
   EXPECT_EQ(input, buffer_out);
 }
 
 TEST_F(HpackHuffmanTableTest, EncodedSizeAgreesWithEncodeString) {
-  SpdyString test_table[] = {
+  std::string test_table[] = {
       "",
       "Mon, 21 Oct 2013 20:13:21 GMT",
       "https://www.example.com",
       "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1",
-      SpdyString(1, '\0'),
-      SpdyString("foo\0bar", 7),
-      SpdyString(256, '\0'),
+      std::string(1, '\0'),
+      std::string("foo\0bar", 7),
+      std::string(256, '\0'),
   };
   for (size_t i = 0; i != 256; ++i) {
     // Expand last |test_table| entry to cover all codes.
-    test_table[SPDY_ARRAYSIZE(test_table) - 1][i] = static_cast<char>(i);
+    test_table[QUICHE_ARRAYSIZE(test_table) - 1][i] = static_cast<char>(i);
   }
 
   HpackOutputStream output_stream;
-  SpdyString encoding;
-  for (size_t i = 0; i != SPDY_ARRAYSIZE(test_table); ++i) {
+  std::string encoding;
+  for (size_t i = 0; i != QUICHE_ARRAYSIZE(test_table); ++i) {
     table_.EncodeString(test_table[i], &output_stream);
     output_stream.TakeString(&encoding);
     EXPECT_EQ(encoding.size(), table_.EncodedSize(test_table[i]));

@@ -27,7 +27,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -36,21 +36,24 @@ class Element;
 class RuleSet;
 class StyleSheetContents;
 
-class CSSDefaultStyleSheets
-    : public GarbageCollectedFinalized<CSSDefaultStyleSheets> {
-
+class CSSDefaultStyleSheets final
+    : public GarbageCollected<CSSDefaultStyleSheets> {
  public:
   CORE_EXPORT static CSSDefaultStyleSheets& Instance();
 
   CSSDefaultStyleSheets();
 
   bool EnsureDefaultStyleSheetsForElement(const Element&);
+  bool EnsureDefaultStyleSheetForXrOverlay();
   void EnsureDefaultStyleSheetForFullscreen();
 
   RuleSet* DefaultStyle() { return default_style_.Get(); }
   RuleSet* DefaultQuirksStyle() { return default_quirks_style_.Get(); }
   RuleSet* DefaultPrintStyle() { return default_print_style_.Get(); }
   RuleSet* DefaultViewSourceStyle();
+  RuleSet* DefaultForcedColorStyle() {
+    return default_forced_color_style_.Get();
+  }
 
   StyleSheetContents* EnsureMobileViewportStyleSheet();
   StyleSheetContents* EnsureTelevisionViewportStyleSheet();
@@ -85,7 +88,7 @@ class CSSDefaultStyleSheets
     return media_controls_style_sheet_loader_.get();
   }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   void InitializeDefaultStyles();
@@ -94,6 +97,7 @@ class CSSDefaultStyleSheets
   Member<RuleSet> default_quirks_style_;
   Member<RuleSet> default_print_style_;
   Member<RuleSet> default_view_source_style_;
+  Member<RuleSet> default_forced_color_style_;
 
   Member<StyleSheetContents> default_style_sheet_;
   Member<StyleSheetContents> mobile_viewport_style_sheet_;
@@ -103,7 +107,9 @@ class CSSDefaultStyleSheets
   Member<StyleSheetContents> svg_style_sheet_;
   Member<StyleSheetContents> mathml_style_sheet_;
   Member<StyleSheetContents> media_controls_style_sheet_;
+  Member<StyleSheetContents> text_track_style_sheet_;
   Member<StyleSheetContents> fullscreen_style_sheet_;
+  Member<StyleSheetContents> webxr_overlay_style_sheet_;
 
   std::unique_ptr<UAStyleSheetLoader> media_controls_style_sheet_loader_;
   DISALLOW_COPY_AND_ASSIGN(CSSDefaultStyleSheets);

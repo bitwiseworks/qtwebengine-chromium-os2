@@ -32,10 +32,10 @@ MediaSessionServiceImpl::~MediaSessionServiceImpl() {
 // static
 void MediaSessionServiceImpl::Create(
     RenderFrameHost* render_frame_host,
-    blink::mojom::MediaSessionServiceRequest request) {
+    mojo::PendingReceiver<blink::mojom::MediaSessionService> receiver) {
   MediaSessionServiceImpl* impl =
       new MediaSessionServiceImpl(render_frame_host);
-  impl->Bind(std::move(request));
+  impl->Bind(std::move(receiver));
 }
 
 RenderFrameHost* MediaSessionServiceImpl::GetRenderFrameHost() {
@@ -47,7 +47,7 @@ void MediaSessionServiceImpl::DidFinishNavigation() {
   // At this point the BrowsingContext of the frame has changed, so the members
   // need to be reset, and notify MediaSessionImpl.
   SetPlaybackState(blink::mojom::MediaSessionPlaybackState::NONE);
-  SetMetadata(base::nullopt);
+  SetMetadata(nullptr);
   ClearActions();
 }
 
@@ -56,8 +56,8 @@ void MediaSessionServiceImpl::FlushForTesting() {
 }
 
 void MediaSessionServiceImpl::SetClient(
-    blink::mojom::MediaSessionClientPtr client) {
-  client_ = std::move(client);
+    mojo::PendingRemote<blink::mojom::MediaSessionClient> client) {
+  client_ = mojo::Remote<blink::mojom::MediaSessionClient>(std::move(client));
 }
 
 void MediaSessionServiceImpl::SetPlaybackState(
@@ -68,20 +68,32 @@ void MediaSessionServiceImpl::SetPlaybackState(
     session->OnMediaSessionPlaybackStateChanged(this);
 }
 
+void MediaSessionServiceImpl::SetPositionState(
+    const base::Optional<media_session::MediaPosition>& position) {
+  position_ = position;
+  MediaSessionImpl* session = GetMediaSession();
+  if (session)
+    session->RebuildAndNotifyMediaPositionChanged();
+}
+
 void MediaSessionServiceImpl::SetMetadata(
-    const base::Optional<media_session::MediaMetadata>& metadata) {
+    blink::mojom::SpecMediaMetadataPtr metadata) {
+  metadata_.reset();
+
   // When receiving a MediaMetadata, the browser process can't trust that it is
   // coming from a known and secure source. It must be processed accordingly.
-  if (metadata.has_value() &&
-      !MediaMetadataSanitizer::CheckSanity(metadata.value())) {
-    RenderFrameHost* rfh = GetRenderFrameHost();
-    if (rfh) {
-      rfh->GetProcess()->ShutdownForBadMessage(
-          RenderProcessHost::CrashReportMode::GENERATE_CRASH_DUMP);
+  if (!metadata.is_null()) {
+    if (!MediaMetadataSanitizer::CheckSanity(metadata)) {
+      RenderFrameHost* rfh = GetRenderFrameHost();
+      if (rfh) {
+        rfh->GetProcess()->ShutdownForBadMessage(
+            RenderProcessHost::CrashReportMode::GENERATE_CRASH_DUMP);
+      }
+      return;
     }
-    return;
+
+    metadata_ = std::move(metadata);
   }
-  metadata_ = metadata;
 
   MediaSessionImpl* session = GetMediaSession();
   if (session)
@@ -125,9 +137,9 @@ MediaSessionImpl* MediaSessionServiceImpl::GetMediaSession() {
 }
 
 void MediaSessionServiceImpl::Bind(
-    blink::mojom::MediaSessionServiceRequest request) {
-  binding_.reset(new mojo::Binding<blink::mojom::MediaSessionService>(
-      this, std::move(request)));
+    mojo::PendingReceiver<blink::mojom::MediaSessionService> receiver) {
+  receiver_.reset(new mojo::Receiver<blink::mojom::MediaSessionService>(
+      this, std::move(receiver)));
 }
 
 }  // namespace content

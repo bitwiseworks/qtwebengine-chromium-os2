@@ -15,7 +15,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/mock_entropy_provider.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/platform_thread.h"
 #include "net/base/completion_once_callback.h"
@@ -44,6 +43,8 @@ using net::test::IsError;
 using net::test::IsOk;
 
 using base::Time;
+using disk_cache::EntryResult;
+using disk_cache::EntryResultCallback;
 using disk_cache::ScopedEntryPtr;
 
 // Tests that can run with different types of caches.
@@ -75,16 +76,28 @@ class DiskCacheEntryTest : public DiskCacheTestWithCache {
   void DoomedEntry(int stream_index);
   void BasicSparseIO();
   void HugeSparseIO();
-  void GetAvailableRange();
+  void GetAvailableRangeTest();
   void CouldBeSparse();
   void UpdateSparseEntry();
   void DoomSparseEntry();
   void PartialSparseEntry();
+  void SparseInvalidArg();
+  void SparseClipEnd(int64_t max_index, bool expected_unsupported);
   bool SimpleCacheMakeBadChecksumEntry(const std::string& key, int data_size);
   bool SimpleCacheThirdStreamFileExists(const char* key);
   void SyncDoomEntry(const char* key);
+  void CreateEntryWithHeaderBodyAndSideData(const std::string& key,
+                                            int data_size);
+  void TruncateFileFromEnd(int file_index,
+                           const std::string& key,
+                           int data_size,
+                           int truncate_size);
   void UseAfterBackendDestruction();
+  void CloseSparseAfterBackendDestruction();
   void LastUsedTimePersists();
+  void TruncateBackwards();
+  void ZeroWriteBackwards();
+  void SparseOffset64Bit();
 };
 
 // This part of the test runs on the background thread.
@@ -135,10 +148,10 @@ void DiskCacheEntryTest::InternalSyncIOBackground(disk_cache::Entry* entry) {
   EXPECT_EQ(8192, entry->GetDataSize(1));
 
   // We need to delete the memory buffer on this thread.
-  EXPECT_EQ(
-      0, entry->WriteData(0, 0, NULL, 0, net::CompletionOnceCallback(), true));
-  EXPECT_EQ(
-      0, entry->WriteData(1, 0, NULL, 0, net::CompletionOnceCallback(), true));
+  EXPECT_EQ(0, entry->WriteData(0, 0, nullptr, 0, net::CompletionOnceCallback(),
+                                true));
+  EXPECT_EQ(0, entry->WriteData(1, 0, nullptr, 0, net::CompletionOnceCallback(),
+                                true));
 }
 
 // We need to support synchronous IO even though it is not a supported operation
@@ -146,15 +159,13 @@ void DiskCacheEntryTest::InternalSyncIOBackground(disk_cache::Entry* entry) {
 // it internally, not just by a few tests, but as part of the implementation
 // (see sparse_control.cc, for example).
 void DiskCacheEntryTest::InternalSyncIO() {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
-  ASSERT_TRUE(NULL != entry);
+  ASSERT_TRUE(nullptr != entry);
 
   // The bulk of the test runs from within the callback, on the cache thread.
-  RunTaskForTest(base::Bind(&DiskCacheEntryTest::InternalSyncIOBackground,
-                            base::Unretained(this),
-                            entry));
-
+  RunTaskForTest(base::BindOnce(&DiskCacheEntryTest::InternalSyncIOBackground,
+                                base::Unretained(this), entry));
 
   entry->Doom();
   entry->Close();
@@ -174,17 +185,17 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyInternalSyncIO) {
 }
 
 void DiskCacheEntryTest::InternalAsyncIO() {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
-  ASSERT_TRUE(NULL != entry);
+  ASSERT_TRUE(nullptr != entry);
 
   // Avoid using internal buffers for the test. We have to write something to
   // the entry and close it so that we flush the internal buffer to disk. After
   // that, IO operations will be really hitting the disk. We don't care about
   // the content, so just extending the entry is enough (all extensions zero-
   // fill any holes).
-  EXPECT_EQ(0, WriteData(entry, 0, 15 * 1024, NULL, 0, false));
-  EXPECT_EQ(0, WriteData(entry, 1, 15 * 1024, NULL, 0, false));
+  EXPECT_EQ(0, WriteData(entry, 0, 15 * 1024, nullptr, 0, false));
+  EXPECT_EQ(0, WriteData(entry, 1, 15 * 1024, nullptr, 0, false));
   entry->Close();
   ASSERT_THAT(OpenEntry("the first key", &entry), IsOk());
 
@@ -217,22 +228,14 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
   CacheTestFillBuffer(buffer3->data(), kSize3, false);
 
-  EXPECT_EQ(0,
-            entry->ReadData(
-                0,
-                15 * 1024,
-                buffer1.get(),
-                kSize1,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback1))));
+  EXPECT_EQ(0, entry->ReadData(0, 15 * 1024, buffer1.get(), kSize1,
+                               base::BindOnce(&CallbackTest::Run,
+                                              base::Unretained(&callback1))));
   base::strlcpy(buffer1->data(), "the data", kSize1);
   int expected = 0;
   int ret = entry->WriteData(
-      0,
-      0,
-      buffer1.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback2)),
-      false);
+      0, 0, buffer1.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback2)), false);
   EXPECT_TRUE(10 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -240,11 +243,8 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   memset(buffer2->data(), 0, kSize2);
   ret = entry->ReadData(
-      0,
-      0,
-      buffer2.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback3)));
+      0, 0, buffer2.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback3)));
   EXPECT_TRUE(10 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -254,12 +254,8 @@ void DiskCacheEntryTest::InternalAsyncIO() {
 
   base::strlcpy(buffer2->data(), "The really big data goes here", kSize2);
   ret = entry->WriteData(
-      1,
-      1500,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback4)),
-      true);
+      1, 1500, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback4)), true);
   EXPECT_TRUE(5000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -267,11 +263,8 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   memset(buffer3->data(), 0, kSize3);
   ret = entry->ReadData(
-      1,
-      1511,
-      buffer3.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback5)));
+      1, 1511, buffer3.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback5)));
   EXPECT_TRUE(4989 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -279,11 +272,8 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   EXPECT_STREQ("big data goes here", buffer3->data());
   ret = entry->ReadData(
-      1,
-      0,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback6)));
+      1, 0, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback6)));
   EXPECT_TRUE(5000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -293,43 +283,30 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   EXPECT_EQ(0, memcmp(buffer2->data(), buffer3->data(), 1500));
   ret = entry->ReadData(
-      1,
-      5000,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback7)));
+      1, 5000, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback7)));
   EXPECT_TRUE(1500 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   ret = entry->ReadData(
-      1,
-      0,
-      buffer3.get(),
-      kSize3,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback9)));
+      1, 0, buffer3.get(), kSize3,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback9)));
   EXPECT_TRUE(6500 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   ret = entry->WriteData(
-      1,
-      0,
-      buffer3.get(),
-      8192,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback10)),
-      true);
+      1, 0, buffer3.get(), 8192,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback10)), true);
   EXPECT_TRUE(8192 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   ret = entry->ReadData(
-      1,
-      0,
-      buffer3.get(),
-      kSize3,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback11)));
+      1, 0, buffer3.get(), kSize3,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback11)));
   EXPECT_TRUE(8192 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -337,21 +314,15 @@ void DiskCacheEntryTest::InternalAsyncIO() {
   EXPECT_EQ(8192, entry->GetDataSize(1));
 
   ret = entry->ReadData(
-      0,
-      0,
-      buffer1.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback12)));
+      0, 0, buffer1.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback12)));
   EXPECT_TRUE(10 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   ret = entry->ReadData(
-      1,
-      0,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback13)));
+      1, 0, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback13)));
   EXPECT_TRUE(5000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -416,10 +387,10 @@ void DiskCacheEntryTest::ExternalSyncIOBackground(disk_cache::Entry* entry) {
   EXPECT_EQ(37000, entry->GetDataSize(1));
 
   // We need to delete the memory buffer on this thread.
-  EXPECT_EQ(
-      0, entry->WriteData(0, 0, NULL, 0, net::CompletionOnceCallback(), true));
-  EXPECT_EQ(
-      0, entry->WriteData(1, 0, NULL, 0, net::CompletionOnceCallback(), true));
+  EXPECT_EQ(0, entry->WriteData(0, 0, nullptr, 0, net::CompletionOnceCallback(),
+                                true));
+  EXPECT_EQ(0, entry->WriteData(1, 0, nullptr, 0, net::CompletionOnceCallback(),
+                                true));
 }
 
 void DiskCacheEntryTest::ExternalSyncIO() {
@@ -427,9 +398,8 @@ void DiskCacheEntryTest::ExternalSyncIO() {
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
 
   // The bulk of the test runs from within the callback, on the cache thread.
-  RunTaskForTest(base::Bind(&DiskCacheEntryTest::ExternalSyncIOBackground,
-                            base::Unretained(this),
-                            entry));
+  RunTaskForTest(base::BindOnce(&DiskCacheEntryTest::ExternalSyncIOBackground,
+                                base::Unretained(this), entry));
 
   entry->Doom();
   entry->Close();
@@ -486,12 +456,8 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
   CacheTestFillBuffer(buffer3->data(), kSize3, false);
   base::strlcpy(buffer1->data(), "the data", kSize1);
   int ret = entry->WriteData(
-      0,
-      0,
-      buffer1.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback1)),
-      false);
+      0, 0, buffer1.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback1)), false);
   EXPECT_TRUE(17000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -500,11 +466,8 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
 
   memset(buffer2->data(), 0, kSize1);
   ret = entry->ReadData(
-      0,
-      0,
-      buffer2.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback2)));
+      0, 0, buffer2.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback2)));
   EXPECT_TRUE(17000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -514,12 +477,8 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
 
   base::strlcpy(buffer2->data(), "The really big data goes here", kSize2);
   ret = entry->WriteData(
-      1,
-      10000,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback3)),
-      false);
+      1, 10000, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback3)), false);
   EXPECT_TRUE(25000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -528,11 +487,8 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
 
   memset(buffer3->data(), 0, kSize3);
   ret = entry->ReadData(
-      1,
-      10011,
-      buffer3.get(),
-      kSize3,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback4)));
+      1, 10011, buffer3.get(), kSize3,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback4)));
   EXPECT_TRUE(24989 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -540,11 +496,8 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   EXPECT_STREQ("big data goes here", buffer3->data());
   ret = entry->ReadData(
-      1,
-      0,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback5)));
+      1, 0, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback5)));
   EXPECT_TRUE(25000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -553,38 +506,28 @@ void DiskCacheEntryTest::ExternalAsyncIO() {
   memset(buffer3->data(), 0, kSize3);
   EXPECT_EQ(0, memcmp(buffer2->data(), buffer3->data(), 10000));
   ret = entry->ReadData(
-      1,
-      30000,
-      buffer2.get(),
-      kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback6)));
+      1, 30000, buffer2.get(), kSize2,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback6)));
   EXPECT_TRUE(5000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   ret = entry->ReadData(
       1, 35000, buffer2.get(), kSize2,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback7)));
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback7)));
   EXPECT_TRUE(0 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   ret = entry->ReadData(
-      1,
-      0,
-      buffer1.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback8)));
+      1, 0, buffer1.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback8)));
   EXPECT_TRUE(17000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
   ret = entry->WriteData(
-      1,
-      20000,
-      buffer3.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback9)),
-      false);
+      1, 20000, buffer3.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback9)), false);
   EXPECT_TRUE(17000 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
@@ -625,9 +568,9 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyExternalAsyncIO) {
 
 // Tests that IOBuffers are not referenced after IO completes.
 void DiskCacheEntryTest::ReleaseBuffer(int stream_index) {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
-  ASSERT_TRUE(NULL != entry);
+  ASSERT_TRUE(nullptr != entry);
 
   const int kBufferSize = 1024;
   scoped_refptr<net::IOBuffer> buffer =
@@ -654,9 +597,9 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyReleaseBuffer) {
 }
 
 void DiskCacheEntryTest::StreamAccess() {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
-  ASSERT_TRUE(NULL != entry);
+  ASSERT_TRUE(nullptr != entry);
 
   const int kBufferSize = 1024;
   const int kNumStreams = 3;
@@ -682,7 +625,7 @@ void DiskCacheEntryTest::StreamAccess() {
 
   // Open the entry and read it in chunks, including a read past the end.
   ASSERT_THAT(OpenEntry("the first key", &entry), IsOk());
-  ASSERT_TRUE(NULL != entry);
+  ASSERT_TRUE(nullptr != entry);
   const int kReadBufferSize = 600;
   const int kFinalReadSize = kBufferSize - kReadBufferSize;
   static_assert(kFinalReadSize < kReadBufferSize,
@@ -787,7 +730,7 @@ void DiskCacheEntryTest::GetTimes(int stream_index) {
   AddDelay();
   Time t2 = Time::Now();
   EXPECT_TRUE(t2 > t1);
-  EXPECT_EQ(0, WriteData(entry, stream_index, 200, NULL, 0, false));
+  EXPECT_EQ(0, WriteData(entry, stream_index, 200, nullptr, 0, false));
   if (type_ == net::APP_CACHE) {
     EXPECT_TRUE(entry->GetLastModified() < t2);
   } else {
@@ -1016,17 +959,17 @@ void DiskCacheEntryTest::ZeroLengthIO(int stream_index) {
   disk_cache::Entry* entry;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
-  EXPECT_EQ(0, ReadData(entry, stream_index, 0, NULL, 0));
-  EXPECT_EQ(0, WriteData(entry, stream_index, 0, NULL, 0, false));
+  EXPECT_EQ(0, ReadData(entry, stream_index, 0, nullptr, 0));
+  EXPECT_EQ(0, WriteData(entry, stream_index, 0, nullptr, 0, false));
 
   // This write should extend the entry.
-  EXPECT_EQ(0, WriteData(entry, stream_index, 1000, NULL, 0, false));
-  EXPECT_EQ(0, ReadData(entry, stream_index, 500, NULL, 0));
-  EXPECT_EQ(0, ReadData(entry, stream_index, 2000, NULL, 0));
+  EXPECT_EQ(0, WriteData(entry, stream_index, 1000, nullptr, 0, false));
+  EXPECT_EQ(0, ReadData(entry, stream_index, 500, nullptr, 0));
+  EXPECT_EQ(0, ReadData(entry, stream_index, 2000, nullptr, 0));
   EXPECT_EQ(1000, entry->GetDataSize(stream_index));
 
-  EXPECT_EQ(0, WriteData(entry, stream_index, 100000, NULL, 0, true));
-  EXPECT_EQ(0, ReadData(entry, stream_index, 50000, NULL, 0));
+  EXPECT_EQ(0, WriteData(entry, stream_index, 100000, nullptr, 0, true));
+  EXPECT_EQ(0, ReadData(entry, stream_index, 50000, nullptr, 0));
   EXPECT_EQ(100000, entry->GetDataSize(stream_index));
 
   // Let's verify the actual content.
@@ -1453,7 +1396,7 @@ void DiskCacheEntryTest::ReadWriteDestroyBuffer(int stream_index) {
                 stream_index, 0, buffer.get(), kSize, cb.callback(), false));
 
   // Release our reference to the buffer.
-  buffer = NULL;
+  buffer = nullptr;
   EXPECT_EQ(kSize, cb.WaitForResult());
 
   // And now test with a Read().
@@ -1463,7 +1406,7 @@ void DiskCacheEntryTest::ReadWriteDestroyBuffer(int stream_index) {
   EXPECT_EQ(
       net::ERR_IO_PENDING,
       entry->ReadData(stream_index, 0, buffer.get(), kSize, cb.callback()));
-  buffer = NULL;
+  buffer = nullptr;
   EXPECT_EQ(kSize, cb.WaitForResult());
 
   entry->Close();
@@ -1651,10 +1594,10 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyEnumerationWithSparseEntries) {
 
   // Perform the enumerations.
   std::unique_ptr<TestIterator> iter = CreateIterator();
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   int count = 0;
   while (iter->OpenNextEntry(&entry) == net::OK) {
-    ASSERT_TRUE(entry != NULL);
+    ASSERT_TRUE(entry != nullptr);
     ++count;
     disk_cache::MemEntryImpl* mem_entry =
         reinterpret_cast<disk_cache::MemEntryImpl*>(entry);
@@ -1777,7 +1720,7 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyHugeSparseIO) {
   HugeSparseIO();
 }
 
-void DiskCacheEntryTest::GetAvailableRange() {
+void DiskCacheEntryTest::GetAvailableRangeTest() {
   std::string key("the first key");
   disk_cache::Entry* entry;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
@@ -1848,13 +1791,13 @@ void DiskCacheEntryTest::GetAvailableRange() {
 
 TEST_F(DiskCacheEntryTest, GetAvailableRange) {
   InitCache();
-  GetAvailableRange();
+  GetAvailableRangeTest();
 }
 
 TEST_F(DiskCacheEntryTest, MemoryOnlyGetAvailableRange) {
   SetMemoryOnlyMode();
   InitCache();
-  GetAvailableRange();
+  GetAvailableRangeTest();
 }
 
 TEST_F(DiskCacheEntryTest, GetAvailableRangeBlockFileDiscontinuous) {
@@ -2228,14 +2171,12 @@ void DiskCacheEntryTest::UpdateSparseEntry() {
 }
 
 TEST_F(DiskCacheEntryTest, UpdateSparseEntry) {
-  SetCacheType(net::MEDIA_CACHE);
   InitCache();
   UpdateSparseEntry();
 }
 
 TEST_F(DiskCacheEntryTest, MemoryOnlyUpdateSparseEntry) {
   SetMemoryOnlyMode();
-  SetCacheType(net::MEDIA_CACHE);
   InitCache();
   UpdateSparseEntry();
 }
@@ -2462,6 +2403,159 @@ TEST_F(DiskCacheEntryTest, MemoryPartialSparseEntry) {
   PartialSparseEntry();
 }
 
+void DiskCacheEntryTest::SparseInvalidArg() {
+  std::string key("key");
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+
+  const int kSize = 2048;
+  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buf->data(), kSize, false);
+
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
+            WriteSparseData(entry, -1, buf.get(), kSize));
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
+            WriteSparseData(entry, 0, buf.get(), -1));
+
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
+            ReadSparseData(entry, -1, buf.get(), kSize));
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT, ReadSparseData(entry, 0, buf.get(), -1));
+
+  int64_t start_out;
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
+            GetAvailableRange(entry, -1, kSize, &start_out));
+  EXPECT_EQ(net::ERR_INVALID_ARGUMENT,
+            GetAvailableRange(entry, 0, -1, &start_out));
+
+  int rv = WriteSparseData(
+      entry, std::numeric_limits<int64_t>::max() - kSize + 1, buf.get(), kSize);
+  // Blockfile rejects anything over 64GiB with
+  // net::ERR_CACHE_OPERATION_NOT_SUPPORTED, which is also OK here, as it's not
+  // an overflow or something else nonsensical.
+  EXPECT_TRUE(rv == net::ERR_INVALID_ARGUMENT ||
+              rv == net::ERR_CACHE_OPERATION_NOT_SUPPORTED);
+
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, SparseInvalidArg) {
+  InitCache();
+  SparseInvalidArg();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlySparseInvalidArg) {
+  SetMemoryOnlyMode();
+  InitCache();
+  SparseInvalidArg();
+}
+
+TEST_F(DiskCacheEntryTest, SimpleSparseInvalidArg) {
+  SetSimpleCacheMode();
+  InitCache();
+  SparseInvalidArg();
+}
+
+void DiskCacheEntryTest::SparseClipEnd(int64_t max_index,
+                                       bool expect_unsupported) {
+  std::string key("key");
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+
+  const int kSize = 1024;
+  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buf->data(), kSize, false);
+
+  scoped_refptr<net::IOBuffer> read_buf =
+      base::MakeRefCounted<net::IOBuffer>(kSize * 2);
+  CacheTestFillBuffer(read_buf->data(), kSize * 2, false);
+
+  const int64_t kOffset = max_index - kSize;
+  int rv = WriteSparseData(entry, kOffset, buf.get(), kSize);
+  EXPECT_EQ(
+      rv, expect_unsupported ? net::ERR_CACHE_OPERATION_NOT_SUPPORTED : kSize);
+
+  // Try to read further than offset range, should get clipped (if supported).
+  rv = ReadSparseData(entry, kOffset, read_buf.get(), kSize * 2);
+  if (expect_unsupported) {
+    EXPECT_EQ(rv, net::ERR_CACHE_OPERATION_NOT_SUPPORTED);
+  } else {
+    EXPECT_EQ(kSize, rv);
+    EXPECT_EQ(0, memcmp(buf->data(), read_buf->data(), kSize));
+  }
+
+  int64_t out_start = 0;
+  net::TestCompletionCallback cb;
+  rv = entry->GetAvailableRange(kOffset - kSize, kSize * 3, &out_start,
+                                cb.callback());
+  rv = cb.GetResult(rv);
+  if (expect_unsupported) {
+    // GetAvailableRange just returns nothing found, not an error.
+    EXPECT_EQ(rv, 0);
+  } else {
+    EXPECT_EQ(kSize, rv);
+    EXPECT_EQ(kOffset, out_start);
+  }
+
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, SparseClipEnd) {
+  InitCache();
+
+  // Blockfile refuses to deal with sparse indices over 64GiB.
+  SparseClipEnd(std::numeric_limits<int64_t>::max(),
+                /* expect_unsupported = */ true);
+}
+
+TEST_F(DiskCacheEntryTest, SparseClipEnd2) {
+  InitCache();
+
+  const int64_t kLimit = 64ll * 1024 * 1024 * 1024;
+  // Separate test for blockfile for indices right at the edge of its address
+  // space limit. kLimit must match kMaxEndOffset in sparse_control.cc
+  SparseClipEnd(kLimit, /* expect_unsupported = */ false);
+
+  // Test with things after kLimit, too, which isn't an issue for backends
+  // supporting the entire 64-bit offset range.
+  std::string key("key2");
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+
+  const int kSize = 1024;
+  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buf->data(), kSize, false);
+
+  // Try to write after --- fails.
+  int rv = WriteSparseData(entry, kLimit, buf.get(), kSize);
+  EXPECT_EQ(net::ERR_CACHE_OPERATION_NOT_SUPPORTED, rv);
+
+  // Similarly for read.
+  rv = ReadSparseData(entry, kLimit, buf.get(), kSize);
+  EXPECT_EQ(net::ERR_CACHE_OPERATION_NOT_SUPPORTED, rv);
+
+  // GetAvailableRange just returns nothing.
+  net::TestCompletionCallback cb;
+  int64_t out_start = 0;
+  rv = entry->GetAvailableRange(kLimit, kSize * 3, &out_start, cb.callback());
+  rv = cb.GetResult(rv);
+  EXPECT_EQ(rv, 0);
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlySparseClipEnd) {
+  SetMemoryOnlyMode();
+  InitCache();
+  SparseClipEnd(std::numeric_limits<int64_t>::max(),
+                /* expect_unsupported = */ false);
+}
+
+TEST_F(DiskCacheEntryTest, SimpleSparseClipEnd) {
+  SetSimpleCacheMode();
+  InitCache();
+  SparseClipEnd(std::numeric_limits<int64_t>::max(),
+                /* expect_unsupported = */ false);
+}
+
 // Tests that corrupt sparse children are removed automatically.
 TEST_F(DiskCacheEntryTest, CleanupSparseEntry) {
   InitCache();
@@ -2485,7 +2579,7 @@ TEST_F(DiskCacheEntryTest, CleanupSparseEntry) {
   int count = 0;
   std::string child_key[2];
   while (iter->OpenNextEntry(&entry) == net::OK) {
-    ASSERT_TRUE(entry != NULL);
+    ASSERT_TRUE(entry != nullptr);
     // Writing to an entry will alter the LRU list and invalidate the iterator.
     if (entry->GetKey() != key && count < 2)
       child_key[count++] = entry->GetKey();
@@ -2596,6 +2690,67 @@ TEST_F(DiskCacheEntryTest, KeySanityCheck) {
   // allocated buffer here.
   ASSERT_NE(net::OK, OpenEntry(key, &entry));
   DisableIntegrityCheck();
+}
+
+TEST_F(DiskCacheEntryTest, KeySanityCheck2) {
+  UseCurrentThread();
+  InitCache();
+  std::string key("the first key");
+  disk_cache::Entry* entry;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+
+  disk_cache::EntryImpl* entry_impl =
+      static_cast<disk_cache::EntryImpl*>(entry);
+  disk_cache::EntryStore* store = entry_impl->entry()->Data();
+
+  // Fill in the rest of inline key store with non-nulls. Unlike in
+  // KeySanityCheck, this does not change the length to identify it as
+  // stored under |long_key|.
+  memset(store->key + key.size(), 'k', sizeof(store->key) - key.size());
+  entry_impl->entry()->set_modified();
+  entry->Close();
+
+  // We have a corrupt entry. Now reload it. We should NOT read beyond the
+  // allocated buffer here.
+  ASSERT_NE(net::OK, OpenEntry(key, &entry));
+  DisableIntegrityCheck();
+}
+
+TEST_F(DiskCacheEntryTest, KeySanityCheck3) {
+  const size_t kVeryLong = 40 * 1024;
+  UseCurrentThread();
+  InitCache();
+  std::string key(kVeryLong, 'a');
+  disk_cache::Entry* entry;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+
+  disk_cache::EntryImpl* entry_impl =
+      static_cast<disk_cache::EntryImpl*>(entry);
+  disk_cache::EntryStore* store = entry_impl->entry()->Data();
+
+  // Test meaningful when using long keys; and also want this to be
+  // an external file to avoid needing to duplicate offset math here.
+  disk_cache::Addr key_addr(store->long_key);
+  ASSERT_TRUE(key_addr.is_initialized());
+  ASSERT_TRUE(key_addr.is_separate_file());
+
+  // Close the entry before messing up its files.
+  entry->Close();
+
+  // Mess up the terminating null in the external key file.
+  auto key_file =
+      base::MakeRefCounted<disk_cache::File>(true /* want sync ops*/);
+  ASSERT_TRUE(key_file->Init(cache_impl_->GetFileName(key_addr)));
+
+  ASSERT_TRUE(key_file->Write("b", 1u, kVeryLong));
+  key_file = nullptr;
+
+  // This case gets graceful recovery.
+  ASSERT_THAT(OpenEntry(key, &entry), IsOk());
+
+  // Make sure the key object isn't messed up.
+  EXPECT_EQ(kVeryLong, strlen(entry->GetKey().data()));
+  entry->Close();
 }
 
 TEST_F(DiskCacheEntryTest, SimpleCacheInternalAsyncIO) {
@@ -2789,7 +2944,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomedEntry) {
 // Requires SimpleCacheMode.
 bool DiskCacheEntryTest::SimpleCacheMakeBadChecksumEntry(const std::string& key,
                                                          int data_size) {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
 
   if (CreateEntry(key, &entry) != net::OK || !entry) {
     LOG(ERROR) << "Could not create entry";
@@ -2802,7 +2957,7 @@ bool DiskCacheEntryTest::SimpleCacheMakeBadChecksumEntry(const std::string& key,
 
   EXPECT_EQ(data_size, WriteData(entry, 1, 0, buffer.get(), data_size, false));
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 
   // Corrupt the last byte of the data.
   base::FilePath entry_file0_path = cache_path_.AppendASCII(
@@ -2827,7 +2982,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheBadChecksum) {
   const int kLargeSize = 50000;
   ASSERT_TRUE(SimpleCacheMakeBadChecksumEntry(key, kLargeSize));
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
 
   // Open the entry. Can't spot the checksum that quickly with it so
   // huge.
@@ -2854,7 +3009,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheErrorThenDoom) {
   const int kLargeSize = 50000;
   ASSERT_TRUE(SimpleCacheMakeBadChecksumEntry(key, kLargeSize));
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
 
   // Open the entry, forcing an IO error.
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
@@ -2945,18 +3100,17 @@ TEST_F(DiskCacheEntryTest, SimpleCacheQueuedOpenOnDoomedEntry) {
 
   entry->Close();
 
-  disk_cache::Entry* entry2 = nullptr;
   // Done via cache_ -> no event loop.
-  net::TestCompletionCallback cb;
-  ASSERT_EQ(net::ERR_IO_PENDING,
-            cache_->OpenEntry(key, net::HIGHEST, &entry2, cb.callback()));
+  TestEntryResultCompletionCallback cb;
+  EntryResult result = cache_->OpenEntry(key, net::HIGHEST, cb.callback());
+  ASSERT_EQ(net::ERR_IO_PENDING, result.net_error());
 
   net::TestCompletionCallback cb2;
   cache_->DoomEntry(key, net::HIGHEST, cb2.callback());
   // Now event loop.
-  EXPECT_EQ(net::OK, cb.WaitForResult());
-  ASSERT_TRUE(entry2 != nullptr);
-  entry2->Close();
+  result = cb.WaitForResult();
+  EXPECT_EQ(net::OK, result.net_error());
+  result.ReleaseEntry()->Close();
 
   EXPECT_EQ(net::OK, cb2.WaitForResult());
   EXPECT_EQ(0, cache_->GetEntryCount());
@@ -3009,18 +3163,18 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNoEOF) {
 
   const std::string key("the first key");
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   EXPECT_NE(null, entry);
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 
   // Force the entry to flush to disk, so subsequent platform file operations
   // succed.
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 
   // Truncate the file such that the length isn't sufficient to have an EOF
   // record.
@@ -3040,9 +3194,9 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonOptimisticOperationsBasic) {
   SetCacheType(net::APP_CACHE);  // APP_CACHE doesn't use optimistic operations.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* const null_entry = NULL;
+  disk_cache::Entry* const null_entry = nullptr;
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   EXPECT_THAT(CreateEntry("my key", &entry), IsOk());
   ASSERT_NE(null_entry, entry);
   ScopedEntryPtr entry_closer(entry);
@@ -3067,7 +3221,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonOptimisticOperationsDontBlock) {
   SetCacheType(net::APP_CACHE);  // APP_CACHE doesn't use optimistic operations.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* const null_entry = NULL;
+  disk_cache::Entry* const null_entry = nullptr;
 
   MessageLoopHelper helper;
   CallbackTest create_callback(&helper, false);
@@ -3077,7 +3231,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonOptimisticOperationsDontBlock) {
   scoped_refptr<net::IOBufferWithSize> write_buffer =
       base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   EXPECT_THAT(CreateEntry("my key", &entry), IsOk());
   ASSERT_NE(null_entry, entry);
   ScopedEntryPtr entry_closer(entry);
@@ -3085,11 +3239,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonOptimisticOperationsDontBlock) {
   CacheTestFillBuffer(write_buffer->data(), write_buffer->size(), false);
   CallbackTest write_callback(&helper, false);
   int ret = entry->WriteData(
-      1,
-      0,
-      write_buffer.get(),
-      write_buffer->size(),
-      base::Bind(&CallbackTest::Run, base::Unretained(&write_callback)),
+      1, 0, write_buffer.get(), write_buffer->size(),
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&write_callback)),
       false);
   ASSERT_THAT(ret, IsError(net::ERR_IO_PENDING));
   helper.WaitUntilCacheIoFinished(++expected_callback_runs);
@@ -3102,10 +3253,10 @@ TEST_F(DiskCacheEntryTest,
   SetCacheType(net::APP_CACHE);  // APP_CACHE doesn't use optimistic operations.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* const null_entry = NULL;
+  disk_cache::Entry* const null_entry = nullptr;
   MessageLoopHelper helper;
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   // Note that |entry| is only set once CreateEntry() completed which is why we
   // have to wait (i.e. use the helper CreateEntry() function).
   EXPECT_THAT(CreateEntry("my key", &entry), IsOk());
@@ -3118,11 +3269,8 @@ TEST_F(DiskCacheEntryTest,
   CacheTestFillBuffer(write_buffer->data(), write_buffer->size(), false);
   CallbackTest write_callback(&helper, false);
   int ret = entry->WriteData(
-      1,
-      0,
-      write_buffer.get(),
-      write_buffer->size(),
-      base::Bind(&CallbackTest::Run, base::Unretained(&write_callback)),
+      1, 0, write_buffer.get(), write_buffer->size(),
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&write_callback)),
       false);
   EXPECT_THAT(ret, IsError(net::ERR_IO_PENDING));
   int expected_callback_runs = 1;
@@ -3131,11 +3279,8 @@ TEST_F(DiskCacheEntryTest,
       base::MakeRefCounted<net::IOBufferWithSize>(kBufferSize);
   CallbackTest read_callback(&helper, false);
   ret = entry->ReadData(
-      1,
-      0,
-      read_buffer.get(),
-      read_buffer->size(),
-      base::Bind(&CallbackTest::Run, base::Unretained(&read_callback)));
+      1, 0, read_buffer.get(), read_buffer->size(),
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&read_callback)));
   EXPECT_THAT(ret, IsError(net::ERR_IO_PENDING));
   ++expected_callback_runs;
 
@@ -3151,7 +3296,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic) {
   // Create, Write, Read, Write, Read, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   const char key[] = "the first key";
 
   MessageLoopHelper helper;
@@ -3175,36 +3320,30 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic) {
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
   CacheTestFillBuffer(buffer2->data(), kSize2, false);
 
-  disk_cache::Entry* entry = NULL;
   // Create is optimistic, must return OK.
-  ASSERT_EQ(net::OK,
-            cache_->CreateEntry(
-                key, net::HIGHEST, &entry,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback1))));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST,
+                          base::BindOnce(&CallbackTest::RunWithEntry,
+                                         base::Unretained(&callback1)));
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  ASSERT_NE(null, entry);
   ScopedEntryPtr entry_closer(entry);
 
   // This write may or may not be optimistic (it depends if the previous
   // optimistic create already finished by the time we call the write here).
   int ret = entry->WriteData(
-      1,
-      0,
-      buffer1.get(),
-      kSize1,
-      base::Bind(&CallbackTest::Run, base::Unretained(&callback2)),
-      false);
+      1, 0, buffer1.get(), kSize1,
+      base::BindOnce(&CallbackTest::Run, base::Unretained(&callback2)), false);
   EXPECT_TRUE(kSize1 == ret || net::ERR_IO_PENDING == ret);
   if (net::ERR_IO_PENDING == ret)
     expected++;
 
   // This Read must not be optimistic, since we don't support that yet.
   EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->ReadData(
-                1,
-                0,
-                buffer1_read.get(),
-                kSize1,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback3))));
+            entry->ReadData(1, 0, buffer1_read.get(), kSize1,
+                            base::BindOnce(&CallbackTest::Run,
+                                           base::Unretained(&callback3))));
   expected++;
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
   EXPECT_EQ(0, memcmp(buffer1->data(), buffer1_read->data(), kSize1));
@@ -3212,23 +3351,17 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic) {
   // At this point after waiting, the pending operations queue on the entry
   // should be empty, so the next Write operation must run as optimistic.
   EXPECT_EQ(kSize2,
-            entry->WriteData(
-                1,
-                0,
-                buffer2.get(),
-                kSize2,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback4)),
-                false));
+            entry->WriteData(1, 0, buffer2.get(), kSize2,
+                             base::BindOnce(&CallbackTest::Run,
+                                            base::Unretained(&callback4)),
+                             false));
 
   // Lets do another read so we block until both the write and the read
   // operation finishes and we can then test for HasOneRef() below.
   EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->ReadData(
-                1,
-                0,
-                buffer2_read.get(),
-                kSize2,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback5))));
+            entry->ReadData(1, 0, buffer2_read.get(), kSize2,
+                            base::BindOnce(&CallbackTest::Run,
+                                           base::Unretained(&callback5))));
   expected++;
 
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
@@ -3245,32 +3378,35 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic2) {
   // Create, Open, Close, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
   MessageLoopHelper helper;
   CallbackTest callback1(&helper, false);
   CallbackTest callback2(&helper, false);
 
-  disk_cache::Entry* entry = NULL;
-  ASSERT_EQ(net::OK,
-            cache_->CreateEntry(
-                key, net::HIGHEST, &entry,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback1))));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST,
+                          base::BindOnce(&CallbackTest::RunWithEntry,
+                                         base::Unretained(&callback1)));
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  ASSERT_NE(nullptr, entry);
   ScopedEntryPtr entry_closer(entry);
 
-  disk_cache::Entry* entry2 = NULL;
-  ASSERT_EQ(net::ERR_IO_PENDING,
-            cache_->OpenEntry(
-                key, net::HIGHEST, &entry2,
-                base::Bind(&CallbackTest::Run, base::Unretained(&callback2))));
+  EntryResult result2 =
+      cache_->OpenEntry(key, net::HIGHEST,
+                        base::BindOnce(&CallbackTest::RunWithEntry,
+                                       base::Unretained(&callback2)));
+  ASSERT_EQ(net::ERR_IO_PENDING, result2.net_error());
   ASSERT_TRUE(helper.WaitUntilCacheIoFinished(1));
-
-  EXPECT_NE(null, entry2);
+  result2 = callback2.ReleaseLastEntryResult();
+  EXPECT_EQ(net::OK, result2.net_error());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
+  EXPECT_NE(nullptr, entry2);
   EXPECT_EQ(entry, entry2);
 
   // We have to call close twice, since we called create and open above.
+  // (the other closes is from |entry_closer|).
   entry->Close();
 
   // Check that we are not leaking.
@@ -3283,23 +3419,24 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic3) {
   // Create, Close, Open, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
-  disk_cache::Entry* entry = NULL;
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  ASSERT_NE(nullptr, entry);
   entry->Close();
 
-  net::TestCompletionCallback cb;
-  disk_cache::Entry* entry2 = NULL;
-  ASSERT_EQ(net::ERR_IO_PENDING,
-            cache_->OpenEntry(key, net::HIGHEST, &entry2, cb.callback()));
-  ASSERT_THAT(cb.GetResult(net::ERR_IO_PENDING), IsOk());
+  TestEntryResultCompletionCallback cb;
+  EntryResult result2 = cache_->OpenEntry(key, net::HIGHEST, cb.callback());
+  ASSERT_EQ(net::ERR_IO_PENDING, result2.net_error());
+  result2 = cb.WaitForResult();
+  ASSERT_THAT(result2.net_error(), IsOk());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
   ScopedEntryPtr entry_closer(entry2);
 
-  EXPECT_NE(null, entry2);
+  EXPECT_NE(nullptr, entry2);
   EXPECT_EQ(entry, entry2);
 
   // Check that we are not leaking.
@@ -3312,7 +3449,6 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic4) {
   // Create, Close, Write, Open, Open, Close, Write, Read, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
   net::TestCompletionCallback cb;
@@ -3320,11 +3456,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic4) {
   scoped_refptr<net::IOBuffer> buffer1 =
       base::MakeRefCounted<net::IOBuffer>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
-  disk_cache::Entry* entry = NULL;
 
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  ASSERT_NE(nullptr, entry);
   entry->Close();
 
   // Lets do a Write so we block until both the Close and the Write
@@ -3340,17 +3477,20 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic4) {
 
   // At this point the |entry| must have been destroyed, and called
   // RemoveSelfFromBackend().
-  disk_cache::Entry* entry2 = NULL;
-  ASSERT_EQ(net::ERR_IO_PENDING,
-            cache_->OpenEntry(key, net::HIGHEST, &entry2, cb.callback()));
-  ASSERT_THAT(cb.GetResult(net::ERR_IO_PENDING), IsOk());
-  EXPECT_NE(null, entry2);
+  TestEntryResultCompletionCallback cb2;
+  EntryResult result2 = cache_->OpenEntry(key, net::HIGHEST, cb2.callback());
+  ASSERT_EQ(net::ERR_IO_PENDING, result2.net_error());
+  result2 = cb2.WaitForResult();
+  ASSERT_THAT(result2.net_error(), IsOk());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
+  EXPECT_NE(nullptr, entry2);
 
-  disk_cache::Entry* entry3 = NULL;
-  ASSERT_EQ(net::ERR_IO_PENDING,
-            cache_->OpenEntry(key, net::HIGHEST, &entry3, cb.callback()));
-  ASSERT_THAT(cb.GetResult(net::ERR_IO_PENDING), IsOk());
-  EXPECT_NE(null, entry3);
+  EntryResult result3 = cache_->OpenEntry(key, net::HIGHEST, cb2.callback());
+  ASSERT_EQ(net::ERR_IO_PENDING, result3.net_error());
+  result3 = cb2.WaitForResult();
+  ASSERT_THAT(result3.net_error(), IsOk());
+  disk_cache::Entry* entry3 = result3.ReleaseEntry();
+  EXPECT_NE(nullptr, entry3);
   EXPECT_EQ(entry2, entry3);
   entry3->Close();
 
@@ -3378,7 +3518,6 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic5) {
   // Create, Doom, Write, Read, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
   net::TestCompletionCallback cb;
@@ -3386,11 +3525,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic5) {
   scoped_refptr<net::IOBuffer> buffer1 =
       base::MakeRefCounted<net::IOBuffer>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
-  disk_cache::Entry* entry = NULL;
 
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  ASSERT_NE(nullptr, entry);
   ScopedEntryPtr entry_closer(entry);
   entry->Doom();
 
@@ -3413,7 +3553,6 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic6) {
   // Create, Write, Doom, Doom, Read, Doom, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
   net::TestCompletionCallback cb;
@@ -3423,11 +3562,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimistic6) {
   scoped_refptr<net::IOBuffer> buffer1_read =
       base::MakeRefCounted<net::IOBuffer>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
-  disk_cache::Entry* entry = NULL;
 
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  EXPECT_NE(nullptr, entry);
   ScopedEntryPtr entry_closer(entry);
 
   EXPECT_EQ(
@@ -3454,11 +3594,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimisticWriteReleases) {
   InitCache();
 
   const char key[] = "the first key";
-  disk_cache::Entry* entry = NULL;
 
   // First, an optimistic create.
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
   ASSERT_TRUE(entry);
   ScopedEntryPtr entry_closer(entry);
 
@@ -3487,7 +3628,6 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCreateDoomRace) {
   // Create, Doom, Write, Close, Check files are not on disk anymore.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
   net::TestCompletionCallback cb;
@@ -3495,11 +3635,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCreateDoomRace) {
   scoped_refptr<net::IOBuffer> buffer1 =
       base::MakeRefCounted<net::IOBuffer>(kSize1);
   CacheTestFillBuffer(buffer1->data(), kSize1, false);
-  disk_cache::Entry* entry = NULL;
 
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
-  EXPECT_NE(null, entry);
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
+  EXPECT_NE(nullptr, entry);
 
   EXPECT_THAT(cache_->DoomEntry(key, net::HIGHEST, cb.callback()),
               IsError(net::ERR_IO_PENDING));
@@ -3530,26 +3671,25 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCreateRace) {
   SetCacheType(net::APP_CACHE);
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
   const char key[] = "the first key";
 
-  net::TestCompletionCallback create_callback;
+  TestEntryResultCompletionCallback create_callback;
 
-  disk_cache::Entry* entry1 = NULL;
-  ASSERT_EQ(net::OK,
-            create_callback.GetResult(cache_->CreateEntry(
-                key, net::HIGHEST, &entry1, create_callback.callback())));
+  EntryResult result1 = create_callback.GetResult(
+      cache_->CreateEntry(key, net::HIGHEST, create_callback.callback()));
+  ASSERT_EQ(net::OK, result1.net_error());
+  disk_cache::Entry* entry1 = result1.ReleaseEntry();
   ScopedEntryPtr entry1_closer(entry1);
-  EXPECT_NE(null, entry1);
+  EXPECT_NE(nullptr, entry1);
 
   net::TestCompletionCallback doom_callback;
   EXPECT_EQ(net::ERR_IO_PENDING,
             cache_->DoomEntry(key, net::HIGHEST, doom_callback.callback()));
 
-  disk_cache::Entry* entry2 = NULL;
-  ASSERT_EQ(net::OK,
-            create_callback.GetResult(cache_->CreateEntry(
-                key, net::HIGHEST, &entry2, create_callback.callback())));
+  EntryResult result2 = create_callback.GetResult(
+      cache_->CreateEntry(key, net::HIGHEST, create_callback.callback()));
+  ASSERT_EQ(net::OK, result2.net_error());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_THAT(doom_callback.GetResult(net::ERR_IO_PENDING), IsOk());
 }
@@ -3569,13 +3709,15 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCreateOptimistic) {
   net::TestCompletionCallback doom_callback;
   cache_->DoomEntry(kKey, net::HIGHEST, doom_callback.callback());
 
-  disk_cache::Entry* entry2 = nullptr;
-  net::TestCompletionCallback create_callback;
+  TestEntryResultCompletionCallback create_callback;
   // Open entry2, with same key. With optimistic ops, this should succeed
   // immediately, hence us using cache_->CreateEntry directly rather than using
   // the DiskCacheTestWithCache::CreateEntry wrapper which blocks when needed.
-  ASSERT_EQ(net::OK, cache_->CreateEntry(kKey, net::HIGHEST, &entry2,
-                                         create_callback.callback()));
+  EntryResult result2 =
+      cache_->CreateEntry(kKey, net::HIGHEST, create_callback.callback());
+  ASSERT_EQ(net::OK, result2.net_error());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
+  ASSERT_NE(nullptr, entry2);
 
   // Do some I/O to make sure it's alive.
   const int kSize = 2048;
@@ -3611,13 +3753,15 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCreateOptimisticMassDoom) {
   net::TestCompletionCallback doom_callback;
   cache_->DoomEntry(kKey, net::HIGHEST, doom_callback.callback());
 
-  disk_cache::Entry* entry2 = nullptr;
-  net::TestCompletionCallback create_callback;
+  TestEntryResultCompletionCallback create_callback;
   // Open entry2, with same key. With optimistic ops, this should succeed
   // immediately, hence us using cache_->CreateEntry directly rather than using
   // the DiskCacheTestWithCache::CreateEntry wrapper which blocks when needed.
-  ASSERT_EQ(net::OK, cache_->CreateEntry(kKey, net::HIGHEST, &entry2,
-                                         create_callback.callback()));
+  EntryResult result =
+      cache_->CreateEntry(kKey, net::HIGHEST, create_callback.callback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry2 = result.ReleaseEntry();
+  ASSERT_NE(nullptr, entry2);
 
   net::TestCompletionCallback doomall_callback;
 
@@ -3649,10 +3793,11 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomOpenOptimistic) {
 
   // Try to open entry. This should detect a miss immediately, since it's
   // the only thing after a doom.
-  disk_cache::Entry* entry2 = nullptr;
-  net::TestCompletionCallback open_callback;
-  EXPECT_EQ(net::ERR_FAILED, cache_->OpenEntry(kKey, net::HIGHEST, &entry2,
-                                               open_callback.callback()));
+
+  EntryResult result2 =
+      cache_->OpenEntry(kKey, net::HIGHEST, EntryResultCallback());
+  EXPECT_EQ(net::ERR_FAILED, result2.net_error());
+  EXPECT_EQ(nullptr, result2.ReleaseEntry());
   doom_callback.WaitForResult();
 }
 
@@ -3661,18 +3806,18 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomDoom) {
   // Create, Doom, Create, Doom (1st entry), Open.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
 
   const char key[] = "the first key";
 
-  disk_cache::Entry* entry1 = NULL;
+  disk_cache::Entry* entry1 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry1), IsOk());
   ScopedEntryPtr entry1_closer(entry1);
   EXPECT_NE(null, entry1);
 
   EXPECT_THAT(DoomEntry(key), IsOk());
 
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry2), IsOk());
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_NE(null, entry2);
@@ -3684,7 +3829,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomDoom) {
   EXPECT_EQ(net::OK,
             cb.GetResult(simple_entry1->DoomEntry(cb.callback())));
 
-  disk_cache::Entry* entry3 = NULL;
+  disk_cache::Entry* entry3 = nullptr;
   ASSERT_THAT(OpenEntry(key, &entry3), IsOk());
   ScopedEntryPtr entry3_closer(entry3);
   EXPECT_NE(null, entry3);
@@ -3696,18 +3841,18 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCreateDoom) {
   SetSimpleCacheMode();
   InitCache();
 
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
 
   const char key[] = "the first key";
 
-  disk_cache::Entry* entry1 = NULL;
+  disk_cache::Entry* entry1 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry1), IsOk());
   ScopedEntryPtr entry1_closer(entry1);
   EXPECT_NE(null, entry1);
 
   entry1->Doom();
 
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry2), IsOk());
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_NE(null, entry2);
@@ -3722,28 +3867,28 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomCloseCreateCloseOpen) {
   SetSimpleCacheMode();
   InitCache();
 
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
 
   const char key[] = "this is a key";
 
-  disk_cache::Entry* entry1 = NULL;
+  disk_cache::Entry* entry1 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry1), IsOk());
   ScopedEntryPtr entry1_closer(entry1);
   EXPECT_NE(null, entry1);
 
   entry1->Doom();
   entry1_closer.reset();
-  entry1 = NULL;
+  entry1 = nullptr;
 
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry2), IsOk());
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_NE(null, entry2);
 
   entry2_closer.reset();
-  entry2 = NULL;
+  entry2 = nullptr;
 
-  disk_cache::Entry* entry3 = NULL;
+  disk_cache::Entry* entry3 = nullptr;
   ASSERT_THAT(OpenEntry(key, &entry3), IsOk());
   ScopedEntryPtr entry3_closer(entry3);
   EXPECT_NE(null, entry3);
@@ -3757,14 +3902,15 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOptimisticCreateFailsOnOpen) {
   // Create a corrupt file in place of a future entry. Optimistic create should
   // initially succeed, but realize later that creation failed.
   const std::string key = "the key";
-  net::TestCompletionCallback cb;
-  disk_cache::Entry* entry = NULL;
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry = nullptr;
+  disk_cache::Entry* entry2 = nullptr;
 
   EXPECT_TRUE(disk_cache::simple_util::CreateCorruptFileForTests(
       key, cache_path_));
-  EXPECT_THAT(cache_->CreateEntry(key, net::HIGHEST, &entry, cb.callback()),
-              IsOk());
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  EXPECT_THAT(result.net_error(), IsOk());
+  entry = result.ReleaseEntry();
   ASSERT_TRUE(entry);
   ScopedEntryPtr entry_closer(entry);
   ASSERT_NE(net::OK, OpenEntry(key, &entry2));
@@ -3806,7 +3952,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheEvictOldEntries) {
       // will be checked for outliving the eviction.
       AddDelay();
     }
-    ASSERT_THAT(CreateEntry(key2 + base::IntToString(i), &entry), IsOk());
+    ASSERT_THAT(CreateEntry(key2 + base::NumberToString(i), &entry), IsOk());
     ScopedEntryPtr entry_closer(entry);
     EXPECT_EQ(kWriteSize,
               WriteData(entry, 1, 0, buffer.get(), kWriteSize, false));
@@ -3821,7 +3967,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheEvictOldEntries) {
     // Generally there is no guarantee that at this point the backround eviction
     // is finished. We are testing the positive case, i.e. when the eviction
     // never reaches this entry, should be non-flaky.
-    ASSERT_EQ(net::OK, OpenEntry(key2 + base::IntToString(entry_no), &entry))
+    ASSERT_EQ(net::OK, OpenEntry(key2 + base::NumberToString(entry_no), &entry))
         << "Should not have evicted fresh entry " << entry_no;
     entry->Close();
   }
@@ -3846,13 +3992,13 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
       base::MakeRefCounted<net::IOBuffer>(kBufferSize);
   CacheTestFillBuffer(write_buffer->data(), kBufferSize, false);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
 
   EXPECT_EQ(kBufferSize,
             WriteData(entry, 1, 0, write_buffer.get(), kBufferSize, false));
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
   ScopedEntryPtr entry_closer(entry);
@@ -3866,12 +4012,9 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
       base::MakeRefCounted<net::IOBuffer>(kReadBufferSize);
   CallbackTest read_callback(&helper, false);
   EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->ReadData(1,
-                            0,
-                            read_buffer.get(),
-                            kReadBufferSize,
-                            base::Bind(&CallbackTest::Run,
-                                       base::Unretained(&read_callback))));
+            entry->ReadData(1, 0, read_buffer.get(), kReadBufferSize,
+                            base::BindOnce(&CallbackTest::Run,
+                                           base::Unretained(&read_callback))));
   ++expected;
 
   // Truncate the entry to the length of that read.
@@ -3879,14 +4022,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightTruncate)  {
       base::MakeRefCounted<net::IOBuffer>(kReadBufferSize);
   CacheTestFillBuffer(truncate_buffer->data(), kReadBufferSize, false);
   CallbackTest truncate_callback(&helper, false);
-  EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->WriteData(1,
-                             0,
-                             truncate_buffer.get(),
-                             kReadBufferSize,
-                             base::Bind(&CallbackTest::Run,
-                                        base::Unretained(&truncate_callback)),
-                             true));
+  EXPECT_EQ(
+      net::ERR_IO_PENDING,
+      entry->WriteData(1, 0, truncate_buffer.get(), kReadBufferSize,
+                       base::BindOnce(&CallbackTest::Run,
+                                      base::Unretained(&truncate_callback)),
+                       true));
   ++expected;
 
   // Wait for both the read and truncation to finish, and confirm that both
@@ -3906,9 +4047,10 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightRead) {
   InitCache();
 
   const char key[] = "the first key";
-  disk_cache::Entry* entry = NULL;
-  ASSERT_EQ(net::OK, cache_->CreateEntry(key, net::HIGHEST, &entry,
-                                         net::CompletionOnceCallback()));
+  EntryResult result =
+      cache_->CreateEntry(key, net::HIGHEST, EntryResultCallback());
+  ASSERT_EQ(net::OK, result.net_error());
+  disk_cache::Entry* entry = result.ReleaseEntry();
   ScopedEntryPtr entry_closer(entry);
 
   const int kBufferSize = 1024;
@@ -3921,12 +4063,9 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightRead) {
 
   CallbackTest write_callback(&helper, false);
   EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->WriteData(1,
-                             0,
-                             write_buffer.get(),
-                             kBufferSize,
-                             base::Bind(&CallbackTest::Run,
-                                        base::Unretained(&write_callback)),
+            entry->WriteData(1, 0, write_buffer.get(), kBufferSize,
+                             base::BindOnce(&CallbackTest::Run,
+                                            base::Unretained(&write_callback)),
                              true));
   ++expected;
 
@@ -3934,12 +4073,9 @@ TEST_F(DiskCacheEntryTest, SimpleCacheInFlightRead) {
       base::MakeRefCounted<net::IOBuffer>(kBufferSize);
   CallbackTest read_callback(&helper, false);
   EXPECT_EQ(net::ERR_IO_PENDING,
-            entry->ReadData(1,
-                            0,
-                            read_buffer.get(),
-                            kBufferSize,
-                            base::Bind(&CallbackTest::Run,
-                                       base::Unretained(&read_callback))));
+            entry->ReadData(1, 0, read_buffer.get(), kBufferSize,
+                            base::BindOnce(&CallbackTest::Run,
+                                           base::Unretained(&read_callback))));
   ++expected;
 
   EXPECT_TRUE(helper.WaitUntilCacheIoFinished(expected));
@@ -3956,15 +4092,16 @@ TEST_F(DiskCacheEntryTest, SimpleCacheOpenCreateRaceWithNoIndex) {
 
   // Assume the index is not initialized, which is likely, since we are blocking
   // the IO thread from executing the index finalization step.
-  disk_cache::Entry* entry1;
-  net::TestCompletionCallback cb1;
-  disk_cache::Entry* entry2;
-  net::TestCompletionCallback cb2;
-  int rv1 = cache_->OpenEntry("key", net::HIGHEST, &entry1, cb1.callback());
-  int rv2 = cache_->CreateEntry("key", net::HIGHEST, &entry2, cb2.callback());
+  TestEntryResultCompletionCallback cb1;
+  TestEntryResultCompletionCallback cb2;
+  EntryResult rv1 = cache_->OpenEntry("key", net::HIGHEST, cb1.callback());
+  EntryResult rv2 = cache_->CreateEntry("key", net::HIGHEST, cb2.callback());
 
-  EXPECT_THAT(cb1.GetResult(rv1), IsError(net::ERR_FAILED));
-  ASSERT_THAT(cb2.GetResult(rv2), IsOk());
+  rv1 = cb1.GetResult(std::move(rv1));
+  EXPECT_THAT(rv1.net_error(), IsError(net::ERR_FAILED));
+  rv2 = cb2.GetResult(std::move(rv2));
+  ASSERT_THAT(rv2.net_error(), IsOk());
+  disk_cache::Entry* entry2 = rv2.ReleaseEntry();
 
   // Try to get an alias for entry2. Open should succeed, and return the same
   // pointer.
@@ -3993,13 +4130,13 @@ TEST_F(DiskCacheEntryTest, SimpleCacheMultipleReadersCheckCRC2) {
       base::MakeRefCounted<net::IOBuffer>(size);
 
   // Advance the first reader a little.
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(OpenEntry(key, &entry), IsOk());
   ScopedEntryPtr entry_closer(entry);
   EXPECT_EQ(1, ReadData(entry, 1, 0, read_buffer1.get(), 1));
 
   // Advance the 2nd reader by the same amount.
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   EXPECT_THAT(OpenEntry(key, &entry2), IsOk());
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_EQ(1, ReadData(entry2, 1, 0, read_buffer2.get(), 1));
@@ -4020,7 +4157,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
   // Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   const char key[] = "the first key";
 
   const int kHalfSize = 200;
@@ -4028,7 +4165,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
   scoped_refptr<net::IOBuffer> buffer1 =
       base::MakeRefCounted<net::IOBuffer>(kSize);
   CacheTestFillBuffer(buffer1->data(), kSize, false);
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
 
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
   EXPECT_NE(null, entry);
@@ -4036,7 +4173,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
   EXPECT_EQ(kSize, WriteData(entry, 1, 0, buffer1.get(), kSize, false));
   entry->Close();
 
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   ASSERT_THAT(OpenEntry(key, &entry2), IsOk());
   EXPECT_EQ(entry, entry2);
 
@@ -4062,7 +4199,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCombineCRC) {
   EXPECT_TRUE(
       static_cast<disk_cache::SimpleEntryImpl*>(entry)->HasOneRef());
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 }
 
 // Test if we can write the data not in sequence and read correctly. In
@@ -4073,7 +4210,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonSequentialWrite) {
   // Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   const char key[] = "the first key";
 
   const int kHalfSize = 200;
@@ -4086,7 +4223,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonSequentialWrite) {
   char* buffer1_data = buffer1->data() + kHalfSize;
   memcpy(buffer2->data(), buffer1_data, kHalfSize);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
   entry->Close();
   for (int i = 0; i < disk_cache::kSimpleEntryStreamCount; ++i) {
@@ -4122,7 +4259,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheNonSequentialWrite) {
 TEST_F(DiskCacheEntryTest, SimpleCacheStream1SizeChanges) {
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   const std::string key("the key");
   const int kSize = 100;
   scoped_refptr<net::IOBuffer> buffer =
@@ -4188,7 +4325,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheStream1SizeChanges) {
   EXPECT_EQ(kSize, ReadData(entry, 0, 0, buffer_read.get(), kSize));
   EXPECT_EQ(0, memcmp(buffer->data(), buffer_read->data(), kSize));
   entry->Close();
-  entry = NULL;
+  entry = nullptr;
 }
 
 // Test that writing within the range for which the crc has already been
@@ -4199,7 +4336,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCRCRewrite) {
   // Open, Read (all), Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   const char key[] = "the first key";
 
   const int kHalfSize = 200;
@@ -4211,7 +4348,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCRCRewrite) {
   CacheTestFillBuffer(buffer1->data(), kSize, false);
   CacheTestFillBuffer(buffer2->data(), kHalfSize, false);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
   EXPECT_NE(null, entry);
   entry->Close();
@@ -4258,8 +4395,39 @@ void DiskCacheEntryTest::SyncDoomEntry(const char* key) {
   callback.WaitForResult();
 }
 
+void DiskCacheEntryTest::CreateEntryWithHeaderBodyAndSideData(
+    const std::string& key,
+    int data_size) {
+  // Use one buffer for simplicity.
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::IOBuffer>(data_size);
+  CacheTestFillBuffer(buffer->data(), data_size, false);
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(key, &entry), IsOk());
+  for (int i = 0; i < disk_cache::kSimpleEntryStreamCount; ++i) {
+    EXPECT_EQ(data_size, WriteData(entry, i, /* offset */ 0, buffer.get(),
+                                   data_size, false));
+  }
+  entry->Close();
+}
+
+void DiskCacheEntryTest::TruncateFileFromEnd(int file_index,
+                                             const std::string& key,
+                                             int data_size,
+                                             int truncate_size) {
+  // Remove last eof bytes from cache file.
+  ASSERT_GT(data_size, truncate_size);
+  const int64_t new_size =
+      disk_cache::simple_util::GetFileSizeFromDataSize(key.size(), data_size) -
+      truncate_size;
+  const base::FilePath entry_path = cache_path_.AppendASCII(
+      disk_cache::simple_util::GetFilenameFromKeyAndFileIndex(key, file_index));
+  EXPECT_TRUE(TruncatePath(entry_path, new_size));
+}
+
 void DiskCacheEntryTest::UseAfterBackendDestruction() {
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
   cache_.reset();
 
@@ -4274,6 +4442,22 @@ void DiskCacheEntryTest::UseAfterBackendDestruction() {
   ReadData(entry, 1, 0, buffer.get(), kSize);
   WriteSparseData(entry, 20000, buffer.get(), kSize);
 
+  entry->Close();
+}
+
+void DiskCacheEntryTest::CloseSparseAfterBackendDestruction() {
+  const int kSize = 100;
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buffer->data(), kSize, false);
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry("the first key", &entry), IsOk());
+  WriteSparseData(entry, 20000, buffer.get(), kSize);
+
+  cache_.reset();
+
+  // This call shouldn't DCHECK or crash.
   entry->Close();
 }
 
@@ -4429,7 +4613,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomOptimisticWritesRace) {
   // Open, Close.
   SetSimpleCacheMode();
   InitCache();
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   const char key[] = "the first key";
 
   const int kSize = 200;
@@ -4443,12 +4627,12 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomOptimisticWritesRace) {
   // The race only happens on stream 1 and stream 2.
   for (int i = 0; i < disk_cache::kSimpleEntryStreamCount; ++i) {
     ASSERT_THAT(DoomAllEntries(), IsOk());
-    disk_cache::Entry* entry = NULL;
+    disk_cache::Entry* entry = nullptr;
 
     ASSERT_THAT(CreateEntry(key, &entry), IsOk());
     EXPECT_NE(null, entry);
     entry->Close();
-    entry = NULL;
+    entry = nullptr;
 
     ASSERT_THAT(DoomAllEntries(), IsOk());
     ASSERT_THAT(CreateEntry(key, &entry), IsOk());
@@ -4470,7 +4654,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheDoomOptimisticWritesRace) {
     EXPECT_NE(null, entry);
 
     entry->Close();
-    entry = NULL;
+    entry = nullptr;
   }
 }
 
@@ -4480,17 +4664,17 @@ TEST_F(DiskCacheEntryTest, SimpleCachePreserveActiveEntries) {
   SetSimpleCacheMode();
   InitCache();
 
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
 
   const char key[] = "this is a key";
 
-  disk_cache::Entry* entry1 = NULL;
+  disk_cache::Entry* entry1 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry1), IsOk());
   ScopedEntryPtr entry1_closer(entry1);
   EXPECT_NE(null, entry1);
   entry1->Doom();
 
-  disk_cache::Entry* entry2 = NULL;
+  disk_cache::Entry* entry2 = nullptr;
   ASSERT_THAT(CreateEntry(key, &entry2), IsOk());
   ScopedEntryPtr entry2_closer(entry2);
   EXPECT_NE(null, entry2);
@@ -4498,7 +4682,7 @@ TEST_F(DiskCacheEntryTest, SimpleCachePreserveActiveEntries) {
 
   // Closing then reopening entry2 insures that entry2 is serialized, and so
   // it can be opened from files without error.
-  entry2 = NULL;
+  entry2 = nullptr;
   ASSERT_THAT(OpenEntry(key, &entry2), IsOk());
   EXPECT_NE(null, entry2);
   entry2_closer.reset(entry2);
@@ -4510,7 +4694,7 @@ TEST_F(DiskCacheEntryTest, SimpleCachePreserveActiveEntries) {
   // the backend's |active_entries_| while |entry2| is still alive and its
   // files are still on disk.
   entry1_closer.reset();
-  entry1 = NULL;
+  entry1 = nullptr;
 
   // Close does not have a callback. However, we need to be sure the close is
   // finished before we continue the test. We can take advantage of how the ref
@@ -4524,11 +4708,11 @@ TEST_F(DiskCacheEntryTest, SimpleCachePreserveActiveEntries) {
     base::PlatformThread::YieldCurrentThread();
     base::RunLoop().RunUntilIdle();
   }
-  entry1_refptr = NULL;
+  entry1_refptr = nullptr;
 
   // In the bug case, this new entry ends up being a duplicate object pointing
   // at the same underlying files.
-  disk_cache::Entry* entry3 = NULL;
+  disk_cache::Entry* entry3 = nullptr;
   EXPECT_THAT(OpenEntry(key, &entry3), IsOk());
   ScopedEntryPtr entry3_closer(entry3);
   EXPECT_NE(null, entry3);
@@ -4553,7 +4737,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheHugeSparseIO) {
 TEST_F(DiskCacheEntryTest, SimpleCacheGetAvailableRange) {
   SetSimpleCacheMode();
   InitCache();
-  GetAvailableRange();
+  GetAvailableRangeTest();
 }
 
 TEST_F(DiskCacheEntryTest, SimpleCacheUpdateSparseEntry) {
@@ -4584,7 +4768,7 @@ TEST_F(DiskCacheEntryTest, SimpleCacheTruncateLargeSparseFile) {
   InitCache();
 
   const char key[] = "key";
-  disk_cache::Entry* null = NULL;
+  disk_cache::Entry* null = nullptr;
   disk_cache::Entry* entry;
   ASSERT_THAT(CreateEntry(key, &entry), IsOk());
   EXPECT_NE(null, entry);
@@ -4632,6 +4816,40 @@ TEST_F(DiskCacheEntryTest, SimpleCacheTruncateLargeSparseFile) {
   EXPECT_EQ(kSize, callback.GetResult(ret));
 
   entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, SimpleCacheNoBodyEOF) {
+  SetSimpleCacheMode();
+  InitCache();
+
+  const std::string key("the first key");
+  const int kSize = 1024;
+  CreateEntryWithHeaderBodyAndSideData(key, kSize);
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(OpenEntry(key, &entry), IsOk());
+  entry->Close();
+
+  TruncateFileFromEnd(0 /*header and body file index*/, key, kSize,
+                      static_cast<int>(sizeof(disk_cache::SimpleFileEOF)));
+  EXPECT_THAT(OpenEntry(key, &entry), IsError(net::ERR_FAILED));
+}
+
+TEST_F(DiskCacheEntryTest, SimpleCacheNoSideDataEOF) {
+  SetSimpleCacheMode();
+  InitCache();
+
+  const std::string key("the first key");
+  const int kSize = 1024;
+  CreateEntryWithHeaderBodyAndSideData(key, kSize);
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(OpenEntry(key, &entry), IsOk());
+  entry->Close();
+
+  TruncateFileFromEnd(1 /*side data file_index*/, key, kSize,
+                      static_cast<int>(sizeof(disk_cache::SimpleFileEOF)));
+  EXPECT_THAT(OpenEntry(key, &entry), IsError(net::ERR_FAILED));
 }
 
 TEST_F(DiskCacheEntryTest, SimpleCacheReadWithoutKeySHA256) {
@@ -4751,7 +4969,8 @@ TEST_F(DiskCacheEntryTest, SimpleCacheReadCorruptLength) {
   EXPECT_NE(net::OK, OpenEntry(key, &entry));
 }
 
-TEST_F(DiskCacheEntryTest, SimpleCacheCreateRecoverFromRmdir) {
+// TODO(crbug.com/999584): Flaky on platforms which use POSIX-based file I/O.
+TEST_F(DiskCacheEntryTest, DISABLED_SimpleCacheCreateRecoverFromRmdir) {
   // This test runs as APP_CACHE to make operations more synchronous.
   // (in particular we want to see if create succeeded or not, so we don't
   //  want an optimistic one).
@@ -5009,6 +5228,19 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyUseAfterBackendDestruction) {
   UseAfterBackendDestruction();
 }
 
+TEST_F(DiskCacheEntryTest, SimpleCloseSparseAfterBackendDestruction) {
+  SetSimpleCacheMode();
+  InitCache();
+  CloseSparseAfterBackendDestruction();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlyCloseSparseAfterBackendDestruction) {
+  // https://crbug.com/946434
+  SetMemoryOnlyMode();
+  InitCache();
+  CloseSparseAfterBackendDestruction();
+}
+
 void DiskCacheEntryTest::LastUsedTimePersists() {
   // Make sure that SetLastUsedTimeForTest persists. When used with SimpleCache,
   // this also checks that Entry::GetLastUsed is based on information in index,
@@ -5048,6 +5280,168 @@ TEST_F(DiskCacheEntryTest, MemoryOnlyLastUsedTimePersists) {
   LastUsedTimePersists();
 }
 
+void DiskCacheEntryTest::TruncateBackwards() {
+  const char kKey[] = "a key";
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(kKey, &entry), IsOk());
+  ASSERT_TRUE(entry != nullptr);
+
+  const int kBigSize = 40 * 1024;
+  const int kSmallSize = 9727;
+
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::IOBuffer>(kBigSize);
+  CacheTestFillBuffer(buffer->data(), kBigSize, false);
+  scoped_refptr<net::IOBuffer> read_buf =
+      base::MakeRefCounted<net::IOBuffer>(kBigSize);
+
+  ASSERT_EQ(kSmallSize, WriteData(entry, /* stream_index = */ 0,
+                                  /* offset = */ kBigSize, buffer.get(),
+                                  /* size = */ kSmallSize,
+                                  /* truncate = */ false));
+  memset(read_buf->data(), 0, kBigSize);
+  ASSERT_EQ(kSmallSize, ReadData(entry, /* stream_index = */ 0,
+                                 /* offset = */ kBigSize, read_buf.get(),
+                                 /* size = */ kSmallSize));
+  EXPECT_EQ(0, memcmp(read_buf->data(), buffer->data(), kSmallSize));
+
+  // A partly overlapping truncate before the previous write.
+  ASSERT_EQ(kBigSize,
+            WriteData(entry, /* stream_index = */ 0,
+                      /* offset = */ 3, buffer.get(), /* size = */ kBigSize,
+                      /* truncate = */ true));
+  memset(read_buf->data(), 0, kBigSize);
+  ASSERT_EQ(kBigSize,
+            ReadData(entry, /* stream_index = */ 0,
+                     /* offset = */ 3, read_buf.get(), /* size = */ kBigSize));
+  EXPECT_EQ(0, memcmp(read_buf->data(), buffer->data(), kBigSize));
+  EXPECT_EQ(kBigSize + 3, entry->GetDataSize(0));
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, TruncateBackwards) {
+  // https://crbug.com/946539/
+  InitCache();
+  TruncateBackwards();
+}
+
+TEST_F(DiskCacheEntryTest, SimpleTruncateBackwards) {
+  SetSimpleCacheMode();
+  InitCache();
+  TruncateBackwards();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlyTruncateBackwards) {
+  SetMemoryOnlyMode();
+  InitCache();
+  TruncateBackwards();
+}
+
+void DiskCacheEntryTest::ZeroWriteBackwards() {
+  const char kKey[] = "a key";
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(kKey, &entry), IsOk());
+  ASSERT_TRUE(entry != nullptr);
+
+  const int kSize = 1024;
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buffer->data(), kSize, false);
+
+  // Offset here needs to be > blockfile's kMaxBlockSize to hit
+  // https://crbug.com/946538, as writes close to beginning are handled
+  // specially.
+  EXPECT_EQ(0, WriteData(entry, /* stream_index = */ 0,
+                         /* offset = */ 17000, buffer.get(),
+                         /* size = */ 0, /* truncate = */ true));
+
+  EXPECT_EQ(0, WriteData(entry, /* stream_index = */ 0,
+                         /* offset = */ 0, buffer.get(),
+                         /* size = */ 0, /* truncate = */ false));
+
+  EXPECT_EQ(kSize, ReadData(entry, /* stream_index = */ 0,
+                            /* offset = */ 0, buffer.get(),
+                            /* size = */ kSize));
+  for (int i = 0; i < kSize; ++i) {
+    EXPECT_EQ(0, buffer->data()[i]) << i;
+  }
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, ZeroWriteBackwards) {
+  // https://crbug.com/946538/
+  InitCache();
+  ZeroWriteBackwards();
+}
+
+TEST_F(DiskCacheEntryTest, SimpleZeroWriteBackwards) {
+  SetSimpleCacheMode();
+  InitCache();
+  ZeroWriteBackwards();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlyZeroWriteBackwards) {
+  SetMemoryOnlyMode();
+  InitCache();
+  ZeroWriteBackwards();
+}
+
+void DiskCacheEntryTest::SparseOffset64Bit() {
+  // Offsets to sparse ops are 64-bit, make sure we keep track of all of them.
+  // (Or, as at least in case of blockfile, fail things cleanly, as it has a
+  //  cap on max offset that's much lower).
+  bool blockfile = !memory_only_ && !simple_cache_mode_;
+  InitCache();
+
+  const char kKey[] = "a key";
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry(kKey, &entry), IsOk());
+  ASSERT_TRUE(entry != nullptr);
+
+  const int kSize = 1024;
+  // One bit set very high, so intermediate truncations to 32-bit would drop it
+  // even if they happen after a bunch of shifting right.
+  const int64_t kOffset = (1ll << 61);
+
+  scoped_refptr<net::IOBuffer> buffer =
+      base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buffer->data(), kSize, false);
+
+  EXPECT_EQ(blockfile ? net::ERR_CACHE_OPERATION_NOT_SUPPORTED : kSize,
+            WriteSparseData(entry, kOffset, buffer.get(), kSize));
+
+  int64_t start_out = -1;
+  EXPECT_EQ(0, GetAvailableRange(entry, /* offset = */ 0, kSize, &start_out));
+
+  start_out = -1;
+  EXPECT_EQ(blockfile ? 0 : kSize,
+            GetAvailableRange(entry, kOffset, kSize, &start_out));
+  EXPECT_EQ(kOffset, start_out);
+
+  entry->Close();
+}
+
+TEST_F(DiskCacheEntryTest, SparseOffset64Bit) {
+  InitCache();
+  SparseOffset64Bit();
+}
+
+TEST_F(DiskCacheEntryTest, SimpleSparseOffset64Bit) {
+  SetSimpleCacheMode();
+  InitCache();
+  SparseOffset64Bit();
+}
+
+TEST_F(DiskCacheEntryTest, MemoryOnlySparseOffset64Bit) {
+  // https://crbug.com/946436
+  SetMemoryOnlyMode();
+  InitCache();
+  SparseOffset64Bit();
+}
+
 TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
   const int kSize = 10;
   scoped_refptr<net::IOBuffer> buffer =
@@ -5067,24 +5461,26 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
   disk_cache::SimpleBackendImpl::FlushWorkerPoolForTesting();
   base::RunLoop().RunUntilIdle();
 
-  disk_cache::Entry* entry2 = nullptr;
-  net::TestCompletionCallback cb_open;
   int rv = entry->WriteData(1, 0, buffer.get(), kSize,
-                            net::CompletionCallback(), false);
+                            net::CompletionOnceCallback(), false);
 
   // Write should be optimistic.
   ASSERT_EQ(kSize, rv);
 
   // Since the write is still pending, the open will get queued...
-  int rv2 = cache_->OpenEntry(kKey, net::HIGHEST, &entry2, cb_open.callback());
-  EXPECT_EQ(net::ERR_IO_PENDING, rv2);
+  TestEntryResultCompletionCallback cb_open;
+  EntryResult result2 =
+      cache_->OpenEntry(kKey, net::HIGHEST, cb_open.callback());
+  EXPECT_EQ(net::ERR_IO_PENDING, result2.net_error());
 
   // ... as the open is queued, this Close will temporarily reduce the number
   // of external references to 0.  This should not break things.
   entry->Close();
 
   // Wait till open finishes.
-  ASSERT_EQ(net::OK, cb_open.GetResult(rv2));
+  result2 = cb_open.GetResult(std::move(result2));
+  ASSERT_EQ(net::OK, result2.net_error());
+  disk_cache::Entry* entry2 = result2.ReleaseEntry();
   ASSERT_TRUE(entry2 != nullptr);
 
   // Get first close a chance to finish.
@@ -5101,11 +5497,39 @@ TEST_F(DiskCacheEntryTest, SimpleCacheCloseResurrection) {
   entry2->Close();
 }
 
+TEST_F(DiskCacheEntryTest, BlockFileSparsePendingAfterDtor) {
+  // Test of behavior of ~EntryImpl for sparse entry that runs after backend
+  // destruction.
+  //
+  // Hand-creating the backend for realistic shutdown behavior.
+  CleanupCacheDir();
+  CreateBackend(disk_cache::kNone);
+
+  disk_cache::Entry* entry = nullptr;
+  ASSERT_THAT(CreateEntry("key", &entry), IsOk());
+  ASSERT_TRUE(entry != nullptr);
+
+  const int kSize = 61184;
+
+  scoped_refptr<net::IOBuffer> buf = base::MakeRefCounted<net::IOBuffer>(kSize);
+  CacheTestFillBuffer(buf->data(), kSize, false);
+
+  // The write pattern here avoids the second write being handled by the
+  // buffering layer, making SparseControl have to deal with its asynchrony.
+  EXPECT_EQ(1, WriteSparseData(entry, 65535, buf.get(), 1));
+  EXPECT_EQ(net::ERR_IO_PENDING,
+            entry->WriteSparseData(2560, buf.get(), kSize, base::DoNothing()));
+  entry->Close();
+  cache_.reset();
+
+  // Create a new instance as a way of flushing the thread.
+  InitCache();
+  FlushQueueForTest();
+}
+
 class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
  public:
-  DiskCacheSimplePrefetchTest()
-      : field_trial_list_(std::make_unique<base::FieldTrialList>(
-            std::make_unique<base::MockEntropyProvider>())) {}
+  DiskCacheSimplePrefetchTest() = default;
 
   enum { kEntrySize = 1024 };
 
@@ -5120,11 +5544,11 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
                                    int trailer_speculative_size) {
     std::map<std::string, std::string> params;
     params[disk_cache::kSimpleCacheFullPrefetchBytesParam] =
-        base::IntToString(full_size);
+        base::NumberToString(full_size);
     params[disk_cache::kSimpleCacheTrailerPrefetchHintParam] =
         trailer_hint ? "true" : "false";
     params[disk_cache::kSimpleCacheTrailerPrefetchSpeculativeBytesParam] =
-        base::IntToString(trailer_speculative_size);
+        base::NumberToString(trailer_speculative_size);
     scoped_feature_list_.InitAndEnableFeatureWithParameters(
         disk_cache::kSimpleCachePrefetchExperiment, params);
   }
@@ -5174,7 +5598,7 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
   }
 
   void TryRead(const std::string& key) {
-    disk_cache::Entry* entry = NULL;
+    disk_cache::Entry* entry = nullptr;
     ASSERT_THAT(OpenEntry(key, &entry), IsOk());
     scoped_refptr<net::IOBuffer> read_buf =
         base::MakeRefCounted<net::IOBuffer>(kEntrySize);
@@ -5185,9 +5609,6 @@ class DiskCacheSimplePrefetchTest : public DiskCacheEntryTest {
 
  protected:
   scoped_refptr<net::IOBuffer> payload_;
-
-  // Need to have the one "global" trial list before we change things.
-  std::unique_ptr<base::FieldTrialList> field_trial_list_;
   base::test::ScopedFeatureList scoped_feature_list_;
 };
 
@@ -5226,7 +5647,7 @@ TEST_F(DiskCacheSimplePrefetchTest, YesPrefetchNoRead) {
   const char kKey[] = "a key";
   InitCacheAndCreateEntry(kKey);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(OpenEntry(kKey, &entry), IsOk());
   entry->Close();
 
@@ -5251,7 +5672,7 @@ TEST_F(DiskCacheSimplePrefetchTest, BadChecksumSmall) {
   const char key[] = "the first key";
   ASSERT_TRUE(SimpleCacheMakeBadChecksumEntry(key, 10));
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
 
   // Open the entry. Since we made a small entry, we will detect the CRC
   // problem at open.
@@ -5330,7 +5751,7 @@ TEST_F(DiskCacheSimplePrefetchTest, PrefetchReadsSync) {
   const char kKey[] = "a key";
   InitCacheAndCreateEntry(kKey);
 
-  disk_cache::Entry* entry = NULL;
+  disk_cache::Entry* entry = nullptr;
   ASSERT_THAT(OpenEntry(kKey, &entry), IsOk());
   scoped_refptr<net::IOBuffer> read_buf =
       base::MakeRefCounted<net::IOBuffer>(kEntrySize);

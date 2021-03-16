@@ -49,11 +49,11 @@ struct TmGlobal {
   void *(*xSaveRealloc)(void *, void *, size_t);
   void (*xSaveFree)(void *, void *);
 
-  /* OOM injection scheduling. If nCountdown is greater than zero when a
-  ** malloc attempt is made, it is decremented. If this means nCountdown
-  ** transitions from 1 to 0, then the allocation fails. If bPersist is true
-  ** when this happens, nCountdown is then incremented back to 1 (so that the
-  ** next attempt fails too).
+  /* OOM injection scheduling. If nCountdown is greater than zero when a 
+  ** malloc attempt is made, it is decremented. If this means nCountdown 
+  ** transitions from 1 to 0, then the allocation fails. If bPersist is true 
+  ** when this happens, nCountdown is then incremented back to 1 (so that the 
+  ** next attempt fails too).  
   */
   int nCountdown;
   int bPersist;
@@ -226,8 +226,8 @@ static void *tmRealloc(TmGlobal *pTm, void *p, int nByte){
 }
 
 static void tmMallocOom(
-  TmGlobal *pTm,
-  int nCountdown,
+  TmGlobal *pTm, 
+  int nCountdown, 
   int bPersist,
   void (*xHook)(void *),
   void *pHookCtx
@@ -242,7 +242,7 @@ static void tmMallocOom(
 }
 
 static void tmMallocOomEnable(
-  TmGlobal *pTm,
+  TmGlobal *pTm, 
   int bEnable
 ){
   pTm->bEnable = bEnable;
@@ -261,7 +261,7 @@ static void tmMallocCheck(
   if( pTm==0 ) return;
 
   for(pHdr=pTm->pFirst; pHdr; pHdr=pHdr->pNext){
-    nLeak++;
+    nLeak++; 
     nByte += pHdr->nByte;
   }
   if( pnLeakAlloc ) *pnLeakAlloc = nLeak;
@@ -326,13 +326,13 @@ static void *tmLsmMalloc(int n){ return malloc(n); }
 static void tmLsmFree(void *ptr){ free(ptr); }
 static void *tmLsmRealloc(void *ptr, int n){ return realloc(ptr, n); }
 
-static void *tmLsmEnvMalloc(lsm_env *p, size_t n){
-  return tmMalloc((TmGlobal *)(p->pMemCtx), n);
+static void *tmLsmEnvMalloc(lsm_env *p, size_t n){ 
+  return tmMalloc((TmGlobal *)(p->pMemCtx), n); 
 }
-static void tmLsmEnvFree(lsm_env *p, void *ptr){
-  tmFree((TmGlobal *)(p->pMemCtx), ptr);
+static void tmLsmEnvFree(lsm_env *p, void *ptr){ 
+  tmFree((TmGlobal *)(p->pMemCtx), ptr); 
 }
-static void *tmLsmEnvRealloc(lsm_env *p, void *ptr, size_t n){
+static void *tmLsmEnvRealloc(lsm_env *p, void *ptr, size_t n){ 
   return tmRealloc((TmGlobal *)(p->pMemCtx), ptr, n);
 }
 
@@ -393,8 +393,8 @@ void testMallocCheck(
 }
 
 void testMallocOom(
-  lsm_env *pEnv,
-  int nCountdown,
+  lsm_env *pEnv, 
+  int nCountdown, 
   int bPersist,
   void (*xHook)(void *),
   void *pHookCtx

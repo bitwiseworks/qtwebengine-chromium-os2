@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,6 +24,7 @@
 #include "absl/base/internal/scheduling_mode.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace base_internal {
 
 // SpinLockWait() waits until it can perform one of several transitions from
@@ -62,6 +63,7 @@ void SpinLockDelay(std::atomic<uint32_t> *w, uint32_t value, int loop,
 int SpinLockSuggestedDelayNS(int loop);
 
 }  // namespace base_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // In some build configurations we pass --detect-odr-violations to the

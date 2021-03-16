@@ -42,8 +42,8 @@ Vector<IntRect> Region::Rects() const {
     int height = (span + 1)->y - y;
 
     for (Shape::SegmentIterator segment = shape_.SegmentsBegin(span),
-                                end = shape_.SegmentsEnd(span);
-         segment != end && segment + 1 != end; segment += 2) {
+                                segment_end = shape_.SegmentsEnd(span);
+         segment != segment_end && segment + 1 != segment_end; segment += 2) {
       int x = *segment;
       int width = *(segment + 1) - x;
 
@@ -77,8 +77,8 @@ bool Region::Contains(const IntPoint& point) const {
       continue;
 
     for (Shape::SegmentIterator segment = shape_.SegmentsBegin(span),
-                                end = shape_.SegmentsEnd(span);
-         segment != end && segment + 1 != end; segment += 2) {
+                                segment_end = shape_.SegmentsEnd(span);
+         segment != segment_end && segment + 1 != segment_end; segment += 2) {
       int x = *segment;
       int max_x = *(segment + 1);
 
@@ -107,8 +107,8 @@ uint64_t Region::Area() const {
     int height = (span + 1)->y - span->y;
 
     for (Shape::SegmentIterator segment = shape_.SegmentsBegin(span),
-                                end = shape_.SegmentsEnd(span);
-         segment != end && segment + 1 != end; segment += 2) {
+                                segment_end = shape_.SegmentsEnd(span);
+         segment != segment_end && segment + 1 != segment_end; segment += 2) {
       int width = *(segment + 1) - *segment;
       area += (uint64_t)height * (uint64_t)width;
     }
@@ -327,15 +327,15 @@ Region::Shape::SegmentIterator Region::Shape::SegmentsEnd(
   return segments_.data() + segment_index;
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void Region::Shape::Dump() const {
   for (Shape::SpanIterator span = SpansBegin(), end = SpansEnd(); span != end;
        ++span) {
     printf("%6d: (", span->y);
 
     for (Shape::SegmentIterator segment = SegmentsBegin(span),
-                                end = SegmentsEnd(span);
-         segment != end; ++segment)
+                                segment_end = SegmentsEnd(span);
+         segment != segment_end; ++segment)
       printf("%d ", *segment);
     printf(")\n");
   }
@@ -432,16 +432,16 @@ Region::Shape Region::Shape::ShapeOperation(const Shape& shape1,
   // Iterate over all spans.
   while (spans1 != spans1_end && spans2 != spans2_end) {
     int y = 0;
-    int test = spans1->y - spans2->y;
+    int y_diff = spans1->y - spans2->y;
 
-    if (test <= 0) {
+    if (y_diff <= 0) {
       y = spans1->y;
 
       segments1 = shape1.SegmentsBegin(spans1);
       segments1_end = shape1.SegmentsEnd(spans1);
       ++spans1;
     }
-    if (test >= 0) {
+    if (y_diff >= 0) {
       y = spans2->y;
 
       segments2 = shape2.SegmentsBegin(spans2);
@@ -462,15 +462,15 @@ Region::Shape Region::Shape::ShapeOperation(const Shape& shape1,
     // Now iterate over the segments in each span and construct a new vector of
     // segments.
     while (s1 != segments1_end && s2 != segments2_end) {
-      int test = *s1 - *s2;
+      int s_diff = *s1 - *s2;
       int x;
 
-      if (test <= 0) {
+      if (s_diff <= 0) {
         x = *s1;
         flag = flag ^ 1;
         ++s1;
       }
-      if (test >= 0) {
+      if (s_diff >= 0) {
         x = *s2;
         flag = flag ^ 2;
         ++s2;
@@ -570,7 +570,7 @@ Region::Shape Region::Shape::SubtractShapes(const Shape& shape1,
   return ShapeOperation<SubtractOperation>(shape1, shape2);
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void Region::Dump() const {
   printf("Bounds: (%d, %d, %d, %d)\n", bounds_.X(), bounds_.Y(),
          bounds_.Width(), bounds_.Height());

@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/data_reduction_proxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
@@ -38,7 +39,7 @@ DataReductionProxyGetDataUsageFunction::Run() {
           browser_context());
   settings->data_reduction_proxy_service()
       ->compression_stats()
-      ->GetHistoricalDataUsage(base::Bind(
+      ->GetHistoricalDataUsage(base::BindOnce(
           &DataReductionProxyGetDataUsageFunction::ReplyWithDataUsage, this));
   return RespondLater();
 }

@@ -5,12 +5,14 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SUGGESTION_TEXT_SUGGESTION_CONTROLLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EDITING_SUGGESTION_TEXT_SUGGESTION_CONTROLLER_H_
 
-#include "third_party/blink/public/platform/input_host.mojom-blink.h"
+#include <utility>
+#include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/mojom/input/input_host.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/document_shutdown_observer.h"
 #include "third_party/blink/renderer/core/editing/forward.h"
 #include "third_party/blink/renderer/core/editing/markers/document_marker.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
@@ -24,8 +26,8 @@ struct TextSuggestionInfo;
 // suggestions (e.g. from spellcheck), and performing actions relating to those
 // suggestions. Android is currently the only platform that has such a menu.
 class CORE_EXPORT TextSuggestionController final
-    : public GarbageCollectedFinalized<TextSuggestionController>,
-      public DocumentShutdownObserver {
+    : public GarbageCollected<TextSuggestionController>,
+      public ExecutionContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(TextSuggestionController);
 
  public:
@@ -44,7 +46,10 @@ class CORE_EXPORT TextSuggestionController final
   void OnSuggestionMenuClosed();
   void SuggestionMenuTimeoutCallback(size_t max_number_of_suggestions);
 
-  void Trace(blink::Visitor*) override;
+  // ExecutionContextLifecycleObserver methods:
+  void ContextDestroyed() override {}
+
+  void Trace(Visitor*) override;
 
  private:
   friend class TextSuggestionControllerTest;
@@ -63,9 +68,9 @@ class CORE_EXPORT TextSuggestionController final
       const Vector<TextSuggestionInfo>& text_suggestion_infos,
       const String& misspelled_word);
   void ShowSpellCheckMenu(
-      const std::pair<Node*, DocumentMarker*>& node_spelling_marker_pair);
+      const std::pair<const Text*, DocumentMarker*>& node_spelling_marker_pair);
   void ShowSuggestionMenu(
-      const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>&
+      const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
           node_suggestion_marker_pairs,
       size_t max_number_of_suggestions);
   void ReplaceActiveSuggestionRange(const String&);
@@ -73,7 +78,7 @@ class CORE_EXPORT TextSuggestionController final
 
   bool is_suggestion_menu_open_;
   const Member<LocalFrame> frame_;
-  mojom::blink::TextSuggestionHostPtr text_suggestion_host_;
+  mojo::Remote<mojom::blink::TextSuggestionHost> text_suggestion_host_;
 
   DISALLOW_COPY_AND_ASSIGN(TextSuggestionController);
 };

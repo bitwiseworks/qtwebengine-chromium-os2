@@ -420,7 +420,7 @@ static int config_audio_output(AVFilterLink *outlink)
 
     for (i = 0; i < nb_channels; i++) {
         /* channel weighting */
-        const uint16_t chl = av_channel_layout_extract_channel(outlink->channel_layout, i);
+        const uint64_t chl = av_channel_layout_extract_channel(outlink->channel_layout, i);
         if (chl & (AV_CH_LOW_FREQUENCY|AV_CH_LOW_FREQUENCY_2)) {
             ebur128->ch_weighting[i] = 0;
         } else if (chl & BACK_MASK) {
@@ -774,6 +774,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
 
             /* push one video frame */
             if (ebur128->do_video) {
+                AVFrame *clone;
                 int x, y, ret;
                 uint8_t *p;
                 double gauge_value;
@@ -823,7 +824,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *insamples)
 
                 /* set pts and push frame */
                 pic->pts = pts;
-                ret = ff_filter_frame(outlink, av_frame_clone(pic));
+                clone = av_frame_clone(pic);
+                if (!clone)
+                    return AVERROR(ENOMEM);
+                ret = ff_filter_frame(outlink, clone);
                 if (ret < 0)
                     return ret;
             }

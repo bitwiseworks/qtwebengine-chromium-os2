@@ -15,13 +15,14 @@
 #include "dawn_native/opengl/DeviceGL.h"
 
 #include "dawn_native/BackendConnection.h"
-#include "dawn_native/BindGroup.h"
 #include "dawn_native/BindGroupLayout.h"
-#include "dawn_native/RenderPassDescriptor.h"
+#include "dawn_native/DynamicUploader.h"
+#include "dawn_native/ErrorData.h"
+#include "dawn_native/opengl/BindGroupGL.h"
+#include "dawn_native/opengl/BindGroupLayoutGL.h"
 #include "dawn_native/opengl/BufferGL.h"
 #include "dawn_native/opengl/CommandBufferGL.h"
 #include "dawn_native/opengl/ComputePipelineGL.h"
-#include "dawn_native/opengl/InputStateGL.h"
 #include "dawn_native/opengl/PipelineLayoutGL.h"
 #include "dawn_native/opengl/QueueGL.h"
 #include "dawn_native/opengl/RenderPipelineGL.h"
@@ -32,23 +33,57 @@
 
 namespace dawn_native { namespace opengl {
 
-    Device::Device(AdapterBase* adapter) : DeviceBase(adapter) {
+    Device::Device(AdapterBase* adapter,
+                   const DeviceDescriptor* descriptor,
+                   const OpenGLFunctions& functions)
+        : DeviceBase(adapter, descriptor), gl(functions) {
+        InitTogglesFromDriver();
+        if (descriptor != nullptr) {
+            ApplyToggleOverrides(descriptor);
+        }
+        mFormatTable = BuildGLFormatTable();
     }
 
     Device::~Device() {
-        CheckPassedFences();
-        ASSERT(mFencesInFlight.empty());
+        BaseDestructor();
+    }
 
-        // Some operations might have been started since the last submit and waiting
-        // on a serial that doesn't have a corresponding fence enqueued. Force all
-        // operations to look as if they were completed (because they were).
-        mCompletedSerial = mLastSubmittedSerial + 1;
-        Tick();
+    void Device::InitTogglesFromDriver() {
+        bool supportsBaseVertex = gl.IsAtLeastGLES(3, 2) || gl.IsAtLeastGL(3, 2);
+
+        bool supportsBaseInstance = gl.IsAtLeastGLES(3, 2) || gl.IsAtLeastGL(4, 2);
+
+        // TODO(crbug.com/dawn/343): We can support the extension variants, but need to load the EXT
+        // procs without the extension suffix.
+        // We'll also need emulation of shader builtins gl_BaseVertex and gl_BaseInstance.
+
+        // supportsBaseVertex |=
+        //     (gl.IsAtLeastGLES(2, 0) &&
+        //      (gl.IsGLExtensionSupported("OES_draw_elements_base_vertex") ||
+        //       gl.IsGLExtensionSupported("EXT_draw_elements_base_vertex"))) ||
+        //     (gl.IsAtLeastGL(3, 1) && gl.IsGLExtensionSupported("ARB_draw_elements_base_vertex"));
+
+        // supportsBaseInstance |=
+        //     (gl.IsAtLeastGLES(3, 1) && gl.IsGLExtensionSupported("EXT_base_instance")) ||
+        //     (gl.IsAtLeastGL(3, 1) && gl.IsGLExtensionSupported("ARB_base_instance"));
+
+        // TODO(crbug.com/dawn/343): Investigate emulation.
+        SetToggle(Toggle::DisableBaseVertex, !supportsBaseVertex);
+        SetToggle(Toggle::DisableBaseInstance, !supportsBaseInstance);
+    }
+
+    const GLFormat& Device::GetGLFormat(const Format& format) {
+        ASSERT(format.isSupported);
+        ASSERT(format.GetIndex() < mFormatTable.size());
+
+        const GLFormat& result = mFormatTable[format.GetIndex()];
+        ASSERT(result.isSupportedOnBackend);
+        return result;
     }
 
     ResultOrError<BindGroupBase*> Device::CreateBindGroupImpl(
         const BindGroupDescriptor* descriptor) {
-        return new BindGroup(this, descriptor);
+        return BindGroup::Create(this, descriptor);
     }
     ResultOrError<BindGroupLayoutBase*> Device::CreateBindGroupLayoutImpl(
         const BindGroupLayoutDescriptor* descriptor) {
@@ -57,15 +92,13 @@ namespace dawn_native { namespace opengl {
     ResultOrError<BufferBase*> Device::CreateBufferImpl(const BufferDescriptor* descriptor) {
         return new Buffer(this, descriptor);
     }
-    CommandBufferBase* Device::CreateCommandBuffer(CommandBufferBuilder* builder) {
-        return new CommandBuffer(builder);
+    CommandBufferBase* Device::CreateCommandBuffer(CommandEncoder* encoder,
+                                                   const CommandBufferDescriptor* descriptor) {
+        return new CommandBuffer(encoder, descriptor);
     }
     ResultOrError<ComputePipelineBase*> Device::CreateComputePipelineImpl(
         const ComputePipelineDescriptor* descriptor) {
         return new ComputePipeline(this, descriptor);
-    }
-    InputStateBase* Device::CreateInputState(InputStateBuilder* builder) {
-        return new InputState(builder);
     }
     ResultOrError<PipelineLayoutBase*> Device::CreatePipelineLayoutImpl(
         const PipelineLayoutDescriptor* descriptor) {
@@ -73,10 +106,6 @@ namespace dawn_native { namespace opengl {
     }
     ResultOrError<QueueBase*> Device::CreateQueueImpl() {
         return new Queue(this);
-    }
-    RenderPassDescriptorBase* Device::CreateRenderPassDescriptor(
-        RenderPassDescriptorBuilder* builder) {
-        return new RenderPassDescriptor(builder);
     }
     ResultOrError<RenderPipelineBase*> Device::CreateRenderPipelineImpl(
         const RenderPipelineDescriptor* descriptor) {
@@ -87,10 +116,17 @@ namespace dawn_native { namespace opengl {
     }
     ResultOrError<ShaderModuleBase*> Device::CreateShaderModuleImpl(
         const ShaderModuleDescriptor* descriptor) {
-        return new ShaderModule(this, descriptor);
+        return ShaderModule::Create(this, descriptor);
     }
-    SwapChainBase* Device::CreateSwapChain(SwapChainBuilder* builder) {
-        return new SwapChain(builder);
+    ResultOrError<SwapChainBase*> Device::CreateSwapChainImpl(
+        const SwapChainDescriptor* descriptor) {
+        return new SwapChain(this, descriptor);
+    }
+    ResultOrError<NewSwapChainBase*> Device::CreateSwapChainImpl(
+        Surface* surface,
+        NewSwapChainBase* previousSwapChain,
+        const SwapChainDescriptor* descriptor) {
+        return DAWN_VALIDATION_ERROR("New swapchains not implemented.");
     }
     ResultOrError<TextureBase*> Device::CreateTextureImpl(const TextureDescriptor* descriptor) {
         return new Texture(this, descriptor);
@@ -102,7 +138,7 @@ namespace dawn_native { namespace opengl {
     }
 
     void Device::SubmitFenceSync() {
-        GLsync sync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        GLsync sync = gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         mLastSubmittedSerial++;
         mFencesInFlight.emplace(sync, mLastSubmittedSerial);
     }
@@ -115,8 +151,13 @@ namespace dawn_native { namespace opengl {
         return mLastSubmittedSerial;
     }
 
-    void Device::TickImpl() {
+    Serial Device::GetPendingCommandSerial() const {
+        return mLastSubmittedSerial + 1;
+    }
+
+    MaybeError Device::TickImpl() {
         CheckPassedFences();
+        return {};
     }
 
     void Device::CheckPassedFences() {
@@ -124,24 +165,51 @@ namespace dawn_native { namespace opengl {
             GLsync sync = mFencesInFlight.front().first;
             Serial fenceSerial = mFencesInFlight.front().second;
 
-            GLint status = 0;
-            GLsizei length;
-            glGetSynciv(sync, GL_SYNC_CONDITION, sizeof(GLint), &length, &status);
-            ASSERT(length == 1);
-
             // Fence are added in order, so we can stop searching as soon
             // as we see one that's not ready.
-            if (!status) {
-                return;
+            GLenum result = gl.ClientWaitSync(sync, GL_SYNC_FLUSH_COMMANDS_BIT, 0);
+            if (result == GL_TIMEOUT_EXPIRED) {
+                continue;
             }
 
-            glDeleteSync(sync);
+            gl.DeleteSync(sync);
 
             mFencesInFlight.pop();
 
             ASSERT(fenceSerial > mCompletedSerial);
             mCompletedSerial = fenceSerial;
         }
+    }
+
+    ResultOrError<std::unique_ptr<StagingBufferBase>> Device::CreateStagingBuffer(size_t size) {
+        return DAWN_UNIMPLEMENTED_ERROR("Device unable to create staging buffer.");
+    }
+
+    MaybeError Device::CopyFromStagingToBuffer(StagingBufferBase* source,
+                                               uint64_t sourceOffset,
+                                               BufferBase* destination,
+                                               uint64_t destinationOffset,
+                                               uint64_t size) {
+        return DAWN_UNIMPLEMENTED_ERROR("Device unable to copy from staging buffer.");
+    }
+
+    void Device::Destroy() {
+        ASSERT(mLossStatus != LossStatus::AlreadyLost);
+
+        // Some operations might have been started since the last submit and waiting
+        // on a serial that doesn't have a corresponding fence enqueued. Force all
+        // operations to look as if they were completed (because they were).
+        mCompletedSerial = mLastSubmittedSerial + 1;
+
+        mDynamicUploader = nullptr;
+    }
+
+    MaybeError Device::WaitForIdleForDestruction() {
+        gl.Finish();
+        CheckPassedFences();
+        ASSERT(mFencesInFlight.empty());
+        Tick();
+        return {};
     }
 
 }}  // namespace dawn_native::opengl

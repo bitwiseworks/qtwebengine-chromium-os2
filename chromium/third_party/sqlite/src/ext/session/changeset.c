@@ -55,17 +55,18 @@ static void readFile(const char *zFilename, int *pSz, void **ppBuf){
   pBuf = sqlite3_malloc64( sz ? sz : 1 );
   if( pBuf==0 ){
     fprintf(stderr, "cannot allocate %d to hold content of \"%s\"\n",
-            sz, zFilename);
+            (int)sz, zFilename);
     exit(1);
   }
   if( sz>0 ){
-    if( fread(pBuf, sz, 1, f)!=1 ){
-      fprintf(stderr, "cannot read all %d bytes of \"%s\"\n", sz, zFilename);
+    if( fread(pBuf, (size_t)sz, 1, f)!=1 ){
+      fprintf(stderr, "cannot read all %d bytes of \"%s\"\n",
+              (int)sz, zFilename);
       exit(1);
     }
     fclose(f);
   }
-  *pSz = sz;
+  *pSz = (int)sz;
   *ppBuf = pBuf;
 }
 
@@ -73,7 +74,7 @@ static void readFile(const char *zFilename, int *pSz, void **ppBuf){
 ** digits. */
 static const char hexdigits[] = {
   '0', '1', '2', '3', '4', '5', '6', '7',
-  '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+  '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' 
 };
 
 /*
@@ -412,5 +413,5 @@ int main(int argc, char **argv){
   /* If nothing else matches, show the usage comment */
   usage(argv[0]);
   sqlite3_free(pBuf);
-  return 0;
+  return 0; 
 }

@@ -11,6 +11,7 @@
 #include "base/win/atl.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "sandbox/win/src/acl.h"
 #include "sandbox/win/src/security_capabilities.h"
 #include "sandbox/win/src/sid.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,11 +20,19 @@ namespace sandbox {
 
 namespace {
 
-void TestDefaultDalc(bool restricted_required) {
+void TestDefaultDalc(bool restricted_required, bool additional_sid_required) {
   RestrictedToken token;
   ASSERT_EQ(static_cast<DWORD>(ERROR_SUCCESS), token.Init(nullptr));
   if (!restricted_required)
     token.SetLockdownDefaultDacl();
+  ATL::CSid additional_sid = ATL::Sids::Guests();
+  ATL::CSid additional_sid2 = ATL::Sids::Batch();
+  if (additional_sid_required) {
+    token.AddDefaultDaclSid(Sid(additional_sid.GetPSID()), GRANT_ACCESS,
+                            READ_CONTROL);
+    token.AddDefaultDaclSid(Sid(additional_sid2.GetPSID()), DENY_ACCESS,
+                            GENERIC_ALL);
+  }
 
   ASSERT_EQ(static_cast<DWORD>(ERROR_SUCCESS),
             token.AddRestrictingSid(ATL::Sids::World().GetPSID()));
@@ -43,20 +52,31 @@ void TestDefaultDalc(bool restricted_required) {
 
   bool restricted_found = false;
   bool logon_sid_found = false;
+  bool additional_sid_found = false;
+  bool additional_sid2_found = false;
 
   unsigned int ace_count = dacl.GetAceCount();
   for (unsigned int i = 0; i < ace_count; ++i) {
     ATL::CSid sid;
     ACCESS_MASK mask = 0;
-    dacl.GetAclEntry(i, &sid, &mask);
+    BYTE ace_type = 0;
+    dacl.GetAclEntry(i, &sid, &mask, &ace_type);
     if (sid == ATL::Sids::RestrictedCode() && mask == GENERIC_ALL) {
       restricted_found = true;
     } else if (sid == logon_sid) {
       logon_sid_found = true;
+    } else if (sid == additional_sid && mask == READ_CONTROL &&
+               ace_type == ACCESS_ALLOWED_ACE_TYPE) {
+      additional_sid_found = true;
+    } else if (sid == additional_sid2 && mask == GENERIC_ALL &&
+               ace_type == ACCESS_DENIED_ACE_TYPE) {
+      additional_sid2_found = true;
     }
   }
 
   ASSERT_EQ(restricted_required, restricted_found);
+  ASSERT_EQ(additional_sid_required, additional_sid_found);
+  ASSERT_EQ(additional_sid_required, additional_sid2_found);
   if (!restricted_required)
     ASSERT_FALSE(logon_sid_found);
 }
@@ -82,6 +102,46 @@ bool GetVariableTokenInformation(const base::win::ScopedHandle& token,
                                  std::vector<char>* information) {
   return GetVariableTokenInformation(token.Get(), information_class,
                                      information);
+}
+
+void CheckDaclForPackageSid(const base::win::ScopedHandle& token,
+                            PSECURITY_CAPABILITIES security_capabilities,
+                            bool package_sid_required) {
+  DWORD length_needed = 0;
+  ::GetKernelObjectSecurity(token.Get(), DACL_SECURITY_INFORMATION, nullptr, 0,
+                            &length_needed);
+  ASSERT_EQ(::GetLastError(), DWORD{ERROR_INSUFFICIENT_BUFFER});
+
+  std::vector<char> security_desc_buffer(length_needed);
+  SECURITY_DESCRIPTOR* security_desc =
+      reinterpret_cast<SECURITY_DESCRIPTOR*>(security_desc_buffer.data());
+
+  ASSERT_TRUE(::GetKernelObjectSecurity(token.Get(), DACL_SECURITY_INFORMATION,
+                                        security_desc, length_needed,
+                                        &length_needed));
+
+  ATL::CSecurityDesc token_sd(*security_desc);
+  ATL::CDacl dacl;
+  ASSERT_TRUE(token_sd.GetDacl(&dacl));
+
+  ATL::CSid package_sid(
+      static_cast<SID*>(security_capabilities->AppContainerSid));
+  ATL::CSid all_package_sid(
+      static_cast<SID*>(sandbox::Sid(::WinBuiltinAnyPackageSid).GetPSID()));
+
+  unsigned int ace_count = dacl.GetAceCount();
+  for (unsigned int i = 0; i < ace_count; ++i) {
+    ATL::CSid sid;
+    ACCESS_MASK mask = 0;
+    BYTE type = 0;
+    dacl.GetAclEntry(i, &sid, &mask, &type);
+    if (mask != TOKEN_ALL_ACCESS || type != ACCESS_ALLOWED_ACE_TYPE)
+      continue;
+    if (sid == package_sid)
+      EXPECT_TRUE(package_sid_required);
+    else if (sid == all_package_sid)
+      EXPECT_FALSE(package_sid_required);
+  }
 }
 
 void CheckLowBoxToken(const base::win::ScopedHandle& token,
@@ -126,38 +186,7 @@ void CheckLowBoxToken(const base::win::ScopedHandle& token,
                            security_capabilities->Capabilities[index].Sid));
   }
 
-  DWORD length_needed = 0;
-  ::GetKernelObjectSecurity(token.Get(), DACL_SECURITY_INFORMATION, nullptr, 0,
-                            &length_needed);
-  ASSERT_EQ(::GetLastError(), DWORD{ERROR_INSUFFICIENT_BUFFER});
-
-  std::vector<char> security_desc_buffer(length_needed);
-  SECURITY_DESCRIPTOR* security_desc =
-      reinterpret_cast<SECURITY_DESCRIPTOR*>(security_desc_buffer.data());
-
-  ASSERT_TRUE(::GetKernelObjectSecurity(token.Get(), DACL_SECURITY_INFORMATION,
-                                        security_desc, length_needed,
-                                        &length_needed));
-
-  ATL::CSecurityDesc token_sd(*security_desc);
-  ATL::CSid check_sid(
-      static_cast<SID*>(security_capabilities->AppContainerSid));
-  bool package_sid_found = false;
-
-  ATL::CDacl dacl;
-  ASSERT_TRUE(token_sd.GetDacl(&dacl));
-  unsigned int ace_count = dacl.GetAceCount();
-  for (unsigned int i = 0; i < ace_count; ++i) {
-    ATL::CSid sid;
-    ACCESS_MASK mask = 0;
-    BYTE type = 0;
-    dacl.GetAclEntry(i, &sid, &mask, &type);
-    if (sid == check_sid && mask == TOKEN_ALL_ACCESS &&
-        type == ACCESS_ALLOWED_ACE_TYPE) {
-      package_sid_found = true;
-    }
-  }
-  ASSERT_TRUE(package_sid_found);
+  CheckDaclForPackageSid(token, security_capabilities, true);
 }
 
 // Checks if a sid is in the restricting list of the restricted token.
@@ -315,13 +344,24 @@ TEST(RestrictedTokenTest, ResultToken) {
 
 // Verifies that the token created has "Restricted" in its default dacl.
 TEST(RestrictedTokenTest, DefaultDacl) {
-  TestDefaultDalc(true);
+  TestDefaultDalc(true, false);
 }
 
 // Verifies that the token created does not have "Restricted" in its default
 // dacl.
 TEST(RestrictedTokenTest, DefaultDaclLockdown) {
-  TestDefaultDalc(false);
+  TestDefaultDalc(false, false);
+}
+
+// Verifies that the token created has an additional SID in its default dacl.
+TEST(RestrictedTokenTest, DefaultDaclWithAddition) {
+  TestDefaultDalc(true, true);
+}
+
+// Verifies that the token created does not have "Restricted" in its default
+// dacl and also has an additional SID.
+TEST(RestrictedTokenTest, DefaultDaclLockdownWithAddition) {
+  TestDefaultDalc(false, true);
 }
 
 // Tests the method "AddSidForDenyOnly".
@@ -519,7 +559,7 @@ TEST(RestrictedTokenTest, DeleteAllPrivilegesException) {
   RestrictedToken token;
   base::win::ScopedHandle token_handle;
 
-  std::vector<base::string16> exceptions;
+  std::vector<std::wstring> exceptions;
   exceptions.push_back(SE_CHANGE_NOTIFY_NAME);
 
   ASSERT_EQ(static_cast<DWORD>(ERROR_SUCCESS), token.Init(nullptr));
@@ -745,7 +785,7 @@ TEST(RestrictedTokenTest, LockdownDefaultDaclNoLogonSid) {
 }
 
 TEST(RestrictedTokenTest, LowBoxToken) {
-  if (base::win::GetVersion() < base::win::VERSION_WIN8)
+  if (base::win::GetVersion() < base::win::Version::WIN8)
     return;
   base::win::ScopedHandle token;
 
@@ -760,6 +800,11 @@ TEST(RestrictedTokenTest, LowBoxToken) {
                               0, &token));
   ASSERT_TRUE(token.IsValid());
   CheckLowBoxToken(token, ::TokenPrimary, &caps_no_capabilities);
+
+  ASSERT_TRUE(ReplacePackageSidInDacl(token.Get(), SE_KERNEL_OBJECT,
+                                      Sid(caps_no_capabilities.AppContainerSid),
+                                      TOKEN_ALL_ACCESS));
+  CheckDaclForPackageSid(token, &caps_no_capabilities, false);
 
   ASSERT_EQ(DWORD{ERROR_SUCCESS},
             CreateLowBoxToken(nullptr, IMPERSONATION, &caps_no_capabilities,

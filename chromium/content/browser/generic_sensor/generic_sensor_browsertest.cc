@@ -3,11 +3,13 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "components/network_session_configurator/common/network_switches.h"
+#include "content/browser/generic_sensor/sensor_provider_proxy_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -19,8 +21,7 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_javascript_dialog_manager.h"
 #include "device/base/synchronization/one_writer_seqlock.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/system/buffer.h"
 #include "net/dns/mock_host_resolver.h"
 #include "services/device/public/cpp/device_features.h"
@@ -28,10 +29,8 @@
 #include "services/device/public/cpp/generic_sensor/sensor_reading.h"
 #include "services/device/public/cpp/generic_sensor/sensor_traits.h"
 #include "services/device/public/cpp/test/fake_sensor_and_provider.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/device/public/mojom/sensor.mojom.h"
 #include "services/device/public/mojom/sensor_provider.mojom.h"
-#include "services/service_manager/public/cpp/service_binding.h"
 
 namespace content {
 
@@ -43,21 +42,17 @@ class GenericSensorBrowserTest : public ContentBrowserTest {
  public:
   GenericSensorBrowserTest() {
     scoped_feature_list_.InitWithFeatures(
-        {features::kGenericSensor, features::kGenericSensorExtraClasses}, {});
+        {features::kGenericSensorExtraClasses}, {});
 
-    // Because Device Service also runs in this process (browser process), here
-    // we can directly set our binder to intercept interface requests against
-    // it.
-    service_manager::ServiceBinding::OverrideInterfaceBinderForTesting(
-        device::mojom::kServiceName,
+    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
         base::BindRepeating(
-            &GenericSensorBrowserTest::BindSensorProviderRequest,
+            &GenericSensorBrowserTest::BindSensorProviderReceiver,
             base::Unretained(this)));
   }
 
   ~GenericSensorBrowserTest() override {
-    service_manager::ServiceBinding::ClearInterfaceBinderOverrideForTesting<
-        device::mojom::SensorProvider>(device::mojom::kServiceName);
+    SensorProviderProxyImpl::OverrideSensorProviderBinderForTesting(
+        base::NullCallback());
   }
 
   void SetUpOnMainThread() override {
@@ -78,7 +73,8 @@ class GenericSensorBrowserTest : public ContentBrowserTest {
     command_line->AppendSwitch(switches::kIgnoreCertificateErrors);
   }
 
-  void BindSensorProviderRequest(device::mojom::SensorProviderRequest request) {
+  void BindSensorProviderReceiver(
+      mojo::PendingReceiver<device::mojom::SensorProvider> receiver) {
     if (!sensor_provider_available_)
       return;
 
@@ -87,7 +83,7 @@ class GenericSensorBrowserTest : public ContentBrowserTest {
       fake_sensor_provider_->SetAmbientLightSensorData(50);
     }
 
-    fake_sensor_provider_->Bind(std::move(request));
+    fake_sensor_provider_->Bind(std::move(receiver));
   }
 
   void set_sensor_provider_available(bool sensor_provider_available) {

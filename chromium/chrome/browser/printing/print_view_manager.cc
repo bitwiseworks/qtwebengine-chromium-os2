@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
+#include "base/no_destructor.h"
 #include "build/build_config.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
@@ -24,6 +25,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/webplugininfo.h"
 #include "ipc/ipc_message_macros.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "printing/buildflags/buildflags.h"
 
 using content::BrowserThread;
@@ -32,17 +34,17 @@ namespace {
 
 // Keeps track of pending scripted print preview closures.
 // No locking, only access on the UI thread.
-base::LazyInstance<std::map<content::RenderProcessHost*, base::Closure>>::Leaky
-    g_scripted_print_preview_closure_map = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<std::map<content::RenderProcessHost*, base::OnceClosure>>::
+    Leaky g_scripted_print_preview_closure_map = LAZY_INSTANCE_INITIALIZER;
 
 void EnableInternalPDFPluginForContents(int render_process_id,
                                         int render_frame_id) {
   // Always enable the internal PDF plugin for the print preview page.
-  static const base::FilePath pdf_plugin_path(
+  static const base::NoDestructor<base::FilePath> pdf_plugin_path(
       ChromeContentClient::kPDFPluginPath);
   auto* plugin_service = content::PluginService::GetInstance();
   const content::PepperPluginInfo* info =
-      plugin_service->GetRegisteredPpapiPluginInfo(pdf_plugin_path);
+      plugin_service->GetRegisteredPpapiPluginInfo(*pdf_plugin_path);
   if (!info)
     return;
 
@@ -86,9 +88,13 @@ bool PrintViewManager::PrintForSystemDialogNow(
   is_switching_to_system_dialog_ = true;
 
   SetPrintingRFH(print_preview_rfh_);
-  int32_t id = print_preview_rfh_->GetRoutingID();
-  return PrintNowInternal(print_preview_rfh_,
-                          std::make_unique<PrintMsg_PrintForSystemDialog>(id));
+
+  // Don't print / print preview interstitials or crashed tabs.
+  if (IsInterstitialOrCrashed())
+    return false;
+
+  GetPrintRenderFrame(print_preview_rfh_)->PrintForSystemDialog();
+  return true;
 }
 
 bool PrintViewManager::BasicPrint(content::RenderFrameHost* rfh) {
@@ -107,21 +113,13 @@ bool PrintViewManager::BasicPrint(content::RenderFrameHost* rfh) {
 
 bool PrintViewManager::PrintPreviewNow(content::RenderFrameHost* rfh,
                                        bool has_selection) {
-  // Users can send print commands all they want and it is beyond
-  // PrintViewManager's control. Just ignore the extra commands.
-  // See http://crbug.com/136842 for example.
-  if (print_preview_state_ != NOT_PREVIEWING)
-    return false;
+  return PrintPreview(rfh, mojo::NullAssociatedRemote(), has_selection);
+}
 
-  auto message = std::make_unique<PrintMsg_InitiatePrintPreview>(
-      rfh->GetRoutingID(), has_selection);
-  if (!PrintNowInternal(rfh, std::move(message)))
-    return false;
-
-  DCHECK(!print_preview_rfh_);
-  print_preview_rfh_ = rfh;
-  print_preview_state_ = USER_INITIATED_PREVIEW;
-  return true;
+bool PrintViewManager::PrintPreviewWithPrintRenderer(
+    content::RenderFrameHost* rfh,
+    mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer) {
+  return PrintPreview(rfh, std::move(print_renderer), false);
 }
 
 void PrintViewManager::PrintPreviewForWebNode(content::RenderFrameHost* rfh) {
@@ -147,29 +145,27 @@ void PrintViewManager::PrintPreviewDone() {
   if (print_preview_state_ == NOT_PREVIEWING)
     return;
 
-// Send ClosePrintPreview message for 'afterprint' event.
+// Send OnPrintPreviewDialogClosed message for 'afterprint' event.
 #if defined(OS_WIN)
-  // On Windows, we always send ClosePrintPreviewDialog. It's ok to dispatch
+  // On Windows, we always send OnPrintPreviewDialogClosed. It's ok to dispatch
   // 'afterprint' at this timing because system dialog printing on
   // Windows doesn't need the original frame.
   bool send_message = true;
 #else
-  // On non-Windows, we don't need to send ClosePrintPreviewDialog when we are
-  // switching to system dialog. PrintRenderFrameHelper is responsible to
+  // On non-Windows, we don't need to send OnPrintPreviewDialogClosed when we
+  // are switching to system dialog. PrintRenderFrameHelper is responsible to
   // dispatch 'afterprint' event.
   bool send_message = !is_switching_to_system_dialog_;
 #endif
-  if (send_message) {
-    print_preview_rfh_->Send(new PrintMsg_ClosePrintPreviewDialog(
-        print_preview_rfh_->GetRoutingID()));
-  }
+  if (send_message)
+    GetPrintRenderFrame(print_preview_rfh_)->OnPrintPreviewDialogClosed();
   is_switching_to_system_dialog_ = false;
 
   if (print_preview_state_ == SCRIPTED_PREVIEW) {
     auto& map = g_scripted_print_preview_closure_map.Get();
     auto it = map.find(scripted_print_preview_rph_);
     CHECK(it != map.end());
-    it->second.Run();
+    std::move(it->second).Run();
     map.erase(it);
 
     // PrintPreviewAlmostDone() usually already calls this. Calling it again
@@ -197,6 +193,29 @@ void PrintViewManager::RenderFrameDeleted(
   PrintViewManagerBase::RenderFrameDeleted(render_frame_host);
 }
 
+bool PrintViewManager::PrintPreview(
+    content::RenderFrameHost* rfh,
+    mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer,
+    bool has_selection) {
+  // Users can send print commands all they want and it is beyond
+  // PrintViewManager's control. Just ignore the extra commands.
+  // See http://crbug.com/136842 for example.
+  if (print_preview_state_ != NOT_PREVIEWING)
+    return false;
+
+  // Don't print / print preview interstitials or crashed tabs.
+  if (IsInterstitialOrCrashed())
+    return false;
+
+  GetPrintRenderFrame(rfh)->InitiatePrintPreview(std::move(print_renderer),
+                                                 has_selection);
+
+  DCHECK(!print_preview_rfh_);
+  print_preview_rfh_ = rfh;
+  print_preview_state_ = USER_INITIATED_PREVIEW;
+  return true;
+}
+
 void PrintViewManager::OnDidShowPrintDialog(content::RenderFrameHost* rfh) {
   if (rfh != print_preview_rfh_)
     return;
@@ -212,7 +231,7 @@ void PrintViewManager::OnSetupScriptedPrintPreview(
   auto& map = g_scripted_print_preview_closure_map.Get();
   content::RenderProcessHost* rph = rfh->GetProcess();
 
-  if (base::ContainsKey(map, rph)) {
+  if (base::Contains(map, rph)) {
     // Renderer already handling window.print(). Abort this attempt to prevent
     // the renderer from having multiple nested loops. If multiple nested loops
     // existed, then they have to exit in the right order and that is messy.
@@ -237,8 +256,8 @@ void PrintViewManager::OnSetupScriptedPrintPreview(
   DCHECK(!print_preview_rfh_);
   print_preview_rfh_ = rfh;
   print_preview_state_ = SCRIPTED_PREVIEW;
-  map[rph] = base::Bind(&PrintViewManager::OnScriptedPrintPreviewReply,
-                        base::Unretained(this), reply_msg);
+  map[rph] = base::BindOnce(&PrintViewManager::OnScriptedPrintPreviewReply,
+                            base::Unretained(this), reply_msg);
   scripted_print_preview_rph_ = rph;
   DCHECK(!scripted_print_preview_rph_set_blocked_);
   if (!scripted_print_preview_rph_->IsBlocked()) {

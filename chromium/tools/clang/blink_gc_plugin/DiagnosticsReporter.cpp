@@ -4,6 +4,8 @@
 
 #include "DiagnosticsReporter.h"
 
+#include "llvm/Support/ErrorHandling.h"
+
 using namespace clang;
 
 namespace {
@@ -38,23 +40,17 @@ const char kClassContainsInvalidFields[] =
 const char kClassContainsGCRoot[] =
     "[blink-gc] Class %0 contains GC root in field %1.";
 
-const char kClassRequiresFinalization[] =
-    "[blink-gc] Class %0 requires finalization.";
-
-const char kClassDoesNotRequireFinalization[] =
-    "[blink-gc] Class %0 may not require finalization.";
-
 const char kFinalizerAccessesFinalizedField[] =
     "[blink-gc] Finalizer %0 accesses potentially finalized field %1.";
-
-const char kFinalizerAccessesEagerlyFinalizedField[] =
-    "[blink-gc] Finalizer %0 accesses eagerly finalized field %1.";
 
 const char kRawPtrToGCManagedClassNote[] =
     "[blink-gc] Raw pointer field %0 to a GC managed class declared here:";
 
 const char kRefPtrToGCManagedClassNote[] =
-    "[blink-gc] RefPtr field %0 to a GC managed class declared here:";
+    "[blink-gc] scoped_refptr field %0 to a GC managed class declared here:";
+
+const char kWeakPtrToGCManagedClassNote[] =
+    "[blink-gc] WeakPtr field %0 to a GC managed class declared here:";
 
 const char kReferencePtrToGCManagedClassNote[] =
     "[blink-gc] Reference pointer field %0 to a GC managed class"
@@ -90,9 +86,6 @@ const char kOverriddenNonVirtualTraceNote[] =
 const char kMissingTraceDispatchMethod[] =
     "[blink-gc] Class %0 is missing manual trace dispatch.";
 
-const char kMissingFinalizeDispatchMethod[] =
-    "[blink-gc] Class %0 is missing manual finalize dispatch.";
-
 const char kVirtualAndManualDispatch[] =
     "[blink-gc] Class %0 contains or inherits virtual methods"
     " but implements manual dispatching.";
@@ -105,21 +98,6 @@ const char kMissingFinalizeDispatch[] =
 
 const char kFinalizedFieldNote[] =
     "[blink-gc] Potentially finalized field %0 declared here:";
-
-const char kEagerlyFinalizedFieldNote[] =
-    "[blink-gc] Field %0 having eagerly finalized value, declared here:";
-
-const char kUserDeclaredDestructorNote[] =
-    "[blink-gc] User-declared destructor declared here:";
-
-const char kUserDeclaredFinalizerNote[] =
-    "[blink-gc] User-declared finalizer declared here:";
-
-const char kBaseRequiresFinalizationNote[] =
-    "[blink-gc] Base class %0 requiring finalization declared here:";
-
-const char kFieldRequiresFinalizationNote[] =
-    "[blink-gc] Field %0 requiring finalization declared here:";
 
 const char kManualDispatchMethodNote[] =
     "[blink-gc] Manual dispatch %0 declared here:";
@@ -144,12 +122,20 @@ const char kBaseClassMustDeclareVirtualTrace[] =
     "[blink-gc] Left-most base class %0 of derived class %1"
     " must define a virtual trace method.";
 
+const char kClassMustCRTPItself[] =
+    "[blink-gc] GC base class %0 must be specialized with the derived class "
+    "%1.";
+
 const char kIteratorToGCManagedCollectionNote[] =
     "[blink-gc] Iterator field %0 to a GC managed collection declared here:";
 
 const char kTraceMethodOfStackAllocatedParentNote[] =
     "[blink-gc] The stack allocated class %0 provides an unnecessary "
     "trace method:";
+
+const char kMemberInStackAllocated[] =
+    "[blink-gc] Member field %0 in stack allocated class declared here (use "
+    "raw pointer or reference instead):";
 
 const char kUniquePtrUsedWithGC[] =
     "[blink-gc] Disallowed use of %0 found; %1 is a garbage-collected type. "
@@ -196,20 +182,12 @@ DiagnosticsReporter::DiagnosticsReporter(
       getErrorLevel(), kClassContainsInvalidFields);
   diag_class_contains_gc_root_ =
       diagnostic_.getCustomDiagID(getErrorLevel(), kClassContainsGCRoot);
-  diag_class_requires_finalization_ = diagnostic_.getCustomDiagID(
-      getErrorLevel(), kClassRequiresFinalization);
-  diag_class_does_not_require_finalization_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Warning, kClassDoesNotRequireFinalization);
   diag_finalizer_accesses_finalized_field_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kFinalizerAccessesFinalizedField);
-  diag_finalizer_eagerly_finalized_field_ = diagnostic_.getCustomDiagID(
-      getErrorLevel(), kFinalizerAccessesEagerlyFinalizedField);
   diag_overridden_non_virtual_trace_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kOverriddenNonVirtualTrace);
   diag_missing_trace_dispatch_method_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kMissingTraceDispatchMethod);
-  diag_missing_finalize_dispatch_method_ = diagnostic_.getCustomDiagID(
-      getErrorLevel(), kMissingFinalizeDispatchMethod);
   diag_virtual_and_manual_dispatch_ =
       diagnostic_.getCustomDiagID(getErrorLevel(), kVirtualAndManualDispatch);
   diag_missing_trace_dispatch_ =
@@ -226,10 +204,14 @@ DiagnosticsReporter::DiagnosticsReporter(
       getErrorLevel(), kLeftMostBaseMustBePolymorphic);
   diag_base_class_must_declare_virtual_trace_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kBaseClassMustDeclareVirtualTrace);
+  diag_class_must_crtp_itself_ =
+      diagnostic_.getCustomDiagID(getErrorLevel(), kClassMustCRTPItself);
   diag_iterator_to_gc_managed_collection_note_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kIteratorToGCManagedCollectionNote);
   diag_trace_method_of_stack_allocated_parent_ = diagnostic_.getCustomDiagID(
       getErrorLevel(), kTraceMethodOfStackAllocatedParentNote);
+  diag_member_in_stack_allocated_class_ =
+      diagnostic_.getCustomDiagID(getErrorLevel(), kMemberInStackAllocated);
 
   // Register note messages.
   diag_base_requires_tracing_note_ = diagnostic_.getCustomDiagID(
@@ -242,6 +224,8 @@ DiagnosticsReporter::DiagnosticsReporter(
       DiagnosticsEngine::Note, kRawPtrToGCManagedClassNote);
   diag_ref_ptr_to_gc_managed_class_note_ = diagnostic_.getCustomDiagID(
       DiagnosticsEngine::Note, kRefPtrToGCManagedClassNote);
+  diag_weak_ptr_to_gc_managed_class_note_ = diagnostic_.getCustomDiagID(
+      DiagnosticsEngine::Note, kWeakPtrToGCManagedClassNote);
   diag_reference_ptr_to_gc_managed_class_note_ = diagnostic_.getCustomDiagID(
       DiagnosticsEngine::Note, kReferencePtrToGCManagedClassNote);
   diag_unique_ptr_to_gc_managed_class_note_ = diagnostic_.getCustomDiagID(
@@ -260,16 +244,6 @@ DiagnosticsReporter::DiagnosticsReporter(
       DiagnosticsEngine::Note, kFieldContainsGCRootNote);
   diag_finalized_field_note_ = diagnostic_.getCustomDiagID(
       DiagnosticsEngine::Note, kFinalizedFieldNote);
-  diag_eagerly_finalized_field_note_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Note, kEagerlyFinalizedFieldNote);
-  diag_user_declared_destructor_note_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Note, kUserDeclaredDestructorNote);
-  diag_user_declared_finalizer_note_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Note, kUserDeclaredFinalizerNote);
-  diag_base_requires_finalization_note_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Note, kBaseRequiresFinalizationNote);
-  diag_field_requires_finalization_note_ = diagnostic_.getCustomDiagID(
-      DiagnosticsEngine::Note, kFieldRequiresFinalizationNote);
   diag_overridden_non_virtual_trace_note_ = diagnostic_.getCustomDiagID(
       DiagnosticsEngine::Note, kOverriddenNonVirtualTraceNote);
   diag_manual_dispatch_method_note_ = diagnostic_.getCustomDiagID(
@@ -357,6 +331,8 @@ void DiagnosticsReporter::ClassContainsInvalidFields(
       note = diag_raw_ptr_to_gc_managed_class_note_;
     } else if (error.second == CheckFieldsVisitor::kRefPtrToGCManaged) {
       note = diag_ref_ptr_to_gc_managed_class_note_;
+    } else if (error.second == CheckFieldsVisitor::kWeakPtrToGCManaged) {
+      note = diag_weak_ptr_to_gc_managed_class_note_;
     } else if (error.second == CheckFieldsVisitor::kReferencePtrToGCManaged) {
       note = diag_reference_ptr_to_gc_managed_class_note_;
     } else if (error.second == CheckFieldsVisitor::kUniquePtrToGCManaged) {
@@ -371,8 +347,10 @@ void DiagnosticsReporter::ClassContainsInvalidFields(
       note = diag_part_object_to_gc_derived_class_note_;
     } else if (error.second == CheckFieldsVisitor::kIteratorToGCManaged) {
       note = diag_iterator_to_gc_managed_collection_note_;
+    } else if (error.second == CheckFieldsVisitor::kMemberInStackAllocated) {
+      note = diag_member_in_stack_allocated_class_;
     } else {
-      assert(false && "Unknown field error");
+      llvm_unreachable("Unknown field error.");
     }
     NoteField(error.first, note);
   }
@@ -402,30 +380,11 @@ void DiagnosticsReporter::FinalizerAccessesFinalizedFields(
     CXXMethodDecl* dtor,
     const CheckFinalizerVisitor::Errors& errors) {
   for (auto& error : errors) {
-    bool as_eagerly_finalized = error.as_eagerly_finalized;
-    unsigned diag_error = as_eagerly_finalized ?
-                          diag_finalizer_eagerly_finalized_field_ :
-                          diag_finalizer_accesses_finalized_field_;
-    unsigned diag_note = as_eagerly_finalized ?
-                         diag_eagerly_finalized_field_note_ :
-                         diag_finalized_field_note_;
-    ReportDiagnostic(error.member->getBeginLoc(), diag_error)
+    ReportDiagnostic(error.member->getBeginLoc(),
+        diag_finalizer_accesses_finalized_field_)
         << dtor << error.field->field();
-    NoteField(error.field, diag_note);
+    NoteField(error.field, diag_finalized_field_note_);
   }
-}
-
-void DiagnosticsReporter::ClassRequiresFinalization(RecordInfo* info) {
-  ReportDiagnostic(info->record()->getInnerLocStart(),
-                   diag_class_requires_finalization_)
-      << info->record();
-}
-
-void DiagnosticsReporter::ClassDoesNotRequireFinalization(
-    RecordInfo* info) {
-  ReportDiagnostic(info->record()->getInnerLocStart(),
-                   diag_class_does_not_require_finalization_)
-      << info->record();
 }
 
 void DiagnosticsReporter::OverriddenNonVirtualTrace(
@@ -439,11 +398,6 @@ void DiagnosticsReporter::OverriddenNonVirtualTrace(
 
 void DiagnosticsReporter::MissingTraceDispatchMethod(RecordInfo* info) {
   ReportMissingDispatchMethod(info, diag_missing_trace_dispatch_method_);
-}
-
-void DiagnosticsReporter::MissingFinalizeDispatchMethod(
-    RecordInfo* info) {
-  ReportMissingDispatchMethod(info, diag_missing_finalize_dispatch_method_);
 }
 
 void DiagnosticsReporter::ReportMissingDispatchMethod(
@@ -519,6 +473,14 @@ void DiagnosticsReporter::BaseClassMustDeclareVirtualTrace(
       << base << derived->record();
 }
 
+void DiagnosticsReporter::ClassMustCRTPItself(
+    const RecordInfo* derived,
+    const CXXRecordDecl* base,
+    const CXXBaseSpecifier* base_spec) {
+  ReportDiagnostic(base_spec->getBeginLoc(), diag_class_must_crtp_itself_)
+      << base << derived->record();
+}
+
 void DiagnosticsReporter::TraceMethodForStackAllocatedClass(
     RecordInfo* info,
     CXXMethodDecl* trace) {
@@ -558,24 +520,6 @@ void DiagnosticsReporter::NotePartObjectContainsGCRoot(FieldPoint* point) {
 
 void DiagnosticsReporter::NoteFieldContainsGCRoot(FieldPoint* point) {
   NoteField(point, diag_field_contains_gc_root_note_);
-}
-
-void DiagnosticsReporter::NoteUserDeclaredDestructor(CXXMethodDecl* dtor) {
-  ReportDiagnostic(dtor->getBeginLoc(), diag_user_declared_destructor_note_);
-}
-
-void DiagnosticsReporter::NoteUserDeclaredFinalizer(CXXMethodDecl* dtor) {
-  ReportDiagnostic(dtor->getBeginLoc(), diag_user_declared_finalizer_note_);
-}
-
-void DiagnosticsReporter::NoteBaseRequiresFinalization(BasePoint* base) {
-  ReportDiagnostic(base->spec().getBeginLoc(),
-                   diag_base_requires_finalization_note_)
-      << base->info()->record();
-}
-
-void DiagnosticsReporter::NoteFieldRequiresFinalization(FieldPoint* point) {
-  NoteField(point, diag_field_requires_finalization_note_);
 }
 
 void DiagnosticsReporter::NoteField(FieldPoint* point, unsigned note) {

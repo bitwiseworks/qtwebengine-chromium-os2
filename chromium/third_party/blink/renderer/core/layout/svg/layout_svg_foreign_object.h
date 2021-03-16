@@ -22,6 +22,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_SVG_LAYOUT_SVG_FOREIGN_OBJECT_H_
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_block.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -63,7 +64,7 @@ class LayoutSVGForeignObject final : public LayoutSVGBlock {
 
   bool NodeAtPoint(HitTestResult&,
                    const HitTestLocation&,
-                   const LayoutPoint&,
+                   const PhysicalOffset&,
                    HitTestAction) override;
 
   // A method to call when recursively hit testing from an SVG parent.
@@ -72,7 +73,7 @@ class LayoutSVGForeignObject final : public LayoutSVGBlock {
   // on this object. This is why there are two methods.
   bool NodeAtPointFromSVG(HitTestResult&,
                           const HitTestLocation&,
-                          const LayoutPoint&,
+                          const PhysicalOffset&,
                           HitTestAction);
 
   bool IsOfType(LayoutObjectType type) const override {
@@ -104,7 +105,12 @@ class LayoutSVGForeignObject final : public LayoutSVGBlock {
   bool needs_transform_update_;
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutSVGForeignObject, IsSVGForeignObject());
+template <>
+struct DowncastTraits<LayoutSVGForeignObject> {
+  static bool AllowFrom(const LayoutObject& object) {
+    return object.IsSVGForeignObject();
+  }
+};
 
 }  // namespace blink
 

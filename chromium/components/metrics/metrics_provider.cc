@@ -17,8 +17,8 @@ MetricsProvider::~MetricsProvider() {
 void MetricsProvider::Init() {
 }
 
-void MetricsProvider::AsyncInit(const base::Closure& done_callback) {
-  done_callback.Run();
+void MetricsProvider::AsyncInit(base::OnceClosure done_callback) {
+  std::move(done_callback).Run();
 }
 
 void MetricsProvider::OnDidCreateMetricsLog() {
@@ -39,7 +39,7 @@ bool MetricsProvider::HasIndependentMetrics() {
 
 void MetricsProvider::ProvideIndependentMetrics(
     base::OnceCallback<void(bool)> done_callback,
-    SystemProfileProto* system_profile_proto,
+    ChromeUserMetricsExtension* uma_proto,
     base::HistogramSnapshotManager* snapshot_manager) {
   // Either the method HasIndependentMetrics() has been overridden and this
   // method has not, or this method being called without regard to Has().
@@ -48,7 +48,12 @@ void MetricsProvider::ProvideIndependentMetrics(
 }
 
 void MetricsProvider::ProvideSystemProfileMetrics(
+    SystemProfileProto* system_profile_proto) {}
+
+void MetricsProvider::ProvideSystemProfileMetricsWithLogCreationTime(
+    base::TimeTicks log_creation_time,
     SystemProfileProto* system_profile_proto) {
+  ProvideSystemProfileMetrics(system_profile_proto);
 }
 
 bool MetricsProvider::HasPreviousSessionData() {

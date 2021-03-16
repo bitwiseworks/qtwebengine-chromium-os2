@@ -4,6 +4,8 @@
 
 #include "chrome/browser/devtools/devtools_window_testing.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
@@ -29,7 +31,7 @@ DevToolsWindowTesting::DevToolsWindowTesting(DevToolsWindow* window)
     : devtools_window_(window) {
   DCHECK(window);
   window->close_callback_ =
-      base::Bind(&DevToolsWindowTesting::WindowClosed, window);
+      base::BindOnce(&DevToolsWindowTesting::WindowClosed, window);
   g_devtools_window_testing_instances.Get().push_back(this);
 }
 
@@ -39,10 +41,8 @@ DevToolsWindowTesting::~DevToolsWindowTesting() {
   auto it(std::find(instances->begin(), instances->end(), this));
   DCHECK(it != instances->end());
   instances->erase(it);
-  if (!close_callback_.is_null()) {
-    close_callback_.Run();
-    close_callback_ = base::Closure();
-  }
+  if (!close_callback_.is_null())
+    std::move(close_callback_).Run();
 
   // Needed for Chrome_DevToolsADBThread to shut down gracefully in tests.
   ChromeDevToolsManagerDelegate::GetInstance()
@@ -86,8 +86,8 @@ void DevToolsWindowTesting::SetInspectedPageBounds(const gfx::Rect& bounds) {
   devtools_window_->SetInspectedPageBounds(bounds);
 }
 
-void DevToolsWindowTesting::SetCloseCallback(const base::Closure& closure) {
-  close_callback_ = closure;
+void DevToolsWindowTesting::SetCloseCallback(base::OnceClosure closure) {
+  close_callback_ = std::move(closure);
 }
 
 void DevToolsWindowTesting::SetOpenNewWindowForPopups(bool value) {
@@ -111,7 +111,8 @@ void DevToolsWindowTesting::WaitForDevToolsWindowLoad(DevToolsWindow* window) {
   }
   base::string16 harness = base::UTF8ToUTF16(
       content::DevToolsFrontendHost::GetFrontendResource(kHarnessScript));
-  window->main_web_contents_->GetMainFrame()->ExecuteJavaScript(harness);
+  window->main_web_contents_->GetMainFrame()->ExecuteJavaScript(
+      harness, base::NullCallback());
 }
 
 // static
@@ -190,7 +191,7 @@ DevToolsWindowCreationObserver::~DevToolsWindowCreationObserver() {
 }
 
 void DevToolsWindowCreationObserver::Wait() {
-  if (devtools_windows_.size())
+  if (!devtools_windows_.empty())
     return;
   runner_ = new content::MessageLoopRunner();
   runner_->Run();

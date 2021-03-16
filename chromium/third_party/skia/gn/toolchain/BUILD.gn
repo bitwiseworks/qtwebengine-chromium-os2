@@ -1,18 +1,31 @@
+if (is_fuchsia) {
+  import("//build/fuchsia/sdk.gni")
+}
+
 declare_args() {
   host_ar = ar
   host_cc = cc
   host_cxx = cxx
 
   if (is_android) {
+    _prefix = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin"
     if (host_os == "win") {
-      target_ar = "$ndk/toolchains/$ndk_gccdir-4.9/prebuilt/$ndk_host/$ndk_target/bin/ar.exe"
-      target_cc = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang.exe"
-      target_cxx = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang++.exe"
+      target_ar = "$_prefix/llvm-ar.exe"
+      target_cc = "$_prefix/clang.exe --target=$ndk_target$ndk_api -fno-addrsig"
+      target_cxx =
+          "$_prefix/clang++.exe --target=$ndk_target$ndk_api -fno-addrsig"
     } else {
-      target_ar = "$ndk/toolchains/$ndk_gccdir-4.9/prebuilt/$ndk_host/$ndk_target/bin/ar"
-      target_cc = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang"
-      target_cxx = "$ndk/toolchains/llvm/prebuilt/$ndk_host/bin/clang++"
+      target_ar = "$_prefix/llvm-ar"
+      target_cc = "$_prefix/$ndk_target$ndk_api-clang"
+      target_cxx = "$_prefix/$ndk_target$ndk_api-clang++"
     }
+  } else if (is_fuchsia && using_fuchsia_sdk) {
+    target_ar = rebase_path("$fuchsia_toolchain_path/bin/llvm-ar")
+    target_cc = rebase_path("$fuchsia_toolchain_path/bin/clang")
+    target_cxx = rebase_path("$fuchsia_toolchain_path/bin/clang++")
+    cflags = "--sysroot=" +
+             rebase_path("$fuchsia_toolchain_path/$target_cpu/sysroot")
+    link = rebase_path("$fuchsia_toolchain_path/bin/ld.lld")
   } else {
     target_ar = ar
     target_cc = cc
@@ -20,6 +33,13 @@ declare_args() {
   }
 
   cc_wrapper = ""
+
+  # dsymutil seems to kill the machine when too many processes are run in
+  # parallel, so we need to use a pool to limit the concurrency when passing
+  # large -j to Ninja (e.g. Goma build). Unfortunately this is also one of the
+  # slowest steps in a build, so we don't want to limit too much. Use the number
+  # of CPUs as a default.
+  dlsymutil_pool_depth = exec_script("num_cpus.py", [], "value")
 }
 
 if (host_os == "win") {
@@ -28,18 +48,17 @@ if (host_os == "win") {
   stamp = "touch"
 }
 
+if (current_toolchain == default_toolchain) {
+  pool("dsymutil_pool") {
+    depth = dlsymutil_pool_depth
+  }
+}
+
 toolchain("msvc") {
+  lib_switch = ""
   lib_dir_switch = "/LIBPATH:"
 
-  if (msvc == 2015) {
-    if (target_cpu == "x86") {
-      bin = "$win_vc/bin"
-    } else {
-      bin = "$win_vc/bin/amd64"
-    }
-  } else {
-    bin = "$win_vc/Tools/MSVC/$win_toolchain_version/bin/HostX64/$target_cpu"
-  }
+  bin = "$win_vc/Tools/MSVC/$win_toolchain_version/bin/HostX64/$target_cpu"
 
   env_setup = ""
   if (target_cpu == "x86") {
@@ -81,9 +100,8 @@ toolchain("msvc") {
       _ml += "64"
     }
     command = "$env_setup \"$bin/$_ml.exe\" {{asmflags}} /nologo /c /Fo {{output}} {{source}}"
-    outputs = [
-      "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj",
-    ]
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj" ]
     description = "assemble {{source}}"
   }
 
@@ -94,9 +112,8 @@ toolchain("msvc") {
     # Label names may have spaces so pdbname must be quoted.
     command = "$env_setup $cc_wrapper $cl /nologo /showIncludes /FC {{defines}} {{include_dirs}} {{cflags}} $cl_m32_flag {{cflags_c}} /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
     depsformat = "msvc"
-    outputs = [
-      "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj",
-    ]
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj" ]
     description = "compile {{source}}"
   }
 
@@ -107,9 +124,8 @@ toolchain("msvc") {
     # Label names may have spaces so pdbname must be quoted.
     command = "$env_setup $cc_wrapper $cl /nologo /showIncludes /FC {{defines}} {{include_dirs}} {{cflags}} $cl_m32_flag {{cflags_cc}} /c {{source}} /Fo{{output}} /Fd\"$pdbname\""
     depsformat = "msvc"
-    outputs = [
-      "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj",
-    ]
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.obj" ]
     description = "compile {{source}}"
   }
 
@@ -168,9 +184,7 @@ toolchain("msvc") {
     command = "$env_setup $link /nologo /OUT:$exename /PDB:$pdbname @$rspfile"
     default_output_extension = ".exe"
     default_output_dir = "{{root_out_dir}}"
-    outputs = [
-      exename,
-    ]
+    outputs = [ exename ]
 
     # inputs_newline works around a fixed per-line buffer size in the linker.
     rspfile_content = "{{inputs_newline}} {{libs}} {{solibs}} {{ldflags}}"
@@ -184,7 +198,7 @@ toolchain("msvc") {
 
   tool("copy") {
     cp_py = rebase_path("../cp.py")
-    command = "python $cp_py {{source}} {{output}}"
+    command = "python \"$cp_py\" {{source}} {{output}}"
     description = "copy {{source}} {{output}}"
   }
 }
@@ -199,62 +213,64 @@ template("gcc_like_toolchain") {
 
     tool("cc") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_c}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
-      outputs = [
-        "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
-      ]
+      outputs =
+          [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
       description = "compile {{source}}"
     }
 
     tool("cxx") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cxx -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cxx -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
-      outputs = [
-        "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
-      ]
+      outputs =
+          [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
       description = "compile {{source}}"
     }
 
     tool("objc") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_objc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_objc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
-      outputs = [
-        "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
-      ]
+      outputs =
+          [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
       description = "compile {{source}}"
     }
 
     tool("objcxx") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cxx -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} {{cflags_objcc}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cxx -MD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} {{cflags_objcc}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
-      outputs = [
-        "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
-      ]
+      outputs =
+          [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
       description = "compile {{source}}"
     }
 
     tool("asm") {
       depfile = "{{output}}.d"
-      command = "$cc_wrapper $cc -MMD -MF $depfile {{defines}} {{include_dirs}} {{asmflags}} -c {{source}} -o {{output}}"
+      command = "$cc_wrapper $cc -MD -MF $depfile {{defines}} {{include_dirs}} {{asmflags}} -c {{source}} -o {{output}}"
       depsformat = "gcc"
-      outputs = [
-        "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o",
-      ]
+      outputs =
+          [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
       description = "assemble {{source}}"
     }
 
+    if (is_mac || is_ios) {
+      not_needed([ "ar" ])  # We use libtool instead.
+    }
+
     tool("alink") {
-      rspfile = "{{output}}.rsp"
-      rspfile_content = "{{inputs}}"
-      ar_py = rebase_path("../ar.py")
-      command = "python $ar_py $ar {{output}} $rspfile"
-      outputs = [
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}",
-      ]
+      if (is_mac || is_ios) {
+        command = "libtool -static -o {{output}} -no_warning_for_no_symbols {{inputs}}"
+      } else {
+        rspfile = "{{output}}.rsp"
+        rspfile_content = "{{inputs}}"
+        command = "$ar rcs {{output}} @$rspfile"
+      }
+
+      outputs =
+          [ "{{root_out_dir}}/{{target_output_name}}{{output_extension}}" ]
       default_output_extension = ".a"
       output_prefix = "lib"
       description = "link {{output}}"
@@ -264,22 +280,10 @@ template("gcc_like_toolchain") {
       soname = "{{target_output_name}}{{output_extension}}"
 
       rpath = "-Wl,-soname,$soname"
-      if (is_mac) {
+      if (is_mac || is_ios) {
         rpath = "-Wl,-install_name,@rpath/$soname"
       }
 
-      rspfile = "{{output}}.rsp"
-      rspfile_content = "{{inputs}}"
-      command = "$cc_wrapper $cxx -shared {{ldflags}} @$rspfile {{solibs}} {{libs}} $rpath -o {{output}}"
-      outputs = [
-        "{{root_out_dir}}/$soname",
-      ]
-      output_prefix = "lib"
-      default_output_extension = ".so"
-      description = "link {{output}}"
-    }
-
-    tool("link") {
       rspfile = "{{output}}.rsp"
       rspfile_content = "{{inputs}}"
 
@@ -291,14 +295,38 @@ template("gcc_like_toolchain") {
       # LLD doesn't need these flags, but accepts and ignores them.
       _start_group = "-Wl,--start-group"
       _end_group = "-Wl,--end-group"
-      if (is_mac || is_ios) {
+      if (is_mac || is_ios || is_fuchsia) {
         _start_group = ""
         _end_group = ""
       }
-      command = "$cc_wrapper $cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o {{output}}"
-      outputs = [
-        "{{root_out_dir}}/{{target_output_name}}{{output_extension}}",
-      ]
+
+      command = "$cxx -shared {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} $rpath -o {{output}}"
+      outputs = [ "{{root_out_dir}}/$soname" ]
+      output_prefix = "lib"
+      default_output_extension = ".so"
+      description = "link {{output}}"
+    }
+
+    tool("link") {
+      exe_name = "{{root_out_dir}}/{{target_output_name}}{{output_extension}}"
+      rspfile = "$exe_name.rsp"
+      rspfile_content = "{{inputs}}"
+
+      # --start-group/--end-group let us link multiple .a {{inputs}}
+      # without worrying about their relative order on the link line.
+      #
+      # This is mostly important for traditional linkers like GNU ld and Gold.
+      # The Mac/iOS linker neither needs nor accepts these flags.
+      # LLD doesn't need these flags, but accepts and ignores them.
+      _start_group = "-Wl,--start-group"
+      _end_group = "-Wl,--end-group"
+      if (is_mac || is_ios || is_fuchsia) {
+        _start_group = ""
+        _end_group = ""
+      }
+      command = "$cxx {{ldflags}} $_start_group @$rspfile {{solibs}} $_end_group {{libs}} -o $exe_name"
+
+      outputs = [ "$exe_name" ]
       description = "link {{output}}"
     }
 
@@ -309,13 +337,13 @@ template("gcc_like_toolchain") {
 
     tool("copy") {
       cp_py = rebase_path("../cp.py")
-      command = "python $cp_py {{source}} {{output}}"
+      command = "python \"$cp_py\" {{source}} {{output}}"
       description = "copy {{source}} {{output}}"
     }
 
     tool("copy_bundle_data") {
       cp_py = rebase_path("../cp.py")
-      command = "python $cp_py {{source}} {{output}}"
+      command = "python \"$cp_py\" {{source}} {{output}}"
       description = "copy_bundle_data {{source}} {{output}}"
     }
 

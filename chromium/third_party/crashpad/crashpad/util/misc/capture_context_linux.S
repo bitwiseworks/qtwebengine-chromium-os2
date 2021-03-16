@@ -28,7 +28,11 @@
   .globl CAPTURECONTEXT_SYMBOL2
 #if defined(__i386__) || defined(__x86_64__)
   .balign 16, 0x90
-#elif defined(__arm__) || defined(__aarch64__) || defined(__mips__)
+#elif defined(__arm__) || defined(__aarch64__)
+  .balign 4, 0x0
+  .type CAPTURECONTEXT_SYMBOL, %function
+  .type CAPTURECONTEXT_SYMBOL2, %function
+#elif defined(__mips__)
   .balign 4, 0x0
 #endif
 
@@ -282,7 +286,7 @@ CAPTURECONTEXT_SYMBOL2:
   // Restore r1.
   ldr r1, [r0, #0x24]
 
-  // TODO(jperaza): save floating-point registers.
+  // TODO(https://crashpad.chromium.org/bug/300): save floating-point registers.
 
   mov PC, LR
 
@@ -326,7 +330,7 @@ CAPTURECONTEXT_SYMBOL2:
   // Restore x1 from the saved context.
   ldr x1, [x0, #0xc0]
 
-  // TODO(jperaza): save floating-point registers.
+  // TODO(https://crashpad.chromium.org/bug/300): save floating-point registers.
 
   ret
 #elif defined(__mips__)

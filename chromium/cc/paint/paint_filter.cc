@@ -11,6 +11,7 @@
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkMath.h"
 #include "third_party/skia/include/effects/SkAlphaThresholdFilter.h"
+#include "third_party/skia/include/effects/SkArithmeticImageFilter.h"
 #include "third_party/skia/include/effects/SkColorFilterImageFilter.h"
 #include "third_party/skia/include/effects/SkComposeImageFilter.h"
 #include "third_party/skia/include/effects/SkImageSource.h"
@@ -691,12 +692,12 @@ sk_sp<PaintFilter> ImagePaintFilter::SnapshotWithImagesInternal(
     ImageProvider* image_provider) const {
   DrawImage draw_image(image_, SkIRect::MakeWH(image_.width(), image_.height()),
                        filter_quality_, SkMatrix::I());
-  auto scoped_decoded_image = image_provider->GetDecodedDrawImage(draw_image);
-  if (!scoped_decoded_image)
+  auto scoped_result = image_provider->GetRasterContent(draw_image);
+  if (!scoped_result)
     return nullptr;
 
   auto decoded_sk_image = sk_ref_sp<SkImage>(
-      const_cast<SkImage*>(scoped_decoded_image.decoded_image().image().get()));
+      const_cast<SkImage*>(scoped_result.decoded_image().image().get()));
   PaintImage decoded_paint_image =
       PaintImageBuilder::WithDefault()
           .set_id(image_.stable_id())
@@ -980,7 +981,7 @@ PaintFlagsPaintFilter::PaintFlagsPaintFilter(PaintFlags flags,
     : PaintFilter(kType, crop_rect, flags.HasDiscardableImages()),
       flags_(std::move(flags)) {
   if (image_provider) {
-    raster_flags_.emplace(&flags_, image_provider, SkMatrix::I(), 255u);
+    raster_flags_.emplace(&flags_, image_provider, SkMatrix::I(), 0, 255u);
   }
   cached_sk_filter_ = SkPaintImageFilter::Make(
       raster_flags_ ? raster_flags_->flags()->ToSkPaint() : flags_.ToSkPaint(),

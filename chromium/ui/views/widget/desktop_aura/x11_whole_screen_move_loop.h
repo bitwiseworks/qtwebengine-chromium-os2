@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -28,7 +30,7 @@ namespace ui {
 class MouseEvent;
 class ScopedEventDispatcher;
 class XScopedEventSelector;
-}
+}  // namespace ui
 
 namespace views {
 
@@ -62,6 +64,8 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
   // Dispatch mouse movement event to |delegate_| in a posted task.
   void DispatchMouseMovement();
 
+  void PostDispatchIfNeeded(const ui::MouseEvent& event);
+
   X11MoveLoopDelegate* delegate_;
 
   // Are we running a nested run loop from RunMoveLoop()?
@@ -84,14 +88,14 @@ class X11WholeScreenMoveLoop : public X11MoveLoop,
   // Whether the pointer was grabbed on |grab_input_window_|.
   bool grabbed_pointer_;
 
-  base::Closure quit_closure_;
+  base::OnceClosure quit_closure_;
 
   // Keeps track of whether the move-loop is cancled by the user (e.g. by
   // pressing escape).
   bool canceled_;
 
   std::unique_ptr<ui::MouseEvent> last_motion_in_screen_;
-  base::WeakPtrFactory<X11WholeScreenMoveLoop> weak_factory_;
+  base::WeakPtrFactory<X11WholeScreenMoveLoop> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(X11WholeScreenMoveLoop);
 };

@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -58,7 +58,6 @@
 //   std::string s = absl::FormatTime(
 //       "My flight will land in Sydney on %Y-%m-%d at %H:%M:%S",
 //       landing, syd);
-//
 
 #ifndef ABSL_TIME_TIME_H_
 #define ABSL_TIME_TIME_H_
@@ -66,7 +65,14 @@
 #if !defined(_MSC_VER)
 #include <sys/time.h>
 #else
-#include <winsock2.h>
+// We don't include `winsock2.h` because it drags in `windows.h` and friends,
+// and they define conflicting macros like OPAQUE, ERROR, and more. This has the
+// potential to break Abseil users.
+//
+// Instead we only forward declare `timeval` and require Windows users include
+// `winsock2.h` themselves. This is both inconsistent and troublesome, but so is
+// including 'windows.h' so we are picking the lesser of two evils here.
+struct timeval;
 #endif
 #include <chrono>  // NOLINT(build/c++11)
 #include <cmath>
@@ -77,12 +83,13 @@
 #include <type_traits>
 #include <utility>
 
-#include "absl/base/port.h"  // Needed for string vs std::string
+#include "absl/base/macros.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/civil_time.h"
 #include "absl/time/internal/cctz/include/cctz/time_zone.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 class Duration;  // Defined below
 class Time;      // Defined below
@@ -174,6 +181,7 @@ class Duration {
   Duration& operator%=(Duration rhs);
 
   // Overloads that forward to either the int64_t or double overloads above.
+  // Integer operands must be representable as int64_t.
   template <typename T>
   Duration& operator*=(T r) {
     int64_t x = r;
@@ -216,6 +224,7 @@ inline Duration operator+(Duration lhs, Duration rhs) { return lhs += rhs; }
 inline Duration operator-(Duration lhs, Duration rhs) { return lhs -= rhs; }
 
 // Multiplicative Operators
+// Integer operands must be representable as int64_t.
 template <typename T>
 Duration operator*(Duration lhs, T rhs) {
   return lhs *= rhs;
@@ -370,13 +379,14 @@ constexpr Duration InfiniteDuration();
 // Hours()
 //
 // Factory functions for constructing `Duration` values from an integral number
-// of the unit indicated by the factory function's name.
+// of the unit indicated by the factory function's name. The number must be
+// representable as int64_t.
 //
-// Note: no "Days()" factory function exists because "a day" is ambiguous.
+// NOTE: no "Days()" factory function exists because "a day" is ambiguous.
 // Civil days are not always 24 hours long, and a 24-hour duration often does
 // not correspond with a civil day. If a 24-hour duration is needed, use
-// `absl::Hours(24)`. (If you actually want a civil day, use absl::CivilDay
-// from civil_time.h.)
+// `absl::Hours(24)`. If you actually want a civil day, use absl::CivilDay
+// from civil_time.h.
 //
 // Example:
 //
@@ -413,7 +423,9 @@ Duration Milliseconds(T n) {
 template <typename T, time_internal::EnableIfFloat<T> = 0>
 Duration Seconds(T n) {
   if (n >= 0) {  // Note: `NaN >= 0` is false.
-    if (n >= (std::numeric_limits<int64_t>::max)()) return InfiniteDuration();
+    if (n >= static_cast<T>((std::numeric_limits<int64_t>::max)())) {
+      return InfiniteDuration();
+    }
     return time_internal::MakePosDoubleDuration(n);
   } else {
     if (std::isnan(n))
@@ -537,7 +549,11 @@ bool ParseDuration(const std::string& dur_string, Duration* d);
 
 // Support for flag values of type Duration. Duration flags must be specified
 // in a format that is valid input for absl::ParseDuration().
+bool AbslParseFlag(absl::string_view text, Duration* dst, std::string* error);
+std::string AbslUnparseFlag(Duration d);
+ABSL_DEPRECATED("Use AbslParseFlag() instead.")
 bool ParseFlag(const std::string& text, Duration* dst, std::string* error);
+ABSL_DEPRECATED("Use AbslUnparseFlag() instead.")
 std::string UnparseFlag(Duration d);
 
 // Time
@@ -569,7 +585,6 @@ std::string UnparseFlag(Duration d);
 //
 // The `absl::Time` class represents an instant in time as a count of clock
 // ticks of some granularity (resolution) from some starting point (epoch).
-//
 //
 // `absl::Time` uses a resolution that is high enough to avoid loss in
 // precision, and a range that is wide enough to avoid overflow, when
@@ -808,7 +823,11 @@ std::chrono::system_clock::time_point ToChronoTime(Time);
 // Additionally, if you'd like to specify a time as a count of
 // seconds/milliseconds/etc from the Unix epoch, use an absl::Duration flag
 // and add that duration to absl::UnixEpoch() to get an absl::Time.
+bool AbslParseFlag(absl::string_view text, Time* t, std::string* error);
+std::string AbslUnparseFlag(Time t);
+ABSL_DEPRECATED("Use AbslParseFlag() instead.")
 bool ParseFlag(const std::string& text, Time* t, std::string* error);
+ABSL_DEPRECATED("Use AbslUnparseFlag() instead.")
 std::string UnparseFlag(Time t);
 
 // TimeZone
@@ -837,8 +856,8 @@ std::string UnparseFlag(Time t);
 //
 // See also:
 // - https://github.com/google/cctz
-// - http://www.iana.org/time-zones
-// - http://en.wikipedia.org/wiki/Zoneinfo
+// - https://www.iana.org/time-zones
+// - https://en.wikipedia.org/wiki/Zoneinfo
 class TimeZone {
  public:
   explicit TimeZone(time_internal::cctz::time_zone tz) : cz_(tz) {}
@@ -1096,7 +1115,7 @@ inline Time FromCivil(CivilSecond ct, TimeZone tz) {
 // An `absl::TimeConversion` represents the conversion of year, month, day,
 // hour, minute, and second values (i.e., a civil time), in a particular
 // `absl::TimeZone`, to a time instant (an absolute time), as returned by
-// `absl::ConvertDateTime()`. Lecacy version of `absl::TimeZone::TimeInfo`.
+// `absl::ConvertDateTime()`. Legacy version of `absl::TimeZone::TimeInfo`.
 //
 // Deprecated. Use `absl::TimeZone::TimeInfo`.
 struct
@@ -1184,15 +1203,18 @@ struct tm ToTM(Time t, TimeZone tz);
 // time with UTC offset.  Also note the use of "%Y": RFC3339 mandates that
 // years have exactly four digits, but we allow them to take their natural
 // width.
-extern const char RFC3339_full[];  // %Y-%m-%dT%H:%M:%E*S%Ez
-extern const char RFC3339_sec[];   // %Y-%m-%dT%H:%M:%S%Ez
+ABSL_DLL extern const char
+    RFC3339_full[];  // %Y-%m-%dT%H:%M:%E*S%Ez
+ABSL_DLL extern const char RFC3339_sec[];  // %Y-%m-%dT%H:%M:%S%Ez
 
 // RFC1123_full
 // RFC1123_no_wday
 //
 // FormatTime()/ParseTime() format specifiers for RFC1123 date/time strings.
-extern const char RFC1123_full[];     // %a, %d %b %E4Y %H:%M:%S %z
-extern const char RFC1123_no_wday[];  // %d %b %E4Y %H:%M:%S %z
+ABSL_DLL extern const char
+    RFC1123_full[];  // %a, %d %b %E4Y %H:%M:%S %z
+ABSL_DLL extern const char
+    RFC1123_no_wday[];  // %d %b %E4Y %H:%M:%S %z
 
 // FormatTime()
 //
@@ -1222,7 +1244,7 @@ extern const char RFC1123_no_wday[];  // %d %b %E4Y %H:%M:%S %z
 //
 //   absl::CivilSecond cs(2013, 1, 2, 3, 4, 5);
 //   absl::Time t = absl::FromCivil(cs, lax);
-//   string f = absl::FormatTime("%H:%M:%S", t, lax);  // "03:04:05"
+//   std::string f = absl::FormatTime("%H:%M:%S", t, lax);  // "03:04:05"
 //   f = absl::FormatTime("%H:%M:%E3S", t, lax);  // "03:04:05.000"
 //
 // Note: If the given `absl::Time` is `absl::InfiniteFuture()`, the returned
@@ -1394,8 +1416,7 @@ constexpr Duration FromInt64(int64_t v, std::ratio<3600>) {
 // IsValidRep64<T>(0) is true if the expression `int64_t{std::declval<T>()}` is
 // valid. That is, if a T can be assigned to an int64_t without narrowing.
 template <typename T>
-constexpr auto IsValidRep64(int)
-    -> decltype(int64_t{std::declval<T>()}, bool()) {
+constexpr auto IsValidRep64(int) -> decltype(int64_t{std::declval<T>()} == 0) {
   return true;
 }
 template <typename T>
@@ -1451,6 +1472,7 @@ T ToChronoDuration(Duration d) {
 }
 
 }  // namespace time_internal
+
 constexpr Duration Nanoseconds(int64_t n) {
   return time_internal::FromInt64(n, std::nano{});
 }
@@ -1556,6 +1578,7 @@ constexpr Time FromTimeT(time_t t) {
   return time_internal::FromUnixDuration(Seconds(t));
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_TIME_TIME_H_

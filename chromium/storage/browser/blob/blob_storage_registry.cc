@@ -12,8 +12,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "storage/browser/blob/blob_entry.h"
-#include "storage/browser/blob/blob_url_utils.h"
-#include "url/gurl.h"
 
 namespace storage {
 
@@ -54,66 +52,6 @@ BlobEntry* BlobStorageRegistry::GetEntry(const std::string& uuid) {
 
 const BlobEntry* BlobStorageRegistry::GetEntry(const std::string& uuid) const {
   return const_cast<BlobStorageRegistry*>(this)->GetEntry(uuid);
-}
-
-bool BlobStorageRegistry::CreateUrlMapping(const GURL& blob_url,
-                                           const std::string& uuid) {
-  DCHECK(!BlobUrlUtils::UrlHasFragment(blob_url));
-  if (blob_map_.find(uuid) == blob_map_.end() || IsURLMapped(blob_url))
-    return false;
-  url_to_uuid_[blob_url] = uuid;
-  return true;
-}
-
-bool BlobStorageRegistry::DeleteURLMapping(const GURL& blob_url,
-                                           std::string* uuid) {
-  DCHECK(!BlobUrlUtils::UrlHasFragment(blob_url));
-  auto found = url_to_uuid_.find(blob_url);
-  if (found == url_to_uuid_.end())
-    return false;
-  if (uuid)
-    uuid->assign(found->second);
-  url_to_uuid_.erase(found);
-  return true;
-}
-
-bool BlobStorageRegistry::IsURLMapped(const GURL& blob_url) const {
-  return url_to_uuid_.find(blob_url) != url_to_uuid_.end();
-}
-
-BlobEntry* BlobStorageRegistry::GetEntryFromURL(const GURL& url,
-                                                std::string* uuid) {
-  auto found = url_to_uuid_.find(BlobUrlUtils::ClearUrlFragment(url));
-  if (found == url_to_uuid_.end())
-    return nullptr;
-  BlobEntry* entry = GetEntry(found->second);
-  if (entry && uuid)
-    uuid->assign(found->second);
-  return entry;
-}
-
-void BlobStorageRegistry::AddTokenMapping(const base::UnguessableToken& token,
-                                          const GURL& url,
-                                          const std::string& uuid) {
-  DCHECK(token_to_url_and_uuid_.find(token) == token_to_url_and_uuid_.end());
-  token_to_url_and_uuid_.emplace(token, std::make_pair(url, uuid));
-}
-
-void BlobStorageRegistry::RemoveTokenMapping(
-    const base::UnguessableToken& token) {
-  DCHECK(token_to_url_and_uuid_.find(token) != token_to_url_and_uuid_.end());
-  token_to_url_and_uuid_.erase(token);
-}
-
-bool BlobStorageRegistry::GetTokenMapping(const base::UnguessableToken& token,
-                                          GURL* url,
-                                          std::string* uuid) const {
-  auto it = token_to_url_and_uuid_.find(token);
-  if (it == token_to_url_and_uuid_.end())
-    return false;
-  *url = it->second.first;
-  *uuid = it->second.second;
-  return true;
 }
 
 }  // namespace storage

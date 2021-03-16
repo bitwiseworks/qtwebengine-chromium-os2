@@ -7,10 +7,10 @@
 
 #include <map>
 
-#include "components/security_interstitials/core/common/interfaces/interstitial_commands.mojom.h"
+#include "components/security_interstitials/core/common/mojom/interstitial_commands.mojom.h"
 #include "components/security_interstitials/core/controller_client.h"
-#include "content/public/browser/web_contents_binding_set.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/web_contents_receiver_set.h"
 #include "content/public/browser/web_contents_user_data.h"
 
 namespace content {
@@ -42,6 +42,17 @@ class SecurityInterstitialTabHelper
       int64_t navigation_id,
       std::unique_ptr<security_interstitials::SecurityInterstitialPage>
           blocking_page);
+
+  // Determines whether a URL should be shown on the current navigation page.
+  bool ShouldDisplayURL() const;
+
+  // Whether this tab helper is tracking a currently-displaying interstitial.
+  bool IsDisplayingInterstitial() const;
+
+  // Whether an interstitial has been associated for |navigation_id|, but hasn't
+  // committed yet. For checking if the interstitial has committed use
+  // IsDisplayingInterstitial.
+  bool IsInterstitialPendingForNavigation(int64_t navigation_id) const;
 
   security_interstitials::SecurityInterstitialPage*
   GetBlockingPageForCurrentlyCommittedNavigationForTesting();
@@ -85,9 +96,9 @@ class SecurityInterstitialTabHelper
   std::unique_ptr<security_interstitials::SecurityInterstitialPage>
       blocking_page_for_currently_committed_navigation_;
 
-  content::WebContentsFrameBindingSet<
+  content::WebContentsFrameReceiverSet<
       security_interstitials::mojom::InterstitialCommands>
-      binding_;
+      receiver_;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 

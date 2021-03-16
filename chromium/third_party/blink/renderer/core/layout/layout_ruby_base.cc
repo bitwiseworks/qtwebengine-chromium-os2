@@ -65,9 +65,9 @@ void LayoutRubyBase::MoveChildren(LayoutRubyBase* to_base,
   else
     MoveBlockChildren(to_base, before_child);
 
-  SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
+  SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
       layout_invalidation_reason::kUnknown);
-  to_base->SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
+  to_base->SetNeedsLayoutAndIntrinsicWidthsRecalcAndFullPaintInvalidation(
       layout_invalidation_reason::kUnknown);
 }
 
@@ -89,7 +89,7 @@ void LayoutRubyBase::MoveInlineChildren(LayoutRubyBase* to_base,
     LayoutObject* last_child = to_base->LastChild();
     if (last_child && last_child->IsAnonymousBlock() &&
         last_child->ChildrenInline()) {
-      to_block = ToLayoutBlock(last_child);
+      to_block = To<LayoutBlock>(last_child);
     } else {
       to_block = to_base->CreateAnonymousBlock();
       to_base->Children()->AppendChildNode(to_base, to_block);
@@ -118,8 +118,8 @@ void LayoutRubyBase::MoveBlockChildren(LayoutRubyBase* to_base,
       first_child_here->ChildrenInline() && last_child_there &&
       last_child_there->IsAnonymousBlock() &&
       last_child_there->ChildrenInline()) {
-    LayoutBlockFlow* anon_block_here = ToLayoutBlockFlow(first_child_here);
-    LayoutBlockFlow* anon_block_there = ToLayoutBlockFlow(last_child_there);
+    auto* anon_block_here = To<LayoutBlockFlow>(first_child_here);
+    auto* anon_block_there = To<LayoutBlockFlow>(last_child_there);
     anon_block_here->MoveAllChildrenTo(anon_block_there,
                                        anon_block_there->Children());
     anon_block_here->DeleteLineBoxTree();
@@ -152,7 +152,7 @@ void LayoutRubyBase::AdjustInlineDirectionLineBounds(
     unsigned expansion_opportunity_count,
     LayoutUnit& logical_left,
     LayoutUnit& logical_width) const {
-  int max_preferred_logical_width = MaxPreferredLogicalWidth().ToInt();
+  int max_preferred_logical_width = PreferredLogicalWidths().max_size.ToInt();
   if (max_preferred_logical_width >= logical_width)
     return;
 

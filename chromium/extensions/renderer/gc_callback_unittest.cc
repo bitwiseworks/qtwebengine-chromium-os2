@@ -8,8 +8,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
-#include "extensions/common/extension.h"
+#include "base/test/task_environment.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/renderer/scoped_web_frame.h"
@@ -112,7 +112,7 @@ class GCCallbackTest : public testing::TestWithParam<CallbackType> {
     RequestGarbageCollection();
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   ScopedWebFrame web_frame_;  // (this will construct the v8::Isolate)
   // ExtensionsRendererClient is a dependency of ScriptContextSet.
@@ -202,16 +202,16 @@ TEST_P(GCCallbackTest,
   EXPECT_EQ(has_fallback(), fallback_invoked);
 }
 
-INSTANTIATE_TEST_CASE_P(NativeCallback,
-                        GCCallbackTest,
-                        ::testing::Values(NATIVE));
-INSTANTIATE_TEST_CASE_P(JSCallback, GCCallbackTest, ::testing::Values(JS));
-INSTANTIATE_TEST_CASE_P(NativeCallbackWithNoFallback,
-                        GCCallbackTest,
-                        ::testing::Values(NATIVE_WITH_NO_FALLBACK));
-INSTANTIATE_TEST_CASE_P(JSCallbackWithNoFallback,
-                        GCCallbackTest,
-                        ::testing::Values(JS_WITH_NO_FALLBACK));
+INSTANTIATE_TEST_SUITE_P(NativeCallback,
+                         GCCallbackTest,
+                         ::testing::Values(NATIVE));
+INSTANTIATE_TEST_SUITE_P(JSCallback, GCCallbackTest, ::testing::Values(JS));
+INSTANTIATE_TEST_SUITE_P(NativeCallbackWithNoFallback,
+                         GCCallbackTest,
+                         ::testing::Values(NATIVE_WITH_NO_FALLBACK));
+INSTANTIATE_TEST_SUITE_P(JSCallbackWithNoFallback,
+                         GCCallbackTest,
+                         ::testing::Values(JS_WITH_NO_FALLBACK));
 
 }  // namespace
 }  // namespace extensions

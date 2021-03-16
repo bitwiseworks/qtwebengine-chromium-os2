@@ -398,11 +398,15 @@ bool ActivityUserData::CreateSnapshot(Snapshot* output_snapshot) const {
       } break;
       case BOOL_VALUE:
       case CHAR_VALUE:
-        value.short_value_ = *reinterpret_cast<char*>(entry.second.memory);
+        value.short_value_ =
+            reinterpret_cast<std::atomic<char>*>(entry.second.memory)
+                ->load(std::memory_order_relaxed);
         break;
       case SIGNED_VALUE:
       case UNSIGNED_VALUE:
-        value.short_value_ = *reinterpret_cast<uint64_t*>(entry.second.memory);
+        value.short_value_ =
+            reinterpret_cast<std::atomic<uint64_t>*>(entry.second.memory)
+                ->load(std::memory_order_relaxed);
         break;
       case END_OF_VALUES:  // Included for completeness purposes.
         NOTREACHED();
@@ -446,21 +450,21 @@ bool ActivityUserData::GetOwningProcessId(const void* memory,
   return OwningProcess::GetOwningProcessId(&header->owner, out_id, out_stamp);
 }
 
-void ActivityUserData::Set(StringPiece name,
-                           ValueType type,
-                           const void* memory,
-                           size_t size) {
+void* ActivityUserData::Set(StringPiece name,
+                            ValueType type,
+                            const void* memory,
+                            size_t size) {
   DCHECK_GE(std::numeric_limits<uint8_t>::max(), name.length());
   size = std::min(std::numeric_limits<uint16_t>::max() - (kMemoryAlignment - 1),
                   size);
 
   // It's possible that no user data is being stored.
   if (!memory_)
-    return;
+    return nullptr;
 
   // The storage of a name is limited so use that limit during lookup.
   if (name.length() > kMaxUserDataNameLength)
-    name.set(name.data(), kMaxUserDataNameLength);
+    name = StringPiece(name.data(), kMaxUserDataNameLength);
 
   ValueInfo* info;
   auto existing = values_.find(name);
@@ -482,7 +486,7 @@ void ActivityUserData::Set(StringPiece name,
     // now if there's not room enough for even this.
     size_t base_size = sizeof(FieldHeader) + name_extent;
     if (base_size > available_)
-      return;
+      return nullptr;
 
     // The "full size" is the size for storing the entire value.
     size_t full_size = std::min(base_size + value_extent, available_);
@@ -500,7 +504,7 @@ void ActivityUserData::Set(StringPiece name,
     if (size != 0) {
       size = std::min(full_size - base_size, size);
       if (size == 0)
-        return;
+        return nullptr;
     }
 
     // Allocate a chunk of memory.
@@ -542,6 +546,10 @@ void ActivityUserData::Set(StringPiece name,
   info->size_ptr->store(0, std::memory_order_seq_cst);
   memcpy(info->memory, memory, size);
   info->size_ptr->store(size, std::memory_order_release);
+
+  // The address of the stored value is returned so it can be re-used by the
+  // caller, so long as it's done in an atomic way.
+  return info->memory;
 }
 
 void ActivityUserData::SetReference(StringPiece name,
@@ -675,6 +683,10 @@ ThreadActivityTracker::ScopedActivity::ScopedActivity(
 ThreadActivityTracker::ScopedActivity::~ScopedActivity() {
   if (tracker_)
     tracker_->PopActivity(activity_id_);
+}
+
+bool ThreadActivityTracker::ScopedActivity::IsRecorded() {
+  return tracker_ && tracker_->IsRecorded(activity_id_);
 }
 
 void ThreadActivityTracker::ScopedActivity::ChangeTypeAndData(
@@ -845,6 +857,10 @@ void ThreadActivityTracker::PopActivity(ActivityId id) {
   // happen after the atomic |depth| operation above so a "release" store
   // is required.
   header_->data_version.fetch_add(1, std::memory_order_release);
+}
+
+bool ThreadActivityTracker::IsRecorded(ActivityId id) {
+  return id < stack_slots_;
 }
 
 std::unique_ptr<ActivityUserData> ThreadActivityTracker::GetUserData(
@@ -1229,12 +1245,12 @@ GlobalActivityTracker::ThreadSafeUserData::ThreadSafeUserData(void* memory,
 
 GlobalActivityTracker::ThreadSafeUserData::~ThreadSafeUserData() = default;
 
-void GlobalActivityTracker::ThreadSafeUserData::Set(StringPiece name,
-                                                    ValueType type,
-                                                    const void* memory,
-                                                    size_t size) {
+void* GlobalActivityTracker::ThreadSafeUserData::Set(StringPiece name,
+                                                     ValueType type,
+                                                     const void* memory,
+                                                     size_t size) {
   AutoLock lock(data_lock_);
-  ActivityUserData::Set(name, type, memory, size);
+  return ActivityUserData::Set(name, type, memory, size);
 }
 
 GlobalActivityTracker::ManagedActivityTracker::ManagedActivityTracker(
@@ -1305,32 +1321,19 @@ bool GlobalActivityTracker::CreateWithLocalMemory(size_t size,
 
 // static
 bool GlobalActivityTracker::CreateWithSharedMemory(
-    std::unique_ptr<SharedMemory> shm,
+    base::WritableSharedMemoryMapping mapping,
     uint64_t id,
     StringPiece name,
     int stack_depth) {
-  if (shm->mapped_size() == 0 ||
-      !SharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(*shm)) {
+  if (!mapping.IsValid() ||
+      !WritableSharedPersistentMemoryAllocator::IsSharedMemoryAcceptable(
+          mapping)) {
     return false;
   }
-  CreateWithAllocator(std::make_unique<SharedPersistentMemoryAllocator>(
-                          std::move(shm), id, name, false),
+  CreateWithAllocator(std::make_unique<WritableSharedPersistentMemoryAllocator>(
+                          std::move(mapping), id, name),
                       stack_depth, 0);
   return true;
-}
-
-// static
-bool GlobalActivityTracker::CreateWithSharedMemoryHandle(
-    const SharedMemoryHandle& handle,
-    size_t size,
-    uint64_t id,
-    StringPiece name,
-    int stack_depth) {
-  std::unique_ptr<SharedMemory> shm(
-      new SharedMemory(handle, /*readonly=*/false));
-  if (!shm->Map(size))
-    return false;
-  return CreateWithSharedMemory(std::move(shm), id, name, stack_depth);
 }
 
 // static
@@ -1376,23 +1379,14 @@ ThreadActivityTracker* GlobalActivityTracker::CreateTrackerForCurrentThread() {
     // because the underlying allocator wasn't given enough memory to satisfy
     // to all possible requests.
     NOTREACHED();
-    // Report the thread-count at which the allocator was full so that the
-    // failure can be seen and underlying memory resized appropriately.
-    UMA_HISTOGRAM_COUNTS_1000(
-        "ActivityTracker.ThreadTrackers.MemLimitTrackerCount",
-        thread_tracker_count_.load(std::memory_order_relaxed));
+
     // Return null, just as if tracking wasn't enabled.
     return nullptr;
   }
 
   // Convert the memory block found above into an actual memory address.
   // Doing the conversion as a Header object enacts the 32/64-bit size
-  // consistency checks which would not otherwise be done. Unfortunately,
-  // some older compilers and MSVC don't have standard-conforming definitions
-  // of std::atomic which cause it not to be plain-old-data. Don't check on
-  // those platforms assuming that the checks on other platforms will be
-  // sufficient.
-  // TODO(bcwhite): Review this after major compiler releases.
+  // consistency checks which would not otherwise be done.
   DCHECK(mem_reference);
   void* mem_base;
   mem_base =
@@ -1408,10 +1402,7 @@ ThreadActivityTracker* GlobalActivityTracker::CreateTrackerForCurrentThread() {
   DCHECK(tracker->IsValid());
   auto* tracker_raw = tracker.get();
   this_thread_tracker_.Set(std::move(tracker));
-  int old_count = thread_tracker_count_.fetch_add(1, std::memory_order_relaxed);
-
-  UMA_HISTOGRAM_EXACT_LINEAR("ActivityTracker.ThreadTrackers.Count",
-                             old_count + 1, static_cast<int>(kMaxThreadCount));
+  thread_tracker_count_.fetch_add(1, std::memory_order_relaxed);
   return tracker_raw;
 }
 
@@ -1421,9 +1412,9 @@ void GlobalActivityTracker::ReleaseTrackerForCurrentThreadForTesting() {
 }
 
 void GlobalActivityTracker::SetBackgroundTaskRunner(
-    const scoped_refptr<TaskRunner>& runner) {
+    const scoped_refptr<SequencedTaskRunner>& runner) {
   AutoLock lock(global_tracker_lock_);
-  background_task_runner_ = runner;
+  background_task_runner_ = std::move(runner);
 }
 
 void GlobalActivityTracker::SetProcessExitCallback(
@@ -1440,7 +1431,7 @@ void GlobalActivityTracker::RecordProcessLaunch(
   DCHECK_NE(0, pid);
 
   base::AutoLock lock(global_tracker_lock_);
-  if (base::ContainsKey(known_processes_, pid)) {
+  if (base::Contains(known_processes_, pid)) {
     // TODO(bcwhite): Measure this in UMA.
     NOTREACHED() << "Process #" << process_id
                  << " was previously recorded as \"launched\""
@@ -1450,7 +1441,7 @@ void GlobalActivityTracker::RecordProcessLaunch(
   }
 
 #if defined(OS_WIN)
-  known_processes_.insert(std::make_pair(pid, UTF16ToUTF8(cmd)));
+  known_processes_.insert(std::make_pair(pid, WideToUTF8(cmd)));
 #else
   known_processes_.insert(std::make_pair(pid, cmd));
 #endif
@@ -1475,7 +1466,7 @@ void GlobalActivityTracker::RecordProcessExit(ProcessId process_id,
   DCHECK_NE(GetProcessId(), pid);
   DCHECK_NE(0, pid);
 
-  scoped_refptr<TaskRunner> task_runner;
+  scoped_refptr<SequencedTaskRunner> task_runner;
   std::string command_line;
   {
     base::AutoLock lock(global_tracker_lock_);
@@ -1632,12 +1623,6 @@ void GlobalActivityTracker::RecordModuleInfo(const ModuleInfo& info) {
   modules_.emplace(info.file, record);
 }
 
-void GlobalActivityTracker::RecordFieldTrial(const std::string& trial_name,
-                                             StringPiece group_name) {
-  const std::string key = std::string("FieldTrial.") + trial_name;
-  process_data_.SetString(key, group_name);
-}
-
 void GlobalActivityTracker::RecordException(const void* pc,
                                             const void* origin,
                                             uint32_t code) {
@@ -1689,12 +1674,6 @@ GlobalActivityTracker::GlobalActivityTracker(
 
   // Note that this process has launched.
   SetProcessPhase(PROCESS_LAUNCHED);
-
-  // Fetch and record all activated field trials.
-  FieldTrial::ActiveGroups active_groups;
-  FieldTrialList::GetActiveFieldTrialGroups(&active_groups);
-  for (auto& group : active_groups)
-    RecordFieldTrial(group.trial_name, group.group_name);
 }
 
 GlobalActivityTracker::~GlobalActivityTracker() {

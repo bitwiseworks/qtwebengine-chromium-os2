@@ -27,14 +27,13 @@ void SVGContainerPainter::Paint(const PaintInfo& paint_info) {
 
   // Spec: An empty viewBox on the <svg> element disables rendering.
   DCHECK(layout_svg_container_.GetElement());
-  if (IsSVGSVGElement(*layout_svg_container_.GetElement()) &&
-      ToSVGSVGElement(*layout_svg_container_.GetElement()).HasEmptyViewBox())
+  auto* svg_svg_element =
+      DynamicTo<SVGSVGElement>(*layout_svg_container_.GetElement());
+  if (svg_svg_element && svg_svg_element->HasEmptyViewBox())
     return;
 
-  PaintInfo paint_info_before_filtering(paint_info);
-
   if (SVGModelObjectPainter(layout_svg_container_)
-          .CullRectSkipsPainting(paint_info_before_filtering)) {
+          .CullRectSkipsPainting(paint_info)) {
     return;
   }
 
@@ -43,12 +42,13 @@ void SVGContainerPainter::Paint(const PaintInfo& paint_info) {
   //   2) Complexity: Difficulty updating clips when ancestor transforms change.
   // This is why we use an infinite cull rect if there is a transform. Non-svg
   // content, does this in PaintLayerPainter::PaintSingleFragment.
+  PaintInfo paint_info_before_filtering(paint_info);
   if (layout_svg_container_.StyleRef().HasTransform()) {
     paint_info_before_filtering.ApplyInfiniteCullRect();
   } else if (const auto* properties =
                  layout_svg_container_.FirstFragment().PaintProperties()) {
     if (const auto* transform = properties->Transform())
-      paint_info_before_filtering.TransformCullRect(transform);
+      paint_info_before_filtering.TransformCullRect(*transform);
   }
 
   ScopedSVGTransformState transform_state(
@@ -58,33 +58,33 @@ void SVGContainerPainter::Paint(const PaintInfo& paint_info) {
     base::Optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties;
     if (layout_svg_container_.IsSVGViewportContainer() &&
         SVGLayoutSupport::IsOverflowHidden(layout_svg_container_)) {
-        const auto* fragment =
-            paint_info.FragmentToPaint(layout_svg_container_);
-        if (!fragment)
-          return;
-        const auto* properties = fragment->PaintProperties();
-        // TODO(crbug.com/814815): The condition should be a DCHECK, but for now
-        // we may paint the object for filters during PrePaint before the
-        // properties are ready.
-        if (properties && properties->OverflowClip()) {
-          scoped_paint_chunk_properties.emplace(
-              paint_info.context.GetPaintController(),
-              properties->OverflowClip(), layout_svg_container_,
-              paint_info.DisplayItemTypeForClipping());
-        }
+      const auto* fragment =
+          paint_info_before_filtering.FragmentToPaint(layout_svg_container_);
+      if (!fragment)
+        return;
+      const auto* properties = fragment->PaintProperties();
+      // TODO(crbug.com/814815): The condition should be a DCHECK, but for now
+      // we may paint the object for filters during PrePaint before the
+      // properties are ready.
+      if (properties && properties->OverflowClip()) {
+        scoped_paint_chunk_properties.emplace(
+            paint_info_before_filtering.context.GetPaintController(),
+            *properties->OverflowClip(), layout_svg_container_,
+            paint_info_before_filtering.DisplayItemTypeForClipping());
+      }
     }
 
     ScopedSVGPaintState paint_state(layout_svg_container_,
                                     paint_info_before_filtering);
     bool continue_rendering = true;
     if (paint_state.GetPaintInfo().phase == PaintPhase::kForeground)
-      continue_rendering = paint_state.ApplyClipMaskAndFilterIfNecessary();
+      continue_rendering = paint_state.ApplyEffects();
 
     if (continue_rendering) {
       for (LayoutObject* child = layout_svg_container_.FirstChild(); child;
            child = child->NextSibling()) {
-        if (child->IsSVGForeignObject()) {
-          SVGForeignObjectPainter(ToLayoutSVGForeignObject(*child))
+        if (auto* foreign_object = DynamicTo<LayoutSVGForeignObject>(*child)) {
+          SVGForeignObjectPainter(*foreign_object)
               .PaintLayer(paint_state.GetPaintInfo());
         } else {
           child->Paint(paint_state.GetPaintInfo());
@@ -96,10 +96,10 @@ void SVGContainerPainter::Paint(const PaintInfo& paint_info) {
   SVGModelObjectPainter(layout_svg_container_)
       .PaintOutline(paint_info_before_filtering);
 
-  if (paint_info_before_filtering.IsPrinting() &&
+  if (paint_info_before_filtering.ShouldAddUrlMetadata() &&
       paint_info_before_filtering.phase == PaintPhase::kForeground) {
     ObjectPainter(layout_svg_container_)
-        .AddPDFURLRectIfNeeded(paint_info_before_filtering, LayoutPoint());
+        .AddURLRectIfNeeded(paint_info_before_filtering, PhysicalOffset());
   }
 }
 

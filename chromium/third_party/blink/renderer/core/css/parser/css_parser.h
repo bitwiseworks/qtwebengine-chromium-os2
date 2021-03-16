@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PARSER_CSS_PARSER_H_
 
 #include <memory>
+#include "third_party/blink/public/platform/web_color_scheme.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/css/css_property_value_set.h"
@@ -22,6 +23,7 @@ class StyleRuleBase;
 class StyleRuleKeyframe;
 class StyleSheetContents;
 class CSSValue;
+class CSSPrimitiveValue;
 enum class ParseSheetResult;
 enum class SecureContextMode;
 
@@ -69,7 +71,6 @@ class CORE_EXPORT CSSParser {
   static MutableCSSPropertyValueSet::SetResult ParseValueForCustomProperty(
       MutableCSSPropertyValueSet*,
       const AtomicString& property_name,
-      const PropertyRegistry*,
       const String& value,
       bool important,
       SecureContextMode,
@@ -100,7 +101,9 @@ class CORE_EXPORT CSSParser {
   // The color will only be changed when string contains a valid CSS color, so
   // callers can set it to a default color and ignore the boolean result.
   static bool ParseColor(Color&, const String&, bool strict = false);
-  static bool ParseSystemColor(Color&, const String&);
+  static bool ParseSystemColor(Color&,
+                               const String&,
+                               WebColorScheme color_scheme);
 
   static void ParseSheetForInspector(const CSSParserContext*,
                                      StyleSheetContents*,
@@ -109,6 +112,9 @@ class CORE_EXPORT CSSParser {
   static void ParseDeclarationListForInspector(const CSSParserContext*,
                                                const String&,
                                                CSSParserObserver&);
+
+  static CSSPrimitiveValue* ParseLengthPercentage(const String&,
+                                                  const CSSParserContext*);
 
  private:
   static MutableCSSPropertyValueSet::SetResult ParseValue(

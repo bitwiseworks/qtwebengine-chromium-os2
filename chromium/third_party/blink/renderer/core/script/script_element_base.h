@@ -22,7 +22,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_SCRIPT_SCRIPT_ELEMENT_BASE_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -39,6 +38,7 @@ ScriptLoader* ScriptLoaderFromElement(Element*);
 
 class CORE_EXPORT ScriptElementBase : public GarbageCollectedMixin {
  public:
+  enum class Type { kHTMLScriptElement, kSVGScriptElement };
   virtual bool AsyncAttributeValue() const = 0;
   virtual String CharsetAttributeValue() const = 0;
   virtual String CrossOriginAttributeValue() const = 0;
@@ -53,23 +53,31 @@ class CORE_EXPORT ScriptElementBase : public GarbageCollectedMixin {
   virtual String ReferrerPolicyAttributeValue() const = 0;
   virtual String ImportanceAttributeValue() const = 0;
 
-  virtual String TextFromChildren() = 0;
+  // This implements https://dom.spec.whatwg.org/#concept-child-text-content
+  virtual String ChildTextContent() = 0;
+  // This supports
+  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#prepare-script-url-and-text
+  virtual String ScriptTextInternalSlot() const = 0;
   virtual bool HasSourceAttribute() const = 0;
   virtual bool IsConnected() const = 0;
   virtual bool HasChildren() const = 0;
   virtual const AtomicString& GetNonceForElement() const = 0;
   virtual bool ElementHasDuplicateAttributes() const = 0;
 
+  // Whether the inline script is allowed by the CSP. Must be called
+  // synchronously to ensure the correct Javascript world is used for CSP
+  // checks.
   virtual bool AllowInlineScriptForCSP(const AtomicString& nonce,
                                        const WTF::OrdinalNumber&,
-                                       const String& script_content,
-                                       ContentSecurityPolicy::InlineType) = 0;
+                                       const String& script_content) = 0;
   virtual Document& GetDocument() const = 0;
   virtual void SetScriptElementForBinding(
       HTMLScriptElementOrSVGScriptElement&) = 0;
 
   virtual void DispatchLoadEvent() = 0;
   virtual void DispatchErrorEvent() = 0;
+
+  virtual Type GetScriptElementType() = 0;
 
  protected:
   ScriptLoader* InitializeScriptLoader(bool parser_inserted,

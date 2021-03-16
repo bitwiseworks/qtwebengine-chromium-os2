@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/bind.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
@@ -20,6 +19,9 @@
 #include "net/base/address_family.h"
 #include "net/base/load_states.h"
 #include "net/base/net_errors.h"
+#include "net/cert/cert_verifier.h"
+#include "net/cert/internal/simple_path_builder_delegate.h"
+#include "net/cert/internal/trust_store.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver.h"
@@ -27,18 +29,17 @@
 #include "net/http/http_network_session.h"
 #include "net/http/http_server_properties.h"
 #include "net/http/http_transaction_factory.h"
-#include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_entry.h"
 #include "net/log/net_log_event_type.h"
-#include "net/log/net_log_parameters_callback.h"
+#include "net/log/net_log_values.h"
 #include "net/log/net_log_with_source.h"
 #include "net/proxy_resolution/proxy_config.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
 #include "net/socket/ssl_client_socket.h"
-#include "net/third_party/quic/core/quic_error_codes.h"
-#include "net/third_party/quic/core/quic_packets.h"
+#include "net/third_party/quiche/src/quic/core/quic_error_codes.h"
+#include "net/third_party/quiche/src/quic/core/quic_packets.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 
@@ -90,6 +91,38 @@ const short kNetErrors[] = {
 #undef NET_ERROR
 };
 
+// Returns the disk cache backend for |context| if there is one, or NULL.
+// Despite the name, can return an in memory "disk cache".
+disk_cache::Backend* GetDiskCacheBackend(URLRequestContext* context) {
+  if (!context->http_transaction_factory())
+    return nullptr;
+
+  HttpCache* http_cache = context->http_transaction_factory()->GetCache();
+  if (!http_cache)
+    return nullptr;
+
+  return http_cache->GetCurrentBackend();
+}
+
+// Returns true if |request1| was created before |request2|.
+bool RequestCreatedBefore(const URLRequest* request1,
+                          const URLRequest* request2) {
+  // Only supported when both requests have the same non-null NetLog.
+  DCHECK(request1->net_log().net_log());
+  DCHECK_EQ(request1->net_log().net_log(), request2->net_log().net_log());
+
+  if (request1->creation_time() < request2->creation_time())
+    return true;
+  if (request1->creation_time() > request2->creation_time())
+    return false;
+  // If requests were created at the same time, sort by NetLogSource ID. Some
+  // NetLog tests assume the returned order exactly matches creation order, even
+  // creation times of two events are potentially the same.
+  return request1->net_log().source().id < request2->net_log().source().id;
+}
+
+}  // namespace
+
 const char* NetInfoSourceToString(NetInfoSource source) {
   switch (source) {
 #define NET_INFO_SOURCE(label, string, value) \
@@ -103,41 +136,6 @@ const char* NetInfoSourceToString(NetInfoSource source) {
   return "?";
 }
 
-// Returns the disk cache backend for |context| if there is one, or NULL.
-// Despite the name, can return an in memory "disk cache".
-disk_cache::Backend* GetDiskCacheBackend(URLRequestContext* context) {
-  if (!context->http_transaction_factory())
-    return NULL;
-
-  HttpCache* http_cache = context->http_transaction_factory()->GetCache();
-  if (!http_cache)
-    return NULL;
-
-  return http_cache->GetCurrentBackend();
-}
-
-// Returns true if |request1| was created before |request2|.
-bool RequestCreatedBefore(const URLRequest* request1,
-                          const URLRequest* request2) {
-  if (request1->creation_time() < request2->creation_time())
-    return true;
-  if (request1->creation_time() > request2->creation_time())
-    return false;
-  // If requests were created at the same time, sort by ID.  Mostly matters for
-  // testing purposes.
-  return request1->identifier() < request2->identifier();
-}
-
-// Returns a Value representing the state of a pre-existing URLRequest when
-// net-internals was opened.
-std::unique_ptr<base::Value> GetRequestStateAsValue(
-    const net::URLRequest* request,
-    NetLogCaptureMode capture_mode) {
-  return request->GetStateAsValue();
-}
-
-}  // namespace
-
 std::unique_ptr<base::DictionaryValue> GetNetConstants() {
   std::unique_ptr<base::DictionaryValue> constants_dict(
       new base::DictionaryValue());
@@ -147,7 +145,7 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
 
   // Add a dictionary with information on the relationship between event type
   // enums and their symbolic names.
-  constants_dict->Set("logEventTypes", NetLog::GetEventTypesAsValue());
+  constants_dict->SetKey("logEventTypes", NetLog::GetEventTypesAsValue());
 
   // Add a dictionary with information about the relationship between CertStatus
   // flags and their symbolic names.
@@ -158,6 +156,59 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
       dict->SetInteger(flag.name, flag.constant);
 
     constants_dict->Set("certStatusFlag", std::move(dict));
+  }
+
+  // Add a dictionary with information about the relationship between
+  // CertVerifier::VerifyFlags and their symbolic names.
+  {
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+
+    dict->SetInteger("VERIFY_DISABLE_NETWORK_FETCHES",
+                     CertVerifier::VERIFY_DISABLE_NETWORK_FETCHES);
+
+    static_assert(CertVerifier::VERIFY_FLAGS_LAST == (1 << 0),
+                  "Update with new flags");
+
+    constants_dict->Set("certVerifierFlags", std::move(dict));
+  }
+
+  {
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+
+    dict->SetInteger(
+        "kStrong",
+        static_cast<int>(SimplePathBuilderDelegate::DigestPolicy::kStrong));
+    dict->SetInteger(
+        "kWeakAllowSha1",
+        static_cast<int>(
+            SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1));
+
+    static_assert(SimplePathBuilderDelegate::DigestPolicy::kMaxValue ==
+                      SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1,
+                  "Update with new flags");
+
+    constants_dict->Set("certPathBuilderDigestPolicy", std::move(dict));
+  }
+
+  {
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+
+    dict->SetInteger("DISTRUSTED",
+                     static_cast<int>(CertificateTrustType::DISTRUSTED));
+    dict->SetInteger("UNSPECIFIED",
+                     static_cast<int>(CertificateTrustType::UNSPECIFIED));
+    dict->SetInteger("TRUSTED_ANCHOR",
+                     static_cast<int>(CertificateTrustType::TRUSTED_ANCHOR));
+    dict->SetInteger(
+        "TRUSTED_ANCHOR_WITH_CONSTRAINTS",
+        static_cast<int>(
+            CertificateTrustType::TRUSTED_ANCHOR_WITH_CONSTRAINTS));
+
+    static_assert(CertificateTrustType::LAST ==
+                      CertificateTrustType::TRUSTED_ANCHOR_WITH_CONSTRAINTS,
+                  "Update with new flags");
+
+    constants_dict->Set("certificateTrustType", std::move(dict));
   }
 
   // Add a dictionary with information about the relationship between load flag
@@ -245,13 +296,7 @@ std::unique_ptr<base::DictionaryValue> GetNetConstants() {
 
   // Information about the relationship between source type enums and
   // their symbolic names.
-  constants_dict->Set("logSourceType", NetLog::GetSourceTypesAsValue());
-
-  // TODO(eroman): This is here for compatibility in loading new log files with
-  // older builds of Chrome. Safe to remove this once M45 is on the stable
-  // channel.
-  constants_dict->Set("logLevelType",
-                      std::make_unique<base::DictionaryValue>());
+  constants_dict->SetKey("logSourceType", NetLog::GetSourceTypesAsValue());
 
   // Information about the relationship between address family enums and
   // their symbolic names.
@@ -314,48 +359,8 @@ NET_EXPORT std::unique_ptr<base::DictionaryValue> GetNetInfo(
   // May only be called on the context's thread.
   context->AssertCalledOnValidThread();
 
-  std::unique_ptr<base::DictionaryValue> net_info_dict(
-      new base::DictionaryValue());
-
-  // TODO(mmenke):  The code for most of these sources should probably be moved
-  // into the sources themselves.
-  if (info_sources & NET_INFO_PROXY_SETTINGS) {
-    ProxyResolutionService* proxy_resolution_service =
-        context->proxy_resolution_service();
-
-    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-    if (proxy_resolution_service->fetched_config())
-      dict->Set("original",
-                proxy_resolution_service->fetched_config()->value().ToValue());
-    if (proxy_resolution_service->config())
-      dict->Set("effective",
-                proxy_resolution_service->config()->value().ToValue());
-
-    net_info_dict->Set(NetInfoSourceToString(NET_INFO_PROXY_SETTINGS),
-                       std::move(dict));
-  }
-
-  if (info_sources & NET_INFO_BAD_PROXIES) {
-    const ProxyRetryInfoMap& bad_proxies_map =
-        context->proxy_resolution_service()->proxy_retry_info();
-
-    auto list = std::make_unique<base::ListValue>();
-
-    for (auto it = bad_proxies_map.begin(); it != bad_proxies_map.end(); ++it) {
-      const std::string& proxy_uri = it->first;
-      const ProxyRetryInfo& retry_info = it->second;
-
-      auto dict = std::make_unique<base::DictionaryValue>();
-      dict->SetString("proxy_uri", proxy_uri);
-      dict->SetString("bad_until",
-                      NetLog::TickCountToString(retry_info.bad_until));
-
-      list->Append(std::move(dict));
-    }
-
-    net_info_dict->Set(NetInfoSourceToString(NET_INFO_BAD_PROXIES),
-                       std::move(list));
-  }
+  std::unique_ptr<base::DictionaryValue> net_info_dict =
+      context->proxy_resolution_service()->GetProxyNetLogValues(info_sources);
 
   if (info_sources & NET_INFO_HOST_RESOLVER) {
     HostResolver* host_resolver = context->host_resolver();
@@ -504,15 +509,9 @@ NET_EXPORT void CreateNetLogEntriesForActiveObjects(
 
   // Create fake events.
   for (auto* request : requests) {
-    NetLogParametersCallback callback =
-        base::Bind(&GetRequestStateAsValue, base::Unretained(request));
-
-    // Note that passing the hardcoded NetLogCaptureMode::Default() below is
-    // fine, since GetRequestStateAsValue() ignores the capture mode.
-    NetLogEntryData entry_data(
-        NetLogEventType::REQUEST_ALIVE, request->net_log().source(),
-        NetLogEventPhase::BEGIN, request->creation_time(), &callback);
-    NetLogEntry entry(&entry_data, NetLogCaptureMode::Default());
+    NetLogEntry entry(NetLogEventType::REQUEST_ALIVE,
+                      request->net_log().source(), NetLogEventPhase::BEGIN,
+                      request->creation_time(), request->GetStateAsValue());
     observer->OnAddEntry(entry);
   }
 }

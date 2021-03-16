@@ -24,13 +24,6 @@
 #include "base/android/application_status_listener.h"
 #endif  // OS_ANDROID
 
-namespace net {
-class HttpRequestHeaders;
-class HttpResponseHeaders;
-struct LoadTimingInfo;
-class ProxyServer;
-}
-
 namespace network {
 class SharedURLLoaderFactory;
 class SimpleURLLoader;
@@ -40,15 +33,15 @@ namespace data_reduction_proxy {
 
 class ClientConfig;
 class DataReductionProxyConfig;
-class DataReductionProxyIOData;
+class DataReductionProxyService;
 class DataReductionProxyMutableConfigValues;
 class DataReductionProxyRequestOptions;
 
-typedef base::Callback<void(const std::string&)> ConfigStorer;
+using ConfigStorer = base::RepeatingCallback<void(const std::string&)>;
 
 // Retrieves the default net::BackoffEntry::Policy for the Data Reduction Proxy
 // configuration service client.
-const net::BackoffEntry::Policy& GetBackoffPolicy();
+net::BackoffEntry::Policy GetBackoffPolicy();
 
 // Retrieves the Data Reduction Proxy configuration from a remote service. This
 // object lives on the IO thread.
@@ -89,14 +82,14 @@ class DataReductionProxyConfigServiceClient
       DataReductionProxyRequestOptions* request_options,
       DataReductionProxyMutableConfigValues* config_values,
       DataReductionProxyConfig* config,
-      DataReductionProxyIOData* io_data,
+      DataReductionProxyService* service,
       network::NetworkConnectionTracker* network_connection_tracker,
       ConfigStorer config_storer);
 
   ~DataReductionProxyConfigServiceClient() override;
 
   // Performs initialization on the IO thread.
-  void InitializeOnIOThread(
+  void Initialize(
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
 
   // Sets whether the configuration should be retrieved or not.
@@ -106,21 +99,14 @@ class DataReductionProxyConfigServiceClient
   // operation takes place asynchronously.
   void RetrieveConfig();
 
+  // Invalidates the current Data Reduction Proxy configuration and requests the
+  // retrieval of the Data Reduction Proxy configuration
+  void InvalidateAndRetrieveNewConfig();
+
   // Takes a serialized Data Reduction Proxy configuration and sets it as the
   // current Data Reduction Proxy configuration. If a remote configuration has
   // already been retrieved, the remote configuration takes precedence.
   void ApplySerializedConfig(const std::string& config_value);
-
-  // Examines |response_headers| to determine if an authentication failure
-  // occurred on a Data Reduction Proxy. Returns true if authentication failure
-  // occurred, and the session key specified in |request_headers| matches the
-  // current session in use by the client. If an authentication failure is
-  // detected,  it fetches a new config.
-  bool ShouldRetryDueToAuthFailure(
-      const net::HttpRequestHeaders& request_headers,
-      const net::HttpResponseHeaders* response_headers,
-      const net::ProxyServer& proxy_server,
-      const net::LoadTimingInfo& load_timing_info);
 
   void SetRemoteConfigAppliedForTesting(bool remote_config_applied) {
     remote_config_applied_ = remote_config_applied;
@@ -200,8 +186,8 @@ class DataReductionProxyConfigServiceClient
   // The caller must ensure that the |config_| outlives this instance.
   DataReductionProxyConfig* config_;
 
-  // The caller must ensure that the |io_data_| outlives this instance.
-  DataReductionProxyIOData* io_data_;
+  // The caller must ensure that the |service_| outlives this instance.
+  DataReductionProxyService* service_;
 
   // Watches for network changes.
   network::NetworkConnectionTracker* network_connection_tracker_;
@@ -210,6 +196,7 @@ class DataReductionProxyConfigServiceClient
   ConfigStorer config_storer_;
 
   // Used to calculate the backoff time on request failures.
+  net::BackoffEntry::Policy backoff_policy_;
   net::BackoffEntry backoff_entry_;
 
   // The URL for retrieving the Data Reduction Proxy configuration.

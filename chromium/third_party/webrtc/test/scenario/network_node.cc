@@ -12,73 +12,62 @@
 #include <algorithm>
 #include <vector>
 
-#include "absl/memory/memory.h"
+#include <memory>
+#include "rtc_base/net_helper.h"
 #include "rtc_base/numerics/safe_minmax.h"
 
 namespace webrtc {
 namespace test {
 namespace {
-SimulatedNetwork::Config CreateSimulationConfig(NetworkNodeConfig config) {
+constexpr char kDummyTransportName[] = "dummy";
+SimulatedNetwork::Config CreateSimulationConfig(
+    NetworkSimulationConfig config) {
   SimulatedNetwork::Config sim_config;
-  sim_config.link_capacity_kbps = config.simulation.bandwidth.kbps_or(0);
-  sim_config.loss_percent = config.simulation.loss_rate * 100;
-  sim_config.queue_delay_ms = config.simulation.delay.ms();
-  sim_config.delay_standard_deviation_ms = config.simulation.delay_std_dev.ms();
+  sim_config.link_capacity_kbps = config.bandwidth.kbps_or(0);
+  sim_config.loss_percent = config.loss_rate * 100;
+  sim_config.queue_delay_ms = config.delay.ms();
+  sim_config.delay_standard_deviation_ms = config.delay_std_dev.ms();
+  sim_config.packet_overhead = config.packet_overhead.bytes<int>();
+  sim_config.codel_active_queue_management =
+      config.codel_active_queue_management;
+  sim_config.queue_length_packets =
+      config.packet_queue_length_limit.value_or(0);
   return sim_config;
 }
 }  // namespace
 
-void NullReceiver::OnPacketReceived(EmulatedIpPacket packet) {}
+SimulationNode::SimulationNode(NetworkSimulationConfig config,
+                               SimulatedNetwork* behavior,
+                               EmulatedNetworkNode* network_node)
+    : config_(config), simulation_(behavior), network_node_(network_node) {}
 
-ActionReceiver::ActionReceiver(std::function<void()> action)
-    : action_(action) {}
-
-void ActionReceiver::OnPacketReceived(EmulatedIpPacket packet) {
-  action_();
-}
-
-std::unique_ptr<SimulationNode> SimulationNode::Create(
-    NetworkNodeConfig config) {
-  RTC_DCHECK(config.mode == NetworkNodeConfig::TrafficMode::kSimulation);
+std::unique_ptr<SimulatedNetwork> SimulationNode::CreateBehavior(
+    NetworkSimulationConfig config) {
   SimulatedNetwork::Config sim_config = CreateSimulationConfig(config);
-  auto network = absl::make_unique<SimulatedNetwork>(sim_config);
-  SimulatedNetwork* simulation_ptr = network.get();
-  return std::unique_ptr<SimulationNode>(
-      new SimulationNode(config, std::move(network), simulation_ptr));
+  return std::make_unique<SimulatedNetwork>(sim_config);
 }
 
 void SimulationNode::UpdateConfig(
-    std::function<void(NetworkNodeConfig*)> modifier) {
+    std::function<void(NetworkSimulationConfig*)> modifier) {
   modifier(&config_);
   SimulatedNetwork::Config sim_config = CreateSimulationConfig(config_);
-  simulated_network_->SetConfig(sim_config);
+  simulation_->SetConfig(sim_config);
 }
 
 void SimulationNode::PauseTransmissionUntil(Timestamp until) {
-  simulated_network_->PauseTransmissionUntil(until.us());
+  simulation_->PauseTransmissionUntil(until.us());
 }
 
 ColumnPrinter SimulationNode::ConfigPrinter() const {
-  return ColumnPrinter::Lambda("propagation_delay capacity loss_rate",
-                               [this](rtc::SimpleStringBuilder& sb) {
-                                 sb.AppendFormat(
-                                     "%.3lf %.0lf %.2lf",
-                                     config_.simulation.delay.seconds<double>(),
-                                     config_.simulation.bandwidth.bps() / 8.0,
-                                     config_.simulation.loss_rate);
-                               });
+  return ColumnPrinter::Lambda(
+      "propagation_delay capacity loss_rate",
+      [this](rtc::SimpleStringBuilder& sb) {
+        sb.AppendFormat("%.3lf %.0lf %.2lf", config_.delay.seconds<double>(),
+                        config_.bandwidth.bps() / 8.0, config_.loss_rate);
+      });
 }
 
-SimulationNode::SimulationNode(
-    NetworkNodeConfig config,
-    std::unique_ptr<NetworkBehaviorInterface> behavior,
-    SimulatedNetwork* simulation)
-    : EmulatedNetworkNode(std::move(behavior),
-                          config.packet_overhead.bytes_or(0)),
-      simulated_network_(simulation),
-      config_(config) {}
-
-NetworkNodeTransport::NetworkNodeTransport(const Clock* sender_clock,
+NetworkNodeTransport::NetworkNodeTransport(Clock* sender_clock,
                                            Call* sender_call)
     : sender_clock_(sender_clock), sender_call_(sender_call) {}
 
@@ -97,99 +86,60 @@ bool NetworkNodeTransport::SendRtp(const uint8_t* packet,
   sent_packet.info.packet_type = rtc::PacketType::kData;
   sender_call_->OnSentPacket(sent_packet);
 
-  Timestamp send_time = Timestamp::ms(send_time_ms);
   rtc::CritScope crit(&crit_sect_);
-  if (!send_net_)
+  if (!endpoint_)
     return false;
-  rtc::CopyOnWriteBuffer buffer(packet, length,
-                                length + packet_overhead_.bytes());
-  buffer.SetSize(length + packet_overhead_.bytes());
-  send_net_->OnPacketReceived(EmulatedIpPacket(
-      rtc::SocketAddress() /*from*/, rtc::SocketAddress() /*to*/, receiver_id_,
-      buffer, send_time));
+  rtc::CopyOnWriteBuffer buffer(packet, length);
+  endpoint_->SendPacket(local_address_, remote_address_, buffer,
+                        packet_overhead_.bytes());
   return true;
 }
 
 bool NetworkNodeTransport::SendRtcp(const uint8_t* packet, size_t length) {
   rtc::CopyOnWriteBuffer buffer(packet, length);
-  Timestamp send_time = Timestamp::ms(sender_clock_->TimeInMilliseconds());
   rtc::CritScope crit(&crit_sect_);
-  buffer.SetSize(length + packet_overhead_.bytes());
-  if (!send_net_)
+  if (!endpoint_)
     return false;
-  send_net_->OnPacketReceived(EmulatedIpPacket(
-      rtc::SocketAddress() /*from*/, rtc::SocketAddress() /*to*/, receiver_id_,
-      buffer, send_time));
+  endpoint_->SendPacket(local_address_, remote_address_, buffer,
+                        packet_overhead_.bytes());
   return true;
 }
 
-void NetworkNodeTransport::Connect(EmulatedNetworkNode* send_node,
-                                   uint64_t receiver_id,
+void NetworkNodeTransport::Connect(EmulatedEndpoint* endpoint,
+                                   const rtc::SocketAddress& receiver_address,
                                    DataSize packet_overhead) {
-  rtc::CritScope crit(&crit_sect_);
-  send_net_ = send_node;
-  receiver_id_ = receiver_id;
-  packet_overhead_ = packet_overhead;
-
   rtc::NetworkRoute route;
   route.connected = true;
-  route.local_network_id = receiver_id;
-  route.remote_network_id = receiver_id;
-  std::string transport_name = "dummy";
+  // We assume that the address will be unique in the lower bytes.
+  route.local = rtc::RouteEndpoint::CreateWithNetworkId(static_cast<uint16_t>(
+      receiver_address.ipaddr().v4AddressAsHostOrderInteger()));
+  route.remote = rtc::RouteEndpoint::CreateWithNetworkId(static_cast<uint16_t>(
+      receiver_address.ipaddr().v4AddressAsHostOrderInteger()));
+  route.packet_overhead = packet_overhead.bytes() +
+                          receiver_address.ipaddr().overhead() +
+                          cricket::kUdpHeaderSize;
+  {
+    // Only IPv4 address is supported.
+    RTC_CHECK_EQ(receiver_address.family(), AF_INET);
+    rtc::CritScope crit(&crit_sect_);
+    endpoint_ = endpoint;
+    local_address_ = rtc::SocketAddress(endpoint_->GetPeerLocalAddress(), 0);
+    remote_address_ = receiver_address;
+    packet_overhead_ = packet_overhead;
+    current_network_route_ = route;
+  }
+
   sender_call_->GetTransportControllerSend()->OnNetworkRouteChanged(
-      transport_name, route);
+      kDummyTransportName, route);
 }
 
-CrossTrafficSource::CrossTrafficSource(EmulatedNetworkReceiverInterface* target,
-                                       uint64_t receiver_id,
-                                       CrossTrafficConfig config)
-    : target_(target),
-      receiver_id_(receiver_id),
-      config_(config),
-      random_(config.random_seed) {}
-
-CrossTrafficSource::~CrossTrafficSource() = default;
-
-DataRate CrossTrafficSource::TrafficRate() const {
-  return config_.peak_rate * intensity_;
-}
-
-void CrossTrafficSource::Process(Timestamp at_time, TimeDelta delta) {
-  time_since_update_ += delta;
-  if (config_.mode == CrossTrafficConfig::Mode::kRandomWalk) {
-    if (time_since_update_ >= config_.random_walk.update_interval) {
-      intensity_ += random_.Gaussian(config_.random_walk.bias,
-                                     config_.random_walk.variance) *
-                    time_since_update_.seconds<double>();
-      intensity_ = rtc::SafeClamp(intensity_, 0.0, 1.0);
-      time_since_update_ = TimeDelta::Zero();
-    }
-  } else if (config_.mode == CrossTrafficConfig::Mode::kPulsedPeaks) {
-    if (intensity_ == 0 && time_since_update_ >= config_.pulsed.hold_duration) {
-      intensity_ = 1;
-      time_since_update_ = TimeDelta::Zero();
-    } else if (intensity_ == 1 &&
-               time_since_update_ >= config_.pulsed.send_duration) {
-      intensity_ = 0;
-      time_since_update_ = TimeDelta::Zero();
-    }
-  }
-  pending_size_ += TrafficRate() * delta;
-  if (pending_size_ > config_.min_packet_size) {
-    target_->OnPacketReceived(EmulatedIpPacket(
-        rtc::SocketAddress() /*from*/, rtc::SocketAddress() /*to*/,
-        receiver_id_, rtc::CopyOnWriteBuffer(pending_size_.bytes()), at_time));
-    pending_size_ = DataSize::Zero();
-  }
-}
-
-ColumnPrinter CrossTrafficSource::StatsPrinter() {
-  return ColumnPrinter::Lambda("cross_traffic_rate",
-                               [this](rtc::SimpleStringBuilder& sb) {
-                                 sb.AppendFormat("%.0lf",
-                                                 TrafficRate().bps() / 8.0);
-                               },
-                               32);
+void NetworkNodeTransport::Disconnect() {
+  rtc::CritScope crit(&crit_sect_);
+  current_network_route_.connected = false;
+  sender_call_->GetTransportControllerSend()->OnNetworkRouteChanged(
+      kDummyTransportName, current_network_route_);
+  current_network_route_ = {};
+  endpoint_ = nullptr;
 }
 
 }  // namespace test

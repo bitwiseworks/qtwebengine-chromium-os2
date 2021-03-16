@@ -4,13 +4,17 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+#if defined(_MSC_VER)
+#include <winsock2.h>  // for timeval
+#endif
 
 #include <chrono>  // NOLINT(build/c++11)
 #include <cmath>
@@ -758,11 +762,6 @@ TEST(Duration, DivisionByZero) {
   const double dbl_inf = std::numeric_limits<double>::infinity();
   const double dbl_denorm = std::numeric_limits<double>::denorm_min();
 
-  // IEEE 754 behavior
-  double z = 0.0, two = 2.0;
-  EXPECT_TRUE(std::isinf(two / z));
-  EXPECT_TRUE(std::isnan(z / z));  // We'll return inf
-
   // Operator/(Duration, double)
   EXPECT_EQ(inf, zero / 0.0);
   EXPECT_EQ(-inf, zero / -0.0);
@@ -1046,7 +1045,7 @@ TEST(Duration, Multiplication) {
   EXPECT_EQ(absl::Seconds(666666666) + absl::Nanoseconds(666666667) +
                 absl::Nanoseconds(1) / 2,
             sigfigs / 3);
-  sigfigs = absl::Seconds(7000000000LL);
+  sigfigs = absl::Seconds(int64_t{7000000000});
   EXPECT_EQ(absl::Seconds(2333333333) + absl::Nanoseconds(333333333) +
                 absl::Nanoseconds(1) / 4,
             sigfigs / 3);
@@ -1771,7 +1770,7 @@ TEST(Duration, ParseDuration) {
 TEST(Duration, FormatParseRoundTrip) {
 #define TEST_PARSE_ROUNDTRIP(d)                \
   do {                                         \
-    std::string s = absl::FormatDuration(d);        \
+    std::string s = absl::FormatDuration(d);   \
     absl::Duration dur;                        \
     EXPECT_TRUE(absl::ParseDuration(s, &dur)); \
     EXPECT_EQ(d, dur);                         \

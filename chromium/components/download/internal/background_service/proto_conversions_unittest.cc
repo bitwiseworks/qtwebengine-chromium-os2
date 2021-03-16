@@ -98,6 +98,7 @@ TEST_F(ProtoConversionsTest, RequestParamsWithHeadersConversion) {
   expected.url = GURL(TEST_URL);
   expected.method = "GET";
   expected.fetch_error_body = true;
+  expected.require_safety_checks = false;
   expected.request_headers.SetHeader("key1", "value1");
   expected.request_headers.SetHeader("key2", "value2");
 
@@ -108,6 +109,7 @@ TEST_F(ProtoConversionsTest, RequestParamsWithHeadersConversion) {
   EXPECT_EQ(expected.url, actual.url);
   EXPECT_EQ(expected.method, actual.method);
   EXPECT_EQ(expected.fetch_error_body, actual.fetch_error_body);
+  EXPECT_EQ(expected.require_safety_checks, actual.require_safety_checks);
 
   std::string out;
   actual.request_headers.GetHeader("key1", &out);
@@ -129,7 +131,7 @@ TEST_F(ProtoConversionsTest, EntryConversion) {
       SchedulingParams::BatteryRequirements::BATTERY_SENSITIVE,
       SchedulingParams::Priority::HIGH, GURL(TEST_URL), "GET",
       Entry::State::ACTIVE, base::FilePath(FILE_PATH_LITERAL("/test/xyz")),
-      base::Time::Now(), base::Time::Now(), base::Time::Now(), 1024u, 3, 8, 5);
+      base::Time::Now(), base::Time::Now(), base::Time::Now(), 1024u, 3, 8);
   actual = EntryFromProto(EntryToProto(expected));
   EXPECT_TRUE(test::CompareEntry(&expected, &actual));
 }
@@ -146,7 +148,7 @@ TEST_F(ProtoConversionsTest, EntryVectorConversion) {
       SchedulingParams::BatteryRequirements::BATTERY_SENSITIVE,
       SchedulingParams::Priority::HIGH, GURL(TEST_URL), "GET",
       Entry::State::ACTIVE, base::FilePath(FILE_PATH_LITERAL("/test/xyz")),
-      base::Time::Now(), base::Time::Now(), base::Time::Now(), 1024u, 2, 8, 5));
+      base::Time::Now(), base::Time::Now(), base::Time::Now(), 1024u, 2, 8));
 
   auto actual = EntryVectorFromProto(
       EntryVectorToProto(std::make_unique<std::vector<Entry>>(expected)));

@@ -14,7 +14,6 @@
 #include "core/fxcrt/unowned_ptr.h"
 #include "v8/include/v8.h"
 
-class CFXJS_Engine;
 class CFXJSE_Class;
 class CFXJSE_HostObject;
 class CFXJSE_Value;
@@ -52,6 +51,7 @@ class CFXJSE_Context {
 void FXJSE_UpdateObjectBinding(v8::Local<v8::Object> hObject,
                                CFXJSE_HostObject* lpNewBinding);
 
+void FXJSE_ClearObjectBinding(v8::Local<v8::Object> hJSObject);
 CFXJSE_HostObject* FXJSE_RetrieveObjectBinding(v8::Local<v8::Object> hJSObject);
 
 #endif  // FXJS_XFA_CFXJSE_CONTEXT_H_

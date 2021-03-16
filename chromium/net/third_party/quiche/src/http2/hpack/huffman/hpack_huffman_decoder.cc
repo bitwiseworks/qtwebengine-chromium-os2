@@ -7,7 +7,7 @@
 #include <bitset>
 #include <limits>
 
-#include "base/logging.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
 
 // Terminology:
 //
@@ -356,7 +356,7 @@ void HuffmanBitBuffer::Reset() {
   count_ = 0;
 }
 
-size_t HuffmanBitBuffer::AppendBytes(Http2StringPiece input) {
+size_t HuffmanBitBuffer::AppendBytes(quiche::QuicheStringPiece input) {
   HuffmanAccumulatorBitCount free_cnt = free_count();
   size_t bytes_available = input.size();
   if (free_cnt < 8 || bytes_available == 0) {
@@ -403,7 +403,7 @@ bool HuffmanBitBuffer::InputProperlyTerminated() const {
   return false;
 }
 
-Http2String HuffmanBitBuffer::DebugString() const {
+std::string HuffmanBitBuffer::DebugString() const {
   std::stringstream ss;
   ss << "{accumulator: " << HuffmanAccumulatorBitSet(accumulator_)
      << "; count: " << count_ << "}";
@@ -414,14 +414,15 @@ HpackHuffmanDecoder::HpackHuffmanDecoder() = default;
 
 HpackHuffmanDecoder::~HpackHuffmanDecoder() = default;
 
-bool HpackHuffmanDecoder::Decode(Http2StringPiece input, Http2String* output) {
-  DVLOG(1) << "HpackHuffmanDecoder::Decode";
+bool HpackHuffmanDecoder::Decode(quiche::QuicheStringPiece input,
+                                 std::string* output) {
+  HTTP2_DVLOG(1) << "HpackHuffmanDecoder::Decode";
 
   // Fill bit_buffer_ from input.
   input.remove_prefix(bit_buffer_.AppendBytes(input));
 
   while (true) {
-    DVLOG(3) << "Enter Decode Loop, bit_buffer_: " << bit_buffer_;
+    HTTP2_DVLOG(3) << "Enter Decode Loop, bit_buffer_: " << bit_buffer_;
     if (bit_buffer_.count() >= 7) {
       // Get high 7 bits of the bit buffer, see if that contains a complete
       // code of 5, 6 or 7 bits.
@@ -447,10 +448,10 @@ bool HpackHuffmanDecoder::Decode(Http2StringPiece input, Http2String* output) {
     }
 
     HuffmanCode code_prefix = bit_buffer_.value() >> kExtraAccumulatorBitCount;
-    DVLOG(3) << "code_prefix: " << HuffmanCodeBitSet(code_prefix);
+    HTTP2_DVLOG(3) << "code_prefix: " << HuffmanCodeBitSet(code_prefix);
 
     PrefixInfo prefix_info = PrefixToInfo(code_prefix);
-    DVLOG(3) << "prefix_info: " << prefix_info;
+    HTTP2_DVLOG(3) << "prefix_info: " << prefix_info;
     DCHECK_LE(kMinCodeBitCount, prefix_info.code_length);
     DCHECK_LE(prefix_info.code_length, kMaxCodeBitCount);
 
@@ -465,8 +466,8 @@ bool HpackHuffmanDecoder::Decode(Http2StringPiece input, Http2String* output) {
         continue;
       }
       // Encoder is not supposed to explicity encode the EOS symbol.
-      DLOG(ERROR) << "EOS explicitly encoded!\n " << bit_buffer_ << "\n "
-                  << prefix_info;
+      HTTP2_DLOG(ERROR) << "EOS explicitly encoded!\n " << bit_buffer_ << "\n "
+                        << prefix_info;
       return false;
     }
     // bit_buffer_ doesn't have enough bits in it to decode the next symbol.
@@ -480,7 +481,7 @@ bool HpackHuffmanDecoder::Decode(Http2StringPiece input, Http2String* output) {
   }
 }
 
-Http2String HpackHuffmanDecoder::DebugString() const {
+std::string HpackHuffmanDecoder::DebugString() const {
   return bit_buffer_.DebugString();
 }
 

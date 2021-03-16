@@ -15,7 +15,6 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
 #include "ui/ozone/platform/drm/gpu/inter_thread_messaging_proxy.h"
-#include "ui/ozone/public/overlay_surface_candidate.h"
 
 namespace base {
 struct FileDescriptor;
@@ -30,7 +29,6 @@ class Rect;
 namespace ui {
 class DrmThread;
 struct DisplayMode_Params;
-struct OverlayCheck_Params;
 
 class DrmThreadMessageProxy : public IPC::MessageFilter,
                               public InterThreadMessagingProxy {
@@ -47,7 +45,8 @@ class DrmThreadMessageProxy : public IPC::MessageFilter,
  private:
   ~DrmThreadMessageProxy() override;
 
-  void OnCreateWindow(gfx::AcceleratedWidget widget);
+  void OnCreateWindow(gfx::AcceleratedWidget widget,
+                      const gfx::Rect& initial_bounds);
   void OnDestroyWindow(gfx::AcceleratedWidget widget);
   void OnWindowBoundsChanged(gfx::AcceleratedWidget widget,
                              const gfx::Rect& bounds);
@@ -56,9 +55,6 @@ class DrmThreadMessageProxy : public IPC::MessageFilter,
                    const gfx::Point& location,
                    int frame_delay_ms);
   void OnCursorMove(gfx::AcceleratedWidget widget, const gfx::Point& location);
-  void OnCheckOverlayCapabilities(
-      gfx::AcceleratedWidget widget,
-      const std::vector<OverlayCheck_Params>& overlays);
 
   // Display related IPC handlers.
   void OnRefreshNativeDisplays();
@@ -79,11 +75,7 @@ class DrmThreadMessageProxy : public IPC::MessageFilter,
       int64_t display_id,
       const std::vector<display::GammaRampRGBEntry>& degamma_lut,
       const std::vector<display::GammaRampRGBEntry>& gamma_lut);
-
-  void OnCheckOverlayCapabilitiesCallback(
-      gfx::AcceleratedWidget widget,
-      const OverlaySurfaceCandidateList& overlays,
-      const OverlayStatusList& returns) const;
+  void OnSetPrivacyScreen(int64_t display_id, bool enabled);
   void OnRefreshNativeDisplaysCallback(MovableDisplaySnapshots displays) const;
   void OnConfigureNativeDisplayCallback(int64_t display_id, bool success) const;
   void OnDisableNativeDisplayCallback(int64_t display_id, bool success) const;
@@ -98,7 +90,7 @@ class DrmThreadMessageProxy : public IPC::MessageFilter,
 
   IPC::Sender* sender_ = nullptr;
 
-  base::WeakPtrFactory<DrmThreadMessageProxy> weak_ptr_factory_;
+  base::WeakPtrFactory<DrmThreadMessageProxy> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DrmThreadMessageProxy);
 };

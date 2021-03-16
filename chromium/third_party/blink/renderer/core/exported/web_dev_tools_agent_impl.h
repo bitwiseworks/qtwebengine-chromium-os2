@@ -33,6 +33,9 @@
 
 #include <memory>
 
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/public/platform/web_size.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/inspector/devtools_agent.h"
@@ -55,46 +58,41 @@ class LocalFrame;
 class WebLocalFrameImpl;
 
 class CORE_EXPORT WebDevToolsAgentImpl final
-    : public GarbageCollectedFinalized<WebDevToolsAgentImpl>,
+    : public GarbageCollected<WebDevToolsAgentImpl>,
       public DevToolsAgent::Client,
       public InspectorPageAgent::Client,
       public InspectorLayerTreeAgent::Client,
       private Thread::TaskObserver {
  public:
-  class WorkerClient {
-   public:
-    virtual ~WorkerClient() {}
-    virtual void ResumeStartup() = 0;
-  };
-
   static WebDevToolsAgentImpl* CreateForFrame(WebLocalFrameImpl*);
-  static WebDevToolsAgentImpl* CreateForWorker(WebLocalFrameImpl*,
-                                               WorkerClient*);
+  static WebDevToolsAgentImpl* CreateForWorker(WebLocalFrameImpl*);
 
-  WebDevToolsAgentImpl(WebLocalFrameImpl*,
-                       bool include_view_agents,
-                       WorkerClient*);
+  WebDevToolsAgentImpl(WebLocalFrameImpl*, bool include_view_agents);
   ~WebDevToolsAgentImpl() override;
-  virtual void Trace(blink::Visitor*);
+  virtual void Trace(Visitor*);
   DevToolsAgent* GetDevToolsAgent() const { return agent_.Get(); }
 
   void WillBeDestroyed();
   void FlushProtocolNotifications();
 
   bool HasOverlays() const { return !overlay_agents_.IsEmpty(); }
-  void UpdateOverlays();
+  void UpdateOverlaysPrePaint();
   void PaintOverlays(GraphicsContext&);  // For CompositeAfterPaint.
 
-  bool HandleInputEvent(const WebInputEvent&);
+  WebInputEventResult HandleInputEvent(const WebInputEvent&);
   void DispatchBufferedTouchEvents();
-  void BindRequest(mojom::blink::DevToolsAgentHostAssociatedPtrInfo,
-                   mojom::blink::DevToolsAgentAssociatedRequest);
+  void BindReceiver(
+      mojo::PendingAssociatedRemote<mojom::blink::DevToolsAgentHost>,
+      mojo::PendingAssociatedReceiver<mojom::blink::DevToolsAgent>);
 
   // Instrumentation from web/ layer.
   void DidCommitLoadForLocalFrame(LocalFrame*);
   bool ScreencastEnabled();
   String NavigationInitiatorInfo(LocalFrame*);
   String EvaluateInOverlayForTesting(const String& script);
+  void DidShowNewWindow();
+
+  void WaitForDebuggerWhenShown();
 
  private:
   friend class ClientMessageLoopAdapter;
@@ -102,7 +100,7 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   // DevToolsAgent::Client implementation.
   void AttachSession(DevToolsSession*, bool restore) override;
   void DetachSession(DevToolsSession*) override;
-  void InspectElement(const WebPoint& point_in_local_root) override;
+  void InspectElement(const gfx::Point& point_in_local_root) override;
   void DebuggerTaskStarted() override;
   void DebuggerTaskFinished() override;
 
@@ -114,7 +112,7 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   bool IsInspectorLayer(const cc::Layer*) override;
 
   // Thread::TaskObserver implementation.
-  void WillProcessTask(const base::PendingTask&) override;
+  void WillProcessTask(const base::PendingTask&, bool) override;
   void DidProcessTask(const base::PendingTask&) override;
 
   Member<DevToolsAgent> agent_;
@@ -123,7 +121,6 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   HeapHashMap<Member<DevToolsSession>, Member<InspectorPageAgent>> page_agents_;
   HeapHashMap<Member<DevToolsSession>, Member<InspectorOverlayAgent>>
       overlay_agents_;
-  WorkerClient* worker_client_;
   Member<WebLocalFrameImpl> web_local_frame_impl_;
   Member<CoreProbeSink> probe_sink_;
   Member<InspectorResourceContentLoader> resource_content_loader_;
@@ -131,6 +128,7 @@ class CORE_EXPORT WebDevToolsAgentImpl final
   Member<InspectorResourceContainer> resource_container_;
   Member<Node> node_to_inspect_;
   bool include_view_agents_;
+  bool wait_for_debugger_when_shown_ = false;
 };
 
 }  // namespace blink

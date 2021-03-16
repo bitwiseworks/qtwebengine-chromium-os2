@@ -5,24 +5,26 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVATION_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVATION_H_
 
+#include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
-#include "third_party/blink/renderer/core/intersection_observer/intersection_observer_entry.h"
+#include "third_party/blink/renderer/core/intersection_observer/intersection_geometry.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
 namespace blink {
 
 class Element;
 class IntersectionObserver;
+class IntersectionObserverEntry;
 
 // IntersectionObservation represents the result of calling
 // IntersectionObserver::observe(target) for some target element; it tracks the
 // intersection between a single target element and the IntersectionObserver's
 // root.  It is an implementation-internal class without any exposed interface.
-class IntersectionObservation final
+class CORE_EXPORT IntersectionObservation final
     : public GarbageCollected<IntersectionObservation> {
  public:
-  // Flags that drive the behavior of the Compute() methods. For an explanation
-  // of implicit vs. explicit root, see intersection_observer.h.
+  // Flags that drive the behavior of the ComputeIntersections() method. For an
+  // explanation of implicit vs. explicit root, see intersection_observer.h.
   enum ComputeFlags {
     // If this bit is set, and observer_->RootIsImplicit() is true, then the
     // root bounds (i.e., size of the top document's viewport) should be
@@ -34,6 +36,13 @@ class IntersectionObservation final
     // If this bit is set, and observer_->RootIsImplicit() is true, then
     // Compute() should update the observation.
     kImplicitRootObserversNeedUpdate = 1 << 2,
+    // If this bit is set, then the observer.delay parameter is ignored; i.e.,
+    // the computation will run even if the previous run happened within the
+    // delay parameter.
+    kIgnoreDelay = 1 << 3,
+    // If this bit is set, we can skip tracking the sticky frame during
+    // UpdateViewportIntersectionsForSubtree.
+    kCanSkipStickyFrameTracking = 1 << 4,
   };
 
   IntersectionObservation(IntersectionObserver&, Element&);
@@ -41,15 +50,25 @@ class IntersectionObservation final
   IntersectionObserver* Observer() const { return observer_.Get(); }
   Element* Target() const { return target_; }
   unsigned LastThresholdIndex() const { return last_threshold_index_; }
-  // If the parameter is true and the observer doesn't have an explicit root,
-  // then any notifications generated will contain root bounds geometry.
-  void Compute(unsigned flags);
+  void ComputeIntersection(unsigned flags);
+  void ComputeIntersection(
+      const IntersectionGeometry::RootGeometry& root_geometry,
+      unsigned flags);
   void TakeRecords(HeapVector<Member<IntersectionObserverEntry>>&);
   void Disconnect();
+  void InvalidateCachedRects();
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
+
+  bool CanUseCachedRectsForTesting() const { return CanUseCachedRects(); }
 
  private:
+  bool ShouldCompute(unsigned flags);
+  bool CanUseCachedRects() const;
+  unsigned GetIntersectionGeometryFlags(unsigned compute_flags) const;
+  // Inspect the geometry to see if there has been a transition event; if so,
+  // generate a notification and schedule it for delivery.
+  void ProcessIntersectionGeometry(const IntersectionGeometry& geometry);
   void SetLastThresholdIndex(unsigned index) { last_threshold_index_ = index; }
   void SetWasVisible(bool last_is_visible) {
     last_is_visible_ = last_is_visible ? 1 : 0;
@@ -59,6 +78,8 @@ class IntersectionObservation final
   WeakMember<Element> target_;
   HeapVector<Member<IntersectionObserverEntry>> entries_;
   DOMHighResTimeStamp last_run_time_;
+
+  std::unique_ptr<IntersectionGeometry::CachedRects> cached_rects_;
 
   unsigned last_is_visible_ : 1;
   unsigned needs_update_ : 1;

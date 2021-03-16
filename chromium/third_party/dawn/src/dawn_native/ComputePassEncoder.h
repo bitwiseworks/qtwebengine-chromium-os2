@@ -20,18 +20,32 @@
 
 namespace dawn_native {
 
-    // This is called ComputePassEncoderBase to match the code generator expectations. Note that it
-    // is a pure frontend type to record in its parent CommandBufferBuilder and never has a backend
-    // implementation.
-    // TODO(cwallez@chromium.org): Remove that generator limitation and rename to ComputePassEncoder
-    class ComputePassEncoderBase : public ProgrammablePassEncoder {
+    class ComputePassEncoder final : public ProgrammablePassEncoder {
       public:
-        ComputePassEncoderBase(DeviceBase* device,
-                               CommandBufferBuilder* topLevelBuilder,
-                               CommandAllocator* allocator);
+        ComputePassEncoder(DeviceBase* device,
+                           CommandEncoder* commandEncoder,
+                           EncodingContext* encodingContext);
+
+        static ComputePassEncoder* MakeError(DeviceBase* device,
+                                             CommandEncoder* commandEncoder,
+                                             EncodingContext* encodingContext);
+
+        void EndPass();
 
         void Dispatch(uint32_t x, uint32_t y, uint32_t z);
+        void DispatchIndirect(BufferBase* indirectBuffer, uint64_t indirectOffset);
         void SetPipeline(ComputePipelineBase* pipeline);
+
+      protected:
+        ComputePassEncoder(DeviceBase* device,
+                           CommandEncoder* commandEncoder,
+                           EncodingContext* encodingContext,
+                           ErrorTag errorTag);
+
+      private:
+        // For render and compute passes, the encoding context is borrowed from the command encoder.
+        // Keep a reference to the encoder to make sure the context isn't freed.
+        Ref<CommandEncoder> mCommandEncoder;
     };
 
 }  // namespace dawn_native

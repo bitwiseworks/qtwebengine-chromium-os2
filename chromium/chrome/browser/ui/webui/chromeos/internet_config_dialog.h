@@ -8,8 +8,9 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "chrome/browser/ui/webui/chromeos/system_web_dialog_delegate.h"
+#include "chromeos/services/network_config/public/mojom/cros_network_config.mojom-forward.h"  // nogncheck
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
 
 namespace chromeos {
@@ -49,12 +50,19 @@ class InternetConfigDialog : public SystemWebDialogDelegate {
 
 // A WebUI to host the network configuration UI in a dialog, used in the
 // login screen and when a new network is configured from the system tray.
-class InternetConfigDialogUI : public ui::WebDialogUI {
+class InternetConfigDialogUI : public ui::MojoWebDialogUI {
  public:
   explicit InternetConfigDialogUI(content::WebUI* web_ui);
   ~InternetConfigDialogUI() override;
+  // Instantiates implementor of the mojom::CrosNetworkConfig mojo interface
+  // passing the pending receiver that will be internally bound.
+  void BindInterface(
+      mojo::PendingReceiver<chromeos::network_config::mojom::CrosNetworkConfig>
+          receiver);
 
  private:
+  WEB_UI_CONTROLLER_TYPE_DECL();
+
   DISALLOW_COPY_AND_ASSIGN(InternetConfigDialogUI);
 };
 

@@ -19,7 +19,11 @@
 namespace spvtools {
 namespace reduce {
 
-using namespace opt;
+using opt::IRContext;
+using opt::Instruction;
+
+const uint32_t kTrueBranchOperandIndex = 1;
+const uint32_t kFalseBranchOperandIndex = 2;
 
 uint32_t FindOrCreateGlobalUndef(IRContext* context, uint32_t type_id) {
   for (auto& inst : context->module()->types_values()) {
@@ -38,6 +42,23 @@ uint32_t FindOrCreateGlobalUndef(IRContext* context, uint32_t type_id) {
   assert(undef_id == undef_inst->result_id());
   context->module()->AddGlobalValue(std::move(undef_inst));
   return undef_id;
+}
+
+void AdaptPhiInstructionsForRemovedEdge(uint32_t from_id,
+                                        opt::BasicBlock* to_block) {
+  to_block->ForEachPhiInst([&from_id](Instruction* phi_inst) {
+    Instruction::OperandList new_in_operands;
+    // Go through the OpPhi's input operands in (variable, parent) pairs.
+    for (uint32_t index = 0; index < phi_inst->NumInOperands(); index += 2) {
+      // Keep all pairs where the parent is not the block from which the edge
+      // is being removed.
+      if (phi_inst->GetInOperand(index + 1).words[0] != from_id) {
+        new_in_operands.push_back(phi_inst->GetInOperand(index));
+        new_in_operands.push_back(phi_inst->GetInOperand(index + 1));
+      }
+    }
+    phi_inst->SetInOperands(std::move(new_in_operands));
+  });
 }
 
 }  // namespace reduce

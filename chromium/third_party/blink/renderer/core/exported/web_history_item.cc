@@ -30,9 +30,7 @@
 
 #include "third_party/blink/public/web/web_history_item.h"
 
-#include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/public/platform/web_http_body.h"
-#include "third_party/blink/public/platform/web_point.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/web_serialized_script_value.h"
@@ -41,11 +39,12 @@
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
+#include "ui/gfx/geometry/point.h"
 
 namespace blink {
 
 void WebHistoryItem::Initialize() {
-  private_ = HistoryItem::Create();
+  private_ = MakeGarbageCollected<HistoryItem>();
 }
 
 void WebHistoryItem::Reset() {
@@ -88,34 +87,34 @@ void WebHistoryItem::SetTarget(const WebString& target) {
   target_ = target;
 }
 
-WebFloatPoint WebHistoryItem::VisualViewportScrollOffset() const {
-  HistoryItem::ViewState* scroll_and_view_state = private_->GetViewState();
+gfx::PointF WebHistoryItem::VisualViewportScrollOffset() const {
+  const auto& scroll_and_view_state = private_->GetViewState();
   ScrollOffset offset =
       scroll_and_view_state
           ? scroll_and_view_state->visual_viewport_scroll_offset_
           : ScrollOffset();
-  return WebFloatPoint(offset.Width(), offset.Height());
+  return gfx::PointF(offset.Width(), offset.Height());
 }
 
 void WebHistoryItem::SetVisualViewportScrollOffset(
-    const WebFloatPoint& scroll_offset) {
+    const gfx::PointF& scroll_offset) {
   private_->SetVisualViewportScrollOffset(ToScrollOffset(scroll_offset));
 }
 
-WebPoint WebHistoryItem::GetScrollOffset() const {
-  HistoryItem::ViewState* scroll_and_view_state = private_->GetViewState();
+gfx::Point WebHistoryItem::GetScrollOffset() const {
+  const auto& scroll_and_view_state = private_->GetViewState();
   ScrollOffset offset = scroll_and_view_state
                             ? scroll_and_view_state->scroll_offset_
                             : ScrollOffset();
-  return WebPoint(offset.Width(), offset.Height());
+  return gfx::Point(offset.Width(), offset.Height());
 }
 
-void WebHistoryItem::SetScrollOffset(const WebPoint& scroll_offset) {
-  private_->SetScrollOffset(ScrollOffset(scroll_offset.x, scroll_offset.y));
+void WebHistoryItem::SetScrollOffset(const gfx::Point& scroll_offset) {
+  private_->SetScrollOffset(ScrollOffset(scroll_offset.x(), scroll_offset.y()));
 }
 
 float WebHistoryItem::PageScaleFactor() const {
-  HistoryItem::ViewState* scroll_and_view_state = private_->GetViewState();
+  const auto& scroll_and_view_state = private_->GetViewState();
   return scroll_and_view_state ? scroll_and_view_state->page_scale_factor_ : 0;
 }
 
@@ -135,20 +134,20 @@ void WebHistoryItem::SetDocumentState(const WebVector<WebString>& state) {
   private_->SetDocumentState(ds);
 }
 
-long long WebHistoryItem::ItemSequenceNumber() const {
+int64_t WebHistoryItem::ItemSequenceNumber() const {
   return private_->ItemSequenceNumber();
 }
 
-void WebHistoryItem::SetItemSequenceNumber(long long item_sequence_number) {
+void WebHistoryItem::SetItemSequenceNumber(int64_t item_sequence_number) {
   private_->SetItemSequenceNumber(item_sequence_number);
 }
 
-long long WebHistoryItem::DocumentSequenceNumber() const {
+int64_t WebHistoryItem::DocumentSequenceNumber() const {
   return private_->DocumentSequenceNumber();
 }
 
 void WebHistoryItem::SetDocumentSequenceNumber(
-    long long document_sequence_number) {
+    int64_t document_sequence_number) {
   private_->SetDocumentSequenceNumber(document_sequence_number);
 }
 
@@ -183,7 +182,7 @@ WebHTTPBody WebHistoryItem::HttpBody() const {
   return WebHTTPBody(private_->FormData());
 }
 
-void WebHistoryItem::SetHTTPBody(const WebHTTPBody& http_body) {
+void WebHistoryItem::SetHttpBody(const WebHTTPBody& http_body) {
   private_->SetFormData(http_body);
 }
 
@@ -209,13 +208,12 @@ WebVector<WebString> WebHistoryItem::GetReferencedFilePaths() const {
 }
 
 bool WebHistoryItem::DidSaveScrollOrScaleState() const {
-  return private_->GetViewState();
+  return private_->GetViewState().has_value();
 }
 
 ScrollAnchorData WebHistoryItem::GetScrollAnchorData() const {
-  if (HistoryItem::ViewState* scroll_and_view_state =
-          private_->GetViewState()) {
-    return scroll_and_view_state->scroll_anchor_data_;
+  if (private_->GetViewState()) {
+    return private_->GetViewState()->scroll_anchor_data_;
   }
 
   return ScrollAnchorData();

@@ -7,8 +7,10 @@
 #include <map>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/task/thread_pool.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/feed/core/feed_journal_mutation.h"
 #include "components/feed/core/proto/journal_storage.pb.h"
 #include "components/leveldb_proto/testing/fake_db.h"
@@ -37,18 +39,10 @@ const char kJournalData6[] = "Journal Data6";
 
 const char kUmaCommitMutationSizeHistogramName[] =
     "ContentSuggestions.Feed.JournalStorage.CommitMutationCount";
-const char kUmaInitialSuccessHistogramName[] =
-    "ContentSuggestions.Feed.JournalStorage.InitialSuccess";
-const char kUmaLoadKeysSuccessHistogramName[] =
-    "ContentSuggestions.Feed.JournalStorage.LoadKeysSuccess";
 const char kUmaLoadKeysTimeHistogramName[] =
     "ContentSuggestions.Feed.JournalStorage.LoadKeysTime";
-const char kUmaLoadSuccessHistogramName[] =
-    "ContentSuggestions.Feed.JournalStorage.LoadSuccess";
 const char kUmaLoadTimeHistogramName[] =
     "ContentSuggestions.Feed.JournalStorage.LoadTime";
-const char kUmaOperationCommitSuccessHistogramName[] =
-    "ContentSuggestions.Feed.JournalStorage.OperationCommitSuccess";
 const char kUmaOperationCommitTimeHistogramName[] =
     "ContentSuggestions.Feed.JournalStorage.OperationCommitTime";
 const char kUmaSizeHistogramName[] =
@@ -70,14 +64,15 @@ class FeedJournalDatabaseTest : public testing::Test {
     auto storage_db =
         std::make_unique<FakeDB<JournalStorageProto>>(&journal_db_storage_);
 
+    task_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
+        {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
+
     journal_db_ = storage_db.get();
-    feed_db_ = std::make_unique<FeedJournalDatabase>(base::FilePath(),
-                                                     std::move(storage_db));
+    feed_db_ = std::make_unique<FeedJournalDatabase>(std::move(storage_db),
+                                                     task_runner_);
     if (init_database) {
-      journal_db_->InitCallback(true);
+      InitStatusCallback(journal_db_, leveldb_proto::Enums::InitStatus::kOK);
       ASSERT_TRUE(db()->IsInitialized());
-      histogram().ExpectBucketCount(kUmaInitialSuccessHistogramName,
-                                    /*success=*/true, 1);
     }
   }
 
@@ -91,7 +86,54 @@ class FeedJournalDatabaseTest : public testing::Test {
     journal_db_storage_[key] = storage_proto;
   }
 
-  void RunUntilIdle() { scoped_task_environment_.RunUntilIdle(); }
+  // Since the FakeDB implementation doesn't run callbacks on the same task
+  // runner as the original request was made (like the real ProtoDatabase impl
+  // does), we explicitly post all callbacks onto the DB task runner here.
+  void InitStatusCallback(FakeDB<JournalStorageProto>* storage_db,
+                          leveldb_proto::Enums::InitStatus status) {
+    task_runner()->PostTask(FROM_HERE,
+                            base::BindOnce(
+                                [](FakeDB<JournalStorageProto>* storage_db,
+                                   leveldb_proto::Enums::InitStatus status) {
+                                  storage_db->InitStatusCallback(status);
+                                },
+                                storage_db, status));
+    RunUntilIdle();
+  }
+  void GetCallback(FakeDB<JournalStorageProto>* storage_db, bool success) {
+    task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce([](FakeDB<JournalStorageProto>* storage_db,
+                          bool success) { storage_db->GetCallback(success); },
+                       storage_db, success));
+    RunUntilIdle();
+  }
+  void LoadKeysCallback(FakeDB<JournalStorageProto>* storage_db, bool success) {
+    task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](FakeDB<JournalStorageProto>* storage_db, bool success) {
+              storage_db->LoadKeysCallback(success);
+            },
+            storage_db, success));
+    RunUntilIdle();
+  }
+  void UpdateCallback(FakeDB<JournalStorageProto>* storage_db, bool success) {
+    task_runner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](FakeDB<JournalStorageProto>* storage_db, bool success) {
+              storage_db->UpdateCallback(success);
+            },
+            storage_db, success));
+    RunUntilIdle();
+  }
+
+  void RunUntilIdle() { task_environment_.RunUntilIdle(); }
+
+  scoped_refptr<base::SequencedTaskRunner> task_runner() {
+    return task_runner_;
+  }
 
   FakeDB<JournalStorageProto>* storage_db() { return journal_db_; }
 
@@ -104,9 +146,11 @@ class FeedJournalDatabaseTest : public testing::Test {
   MOCK_METHOD2(OnCheckJournalExistReceived, void(bool, bool));
 
  private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 
   std::map<std::string, JournalStorageProto> journal_db_storage_;
+
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // Owned by |feed_db_|.
   FakeDB<JournalStorageProto>* journal_db_;
@@ -124,7 +168,7 @@ TEST_F(FeedJournalDatabaseTest, Init) {
   CreateDatabase(/*init_database=*/false);
 
   EXPECT_FALSE(db()->IsInitialized());
-  storage_db()->InitCallback(true);
+  InitStatusCallback(storage_db(), leveldb_proto::Enums::InitStatus::kOK);
   EXPECT_TRUE(db()->IsInitialized());
 }
 
@@ -150,10 +194,8 @@ TEST_F(FeedJournalDatabaseTest, LoadJournalEntry) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -171,10 +213,8 @@ TEST_F(FeedJournalDatabaseTest, LoadNonExistingJournalEntry) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -190,8 +230,8 @@ TEST_F(FeedJournalDatabaseTest, AppendJournal) {
       std::move(journal_mutation),
       base::BindOnce(&FeedJournalDatabaseTest::OnStorageCommitted,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
-  storage_db()->UpdateCallback(true);
+  GetCallback(storage_db(), true);
+  UpdateCallback(storage_db(), true);
 
   // Make sure they're there.
   EXPECT_CALL(*this, OnJournalEntryReceived(_, _))
@@ -205,12 +245,10 @@ TEST_F(FeedJournalDatabaseTest, AppendJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaCommitMutationSizeHistogramName,
                                 /*operations=*/2, 1);
-  histogram().ExpectBucketCount(kUmaOperationCommitSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaOperationCommitTimeHistogramName, 1);
 
   Mock::VerifyAndClearExpectations(this);
@@ -225,8 +263,8 @@ TEST_F(FeedJournalDatabaseTest, AppendJournal) {
       std::move(journal_mutation),
       base::BindOnce(&FeedJournalDatabaseTest::OnStorageCommitted,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
-  storage_db()->UpdateCallback(true);
+  GetCallback(storage_db(), true);
+  UpdateCallback(storage_db(), true);
 
   // Check new instances are there.
   EXPECT_CALL(*this, OnJournalEntryReceived(_, _))
@@ -243,12 +281,10 @@ TEST_F(FeedJournalDatabaseTest, AppendJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaCommitMutationSizeHistogramName,
                                 /*operations=*/3, 1);
-  histogram().ExpectBucketCount(kUmaOperationCommitSuccessHistogramName,
-                                /*success=*/true, 2);
   histogram().ExpectTotalCount(kUmaOperationCommitTimeHistogramName, 2);
 }
 
@@ -269,13 +305,11 @@ TEST_F(FeedJournalDatabaseTest, CopyJournal) {
       std::move(journal_mutation),
       base::BindOnce(&FeedJournalDatabaseTest::OnStorageCommitted,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
-  storage_db()->UpdateCallback(true);
+  GetCallback(storage_db(), true);
+  UpdateCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaCommitMutationSizeHistogramName,
                                 /*operations=*/4, 1);
-  histogram().ExpectBucketCount(kUmaOperationCommitSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaOperationCommitTimeHistogramName, 1);
 
   // Check new journal is there.
@@ -290,10 +324,8 @@ TEST_F(FeedJournalDatabaseTest, CopyJournal) {
       kJournalKey2,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 
   Mock::VerifyAndClearExpectations(this);
@@ -312,10 +344,8 @@ TEST_F(FeedJournalDatabaseTest, CopyJournal) {
       kJournalKey3,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 2);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 2);
 
   Mock::VerifyAndClearExpectations(this);
@@ -334,10 +364,8 @@ TEST_F(FeedJournalDatabaseTest, CopyJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 3);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 3);
 }
 
@@ -358,12 +386,10 @@ TEST_F(FeedJournalDatabaseTest, DeleteJournal) {
       base::BindOnce(&FeedJournalDatabaseTest::OnStorageCommitted,
                      base::Unretained(this)));
   RunUntilIdle();
-  storage_db()->UpdateCallback(true);
+  UpdateCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaCommitMutationSizeHistogramName,
                                 /*operations=*/1, 1);
-  histogram().ExpectBucketCount(kUmaOperationCommitSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaOperationCommitTimeHistogramName, 1);
 
   // Make sure |kJournalKey2| got deleted.
@@ -376,10 +402,8 @@ TEST_F(FeedJournalDatabaseTest, DeleteJournal) {
       kJournalKey2,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 
   Mock::VerifyAndClearExpectations(this);
@@ -397,10 +421,8 @@ TEST_F(FeedJournalDatabaseTest, DeleteJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 2);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 2);
 }
 
@@ -420,10 +442,8 @@ TEST_F(FeedJournalDatabaseTest, ChecExistingJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnCheckJournalExistReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -437,10 +457,8 @@ TEST_F(FeedJournalDatabaseTest, CheckNonExistingJournal) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnCheckJournalExistReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(true);
+  GetCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -464,12 +482,10 @@ TEST_F(FeedJournalDatabaseTest, LoadAllJournalKeys) {
   db()->LoadAllJournalKeys(
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->LoadKeysCallback(true);
+  LoadKeysCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaSizeHistogramName,
                                 /*size=*/3, 1);
-  histogram().ExpectBucketCount(kUmaLoadKeysSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadKeysTimeHistogramName, 1);
 }
 
@@ -487,10 +503,8 @@ TEST_F(FeedJournalDatabaseTest, DeleteAllJournals) {
   EXPECT_CALL(*this, OnStorageCommitted(true));
   db()->DeleteAllJournals(base::BindOnce(
       &FeedJournalDatabaseTest::OnStorageCommitted, base::Unretained(this)));
-  storage_db()->UpdateCallback(true);
+  UpdateCallback(storage_db(), true);
 
-  histogram().ExpectBucketCount(kUmaOperationCommitSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaOperationCommitTimeHistogramName, 1);
 
   // Make sure all journals got deleted.
@@ -502,12 +516,10 @@ TEST_F(FeedJournalDatabaseTest, DeleteAllJournals) {
   db()->LoadAllJournalKeys(
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->LoadKeysCallback(true);
+  LoadKeysCallback(storage_db(), true);
 
   histogram().ExpectBucketCount(kUmaSizeHistogramName,
                                 /*size=*/0, 1);
-  histogram().ExpectBucketCount(kUmaLoadKeysSuccessHistogramName,
-                                /*success=*/true, 1);
   histogram().ExpectTotalCount(kUmaLoadKeysTimeHistogramName, 1);
 }
 
@@ -529,10 +541,8 @@ TEST_F(FeedJournalDatabaseTest, LoadJournalEntryFail) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(false);
+  GetCallback(storage_db(), false);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/false, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -549,10 +559,8 @@ TEST_F(FeedJournalDatabaseTest, LoadNonExistingJournalEntryFail) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(false);
+  GetCallback(storage_db(), false);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/false, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -572,11 +580,9 @@ TEST_F(FeedJournalDatabaseTest, LoadAllJournalKeysFail) {
   db()->LoadAllJournalKeys(
       base::BindOnce(&FeedJournalDatabaseTest::OnJournalEntryReceived,
                      base::Unretained(this)));
-  storage_db()->LoadKeysCallback(false);
+  LoadKeysCallback(storage_db(), false);
 
   histogram().ExpectTotalCount(kUmaSizeHistogramName, 0);
-  histogram().ExpectBucketCount(kUmaLoadKeysSuccessHistogramName,
-                                /*success=*/false, 1);
   histogram().ExpectTotalCount(kUmaLoadKeysTimeHistogramName, 1);
 }
 
@@ -596,10 +602,8 @@ TEST_F(FeedJournalDatabaseTest, ChecExistingJournalFail) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnCheckJournalExistReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(false);
+  GetCallback(storage_db(), false);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/false, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 
@@ -613,10 +617,8 @@ TEST_F(FeedJournalDatabaseTest, CheckNonExistingJournalFail) {
       kJournalKey1,
       base::BindOnce(&FeedJournalDatabaseTest::OnCheckJournalExistReceived,
                      base::Unretained(this)));
-  storage_db()->GetCallback(false);
+  GetCallback(storage_db(), false);
 
-  histogram().ExpectBucketCount(kUmaLoadSuccessHistogramName,
-                                /*success=*/false, 1);
   histogram().ExpectTotalCount(kUmaLoadTimeHistogramName, 1);
 }
 

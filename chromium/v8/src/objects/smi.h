@@ -5,7 +5,7 @@
 #ifndef V8_OBJECTS_SMI_H_
 #define V8_OBJECTS_SMI_H_
 
-#include "src/globals.h"
+#include "src/common/globals.h"
 #include "src/objects/heap-object.h"
 
 // Has to be the last include (doesn't have include guards):
@@ -26,12 +26,10 @@ class Smi : public Object {
   // in that we want them to be constexprs.
   constexpr Smi() : Object() {}
   explicit constexpr Smi(Address ptr) : Object(ptr) {
-#if V8_CAN_HAVE_DCHECK_IN_CONSTEXPR
+#if V8_HAS_CXX14_CONSTEXPR
     DCHECK(HAS_SMI_TAG(ptr));
 #endif
   }
-  Smi* operator->() { return this; }
-  const Smi* operator->() const { return this; }
 
   // Returns the integer value.
   inline int value() const { return Internals::SmiValue(ptr()); }
@@ -41,11 +39,13 @@ class Smi : public Object {
   }
 
   // Convert a Smi object to an int.
-  static inline int ToInt(const Object object);
+  static inline int ToInt(const Object object) {
+    return Smi::cast(object).value();
+  }
 
   // Convert a value to a Smi object.
   static inline constexpr Smi FromInt(int value) {
-#if V8_CAN_HAVE_DCHECK_IN_CONSTEXPR
+#if V8_HAS_CXX14_CONSTEXPR
     DCHECK(Smi::IsValid(value));
 #endif
     return Smi(Internals::IntToSmi(value));
@@ -54,7 +54,14 @@ class Smi : public Object {
   static inline Smi FromIntptr(intptr_t value) {
     DCHECK(Smi::IsValid(value));
     int smi_shift_bits = kSmiTagSize + kSmiShiftSize;
-    return Smi((value << smi_shift_bits) | kSmiTag);
+    return Smi((static_cast<Address>(value) << smi_shift_bits) | kSmiTag);
+  }
+
+  // Given {value} in [0, 2^31-1], force it into Smi range by changing at most
+  // the MSB (leaving the lower 31 bit unchanged).
+  static inline Smi From31BitPattern(int value) {
+    return Smi::FromInt((value << (32 - kSmiValueSize)) >>
+                        (32 - kSmiValueSize));
   }
 
   template <typename E,
@@ -66,9 +73,9 @@ class Smi : public Object {
 
   // Returns whether value can be represented in a Smi.
   static inline bool constexpr IsValid(intptr_t value) {
-#if V8_CAN_HAVE_DCHECK_IN_CONSTEXPR
-    DCHECK(Internals::IsValidSmi(value) ==
-           (value >= kMinValue && value <= kMaxValue));
+#if V8_HAS_CXX14_CONSTEXPR
+    DCHECK_EQ(Internals::IsValidSmi(value),
+              value >= kMinValue && value <= kMaxValue);
 #endif
     return Internals::IsValidSmi(value);
   }
@@ -80,7 +87,8 @@ class Smi : public Object {
   //  1 if x > y.
   // Returns the result (a tagged Smi) as a raw Address for ExternalReference
   // usage.
-  static Address LexicographicCompare(Isolate* isolate, Smi x, Smi y);
+  V8_EXPORT_PRIVATE static Address LexicographicCompare(Isolate* isolate, Smi x,
+                                                        Smi y);
 
   DECL_CAST(Smi)
 
@@ -88,16 +96,14 @@ class Smi : public Object {
   V8_EXPORT_PRIVATE void SmiPrint(std::ostream& os) const;  // NOLINT
   DECL_VERIFIER(Smi)
 
-  // C++ does not allow us to have an object of type Smi within class Smi,
-  // so the kZero value has type Object. Consider it deprecated; new code
-  // should use zero() instead.
-  V8_EXPORT_PRIVATE static constexpr Object kZero = Object(0);
-  // If you need something with type Smi, call zero() instead. Since it is
-  // a constexpr, "calling" it is just as efficient as reading kZero.
+  // Since this is a constexpr, "calling" it is just as efficient
+  // as reading a constant.
   static inline constexpr Smi zero() { return Smi::FromInt(0); }
   static constexpr int kMinValue = kSmiMinValue;
   static constexpr int kMaxValue = kSmiMaxValue;
 };
+
+CAST_ACCESSOR(Smi)
 
 }  // namespace internal
 }  // namespace v8

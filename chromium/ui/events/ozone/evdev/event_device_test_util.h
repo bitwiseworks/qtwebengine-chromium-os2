@@ -62,6 +62,7 @@ bool CapabilitiesToDeviceInfo(const DeviceCapabilities& capabilities,
 extern const DeviceCapabilities kXboxGamepad;
 extern const DeviceCapabilities kHJCGamepad;
 extern const DeviceCapabilities kiBuffaloGamepad;
+extern const DeviceCapabilities kBaskingTouchScreen;
 extern const DeviceCapabilities kEveTouchScreen;
 extern const DeviceCapabilities kLinkKeyboard;
 extern const DeviceCapabilities kLinkTouchscreen;
@@ -81,7 +82,14 @@ extern const DeviceCapabilities kHammerKeyboard;
 extern const DeviceCapabilities kHammerTouchpad;
 extern const DeviceCapabilities kIlitekTP_Mouse;
 extern const DeviceCapabilities kIlitekTP;
-
+extern const DeviceCapabilities kSideVolumeButton;
+extern const DeviceCapabilities kNocturneTouchScreen;
+extern const DeviceCapabilities kNocturneStylus;
+extern const DeviceCapabilities kKohakuTouchscreen;
+extern const DeviceCapabilities kKohakuStylus;
+extern const DeviceCapabilities kXboxElite;
+extern const DeviceCapabilities kDrallionStylus;
+extern const DeviceCapabilities kDellActivePenButton;
 }  // namspace ui
 
 #endif  // UI_EVENTS_OZONE_EVDEV_EVENT_DEVICE_TEST_UTIL_H_

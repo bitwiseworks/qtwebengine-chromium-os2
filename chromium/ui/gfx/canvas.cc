@@ -68,31 +68,28 @@ void Canvas::SizeStringInt(const base::string16& text,
                            int* width,
                            int* height,
                            int line_height,
-                           int flags,
-                           Typesetter typesetter) {
+                           int flags) {
   float fractional_width = static_cast<float>(*width);
   float factional_height = static_cast<float>(*height);
   SizeStringFloat(text, font_list, &fractional_width, &factional_height,
-                  line_height, flags, typesetter);
+                  line_height, flags);
   *width = ToCeiledInt(fractional_width);
   *height = ToCeiledInt(factional_height);
 }
 
 // static
 int Canvas::GetStringWidth(const base::string16& text,
-                           const FontList& font_list,
-                           Typesetter typesetter) {
+                           const FontList& font_list) {
   int width = 0, height = 0;
-  SizeStringInt(text, font_list, &width, &height, 0, NO_ELLIPSIS, typesetter);
+  SizeStringInt(text, font_list, &width, &height, 0, NO_ELLIPSIS);
   return width;
 }
 
 // static
 float Canvas::GetStringWidthF(const base::string16& text,
-                              const FontList& font_list,
-                              Typesetter typesetter) {
+                              const FontList& font_list) {
   float width = 0, height = 0;
-  SizeStringFloat(text, font_list, &width, &height, 0, NO_ELLIPSIS, typesetter);
+  SizeStringFloat(text, font_list, &width, &height, 0, NO_ELLIPSIS);
   return width;
 }
 
@@ -166,10 +163,6 @@ void Canvas::ClipRect(const RectF& rect, SkClipOp op) {
 
 void Canvas::ClipPath(const SkPath& path, bool do_anti_alias) {
   canvas_->clipPath(path, SkClipOp::kIntersect, do_anti_alias);
-}
-
-bool Canvas::IsClipEmpty() const {
-  return canvas_->isClipEmpty();
 }
 
 bool Canvas::GetClipBounds(Rect* bounds) {
@@ -358,17 +351,11 @@ void Canvas::DrawImageInt(const ImageSkia& image,
   ScopedCanvas scoper(this);
   canvas_->scale(SkFloatToScalar(1.0f / bitmap_scale),
                  SkFloatToScalar(1.0f / bitmap_scale));
-  if (base::FeatureList::IsEnabled(features::kUsePaintRecordForImageSkia)) {
-    canvas_->translate(std::round(x * bitmap_scale),
-                       std::round(y * bitmap_scale));
-    canvas_->saveLayer(nullptr, &flags);
-    canvas_->drawPicture(image_rep.GetPaintRecord());
-    canvas_->restore();
-  } else {
-    canvas_->drawImage(image_rep.paint_image(),
-                       SkFloatToScalar(x * bitmap_scale),
-                       SkFloatToScalar(y * bitmap_scale), &flags);
-  }
+  canvas_->translate(std::round(x * bitmap_scale),
+                     std::round(y * bitmap_scale));
+  canvas_->saveLayer(nullptr, &flags);
+  canvas_->drawPicture(image_rep.GetPaintRecord());
+  canvas_->restore();
 }
 
 void Canvas::DrawImageInt(const ImageSkia& image,
@@ -435,9 +422,8 @@ void Canvas::DrawImageInPath(const ImageSkia& image,
   SkMatrix matrix;
   matrix.setTranslate(SkIntToScalar(x), SkIntToScalar(y));
   cc::PaintFlags flags(original_flags);
-  flags.setShader(
-      CreateImageRepShader(image_rep, SkShader::kRepeat_TileMode,
-                           SkShader::kRepeat_TileMode, matrix));
+  flags.setShader(CreateImageRepShader(image_rep, SkTileMode::kRepeat,
+                                       SkTileMode::kRepeat, matrix));
   canvas_->drawPath(path, flags);
 }
 
@@ -471,8 +457,8 @@ void Canvas::TileImageInt(const ImageSkia& image,
                           int w,
                           int h,
                           float tile_scale,
-                          SkShader::TileMode tile_mode_x,
-                          SkShader::TileMode tile_mode_y,
+                          SkTileMode tile_mode_x,
+                          SkTileMode tile_mode_y,
                           cc::PaintFlags* flags) {
   SkRect dest_rect = { SkIntToScalar(dest_x),
                        SkIntToScalar(dest_y),
@@ -497,8 +483,8 @@ bool Canvas::InitPaintFlagsForTiling(const ImageSkia& image,
                                      float tile_scale_y,
                                      int dest_x,
                                      int dest_y,
-                                     SkShader::TileMode tile_mode_x,
-                                     SkShader::TileMode tile_mode_y,
+                                     SkTileMode tile_mode_x,
+                                     SkTileMode tile_mode_y,
                                      cc::PaintFlags* flags) {
   const ImageSkiaRep& image_rep = image.GetRepresentation(image_scale_);
   if (image_rep.is_null())
@@ -516,7 +502,7 @@ bool Canvas::InitPaintFlagsForTiling(const ImageSkia& image,
 }
 
 void Canvas::Transform(const gfx::Transform& transform) {
-  canvas_->concat(transform.matrix());
+  canvas_->concat(SkMatrix(transform.matrix()));
 }
 
 SkBitmap Canvas::GetBitmap() const {
@@ -571,8 +557,8 @@ void Canvas::DrawImageIntHelper(const ImageSkiaRep& image_rep,
   cc::PaintFlags flags(original_flags);
   flags.setFilterQuality(filter ? kLow_SkFilterQuality : kNone_SkFilterQuality);
   flags.setShader(CreateImageRepShaderForScale(
-      image_rep, SkShader::kRepeat_TileMode, SkShader::kRepeat_TileMode,
-      shader_scale, remove_image_scale ? image_rep.scale() : 1.f));
+      image_rep, SkTileMode::kRepeat, SkTileMode::kRepeat, shader_scale,
+      remove_image_scale ? image_rep.scale() : 1.f));
 
   // The rect will be filled by the bitmap.
   canvas_->drawRect(dest_rect, flags);

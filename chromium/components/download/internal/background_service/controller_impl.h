@@ -186,11 +186,10 @@ class ControllerImpl : public Controller,
   void HandleStartDownloadResponse(DownloadClient client,
                                    const std::string& guid,
                                    DownloadParams::StartResult result);
-  void HandleStartDownloadResponse(
-      DownloadClient client,
-      const std::string& guid,
-      DownloadParams::StartResult result,
-      const DownloadParams::StartCallback& callback);
+  void HandleStartDownloadResponse(DownloadClient client,
+                                   const std::string& guid,
+                                   DownloadParams::StartResult result,
+                                   DownloadParams::StartCallback callback);
 
   // Handles and clears any pending task finished callbacks.
   void HandleTaskFinished(DownloadTaskType task_type,
@@ -277,7 +276,7 @@ class ControllerImpl : public Controller,
   base::CancelableClosure cancel_uploads_callback_;
 
   // Only used to post tasks on the same thread.
-  base::WeakPtrFactory<ControllerImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<ControllerImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ControllerImpl);
 };

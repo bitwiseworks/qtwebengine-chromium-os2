@@ -12,7 +12,6 @@
 #include "base/values.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "extensions/common/extension.h"
 
 namespace user_prefs {
 class PrefRegistrySyncable;
@@ -37,7 +36,7 @@ class CoreAppLauncherHandler : public content::WebUIMessageHandler {
   // Records an app launch in the corresponding |bucket| of the app launch
   // histogram if the |escaped_url| corresponds to an installed app.
   void RecordAppLaunchByUrl(Profile* profile,
-                            std::string escaped_url,
+                            std::string url,
                             extension_misc::AppLaunchBucket bucket);
 
   // WebUIMessageHandler implementation.

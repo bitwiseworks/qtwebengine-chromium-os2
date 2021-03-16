@@ -30,15 +30,16 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_INDEXEDDB_IDB_DATABASE_ERROR_H_
 
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/bindings/exception_code.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
 class IDBDatabaseError {
  public:
-  explicit IDBDatabaseError(unsigned short code) : code_(code) {}
+  explicit IDBDatabaseError(DOMExceptionCode code) : code_(code) {}
 
-  IDBDatabaseError(unsigned short code, String message)
+  IDBDatabaseError(DOMExceptionCode code, String message)
       : code_(code), message_(std::move(message)) {}
 
   IDBDatabaseError(const IDBDatabaseError& error) = default;
@@ -47,11 +48,11 @@ class IDBDatabaseError {
 
   IDBDatabaseError& operator=(const IDBDatabaseError& error) = default;
 
-  unsigned short Code() const { return code_; }
+  DOMExceptionCode Code() const { return code_; }
   const String& Message() const { return message_; }
 
  private:
-  unsigned short code_;
+  DOMExceptionCode code_;
   String message_;
 };
 

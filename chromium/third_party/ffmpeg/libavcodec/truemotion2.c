@@ -155,7 +155,7 @@ static int tm2_build_huff_table(TM2Context *ctx, TM2Codes *code)
     huff.val_bits = get_bits(&ctx->gb, 5);
     huff.max_bits = get_bits(&ctx->gb, 5);
     huff.min_bits = get_bits(&ctx->gb, 5);
-    huff.nodes    = get_bits_long(&ctx->gb, 17);
+    huff.nodes    = get_bits(&ctx->gb, 17);
     huff.num      = 0;
 
     /* check for correct codes parameters */
@@ -443,7 +443,7 @@ static inline int GET_TOK(TM2Context *ctx,int type)
     clast = ctx->clast + bx * 4;
 
 #define TM2_INIT_POINTERS_2() \
-    int *Yo, *Uo, *Vo;\
+    unsigned *Yo, *Uo, *Vo;\
     int oYstride, oUstride, oVstride;\
 \
     TM2_INIT_POINTERS();\
@@ -581,15 +581,15 @@ static inline void tm2_low_res_block(TM2Context *ctx, AVFrame *pic, int bx, int 
     deltas[10] = GET_TOK(ctx, TM2_L_LO);
 
     if (bx > 0)
-        last[0] = (last[-1] - ctx->D[0] - ctx->D[1] - ctx->D[2] - ctx->D[3] + last[1]) >> 1;
+        last[0] = (int)((unsigned)last[-1] - ctx->D[0] - ctx->D[1] - ctx->D[2] - ctx->D[3] + last[1]) >> 1;
     else
-        last[0] = (last[1]  - ctx->D[0] - ctx->D[1] - ctx->D[2] - ctx->D[3])>> 1;
-    last[2] = (last[1] + last[3]) >> 1;
+        last[0] = (int)((unsigned)last[1]  - ctx->D[0] - ctx->D[1] - ctx->D[2] - ctx->D[3])>> 1;
+    last[2] = (int)((unsigned)last[1] + last[3]) >> 1;
 
-    t1 = ctx->D[0] + ctx->D[1];
+    t1 = ctx->D[0] + (unsigned)ctx->D[1];
     ctx->D[0] = t1 >> 1;
     ctx->D[1] = t1 - (t1 >> 1);
-    t2 = ctx->D[2] + ctx->D[3];
+    t2 = ctx->D[2] + (unsigned)ctx->D[3];
     ctx->D[2] = t2 >> 1;
     ctx->D[3] = t2 - (t2 >> 1);
 
@@ -600,7 +600,8 @@ static inline void tm2_null_res_block(TM2Context *ctx, AVFrame *pic, int bx, int
 {
     int i;
     int ct;
-    int left, right, diff;
+    unsigned left, right;
+    int diff;
     int deltas[16];
     TM2_INIT_POINTERS();
 
@@ -615,10 +616,10 @@ static inline void tm2_null_res_block(TM2Context *ctx, AVFrame *pic, int bx, int
     for (i = 0; i < 16; i++)
         deltas[i] = 0;
 
-    ct = ctx->D[0] + ctx->D[1] + ctx->D[2] + ctx->D[3];
+    ct = (unsigned)ctx->D[0] + ctx->D[1] + ctx->D[2] + ctx->D[3];
 
     if (bx > 0)
-        left = last[-1] - ct;
+        left = last[-1] - (unsigned)ct;
     else
         left = 0;
 
@@ -629,7 +630,7 @@ static inline void tm2_null_res_block(TM2Context *ctx, AVFrame *pic, int bx, int
     last[2] = right - (diff >> 2);
     last[3] = right;
     {
-        int tp = left;
+        unsigned tp = left;
 
         ctx->D[0] = (tp + (ct >> 2)) - left;
         left     += ctx->D[0];
@@ -680,7 +681,7 @@ static inline void tm2_still_block(TM2Context *ctx, AVFrame *pic, int bx, int by
 static inline void tm2_update_block(TM2Context *ctx, AVFrame *pic, int bx, int by)
 {
     int i, j;
-    int d;
+    unsigned d;
     TM2_INIT_POINTERS_2();
 
     /* update chroma */
@@ -708,7 +709,7 @@ static inline void tm2_update_block(TM2Context *ctx, AVFrame *pic, int bx, int b
     for (j = 0; j < 4; j++) {
         d = last[3];
         for (i = 0; i < 4; i++) {
-            Y[i]    = Yo[i] + GET_TOK(ctx, TM2_UPD);
+            Y[i]    = Yo[i] + (unsigned)GET_TOK(ctx, TM2_UPD);
             last[i] = Y[i];
         }
         ctx->D[j] = last[3] - d;
@@ -763,10 +764,10 @@ static inline void tm2_motion_block(TM2Context *ctx, AVFrame *pic, int bx, int b
     }
     /* calculate deltas */
     Y -= Ystride * 4;
-    ctx->D[0] = Y[3] - last[3];
-    ctx->D[1] = Y[3 + Ystride] - Y[3];
-    ctx->D[2] = Y[3 + Ystride * 2] - Y[3 + Ystride];
-    ctx->D[3] = Y[3 + Ystride * 3] - Y[3 + Ystride * 2];
+    ctx->D[0] = (unsigned)Y[3] - last[3];
+    ctx->D[1] = (unsigned)Y[3 + Ystride] - Y[3];
+    ctx->D[2] = (unsigned)Y[3 + Ystride * 2] - Y[3 + Ystride];
+    ctx->D[3] = (unsigned)Y[3 + Ystride * 3] - Y[3 + Ystride * 2];
     for (i = 0; i < 4; i++)
         last[i] = Y[i + Ystride * 3];
 }
@@ -836,7 +837,7 @@ static int tm2_decode_blocks(TM2Context *ctx, AVFrame *p)
     dst = p->data[0];
     for (j = 0; j < h; j++) {
         for (i = 0; i < w; i++) {
-            int y = Y[i], u = U[i >> 1], v = V[i >> 1];
+            unsigned y = Y[i], u = U[i >> 1], v = V[i >> 1];
             dst[3*i+0] = av_clip_uint8(y + v);
             dst[3*i+1] = av_clip_uint8(y);
             dst[3*i+2] = av_clip_uint8(y + u);
@@ -914,7 +915,7 @@ static int decode_frame(AVCodecContext *avctx,
         return AVERROR(ENOMEM);
     }
 
-    if ((ret = ff_reget_buffer(avctx, p)) < 0)
+    if ((ret = ff_reget_buffer(avctx, p, 0)) < 0)
         return ret;
 
     l->bdsp.bswap_buf((uint32_t *) l->buffer, (const uint32_t *) buf,

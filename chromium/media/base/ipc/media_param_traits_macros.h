@@ -23,16 +23,17 @@
 #include "media/base/eme_constants.h"
 #include "media/base/encryption_scheme.h"
 #include "media/base/hdr_metadata.h"
-#include "media/base/media_log_event.h"
+#include "media/base/media_log_record.h"
 #include "media/base/media_status.h"
 #include "media/base/output_device_info.h"
 #include "media/base/overlay_info.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/sample_format.h"
+#include "media/base/status_codes.h"
 #include "media/base/subsample_entry.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
 #include "media/base/video_types.h"
 #include "media/base/waiting.h"
 #include "media/base/watch_time_keys.h"
@@ -40,15 +41,18 @@
 // move CdmProxy related code into #if BUILDFLAG(ENABLE_LIBRARY_CDMS).
 #include "media/cdm/cdm_proxy.h"
 #include "media/media_buildflags.h"
+#include "media/video/supported_video_decoder_config.h"
 #include "ui/gfx/ipc/color/gfx_param_traits_macros.h"
 
-#if defined(OS_ANDROID)
-#include "media/base/android/media_drm_key_type.h"
-#endif  // defined(OS_ANDROID)
+#if BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
+#include "media/base/media_drm_key_type.h"
+#endif  // BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
 
 // Enum traits.
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::AudioCodec, media::AudioCodec::kAudioCodecMax)
+IPC_ENUM_TRAITS_MAX_VALUE(media::AudioCodecProfile,
+                          media::AudioCodecProfile::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::AudioLatency::LatencyType,
                           media::AudioLatency::LATENCY_COUNT)
@@ -58,6 +62,10 @@ IPC_ENUM_TRAITS_MAX_VALUE(media::AudioParameters::Format,
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::BufferingState,
                           media::BufferingState::BUFFERING_STATE_MAX)
+
+IPC_ENUM_TRAITS_MAX_VALUE(
+    media::BufferingStateChangeReason,
+    media::BufferingStateChangeReason::BUFFERING_STATE_CHANGE_REASON_MAX)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::CdmMessageType,
                           media::CdmMessageType::MESSAGE_TYPE_MAX)
@@ -99,17 +107,14 @@ IPC_ENUM_TRAITS_MAX_VALUE(media::DemuxerStream::Type,
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::EmeInitDataType, media::EmeInitDataType::MAX)
 
-IPC_ENUM_TRAITS_MAX_VALUE(media::EncryptionMode,
-                          media::EncryptionMode::kMaxValue)
-
-IPC_ENUM_TRAITS_MAX_VALUE(media::EncryptionScheme::CipherMode,
-                          media::EncryptionScheme::CipherMode::CIPHER_MODE_MAX)
+IPC_ENUM_TRAITS_MAX_VALUE(media::EncryptionScheme,
+                          media::EncryptionScheme::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::HdcpVersion,
                           media::HdcpVersion::kHdcpVersionMax)
 
-IPC_ENUM_TRAITS_MAX_VALUE(media::MediaLogEvent::Type,
-                          media::MediaLogEvent::TYPE_LAST)
+IPC_ENUM_TRAITS_MAX_VALUE(media::MediaLogRecord::Type,
+                          media::MediaLogRecord::Type::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::MediaStatus::State,
                           media::MediaStatus::State::STATE_MAX)
@@ -118,52 +123,56 @@ IPC_ENUM_TRAITS_MAX_VALUE(media::OutputDeviceStatus,
                           media::OUTPUT_DEVICE_STATUS_MAX)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::PipelineStatus,
-                          media::PipelineStatus::PIPELINE_STATUS_MAX);
+                          media::PipelineStatus::PIPELINE_STATUS_MAX)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::SampleFormat, media::kSampleFormatMax)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::VideoCodec, media::kVideoCodecMax)
 
-IPC_ENUM_TRAITS_MAX_VALUE(media::WaitingReason,
-                          media::WaitingReason::kMaxValue);
+IPC_ENUM_TRAITS_MAX_VALUE(media::WaitingReason, media::WaitingReason::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::WatchTimeKey,
-                          media::WatchTimeKey::kWatchTimeKeyMax);
+                          media::WatchTimeKey::kWatchTimeKeyMax)
 
 IPC_ENUM_TRAITS_MIN_MAX_VALUE(media::VideoCodecProfile,
                               media::VIDEO_CODEC_PROFILE_MIN,
                               media::VIDEO_CODEC_PROFILE_MAX)
+
+IPC_ENUM_TRAITS_MAX_VALUE(media::VideoDecoderImplementation,
+                          media::VideoDecoderImplementation::kMaxValue)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::VideoPixelFormat, media::PIXEL_FORMAT_MAX)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::VideoRotation, media::VIDEO_ROTATION_MAX)
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::container_names::MediaContainerName,
-                          media::container_names::CONTAINER_MAX);
+                          media::container_names::CONTAINER_MAX)
 
-#if defined(OS_ANDROID)
+IPC_ENUM_TRAITS_MAX_VALUE(media::StatusCode, media::StatusCode::kMaxValue)
+
+#if BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
 IPC_ENUM_TRAITS_MIN_MAX_VALUE(media::MediaDrmKeyType,
                               media::MediaDrmKeyType::MIN,
-                              media::MediaDrmKeyType::MAX);
-#endif  // defined(OS_ANDROID)
+                              media::MediaDrmKeyType::MAX)
+#endif  // BUILDFLAG(ENABLE_MEDIA_DRM_STORAGE)
 
 IPC_ENUM_TRAITS_VALIDATE(
     media::VideoColorSpace::PrimaryID,
     static_cast<int>(value) ==
         static_cast<int>(
-            media::VideoColorSpace::GetPrimaryID(static_cast<int>(value))));
+            media::VideoColorSpace::GetPrimaryID(static_cast<int>(value))))
 
 IPC_ENUM_TRAITS_VALIDATE(
     media::VideoColorSpace::TransferID,
     static_cast<int>(value) ==
         static_cast<int>(
-            media::VideoColorSpace::GetTransferID(static_cast<int>(value))));
+            media::VideoColorSpace::GetTransferID(static_cast<int>(value))))
 
 IPC_ENUM_TRAITS_VALIDATE(
     media::VideoColorSpace::MatrixID,
     static_cast<int>(value) ==
         static_cast<int>(
-            media::VideoColorSpace::GetMatrixID(static_cast<int>(value))));
+            media::VideoColorSpace::GetMatrixID(static_cast<int>(value))))
 
 // Struct traits.
 
@@ -173,7 +182,7 @@ IPC_STRUCT_TRAITS_BEGIN(media::CdmConfig)
   IPC_STRUCT_TRAITS_MEMBER(use_hw_secure_codecs)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(media::MediaLogEvent)
+IPC_STRUCT_TRAITS_BEGIN(media::MediaLogRecord)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(type)
   IPC_STRUCT_TRAITS_MEMBER(params)

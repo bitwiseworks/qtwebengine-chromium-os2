@@ -9,6 +9,7 @@
 #include "base/debug/alias.h"
 #include "third_party/khronos/EGL/egl.h"
 #include "third_party/khronos/EGL/eglext.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gl_angle_util_win.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_image.h"
@@ -39,15 +40,7 @@ bool SupportedBindFormat(gfx::BufferFormat format) {
 
 bool HasAlpha(gfx::BufferFormat format) {
   DCHECK(SupportedBindFormat(format));
-  switch (format) {
-    case gfx::BufferFormat::RGBA_8888:
-      return true;
-    case gfx::BufferFormat::RGBX_8888:
-      return false;
-    default:
-      NOTREACHED();
-      return false;
-  };
+  return gfx::AlphaBitsForBufferFormat(format) > 0;
 }
 
 EGLConfig ChooseCompatibleConfig(gfx::BufferFormat format) {
@@ -148,6 +141,10 @@ GLImageDXGI* GLImageDXGI::FromGLImage(GLImage* image) {
   return static_cast<GLImageDXGI*>(image);
 }
 
+GLImageDXGI::BindOrCopy GLImageDXGI::ShouldBindOrCopy() {
+  return BIND;
+}
+
 bool GLImageDXGI::BindTexImage(unsigned target) {
   if (!handle_.Get())
     return true;
@@ -180,6 +177,7 @@ bool GLImageDXGI::BindTexImage(unsigned target) {
 }
 
 bool GLImageDXGI::CopyTexImage(unsigned target) {
+  NOTREACHED();
   return false;
 }
 
@@ -196,6 +194,10 @@ unsigned GLImageDXGI::GetInternalFormat() {
     return GL_BGRA_EXT;
   else
     return HasAlpha(buffer_format_) ? GL_RGBA : GL_RGB;
+}
+
+unsigned GLImageDXGI::GetDataType() {
+  return GL_UNSIGNED_BYTE;
 }
 
 gfx::Size GLImageDXGI::GetSize() {
@@ -217,11 +219,6 @@ void GLImageDXGI::ReleaseTexImage(unsigned target) {
   DCHECK(texture_);
   DCHECK(keyed_mutex_);
 
-  Microsoft::WRL::ComPtr<ID3D11Device> device =
-      QueryD3D11DeviceObjectFromANGLE();
-  Microsoft::WRL::ComPtr<ID3D11Device1> device1;
-  device.CopyTo(device1.GetAddressOf());
-
   keyed_mutex_->ReleaseSync(KEY_RELEASE);
 
   eglReleaseTexImage(gl::GLSurfaceEGL::GetHardwareDisplay(), surface_,
@@ -237,10 +234,6 @@ bool GLImageDXGI::ScheduleOverlayPlane(
     bool enable_blend,
     std::unique_ptr<gfx::GpuFence> gpu_fence) {
   return false;
-}
-
-void GLImageDXGI::SetColorSpace(const gfx::ColorSpace& color_space) {
-  color_space_ = color_space;
 }
 
 bool GLImageDXGI::InitializeHandle(base::win::ScopedHandle handle,

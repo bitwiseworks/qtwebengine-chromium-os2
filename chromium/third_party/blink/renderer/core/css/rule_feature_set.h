@@ -99,6 +99,10 @@ class CORE_EXPORT RuleFeatureSet {
   MediaQueryResultList& DeviceDependentMediaQueryResults() {
     return device_dependent_media_query_results_;
   }
+  bool HasMediaQueryResults() const {
+    return !viewport_dependent_media_query_results_.IsEmpty() ||
+           !device_dependent_media_query_results_.IsEmpty();
+  }
 
   // Collect descendant and sibling invalidation sets.
   void CollectInvalidationSetsForClass(InvalidationLists&,
@@ -189,7 +193,7 @@ class CORE_EXPORT RuleFeatureSet {
                                                InvalidationType,
                                                PositionType);
   SiblingInvalidationSet& EnsureUniversalSiblingInvalidationSet();
-  DescendantInvalidationSet& EnsureNthInvalidationSet();
+  NthSiblingInvalidationSet& EnsureNthInvalidationSet();
   DescendantInvalidationSet& EnsureTypeRuleInvalidationSet();
   DescendantInvalidationSet& EnsurePartInvalidationSet();
 
@@ -334,7 +338,7 @@ class CORE_EXPORT RuleFeatureSet {
   InvalidationSetMap id_invalidation_sets_;
   PseudoTypeInvalidationSetMap pseudo_invalidation_sets_;
   scoped_refptr<SiblingInvalidationSet> universal_sibling_invalidation_set_;
-  scoped_refptr<DescendantInvalidationSet> nth_invalidation_set_;
+  scoped_refptr<NthSiblingInvalidationSet> nth_invalidation_set_;
   scoped_refptr<DescendantInvalidationSet> type_rule_invalidation_set_;
   MediaQueryResultList viewport_dependent_media_query_results_;
   MediaQueryResultList device_dependent_media_query_results_;

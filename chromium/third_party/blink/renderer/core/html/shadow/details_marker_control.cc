@@ -36,9 +36,12 @@
 namespace blink {
 
 DetailsMarkerControl::DetailsMarkerControl(Document& document)
-    : HTMLDivElement(document) {}
+    : HTMLDivElement(document) {
+  SetShadowPseudoId(AtomicString("-webkit-details-marker"));
+}
 
-LayoutObject* DetailsMarkerControl::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* DetailsMarkerControl::CreateLayoutObject(const ComputedStyle&,
+                                                       LegacyLayout) {
   return new LayoutDetailsMarker(this);
 }
 
@@ -49,7 +52,7 @@ bool DetailsMarkerControl::LayoutObjectIsNeeded(
 }
 
 HTMLSummaryElement* DetailsMarkerControl::SummaryElement() const {
-  return ToHTMLSummaryElement(OwnerShadowHost());
+  return To<HTMLSummaryElement>(OwnerShadowHost());
 }
 
 }  // namespace blink

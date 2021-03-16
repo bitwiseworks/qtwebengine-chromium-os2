@@ -32,8 +32,6 @@ class SVGMPathElement final : public SVGElement, public SVGURIReference {
   USING_GARBAGE_COLLECTED_MIXIN(SVGMPathElement);
 
  public:
-  DECLARE_NODE_FACTORY(SVGMPathElement);
-
   explicit SVGMPathElement(Document&);
   ~SVGMPathElement() override;
 
@@ -41,7 +39,7 @@ class SVGMPathElement final : public SVGElement, public SVGURIReference {
 
   void TargetPathChanged();
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void BuildPendingResource() override;

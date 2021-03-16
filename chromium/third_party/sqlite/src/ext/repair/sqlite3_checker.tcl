@@ -74,7 +74,7 @@ proc check_index {idxname batchsize bTrace} {
         puts "$idxname: $traceOut"
       }
       incr i
-
+      
     }
     set x [format {%.1f} [expr {($i*100.0)/$max}]]
     if {$x!=$pct} {

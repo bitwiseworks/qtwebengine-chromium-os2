@@ -5,14 +5,18 @@
 #ifndef V8_OBJECTS_SCRIPT_H_
 #define V8_OBJECTS_SCRIPT_H_
 
-#include "src/objects.h"
+#include <memory>
+
+#include "src/base/export-template.h"
 #include "src/objects/fixed-array.h"
+#include "src/objects/objects.h"
 #include "src/objects/struct.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
 namespace v8 {
+
 namespace internal {
 
 // Script describes a script which has been added to the VM.
@@ -96,9 +100,21 @@ class Script : public Struct {
   // [source_mapping_url]: sourceMappingURL magic comment
   DECL_ACCESSORS(source_mapping_url, Object)
 
-  // [wasm_module_object]: the wasm module object this script belongs to.
+  // [wasm_breakpoint_infos]: the list of {BreakPointInfo} objects describing
+  // all WebAssembly breakpoints for modules/instances managed via this script.
   // This must only be called if the type of this script is TYPE_WASM.
-  DECL_ACCESSORS(wasm_module_object, Object)
+  DECL_ACCESSORS(wasm_breakpoint_infos, FixedArray)
+  inline bool has_wasm_breakpoint_infos() const;
+
+  // [wasm_native_module]: the wasm {NativeModule} this script belongs to.
+  // This must only be called if the type of this script is TYPE_WASM.
+  DECL_ACCESSORS(wasm_managed_native_module, Object)
+  inline wasm::NativeModule* wasm_native_module() const;
+
+  // [wasm_weak_instance_list]: the list of all {WasmInstanceObject} being
+  // affected by breakpoints that are managed via this script.
+  // This must only be called if the type of this script is TYPE_WASM.
+  DECL_ACCESSORS(wasm_weak_instance_list, WeakArrayList)
 
   // [host_defined_options]: Options defined by the embedder.
   DECL_ACCESSORS(host_defined_options, FixedArray)
@@ -112,6 +128,11 @@ class Script : public Struct {
   // compiled. Encoded in the 'flags' field.
   inline CompilationState compilation_state();
   inline void set_compilation_state(CompilationState state);
+
+  // [is_repl_mode]: whether this script originated from a REPL via debug
+  // evaluate and therefore has different semantics, e.g. re-declaring let.
+  inline bool is_repl_mode() const;
+  inline void set_is_repl_mode(bool value);
 
   // [origin_options]: optional attributes set by the embedder via ScriptOrigin,
   // and used by the embedder to make decisions about the script. V8 just passes
@@ -128,13 +149,15 @@ class Script : public Struct {
   Object GetNameOrSourceURL();
 
   // Retrieve source position from where eval was called.
-  int GetEvalPosition();
+  static int GetEvalPosition(Isolate* isolate, Handle<Script> script);
 
   // Check if the script contains any Asm modules.
   bool ContainsAsmModule();
 
   // Init line_ends array with source code positions of line ends.
-  static void InitLineEnds(Handle<Script> script);
+  template <typename LocalIsolate>
+  EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
+  static void InitLineEnds(LocalIsolate* isolate, Handle<Script> script);
 
   // Carries information about a source position.
   struct PositionInfo {
@@ -158,24 +181,26 @@ class Script : public Struct {
   // callsites.
   static bool GetPositionInfo(Handle<Script> script, int position,
                               PositionInfo* info, OffsetFlag offset_flag);
-  bool GetPositionInfo(int position, PositionInfo* info,
-                       OffsetFlag offset_flag) const;
+  V8_EXPORT_PRIVATE bool GetPositionInfo(int position, PositionInfo* info,
+                                         OffsetFlag offset_flag) const;
 
-  bool IsUserJavaScript();
+  bool IsUserJavaScript() const;
 
   // Wrappers for GetPositionInfo
   static int GetColumnNumber(Handle<Script> script, int code_offset);
   int GetColumnNumber(int code_pos) const;
-  static int GetLineNumber(Handle<Script> script, int code_offset);
+  V8_EXPORT_PRIVATE static int GetLineNumber(Handle<Script> script,
+                                             int code_offset);
   int GetLineNumber(int code_pos) const;
 
   // Look through the list of existing shared function infos to find one
   // that matches the function literal.  Return empty handle if not found.
+  template <typename LocalIsolate>
   MaybeHandle<SharedFunctionInfo> FindSharedFunctionInfo(
-      Isolate* isolate, const FunctionLiteral* fun);
+      LocalIsolate* isolate, const FunctionLiteral* fun);
 
   // Iterate over all script objects on the heap.
-  class Iterator {
+  class V8_EXPORT_PRIVATE Iterator {
    public:
     explicit Iterator(Isolate* isolate);
     Script Next();
@@ -189,34 +214,15 @@ class Script : public Struct {
   DECL_PRINTER(Script)
   DECL_VERIFIER(Script)
 
-// Layout description.
-#define SCRIPTS_FIELDS(V)                                 \
-  V(kSourceOffset, kTaggedSize)                           \
-  V(kNameOffset, kTaggedSize)                             \
-  V(kLineOffsetOffset, kTaggedSize)                       \
-  V(kColumnOffsetOffset, kTaggedSize)                     \
-  V(kContextOffset, kTaggedSize)                          \
-  V(kTypeOffset, kTaggedSize)                             \
-  V(kLineEndsOffset, kTaggedSize)                         \
-  V(kIdOffset, kTaggedSize)                               \
-  V(kEvalFromSharedOrWrappedArgumentsOffset, kTaggedSize) \
-  V(kEvalFromPositionOffset, kTaggedSize)                 \
-  V(kSharedFunctionInfosOffset, kTaggedSize)              \
-  V(kFlagsOffset, kTaggedSize)                            \
-  V(kSourceUrlOffset, kTaggedSize)                        \
-  V(kSourceMappingUrlOffset, kTaggedSize)                 \
-  V(kHostDefinedOptionsOffset, kTaggedSize)               \
-  /* Total size. */                                       \
-  V(kSize, 0)
-
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, SCRIPTS_FIELDS)
-#undef SCRIPTS_FIELDS
+  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
+                                TORQUE_GENERATED_SCRIPT_FIELDS)
 
  private:
   // Bit positions in the flags field.
   static const int kCompilationTypeBit = 0;
   static const int kCompilationStateBit = 1;
-  static const int kOriginOptionsShift = 2;
+  static const int kREPLModeBit = 2;
+  static const int kOriginOptionsShift = 3;
   static const int kOriginOptionsSize = 4;
   static const int kOriginOptionsMask = ((1 << kOriginOptionsSize) - 1)
                                         << kOriginOptionsShift;

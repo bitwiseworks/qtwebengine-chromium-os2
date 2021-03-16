@@ -15,26 +15,26 @@
 #include "dawn_native/opengl/PipelineGL.h"
 
 #include "common/BitSetIterator.h"
+#include "common/Log.h"
 #include "dawn_native/BindGroupLayout.h"
 #include "dawn_native/opengl/Forward.h"
-#include "dawn_native/opengl/PersistentPipelineStateGL.h"
+#include "dawn_native/opengl/OpenGLFunctions.h"
 #include "dawn_native/opengl/PipelineLayoutGL.h"
 #include "dawn_native/opengl/ShaderModuleGL.h"
 
-#include <iostream>
 #include <set>
 
 namespace dawn_native { namespace opengl {
 
     namespace {
 
-        GLenum GLShaderType(dawn::ShaderStage stage) {
+        GLenum GLShaderType(SingleShaderStage stage) {
             switch (stage) {
-                case dawn::ShaderStage::Vertex:
+                case SingleShaderStage::Vertex:
                     return GL_VERTEX_SHADER;
-                case dawn::ShaderStage::Fragment:
+                case SingleShaderStage::Fragment:
                     return GL_FRAGMENT_SHADER;
-                case dawn::ShaderStage::Compute:
+                case SingleShaderStage::Compute:
                     return GL_COMPUTE_SHADER;
                 default:
                     UNREACHABLE();
@@ -46,119 +46,108 @@ namespace dawn_native { namespace opengl {
     PipelineGL::PipelineGL() {
     }
 
-    void PipelineGL::Initialize(const PipelineLayout* layout,
+    void PipelineGL::Initialize(const OpenGLFunctions& gl,
+                                const PipelineLayout* layout,
                                 const PerStage<const ShaderModule*>& modules) {
-        auto CreateShader = [](GLenum type, const char* source) -> GLuint {
-            GLuint shader = glCreateShader(type);
-            glShaderSource(shader, 1, &source, nullptr);
-            glCompileShader(shader);
+        auto CreateShader = [](const OpenGLFunctions& gl, GLenum type,
+                               const char* source) -> GLuint {
+            GLuint shader = gl.CreateShader(type);
+            gl.ShaderSource(shader, 1, &source, nullptr);
+            gl.CompileShader(shader);
 
             GLint compileStatus = GL_FALSE;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &compileStatus);
+            gl.GetShaderiv(shader, GL_COMPILE_STATUS, &compileStatus);
             if (compileStatus == GL_FALSE) {
                 GLint infoLogLength = 0;
-                glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLogLength);
+                gl.GetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLogLength);
 
                 if (infoLogLength > 1) {
                     std::vector<char> buffer(infoLogLength);
-                    glGetShaderInfoLog(shader, infoLogLength, nullptr, &buffer[0]);
-                    std::cout << source << std::endl;
-                    std::cout << "Program compilation failed:\n";
-                    std::cout << buffer.data() << std::endl;
+                    gl.GetShaderInfoLog(shader, infoLogLength, nullptr, &buffer[0]);
+                    dawn::ErrorLog() << source << "\nProgram compilation failed:\n"
+                                     << buffer.data();
                 }
             }
             return shader;
         };
 
-        auto FillPushConstants = [](const ShaderModule* module, GLPushConstantInfo* info,
-                                    GLuint program) {
-            const auto& moduleInfo = module->GetPushConstants();
-            for (uint32_t i = 0; i < moduleInfo.names.size(); i++) {
-                (*info)[i] = -1;
+        mProgram = gl.CreateProgram();
 
-                unsigned int size = moduleInfo.sizes[i];
-                if (size == 0) {
-                    continue;
-                }
-
-                GLint location = glGetUniformLocation(program, moduleInfo.names[i].c_str());
-                if (location == -1) {
-                    continue;
-                }
-
-                for (uint32_t offset = 0; offset < size; offset++) {
-                    (*info)[i + offset] = location + offset;
-                }
-                i += size - 1;
-            }
-        };
-
-        mProgram = glCreateProgram();
-
-        dawn::ShaderStageBit activeStages = dawn::ShaderStageBit::None;
-        for (dawn::ShaderStage stage : IterateStages(kAllStages)) {
+        wgpu::ShaderStage activeStages = wgpu::ShaderStage::None;
+        for (SingleShaderStage stage : IterateStages(kAllStages)) {
             if (modules[stage] != nullptr) {
                 activeStages |= StageBit(stage);
             }
         }
 
-        for (dawn::ShaderStage stage : IterateStages(activeStages)) {
-            GLuint shader = CreateShader(GLShaderType(stage), modules[stage]->GetSource());
-            glAttachShader(mProgram, shader);
+        for (SingleShaderStage stage : IterateStages(activeStages)) {
+            GLuint shader = CreateShader(gl, GLShaderType(stage), modules[stage]->GetSource());
+            gl.AttachShader(mProgram, shader);
         }
 
-        glLinkProgram(mProgram);
+        gl.LinkProgram(mProgram);
 
         GLint linkStatus = GL_FALSE;
-        glGetProgramiv(mProgram, GL_LINK_STATUS, &linkStatus);
+        gl.GetProgramiv(mProgram, GL_LINK_STATUS, &linkStatus);
         if (linkStatus == GL_FALSE) {
             GLint infoLogLength = 0;
-            glGetProgramiv(mProgram, GL_INFO_LOG_LENGTH, &infoLogLength);
+            gl.GetProgramiv(mProgram, GL_INFO_LOG_LENGTH, &infoLogLength);
 
             if (infoLogLength > 1) {
                 std::vector<char> buffer(infoLogLength);
-                glGetProgramInfoLog(mProgram, infoLogLength, nullptr, &buffer[0]);
-                std::cout << "Program link failed:\n";
-                std::cout << buffer.data() << std::endl;
+                gl.GetProgramInfoLog(mProgram, infoLogLength, nullptr, &buffer[0]);
+                dawn::ErrorLog() << "Program link failed:\n" << buffer.data();
             }
         }
 
-        for (dawn::ShaderStage stage : IterateStages(activeStages)) {
-            FillPushConstants(modules[stage], &mGlPushConstants[stage], mProgram);
-        }
-
-        glUseProgram(mProgram);
+        gl.UseProgram(mProgram);
 
         // The uniforms are part of the program state so we can pre-bind buffer units, texture units
         // etc.
         const auto& indices = layout->GetBindingIndexInfo();
 
         for (uint32_t group : IterateBitSet(layout->GetBindGroupLayoutsMask())) {
-            const auto& groupInfo = layout->GetBindGroupLayout(group)->GetBindingInfo();
+            const BindGroupLayoutBase* bgl = layout->GetBindGroupLayout(group);
 
-            for (uint32_t binding = 0; binding < kMaxBindingsPerGroup; ++binding) {
-                if (!groupInfo.mask[binding]) {
-                    continue;
-                }
+            for (const auto& it : bgl->GetBindingMap()) {
+                BindingNumber bindingNumber = it.first;
+                BindingIndex bindingIndex = it.second;
 
-                std::string name = GetBindingName(group, binding);
-                switch (groupInfo.types[binding]) {
-                    case dawn::BindingType::UniformBuffer: {
-                        GLint location = glGetUniformBlockIndex(mProgram, name.c_str());
-                        glUniformBlockBinding(mProgram, location, indices[group][binding]);
-                    } break;
+                std::string name = GetBindingName(group, bindingNumber);
+                switch (bgl->GetBindingInfo(bindingIndex).type) {
+                    case wgpu::BindingType::UniformBuffer: {
+                        GLint location = gl.GetUniformBlockIndex(mProgram, name.c_str());
+                        if (location != -1) {
+                            gl.UniformBlockBinding(mProgram, location,
+                                                   indices[group][bindingIndex]);
+                        }
+                        break;
+                    }
 
-                    case dawn::BindingType::StorageBuffer: {
-                        GLuint location = glGetProgramResourceIndex(
+                    case wgpu::BindingType::StorageBuffer:
+                    case wgpu::BindingType::ReadonlyStorageBuffer: {
+                        GLuint location = gl.GetProgramResourceIndex(
                             mProgram, GL_SHADER_STORAGE_BLOCK, name.c_str());
-                        glShaderStorageBlockBinding(mProgram, location, indices[group][binding]);
-                    } break;
+                        if (location != GL_INVALID_INDEX) {
+                            gl.ShaderStorageBlockBinding(mProgram, location,
+                                                         indices[group][bindingIndex]);
+                        }
+                        break;
+                    }
 
-                    case dawn::BindingType::Sampler:
-                    case dawn::BindingType::SampledTexture:
+                    case wgpu::BindingType::Sampler:
+                    case wgpu::BindingType::SampledTexture:
                         // These binding types are handled in the separate sampler and texture
                         // emulation
                         break;
+
+                    case wgpu::BindingType::StorageTexture:
+                    case wgpu::BindingType::ReadonlyStorageTexture:
+                    case wgpu::BindingType::WriteonlyStorageTexture:
+                        UNREACHABLE();
+                        break;
+
+                        // TODO(shaobo.yan@intel.com): Implement dynamic buffer offset.
                 }
             }
         }
@@ -166,7 +155,7 @@ namespace dawn_native { namespace opengl {
         // Compute links between stages for combined samplers, then bind them to texture units
         {
             std::set<CombinedSampler> combinedSamplersSet;
-            for (dawn::ShaderStage stage : IterateStages(activeStages)) {
+            for (SingleShaderStage stage : IterateStages(activeStages)) {
                 for (const auto& combined : modules[stage]->GetCombinedSamplerInfo()) {
                     combinedSamplersSet.insert(combined);
                 }
@@ -178,28 +167,36 @@ namespace dawn_native { namespace opengl {
             GLuint textureUnit = layout->GetTextureUnitsUsed();
             for (const auto& combined : combinedSamplersSet) {
                 std::string name = combined.GetName();
-                GLint location = glGetUniformLocation(mProgram, name.c_str());
-                glUniform1i(location, textureUnit);
+                GLint location = gl.GetUniformLocation(mProgram, name.c_str());
 
-                GLuint samplerIndex =
-                    indices[combined.samplerLocation.group][combined.samplerLocation.binding];
-                mUnitsForSamplers[samplerIndex].push_back(textureUnit);
+                if (location == -1) {
+                    continue;
+                }
+
+                gl.Uniform1i(location, textureUnit);
 
                 GLuint textureIndex =
                     indices[combined.textureLocation.group][combined.textureLocation.binding];
                 mUnitsForTextures[textureIndex].push_back(textureUnit);
+
+                const BindGroupLayoutBase* bgl =
+                    layout->GetBindGroupLayout(combined.textureLocation.group);
+                Format::Type componentType =
+                    bgl->GetBindingInfo(bgl->GetBindingIndex(combined.textureLocation.binding))
+                        .textureComponentType;
+                bool shouldUseFiltering = componentType == Format::Type::Float;
+
+                GLuint samplerIndex =
+                    indices[combined.samplerLocation.group][combined.samplerLocation.binding];
+                mUnitsForSamplers[samplerIndex].push_back({textureUnit, shouldUseFiltering});
 
                 textureUnit++;
             }
         }
     }
 
-    const PipelineGL::GLPushConstantInfo& PipelineGL::GetGLPushConstants(
-        dawn::ShaderStage stage) const {
-        return mGlPushConstants[stage];
-    }
-
-    const std::vector<GLuint>& PipelineGL::GetTextureUnitsForSampler(GLuint index) const {
+    const std::vector<PipelineGL::SamplerUnit>& PipelineGL::GetTextureUnitsForSampler(
+        GLuint index) const {
         ASSERT(index < mUnitsForSamplers.size());
         return mUnitsForSamplers[index];
     }
@@ -213,8 +210,8 @@ namespace dawn_native { namespace opengl {
         return mProgram;
     }
 
-    void PipelineGL::ApplyNow() {
-        glUseProgram(mProgram);
+    void PipelineGL::ApplyNow(const OpenGLFunctions& gl) {
+        gl.UseProgram(mProgram);
     }
 
 }}  // namespace dawn_native::opengl

@@ -13,25 +13,22 @@
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/extensions/extension_api_unittest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/browser/permissions/permission_request_manager.h"
-#include "chrome/browser/sessions/session_tab_helper.h"
-#include "chrome/browser/ui/permission_bubble/mock_permission_prompt_factory.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "components/page_load_metrics/browser/page_load_metrics_test_waiter.h"
+#include "components/permissions/permission_request_manager.h"
+#include "components/permissions/test/mock_permission_prompt_factory.h"
+#include "components/sessions/content/session_tab_helper.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using crypto::SHA256HashString;
-
 namespace extensions {
 
 namespace {
 
-using namespace api::cryptotoken_private;
-
-bool GetSingleBooleanResult(UIThreadExtensionFunction* function, bool* result) {
+bool GetSingleBooleanResult(ExtensionFunction* function, bool* result) {
   const base::ListValue* result_list = function->GetResultList();
   if (!result_list) {
     ADD_FAILURE() << "Function has no result list.";
@@ -83,8 +80,8 @@ class CryptoTokenPrivateApiTest : public extensions::ExtensionApiUnittest {
     function->set_has_callback(true);
 
     auto args = std::make_unique<base::Value>(base::Value::Type::LIST);
-    args->GetList().emplace_back(
-        base::Value::BlobStorage(app_id.begin(), app_id.end()));
+    args->Append(
+        base::Value(base::Value::BlobStorage(app_id.begin(), app_id.end())));
 
     if (!extension_function_test_utils::RunFunction(
             function.get(), base::ListValue::From(std::move(args)), browser(),
@@ -133,9 +130,9 @@ TEST_F(CryptoTokenPrivateApiTest, CanOriginAssertAppId) {
 
 TEST_F(CryptoTokenPrivateApiTest, IsAppIdHashInEnterpriseContext) {
   const std::string example_com("https://example.com/");
-  const std::string example_com_hash(SHA256HashString(example_com));
-  const std::string rp_id_hash(SHA256HashString("example.com"));
-  const std::string foo_com_hash(SHA256HashString("https://foo.com/"));
+  const std::string example_com_hash(crypto::SHA256HashString(example_com));
+  const std::string rp_id_hash(crypto::SHA256HashString("example.com"));
+  const std::string foo_com_hash(crypto::SHA256HashString("https://foo.com/"));
 
   bool result;
   ASSERT_TRUE(GetAppIdHashInEnterpriseContext(example_com_hash, &result));
@@ -158,6 +155,57 @@ TEST_F(CryptoTokenPrivateApiTest, IsAppIdHashInEnterpriseContext) {
   EXPECT_FALSE(result);
 }
 
+TEST_F(CryptoTokenPrivateApiTest, RecordRegisterRequest) {
+  const GURL url("https://example.com/signin");
+  AddTab(browser(), url);
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetWebContentsAt(0);
+  const int tab_id = sessions::SessionTabHelper::IdForTab(web_contents).id();
+
+  page_load_metrics::PageLoadMetricsTestWaiter web_feature_waiter(web_contents);
+  web_feature_waiter.AddWebFeatureExpectation(
+      blink::mojom::WebFeature::kU2FCryptotokenRegister);
+  // Force the metrics waiter to attach.
+  NavigateAndCommitActiveTab(url);
+
+  auto function = base::MakeRefCounted<
+      api::CryptotokenPrivateRecordRegisterRequestFunction>();
+  auto args = std::make_unique<base::ListValue>();
+  args->AppendInteger(tab_id);
+  args->AppendInteger(0 /* top-level frame */);
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      function.get(), base::ListValue::From(std::move(args)), browser(),
+      api_test_utils::NONE));
+  ASSERT_EQ(function->GetResultList()->GetSize(), 0u);
+
+  web_feature_waiter.Wait();
+}
+
+TEST_F(CryptoTokenPrivateApiTest, RecordSignRequest) {
+  const GURL url("https://example.com/signin");
+  AddTab(browser(), url);
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetWebContentsAt(0);
+  const int tab_id = sessions::SessionTabHelper::IdForTab(web_contents).id();
+
+  page_load_metrics::PageLoadMetricsTestWaiter web_feature_waiter(web_contents);
+  web_feature_waiter.AddWebFeatureExpectation(
+      blink::mojom::WebFeature::kU2FCryptotokenSign);
+  // Force the metrics waiter to attach.
+  NavigateAndCommitActiveTab(url);
+
+  auto function =
+      base::MakeRefCounted<api::CryptotokenPrivateRecordSignRequestFunction>();
+  auto args = std::make_unique<base::ListValue>();
+  args->AppendInteger(tab_id);
+  args->AppendInteger(0 /* top-level frame */);
+  ASSERT_TRUE(extension_function_test_utils::RunFunction(
+      function.get(), base::ListValue::From(std::move(args)), browser(),
+      api_test_utils::NONE));
+  ASSERT_EQ(function->GetResultList()->GetSize(), 0u);
+
+  web_feature_waiter.Wait();
+}
 }  // namespace
 
 class CryptoTokenPermissionTest : public ExtensionApiUnittest {
@@ -175,10 +223,12 @@ class CryptoTokenPermissionTest : public ExtensionApiUnittest {
 
     content::WebContents* web_contents =
         browser()->tab_strip_model()->GetWebContentsAt(0);
-    tab_id_ = SessionTabHelper::IdForTab(web_contents).id();
-    PermissionRequestManager::CreateForWebContents(web_contents);
-    prompt_factory_ = std::make_unique<MockPermissionPromptFactory>(
-        PermissionRequestManager::FromWebContents(web_contents));
+    tab_id_ = sessions::SessionTabHelper::IdForTab(web_contents).id();
+    permissions::PermissionRequestManager::CreateForWebContents(web_contents);
+    prompt_factory_ =
+        std::make_unique<permissions::MockPermissionPromptFactory>(
+            permissions::PermissionRequestManager::FromWebContents(
+                web_contents));
   }
 
   void TearDown() override {
@@ -194,9 +244,9 @@ class CryptoTokenPermissionTest : public ExtensionApiUnittest {
   // synchronous.
   bool CanAppIdGetAttestation(
       const std::string& app_id,
-      PermissionRequestManager::AutoResponseType bubble_action,
+      permissions::PermissionRequestManager::AutoResponseType bubble_action,
       bool* out_result) {
-    if (bubble_action != PermissionRequestManager::NONE) {
+    if (bubble_action != permissions::PermissionRequestManager::NONE) {
       prompt_factory_->set_response_type(bubble_action);
       prompt_factory_->DocumentOnLoadCompletedInMainFrame();
     }
@@ -210,7 +260,7 @@ class CryptoTokenPermissionTest : public ExtensionApiUnittest {
     dict.emplace("tabId", std::make_unique<base::Value>(tab_id_));
     dict.emplace("origin", std::make_unique<base::Value>(app_id));
     auto args = std::make_unique<base::Value>(base::Value::Type::LIST);
-    args->GetList().emplace_back(std::move(dict));
+    args->Append(base::Value(std::move(dict)));
     auto args_list = base::ListValue::From(std::move(args));
 
     extension_function_test_utils::RunFunction(
@@ -222,16 +272,18 @@ class CryptoTokenPermissionTest : public ExtensionApiUnittest {
  private:
   base::test::ScopedFeatureList feature_list_;
   int tab_id_ = -1;
-  std::unique_ptr<MockPermissionPromptFactory> prompt_factory_;
+  std::unique_ptr<permissions::MockPermissionPromptFactory> prompt_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CryptoTokenPermissionTest);
 };
 
 TEST_F(CryptoTokenPermissionTest, Prompt) {
-  const std::vector<PermissionRequestManager::AutoResponseType> actions = {
-      PermissionRequestManager::ACCEPT_ALL, PermissionRequestManager::DENY_ALL,
-      PermissionRequestManager::DISMISS,
-  };
+  const std::vector<permissions::PermissionRequestManager::AutoResponseType>
+      actions = {
+          permissions::PermissionRequestManager::ACCEPT_ALL,
+          permissions::PermissionRequestManager::DENY_ALL,
+          permissions::PermissionRequestManager::DISMISS,
+      };
 
   for (const auto& action : actions) {
     SCOPED_TRACE(action);
@@ -240,7 +292,8 @@ TEST_F(CryptoTokenPermissionTest, Prompt) {
     ASSERT_TRUE(CanAppIdGetAttestation("https://test.com", action, &result));
     // The result should only be positive if the user accepted the permissions
     // prompt.
-    EXPECT_EQ(action == PermissionRequestManager::ACCEPT_ALL, result);
+    EXPECT_EQ(action == permissions::PermissionRequestManager::ACCEPT_ALL,
+              result);
   }
 }
 
@@ -254,8 +307,8 @@ TEST_F(CryptoTokenPermissionTest, PolicyOverridesPrompt) {
   // If an appId is configured by enterprise policy then attestation requests
   // should be permitted without showing a prompt.
   bool result = false;
-  ASSERT_TRUE(CanAppIdGetAttestation(example_com,
-                                     PermissionRequestManager::NONE, &result));
+  ASSERT_TRUE(CanAppIdGetAttestation(
+      example_com, permissions::PermissionRequestManager::NONE, &result));
   EXPECT_TRUE(result);
 }
 

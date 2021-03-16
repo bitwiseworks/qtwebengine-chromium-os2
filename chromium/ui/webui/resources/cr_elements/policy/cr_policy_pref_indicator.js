@@ -45,11 +45,11 @@ Polymer({
    * @return {CrPolicyIndicatorType} The indicator type based on |controlledBy|
    *     and |enforcement|.
    */
-  getIndicatorTypeForPref_: function(controlledBy, enforcement) {
-    if (enforcement == chrome.settingsPrivate.Enforcement.RECOMMENDED) {
+  getIndicatorTypeForPref_(controlledBy, enforcement) {
+    if (enforcement === chrome.settingsPrivate.Enforcement.RECOMMENDED) {
       return CrPolicyIndicatorType.RECOMMENDED;
     }
-    if (enforcement == chrome.settingsPrivate.Enforcement.ENFORCED) {
+    if (enforcement === chrome.settingsPrivate.Enforcement.ENFORCED) {
       switch (controlledBy) {
         case chrome.settingsPrivate.ControlledBy.EXTENSION:
           return CrPolicyIndicatorType.EXTENSION;
@@ -61,7 +61,14 @@ Polymer({
           return CrPolicyIndicatorType.USER_POLICY;
         case chrome.settingsPrivate.ControlledBy.DEVICE_POLICY:
           return CrPolicyIndicatorType.DEVICE_POLICY;
+        case chrome.settingsPrivate.ControlledBy.PARENT:
+          return CrPolicyIndicatorType.PARENT;
+        case chrome.settingsPrivate.ControlledBy.CHILD_RESTRICTION:
+          return CrPolicyIndicatorType.CHILD_RESTRICTION;
       }
+    }
+    if (enforcement === chrome.settingsPrivate.Enforcement.PARENT_SUPERVISED) {
+      return CrPolicyIndicatorType.PARENT;
     }
     return CrPolicyIndicatorType.NONE;
   },
@@ -71,18 +78,18 @@ Polymer({
    * @return {string} The tooltip text for |indicatorType|.
    * @private
    */
-  getIndicatorTooltipForPref_: function(indicatorType) {
+  getIndicatorTooltipForPref_(indicatorType) {
     if (!this.pref) {
       return '';
     }
 
-    const matches = this.pref && this.pref.value == this.pref.recommendedValue;
+    const matches = this.pref && this.pref.value === this.pref.recommendedValue;
     return this.getIndicatorTooltip(
         indicatorType, this.pref.controlledByName || '', matches);
   },
 
   /** @return {!Element} */
-  getFocusableElement: function() {
+  getFocusableElement() {
     return this.$$('cr-tooltip-icon').getFocusableElement();
   },
 });

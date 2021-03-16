@@ -85,7 +85,7 @@ void LayoutSVGEllipse::CalculateRadiiAndCenter() {
   center_ =
       length_context.ResolveLengthPair(svg_style.Cx(), svg_style.Cy(), style);
 
-  if (IsSVGCircleElement(*GetElement())) {
+  if (IsA<SVGCircleElement>(*GetElement())) {
     float radius = length_context.ValueForLength(svg_style.R(), style,
                                                  SVGLengthMode::kOther);
     radii_ = FloatSize(radius, radius);
@@ -133,7 +133,7 @@ bool LayoutSVGEllipse::ShapeDependentFillContains(
 
 bool LayoutSVGEllipse::HasContinuousStroke() const {
   const SVGComputedStyle& svg_style = StyleRef().SvgStyle();
-  return svg_style.StrokeDashArray()->IsEmpty();
+  return svg_style.StrokeDashArray()->data.IsEmpty();
 }
 
 }  // namespace blink

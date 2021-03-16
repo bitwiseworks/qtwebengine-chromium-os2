@@ -20,7 +20,6 @@
 #include "p2p/client/relay_port_factory_interface.h"
 #include "p2p/client/turn_port_factory.h"
 #include "rtc_base/checks.h"
-#include "rtc_base/message_queue.h"
 #include "rtc_base/network.h"
 #include "rtc_base/system/rtc_export.h"
 #include "rtc_base/thread.h"
@@ -37,13 +36,10 @@ class RTC_EXPORT BasicPortAllocator : public PortAllocator {
                      RelayPortFactoryInterface* relay_port_factory = nullptr);
   explicit BasicPortAllocator(rtc::NetworkManager* network_manager);
   BasicPortAllocator(rtc::NetworkManager* network_manager,
-                     rtc::PacketSocketFactory* socket_factory,
                      const ServerAddresses& stun_servers);
   BasicPortAllocator(rtc::NetworkManager* network_manager,
-                     const ServerAddresses& stun_servers,
-                     const rtc::SocketAddress& relay_address_udp,
-                     const rtc::SocketAddress& relay_address_tcp,
-                     const rtc::SocketAddress& relay_address_ssl);
+                     rtc::PacketSocketFactory* socket_factory,
+                     const ServerAddresses& stun_servers);
   ~BasicPortAllocator() override;
 
   // Set to kDefaultNetworkIgnoreMask by default.
@@ -80,17 +76,16 @@ class RTC_EXPORT BasicPortAllocator : public PortAllocator {
   }
 
  private:
-  void Construct();
-
   void OnIceRegathering(PortAllocatorSession* session,
                         IceRegatheringReason reason);
 
   // This function makes sure that relay_port_factory_ is set properly.
   void InitRelayPortFactory(RelayPortFactoryInterface* relay_port_factory);
 
+  bool MdnsObfuscationEnabled() const override;
+
   rtc::NetworkManager* network_manager_;
   rtc::PacketSocketFactory* socket_factory_;
-  bool allow_tcp_listen_;
   int network_ignore_mask_ = rtc::kDefaultNetworkIgnoreMask;
 
   // This is the factory being used.
@@ -125,6 +120,15 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
   rtc::Thread* network_thread() { return network_thread_; }
   rtc::PacketSocketFactory* socket_factory() { return socket_factory_; }
 
+  // If the new filter allows new types of candidates compared to the previous
+  // filter, gathered candidates that were discarded because of not matching the
+  // previous filter will be signaled if they match the new one.
+  //
+  // We do not perform any regathering since the port allocator flags decide
+  // the type of candidates to gather and the candidate filter only controls the
+  // signaling of candidates. As a result, with the candidate filter changed
+  // alone, all newly allowed candidates for signaling should already be
+  // gathered by the respective cricket::Port.
   void SetCandidateFilter(uint32_t filter) override;
   void StartGettingPorts() override;
   void StopGettingPorts() override;
@@ -137,7 +141,8 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
   std::vector<Candidate> ReadyCandidates() const override;
   bool CandidatesAllocationDone() const override;
   void RegatherOnFailedNetworks() override;
-  void RegatherOnAllNetworks() override;
+  void GetCandidateStatsFromReadyPorts(
+      CandidateStatsList* candidate_stats_list) const override;
   void SetStunKeepaliveIntervalForReadyPorts(
       const absl::optional<int>& stun_keepalive_interval) override;
   void PruneAllPorts() override;
@@ -158,6 +163,14 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
  private:
   class PortData {
    public:
+    enum State {
+      STATE_INPROGRESS,  // Still gathering candidates.
+      STATE_COMPLETE,    // All candidates allocated and ready for process.
+      STATE_ERROR,       // Error in gathering candidates.
+      STATE_PRUNED       // Pruned by higher priority ports on the same network
+                         // interface. Only TURN ports may be pruned.
+    };
+
     PortData() {}
     PortData(Port* port, AllocationSequence* seq)
         : port_(port), sequence_(seq) {}
@@ -165,6 +178,7 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
     Port* port() const { return port_; }
     AllocationSequence* sequence() const { return sequence_; }
     bool has_pairable_candidate() const { return has_pairable_candidate_; }
+    State state() const { return state_; }
     bool complete() const { return state_ == STATE_COMPLETE; }
     bool error() const { return state_ == STATE_ERROR; }
     bool pruned() const { return state_ == STATE_PRUNED; }
@@ -187,20 +201,12 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
       }
       has_pairable_candidate_ = has_pairable_candidate;
     }
-    void set_complete() { state_ = STATE_COMPLETE; }
-    void set_error() {
-      RTC_DCHECK(state_ == STATE_INPROGRESS);
-      state_ = STATE_ERROR;
+    void set_state(State state) {
+      RTC_DCHECK(state != STATE_ERROR || state_ == STATE_INPROGRESS);
+      state_ = state;
     }
 
    private:
-    enum State {
-      STATE_INPROGRESS,  // Still gathering candidates.
-      STATE_COMPLETE,    // All candidates allocated and ready for process.
-      STATE_ERROR,       // Error in gathering candidates.
-      STATE_PRUNED       // Pruned by higher priority ports on the same network
-                         // interface. Only TURN ports may be pruned.
-    };
     Port* port_ = nullptr;
     AllocationSequence* sequence_ = nullptr;
     bool has_pairable_candidate_ = false;
@@ -221,6 +227,7 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
                         AllocationSequence* seq,
                         bool prepare_address);
   void OnCandidateReady(Port* port, const Candidate& c);
+  void OnCandidateError(Port* port, const IceCandidateErrorEvent& event);
   void OnPortComplete(Port* port);
   void OnPortError(Port* port);
   void OnProtocolEnabled(AllocationSequence* seq, ProtocolType proto);
@@ -237,14 +244,6 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
   bool CheckCandidateFilter(const Candidate& c) const;
   bool CandidatePairable(const Candidate& c, const Port* port) const;
 
-  // Returns true if there is an mDNS responder attached to the network manager
-  bool MdnsObfuscationEnabled() const;
-
-  // Clears 1) the address if the candidate is supposedly a hostname candidate;
-  // 2) the related address according to the flags and candidate filter in order
-  // to avoid leaking any information.
-  Candidate SanitizeCandidate(const Candidate& c) const;
-
   std::vector<PortData*> GetUnprunedPorts(
       const std::vector<rtc::Network*>& networks);
   // Prunes ports and signal the remote side to remove the candidates that
@@ -258,6 +257,7 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
   Port* GetBestTurnPortForNetwork(const std::string& network_name) const;
   // Returns true if at least one TURN port is pruned.
   bool PruneTurnPorts(Port* newly_pairable_turn_port);
+  bool PruneNewlyPairableTurnPort(PortData* newly_pairable_turn_port);
 
   BasicPortAllocator* allocator_;
   rtc::Thread* network_thread_;
@@ -270,8 +270,8 @@ class RTC_EXPORT BasicPortAllocatorSession : public PortAllocatorSession,
   std::vector<AllocationSequence*> sequences_;
   std::vector<PortData> ports_;
   uint32_t candidate_filter_ = CF_ALL;
-  // Whether to prune low-priority ports, taken from the port allocator.
-  bool prune_turn_ports_;
+  // Policy on how to prune turn ports, taken from the port allocator.
+  webrtc::PortPrunePolicy turn_port_prune_policy_;
   SessionState state_ = SessionState::CLEARED;
 
   friend class AllocationSequence;
@@ -285,6 +285,7 @@ struct RTC_EXPORT PortConfiguration : public rtc::MessageData {
   ServerAddresses stun_servers;
   std::string username;
   std::string password;
+  bool use_turn_server_as_stun_server_disabled = false;
 
   typedef std::vector<RelayServerConfig> RelayList;
   RelayList relays;
@@ -310,11 +311,10 @@ struct RTC_EXPORT PortConfiguration : public rtc::MessageData {
   // Determines whether the given relay server supports the given protocol.
   bool SupportsProtocol(const RelayServerConfig& relay,
                         ProtocolType type) const;
-  bool SupportsProtocol(RelayType turn_type, ProtocolType type) const;
+  bool SupportsProtocol(ProtocolType type) const;
   // Helper method returns the server addresses for the matching RelayType and
   // Protocol type.
-  ServerAddresses GetRelayServerAddresses(RelayType turn_type,
-                                          ProtocolType type) const;
+  ServerAddresses GetRelayServerAddresses(ProtocolType type) const;
 };
 
 class UDPPort;
@@ -382,7 +382,6 @@ class AllocationSequence : public rtc::MessageHandler,
   void CreateTCPPorts();
   void CreateStunPorts();
   void CreateRelayPorts();
-  void CreateGturnPort(const RelayServerConfig& config);
 
   void OnReadPacket(rtc::AsyncPacketSocket* socket,
                     const char* data,

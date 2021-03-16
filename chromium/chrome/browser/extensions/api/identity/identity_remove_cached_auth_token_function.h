@@ -5,12 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_IDENTITY_IDENTITY_REMOVE_CACHED_AUTH_TOKEN_FUNCTION_H_
 #define CHROME_BROWSER_EXTENSIONS_API_IDENTITY_IDENTITY_REMOVE_CACHED_AUTH_TOKEN_FUNCTION_H_
 
-#include "chrome/browser/extensions/chrome_extension_function.h"
+#include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_histogram_value.h"
 
 namespace extensions {
 
-class IdentityRemoveCachedAuthTokenFunction : public UIThreadExtensionFunction {
+class IdentityRemoveCachedAuthTokenFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("identity.removeCachedAuthToken",
                              EXPERIMENTAL_IDENTITY_REMOVECACHEDAUTHTOKEN)

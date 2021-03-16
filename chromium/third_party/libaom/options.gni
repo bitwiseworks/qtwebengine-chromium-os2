@@ -1,7 +1,8 @@
 import("//build/config/gclient_args.gni")
 
 declare_args() {
-  # Enable decoding AV1 video files.
-  enable_av1_decoder =
-      !is_android && !is_ios && (current_cpu == "x86" || current_cpu == "x64")
+  # Enable encoding and decoding AV1 video files.
+  enable_libaom = false
+  # To be deprecated soon.
+  enable_libaom_decoder = false
 }

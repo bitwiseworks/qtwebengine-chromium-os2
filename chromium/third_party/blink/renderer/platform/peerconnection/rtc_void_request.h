@@ -37,14 +37,14 @@
 
 namespace blink {
 
-class RTCVoidRequest : public GarbageCollectedFinalized<RTCVoidRequest> {
+class RTCVoidRequest : public GarbageCollected<RTCVoidRequest> {
  public:
   virtual ~RTCVoidRequest() = default;
 
   virtual void RequestSucceeded() = 0;
   virtual void RequestFailed(const webrtc::RTCError&) = 0;
 
-  virtual void Trace(blink::Visitor* visitor) {}
+  virtual void Trace(Visitor* visitor) {}
 
  protected:
   RTCVoidRequest() = default;

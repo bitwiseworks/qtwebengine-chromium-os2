@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "build/build_config.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 
 #if defined(OS_CHROMEOS)
@@ -92,7 +93,7 @@ void BrowserLifetimeHandler::HandleSignOutAndRestart(
 
 void BrowserLifetimeHandler::HandleFactoryReset(
     const base::ListValue* args) {
-  const base::Value::ListStorage& args_list = args->GetList();
+  base::Value::ConstListView args_list = args->GetList();
   CHECK_EQ(1U, args_list.size());
   bool tpm_firmware_update_requested = args_list[0].GetBool();
 

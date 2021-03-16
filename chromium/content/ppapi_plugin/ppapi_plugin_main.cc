@@ -8,10 +8,10 @@
 #include "base/debug/debugger.h"
 #include "base/files/file_path.h"
 #include "base/i18n/rtl.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_executor.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "content/child/child_process.h"
@@ -24,7 +24,7 @@
 #include "ipc/ipc_sender.h"
 #include "ppapi/proxy/plugin_globals.h"
 #include "ppapi/proxy/proxy_module.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "services/tracing/public/cpp/trace_startup.h"
 #include "ui/base/ui_base_switches.h"
 
 #if defined(OS_WIN)
@@ -110,7 +110,7 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
   setenv("HOME", homedir.value().c_str(), 1);
 #endif
 
-  base::MessageLoop main_message_loop;
+  base::SingleThreadTaskExecutor main_thread_task_executor;
   base::PlatformThread::SetName("CrPPAPIMain");
   base::trace_event::TraceLog::GetInstance()->set_process_name("PPAPI Process");
   base::trace_event::TraceLog::GetInstance()->SetProcessSortIndex(
@@ -118,7 +118,6 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
   gin::V8Initializer::LoadV8Snapshot();
-  gin::V8Initializer::LoadV8Natives();
 #endif
 
 #if defined(OS_LINUX)
@@ -134,10 +133,19 @@ int PpapiPluginMain(const MainFunctionParams& parameters) {
                                                 parameters.command_line,
                                                 false /* Not a broker */));
 
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
+  // Startup tracing is usually enabled earlier, but if we forked from a zygote,
+  // we can only enable it after mojo IPC support is brought up by PpapiThread,
+  // because the mojo broker has to create the tracing SMB on our behalf due to
+  // the zygote sandbox.
+  if (parameters.zygote_child)
+    tracing::EnableStartupTracingIfNeeded();
+#endif  // OS_POSIX && !OS_ANDROID && !!OS_MACOSX
+
 #if defined(OS_WIN)
   if (!base::win::IsUser32AndGdi32Available())
-    gfx::win::MaybeInitializeDirectWrite();
-  InitializeDWriteFontProxy(ChildThread::Get()->GetConnector());
+    gfx::win::InitializeDirectWrite();
+  InitializeDWriteFontProxy();
 
   int antialiasing_enabled = 1;
   base::StringToInt(

@@ -10,18 +10,63 @@
 #include "base/gtest_prod_util.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/optional.h"
 #include "cc/paint/frame_metadata.h"
 #include "cc/paint/image_animation_count.h"
 #include "cc/paint/paint_export.h"
-#include "cc/paint/paint_worklet_input.h"
 #include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkYUVAIndex.h"
+#include "third_party/skia/include/core/SkYUVASizeInfo.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 
 namespace cc {
 
 class PaintImageGenerator;
 class PaintOpBuffer;
+class PaintWorkletInput;
 using PaintRecord = PaintOpBuffer;
+
+enum class ImageType { kPNG, kJPEG, kWEBP, kGIF, kICO, kBMP, kInvalid };
+
+enum class YUVSubsampling { k410, k411, k420, k422, k440, k444, kUnknown };
+
+struct CC_PAINT_EXPORT ImageHeaderMetadata {
+ public:
+  ImageHeaderMetadata();
+  ImageHeaderMetadata(const ImageHeaderMetadata& other);
+  ImageHeaderMetadata& operator=(const ImageHeaderMetadata& other);
+  ~ImageHeaderMetadata();
+
+  // The image type, e.g., JPEG or WebP.
+  ImageType image_type = ImageType::kInvalid;
+
+  // The subsampling format used for the chroma planes, e.g., YUV 4:2:0.
+  YUVSubsampling yuv_subsampling = YUVSubsampling::kUnknown;
+
+  // The visible size of the image (i.e., the area that contains meaningful
+  // pixels).
+  gfx::Size image_size;
+
+  // The size of the area containing coded data, if known. For example, if the
+  // |image_size| for a 4:2:0 JPEG is 12x31, its coded size should be 16x32
+  // because the size of a minimum-coded unit for 4:2:0 is 16x16.
+  // A zero-initialized |coded_size| indicates an invalid image.
+  base::Optional<gfx::Size> coded_size;
+
+  // Whether the image embeds an ICC color profile.
+  bool has_embedded_color_profile = false;
+
+  // Whether all the data was received prior to starting decoding work.
+  bool all_data_received_prior_to_decode = false;
+
+  // For JPEGs only: whether the image is progressive (as opposed to baseline).
+  base::Optional<bool> jpeg_is_progressive;
+
+  // For WebPs only: whether this is a simple-format lossy image. See
+  // https://developers.google.com/speed/webp/docs/riff_container#simple_file_format_lossy.
+  base::Optional<bool> webp_is_non_extended_lossy;
+};
 
 // A representation of an image for the compositor.  This is the most abstract
 // form of images, and represents what is known at paint time.  Note that aside
@@ -146,10 +191,10 @@ class CC_PAINT_EXPORT PaintImage {
   // GetSupportedDecodeSize(size).
   SkISize GetSupportedDecodeSize(const SkISize& requested_size) const;
 
-  // Decode the image into the given memory for the given SkImageInfo.
+  // Decode the image into RGBX into the given memory for the given SkImageInfo.
   // - Size in |info| must be supported.
   // - The amount of memory allocated must be at least
-  //   |info|.minRowBytes() * |info|.height().
+  //   |info|.minRowBytes() * |info|.height()
   // Returns true on success and false on failure. Updates |info| to match the
   // requested color space, if provided.
   // Note that for non-lazy images this will do a copy or readback if the image
@@ -159,6 +204,29 @@ class CC_PAINT_EXPORT PaintImage {
               sk_sp<SkColorSpace> color_space,
               size_t frame_index,
               GeneratorClientId client_id) const;
+
+  // Decode the image into YUV into |planes| for the given SkYUVASizeInfo.
+  //  - Elements of the |planes| array are pointers to some underlying memory
+  //    for each plane. It is assumed to have been split up by a call to
+  //    SkYUVASizeInfo::computePlanes with the given |yuva_size_info|.
+  //  - The amount of memory allocated must be at least
+  //    |yuva_size_info|.computeTotalBytes(), though there are places in the
+  //    code that assume YUV420 without alpha because it is currently the only
+  //    subsampling supported for direct YUV rendering.
+  //  - The dimensions of YUV planes are tracked in |yuva_size_info|.
+  //    This struct is initialized by QueryYUVA8 in calls to
+  //    PaintImage::IsYuv(), including within this method.
+  //  - The |frame_index| parameter will be passed along to
+  //    ImageDecoder::DecodeToYUV but for multi-frame YUV support, ImageDecoder
+  //    needs a separate YUV frame buffer cache.
+  //  - The mapping of source planes to channels is tracked by |plane_indices|.
+  //    This struct is initialized by QueryYUVA8 in calls to
+  //    PaintImage::IsYuv(), including within this method.
+  bool DecodeYuv(void* planes[SkYUVASizeInfo::kMaxCount],
+                 size_t frame_index,
+                 GeneratorClientId client_id,
+                 const SkYUVASizeInfo& yuva_size_info,
+                 SkYUVAIndex* plane_indices) const;
 
   Id stable_id() const { return id_; }
   const sk_sp<SkImage>& GetSkImage() const;
@@ -172,7 +240,6 @@ class CC_PAINT_EXPORT PaintImage {
     return reset_animation_sequence_id_;
   }
   DecodingMode decoding_mode() const { return decoding_mode_; }
-  PaintImage::ContentId content_id() const { return content_id_; }
 
   // TODO(vmpstr): Don't get the SkImage here if you don't need to.
   uint32_t unique_id() const {
@@ -188,25 +255,33 @@ class CC_PAINT_EXPORT PaintImage {
   bool IsTextureBacked() const {
     return paint_worklet_input_ ? false : GetSkImage()->isTextureBacked();
   }
-  int width() const {
-    return paint_worklet_input_
-               ? static_cast<int>(paint_worklet_input_->GetSize().width())
-               : GetSkImage()->width();
-  }
-  int height() const {
-    return paint_worklet_input_
-               ? static_cast<int>(paint_worklet_input_->GetSize().height())
-               : GetSkImage()->height();
-  }
+  int width() const;
+  int height() const;
   SkColorSpace* color_space() const {
     return paint_worklet_input_ ? nullptr : GetSkImage()->colorSpace();
   }
+  bool isSRGB() const;
+  const gfx::Rect subset_rect() const { return subset_rect_; }
+
+  // Returns whether this image will be decoded and rendered from YUV data
+  // and fills out plane size info, plane index info, and the matrix for
+  // conversion from YUV to RGB in, respectively, |yuva_size_info|,
+  // |plane_indices|, and |yuv_color_space| if any are provided.
+  bool IsYuv(SkYUVASizeInfo* yuva_size_info = nullptr,
+             SkYUVAIndex* plane_indices = nullptr,
+             SkYUVColorSpace* yuv_color_space = nullptr) const;
 
   // Returns the color type of this image.
   SkColorType GetColorType() const;
 
+  // Returns general information about the underlying image. Returns nullptr if
+  // there is no available |paint_image_generator_|.
+  const ImageHeaderMetadata* GetImageHeaderMetadata() const;
+
   // Returns a unique id for the pixel data for the frame at |frame_index|.
   FrameKey GetKeyForFrame(size_t frame_index) const;
+
+  PaintImage::ContentId GetContentIdForFrame(size_t frame_index) const;
 
   // Returns the metadata for each frame of a multi-frame image. Should only be
   // used with animated images.
@@ -219,9 +294,11 @@ class CC_PAINT_EXPORT PaintImage {
   sk_sp<SkImage> GetSkImageForFrame(size_t index,
                                     GeneratorClientId client_id) const;
 
-  PaintWorkletInput* paint_worklet_input() const {
-    return paint_worklet_input_.get();
+  const scoped_refptr<PaintWorkletInput>& paint_worklet_input() const {
+    return paint_worklet_input_;
   }
+
+  bool IsOpaque() const { return GetSkImage() && GetSkImage()->isOpaque(); }
 
   std::string ToString() const;
 
@@ -233,6 +310,8 @@ class CC_PAINT_EXPORT PaintImage {
   static const Id kNonLazyStableId;
   friend class ScopedRasterFlags;
   friend class PaintOpReader;
+
+  bool CanDecodeFromGenerator() const;
 
   bool DecodeFromGenerator(void* memory,
                            SkImageInfo* info,

@@ -84,6 +84,8 @@ class OutOfProcessInstance : public pp::Instance,
   bool CanRedo();
   void Undo();
   void Redo();
+  void HandleAccessibilityAction(
+      const PP_PdfAccessibilityActionData& action_data);
   int32_t PdfPrintBegin(const PP_PrintSettings_Dev* print_settings,
                         const PP_PdfPrintSettings_Dev* pdf_print_settings);
 
@@ -95,7 +97,7 @@ class OutOfProcessInstance : public pp::Instance,
   void OnPrint(int32_t);
 
   // PDFEngine::Client implementation.
-  void DocumentSizeUpdated(const pp::Size& size) override;
+  void ProposeDocumentLayout(const DocumentLayout& layout) override;
   void Invalidate(const pp::Rect& rect) override;
   void DidScroll(const pp::Point& point) override;
   void ScrollToX(int x_in_screen_coords) override;
@@ -104,12 +106,14 @@ class OutOfProcessInstance : public pp::Instance,
   void ScrollToPage(int page) override;
   void NavigateTo(const std::string& url,
                   WindowOpenDisposition disposition) override;
+  void NavigateToDestination(int page,
+                             const float* x,
+                             const float* y,
+                             const float* zoom) override;
   void UpdateCursor(PP_CursorType_Dev cursor) override;
   void UpdateTickMarks(const std::vector<pp::Rect>& tickmarks) override;
   void NotifyNumberOfFindResultsChanged(int total, bool final_result) override;
   void NotifySelectedFindResultChanged(int current_find_index) override;
-  void NotifyPageBecameVisible(
-      const PDFEngine::PageFeatures* page_features) override;
   void GetDocumentPassword(
       pp::CompletionCallbackWithOutput<pp::Var> callback) override;
   void Beep() override;
@@ -132,17 +136,14 @@ class OutOfProcessInstance : public pp::Instance,
                                                const base::char16* term,
                                                bool case_sensitive) override;
   void DocumentLoadComplete(
-      const PDFEngine::DocumentFeatures& document_features,
-      uint32_t file_size) override;
+      const PDFEngine::DocumentFeatures& document_features) override;
   void DocumentLoadFailed() override;
-  void FontSubstituted() override;
   pp::Instance* GetPluginInstance() override;
   void DocumentHasUnsupportedFeature(const std::string& feature) override;
   void DocumentLoadProgress(uint32_t available, uint32_t doc_size) override;
   void FormTextFieldFocusChange(bool in_focus) override;
   bool IsPrintPreview() override;
   uint32_t GetBackgroundColor() override;
-  void CancelBrowserDownload() override;
   void IsSelectingChanged(bool is_selecting) override;
   void SelectionChanged(const pp::Rect& left, const pp::Rect& right) override;
   void IsEditModeChanged(bool is_edit_mode) override;
@@ -155,6 +156,11 @@ class OutOfProcessInstance : public pp::Instance,
   // Helper functions for implementing PPP_PDF.
   void RotateClockwise();
   void RotateCounterclockwise();
+  void SetTwoUpView(bool enable_two_up_view);
+
+  // Creates a file name for saving a PDF file, given the source URL. Exposed
+  // for testing.
+  static std::string GetFileNameFromUrl(const std::string& url);
 
  private:
   void ResetRecentlySentFindUpdate(int32_t);
@@ -229,24 +235,31 @@ class OutOfProcessInstance : public pp::Instance,
   // Send a notification that the print preview has loaded.
   void SendPrintPreviewLoadedNotification();
 
+  // Send document metadata. (e.g. PDF title and bookmarks.)
+  void SendDocumentMetadata();
+
+  // Send the loading progress, where |percentage| represents the progress, or
+  // -1 for loading error.
+  void SendLoadingProgress(double percentage);
+
   // Bound the given scroll offset to the document.
   pp::FloatPoint BoundScrollOffsetToDocument(
       const pp::FloatPoint& scroll_offset);
 
+  // Add a sample to an enumerated histogram and filter out print preview usage.
+  template <typename T>
+  void HistogramEnumeration(const char* name, T sample);
+
   // Wrappers for |uma_| so histogram reporting only occurs when the PDF Viewer
   // is not being used for print preview.
-  void HistogramCustomCounts(const std::string& name,
-                             int32_t sample,
-                             int32_t min,
-                             int32_t max,
-                             uint32_t bucket_count);
-  void HistogramEnumeration(const std::string& name,
-                            int32_t sample,
-                            int32_t boundary_value);
-
-  // Wrapper for |uma_| so PrintPreview.PdfAction histogram reporting only
-  // occurs when the PDF Viewer is being used inside print preview.
-  void PrintPreviewHistogramEnumeration(int32_t sample);
+  void HistogramCustomCountsDeprecated(const std::string& name,
+                                       int32_t sample,
+                                       int32_t min,
+                                       int32_t max,
+                                       uint32_t bucket_count);
+  void HistogramEnumerationDeprecated(const std::string& name,
+                                      int32_t sample,
+                                      int32_t boundary_value);
 
   pp::ImageData image_data_;
   // Used when the plugin is embedded in a page and we have to create the loader
@@ -364,10 +377,6 @@ class OutOfProcessInstance : public pp::Instance,
   // the stats if a feature shows up many times per document.
   std::set<std::string> unsupported_features_reported_;
 
-  // Keeps track of whether font substitution has been reported, so we avoid
-  // spamming the stats if a document requested multiple substitutes.
-  bool font_substitution_reported_;
-
   // Number of pages in print preview mode for non-PDF source, 0 if print
   // previewing a PDF, and -1 if not in print preview mode.
   int print_preview_page_count_;
@@ -421,12 +430,6 @@ class OutOfProcessInstance : public pp::Instance,
   // toolbar.
   int top_toolbar_height_in_viewport_coords_;
 
-  // Whether each page had its features processed.
-  std::vector<bool> page_is_processed_;
-
-  // Annotation types that were already counted for this document.
-  std::set<int> annotation_types_counted_;
-
   bool edit_mode_ = false;
 
   // The current state of accessibility: either off, enabled but waiting
@@ -439,18 +442,6 @@ class OutOfProcessInstance : public pp::Instance,
 
   // True if the plugin is loaded in print preview, otherwise false.
   bool is_print_preview_;
-
-  // Used for UMA. Do not delete entries, and keep in sync with histograms.xml.
-  enum PdfActionBuckets {
-    PRINT_PREVIEW_SHOWN = 0,
-    ROTATE = 1,
-    SELECT_TEXT = 2,
-    UPDATE_ZOOM = 3,
-    PDFACTION_BUCKET_BOUNDARY,
-  };
-
-  // Array indicating what events have been recorded for print preview metrics.
-  bool preview_action_recorded_[PDFACTION_BUCKET_BOUNDARY];
 
   DISALLOW_COPY_AND_ASSIGN(OutOfProcessInstance);
 };

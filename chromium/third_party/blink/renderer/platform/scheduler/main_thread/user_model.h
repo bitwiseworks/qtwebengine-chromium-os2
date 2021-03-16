@@ -8,17 +8,19 @@
 #include "base/macros.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
-#include "third_party/blink/public/platform/web_input_event.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 namespace scheduler {
 
 class PLATFORM_EXPORT UserModel {
+  USING_FAST_MALLOC(UserModel);
+
  public:
   UserModel();
-  ~UserModel();
 
   // Tells us that the system started processing an input event. Must be paired
   // with a call to DidFinishProcessingInputEvent.

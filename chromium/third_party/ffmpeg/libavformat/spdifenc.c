@@ -422,8 +422,13 @@ static int spdif_header_truehd(AVFormatContext *s, AVPacket *pkt)
 
     memcpy(&ctx->hd_buf[ctx->hd_buf_count * TRUEHD_FRAME_OFFSET - BURST_HEADER_SIZE + mat_code_length],
            pkt->data, pkt->size);
-    memset(&ctx->hd_buf[ctx->hd_buf_count * TRUEHD_FRAME_OFFSET - BURST_HEADER_SIZE + mat_code_length + pkt->size],
-           0, TRUEHD_FRAME_OFFSET - pkt->size - mat_code_length);
+    if (ctx->hd_buf_count < 23) {
+        memset(&ctx->hd_buf[ctx->hd_buf_count * TRUEHD_FRAME_OFFSET - BURST_HEADER_SIZE + mat_code_length + pkt->size],
+               0, TRUEHD_FRAME_OFFSET - pkt->size - mat_code_length);
+    } else {
+        size_t padding = MAT_FRAME_SIZE - (ctx->hd_buf_count * TRUEHD_FRAME_OFFSET - BURST_HEADER_SIZE + pkt->size);
+        memset(&ctx->hd_buf[MAT_FRAME_SIZE - padding], 0, padding);
+    }
 
     if (++ctx->hd_buf_count < 24){
         ctx->pkt_offset = 0;
@@ -477,12 +482,11 @@ static int spdif_write_header(AVFormatContext *s)
     return 0;
 }
 
-static int spdif_write_trailer(AVFormatContext *s)
+static void spdif_deinit(AVFormatContext *s)
 {
     IEC61937Context *ctx = s->priv_data;
     av_freep(&ctx->buffer);
     av_freep(&ctx->hd_buf);
-    return 0;
 }
 
 static av_always_inline void spdif_put_16(IEC61937Context *ctx,
@@ -555,7 +559,7 @@ AVOutputFormat ff_spdif_muxer = {
     .video_codec       = AV_CODEC_ID_NONE,
     .write_header      = spdif_write_header,
     .write_packet      = spdif_write_packet,
-    .write_trailer     = spdif_write_trailer,
+    .deinit            = spdif_deinit,
     .flags             = AVFMT_NOTIMESTAMPS,
     .priv_class        = &spdif_class,
 };

@@ -1,15 +1,21 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+//
+
+#define _GNU_SOURCE
 
 #include "components/exo/wayland/clients/client_base.h"
 
 #include <aura-shell-client-protocol.h>
+#include <color-space-unstable-v1-client-protocol.h>
 #include <fcntl.h>
 #include <fullscreen-shell-unstable-v1-client-protocol.h>
 #include <linux-dmabuf-unstable-v1-client-protocol.h>
 #include <linux-explicit-synchronization-unstable-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
 
@@ -17,10 +23,15 @@
 #include <string>
 #include <utility>
 
+#include "base/bits.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/platform_shared_memory_region.h"
+#include "base/memory/unsafe_shared_memory_region.h"
+#include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/unguessable_token.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -39,6 +50,10 @@
 #include <gbm.h>
 #include <xf86drm.h>
 
+#if defined(USE_VULKAN)
+#include "gpu/vulkan/init/vulkan_factory.h"
+#include "gpu/vulkan/vulkan_function_pointers.h"
+#endif
 #include "ui/ozone/public/ozone_platform.h"  // nogncheck
 #endif
 
@@ -61,6 +76,9 @@ const char kTransparentBackground[] = "transparent-background";
 
 // Use drm buffer instead of shared memory.
 const char kUseDrm[] = "use-drm";
+
+// Use memfd backed buffer instead of shared memory.
+const char kUseMemfd[] = "use-memfd";
 
 // Specifies if client should be fullscreen.
 const char kFullscreen[] = "fullscreen";
@@ -89,6 +107,15 @@ ClientBase* CastToClientBase(void* data) {
   return static_cast<ClientBase*>(data);
 }
 
+class MemfdMemoryMapping : public base::SharedMemoryMapping {
+ public:
+  MemfdMemoryMapping(void* memory, size_t size)
+      : base::SharedMemoryMapping(memory,
+                                  size,
+                                  size /* mapped_size */,
+                                  base::UnguessableToken::Create()) {}
+};
+
 void RegistryHandler(void* data,
                      wl_registry* registry,
                      uint32_t id,
@@ -113,7 +140,7 @@ void RegistryHandler(void* data,
         wl_registry_bind(registry, id, &wp_presentation_interface, 1)));
   } else if (strcmp(interface, "zaura_shell") == 0) {
     globals->aura_shell.reset(static_cast<zaura_shell*>(
-        wl_registry_bind(registry, id, &zaura_shell_interface, 5)));
+        wl_registry_bind(registry, id, &zaura_shell_interface, 7)));
   } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
     globals->linux_dmabuf.reset(static_cast<zwp_linux_dmabuf_v1*>(
         wl_registry_bind(registry, id, &zwp_linux_dmabuf_v1_interface, 2)));
@@ -135,6 +162,12 @@ void RegistryHandler(void* data,
         static_cast<zwp_linux_explicit_synchronization_v1*>(wl_registry_bind(
             registry, id, &zwp_linux_explicit_synchronization_v1_interface,
             1)));
+  } else if (strcmp(interface, "zcr_vsync_feedback_v1") == 0) {
+    globals->vsync_feedback.reset(static_cast<zcr_vsync_feedback_v1*>(
+        wl_registry_bind(registry, id, &zcr_vsync_feedback_v1_interface, 1)));
+  } else if (strcmp(interface, "zcr_color_space_v1") == 0) {
+    globals->color_space.reset(static_cast<zcr_color_space_v1*>(
+        wl_registry_bind(registry, id, &zcr_color_space_v1_interface, 1)));
   }
 }
 
@@ -152,12 +185,6 @@ wl_registry_listener g_registry_listener = {RegistryHandler, RegistryRemover};
 wl_buffer_listener g_buffer_listener = {BufferRelease};
 
 #if defined(USE_GBM)
-const GrGLInterface* GrGLCreateNativeInterface() {
-  return GrGLAssembleInterface(nullptr, [](void* ctx, const char name[]) {
-    return eglGetProcAddress(name);
-  });
-}
-
 #if defined(USE_VULKAN)
 uint32_t VulkanChooseGraphicsQueueFamily(VkPhysicalDevice device) {
   uint32_t properties_number = 0;
@@ -313,6 +340,8 @@ ClientBase::InitParams::InitParams() {
 
 ClientBase::InitParams::~InitParams() {}
 
+ClientBase::InitParams::InitParams(const InitParams& params) = default;
+
 bool ClientBase::InitParams::FromCommandLine(
     const base::CommandLine& command_line) {
   if (command_line.HasSwitch(switches::kSize)) {
@@ -345,11 +374,14 @@ bool ClientBase::InitParams::FromCommandLine(
       LOG(ERROR) << "Invalid value for " << switches::kTransform;
       return false;
     }
+    has_transform = true;
   }
 
   use_drm = command_line.HasSwitch(switches::kUseDrm);
   if (use_drm)
     use_drm_value = command_line.GetSwitchValueASCII(switches::kUseDrm);
+
+  use_memfd = command_line.HasSwitch(switches::kUseMemfd);
 
   fullscreen = command_line.HasSwitch(switches::kFullscreen);
   transparent_background =
@@ -398,6 +430,7 @@ bool ClientBase::Init(const InitParams& params) {
   fullscreen_ = params.fullscreen;
   transparent_background_ = params.transparent_background;
   y_invert_ = params.y_invert;
+  has_transform_ = params.has_transform;
 
   display_.reset(wl_display_connect(nullptr));
   if (!display_) {
@@ -431,7 +464,6 @@ bool ClientBase::Init(const InitParams& params) {
   }
 
 #if defined(USE_GBM)
-  sk_sp<const GrGLInterface> native_interface;
   if (params.use_drm) {
     // Number of files to look for when discovering DRM devices.
     const uint32_t kDrmMaxMinor = 15;
@@ -468,9 +500,9 @@ bool ClientBase::Init(const InitParams& params) {
       LOG(ERROR) << "Can't create gbm device";
       return false;
     }
-    ui::OzonePlatform::InitParams params;
-    params.single_process = true;
-    ui::OzonePlatform::InitializeForGPU(params);
+    ui::OzonePlatform::InitParams ozone_params;
+    ozone_params.single_process = true;
+    ui::OzonePlatform::InitializeForGPU(ozone_params);
     bool gl_initialized = gl::init::InitializeGLOneOff();
     DCHECK(gl_initialized);
     gl_surface_ = gl::init::CreateOffscreenGLSurface(gfx::Size());
@@ -489,26 +521,34 @@ bool ClientBase::Init(const InitParams& params) {
       egl_sync_type_ = EGL_SYNC_NATIVE_FENCE_ANDROID;
     }
 
-    native_interface = sk_sp<const GrGLInterface>(GrGLCreateNativeInterface());
+    sk_sp<const GrGLInterface> native_interface = GrGLMakeAssembledInterface(
+        nullptr,
+        [](void* ctx, const char name[]) { return eglGetProcAddress(name); });
     DCHECK(native_interface);
     gr_context_ = GrContext::MakeGL(std::move(native_interface));
     DCHECK(gr_context_);
 
 #if defined(USE_VULKAN)
-    vk_instance_ = CreateVkInstance();
+    if (params.use_vulkan) {
+      vk_implementation_ = gpu::CreateVulkanImplementation();
+      CHECK(vk_implementation_) << "Can't create VulkanImplementation";
+      bool ret = vk_implementation_->InitializeVulkanInstance(false);
+      CHECK(ret) << "Failed to initialize VulkanImplementation";
+      vk_instance_ = CreateVkInstance();
+      uint32_t queue_family_index = UINT32_MAX;
+      vk_device_ = CreateVkDevice(vk_instance_->get(), &queue_family_index);
+      CHECK(gpu::GetVulkanFunctionPointers()->BindDeviceFunctionPointers(
+          vk_device_->get(), VK_VERSION_1_0, gfx::ExtensionSet()));
+      vk_render_pass_ = CreateVkRenderPass(vk_device_->get());
 
-    uint32_t queue_family_index = UINT32_MAX;
-    vk_device_ = CreateVkDevice(vk_instance_->get(), &queue_family_index);
-    vk_render_pass_ = CreateVkRenderPass(vk_device_->get());
+      vkGetDeviceQueue(vk_device_->get(), queue_family_index, 0, &vk_queue_);
 
-    vkGetDeviceQueue(vk_device_->get(), queue_family_index, 0, &vk_queue_);
-
-    vk_command_pool_ =
-        CreateVkCommandPool(vk_device_->get(), queue_family_index);
+      vk_command_pool_ =
+          CreateVkCommandPool(vk_device_->get(), queue_family_index);
+    }
 #endif  // defined(USE_VULKAN)
   }
 #endif  // defined(USE_GBM)
-
   surface_.reset(static_cast<wl_surface*>(
       wl_compositor_create_surface(globals_.compositor.get())));
   if (!surface_) {
@@ -527,6 +567,8 @@ bool ClientBase::Init(const InitParams& params) {
     wl_region_add(opaque_region.get(), 0, 0, size_.width(), size_.height());
     wl_surface_set_opaque_region(surface_.get(), opaque_region.get());
   }
+
+  use_memfd_ = params.use_memfd;
 
   if (params.allocate_buffers_with_output_mode) {
     static wl_output_listener kOutputListener = {
@@ -711,7 +753,29 @@ void ClientBase::HandleGeometry(void* data,
                                 int32_t subpixel,
                                 const char* make,
                                 const char* model,
-                                int32_t transform) {}
+                                int32_t transform) {
+  if (has_transform_)
+    return;
+  // |transform| describes the display transform. In order to take advantage of
+  // hardware overlays, content needs to be rotated in the opposite direction to
+  // show right-side up on the display.
+  switch (transform) {
+    case WL_OUTPUT_TRANSFORM_90:
+      transform_ = WL_OUTPUT_TRANSFORM_270;
+      break;
+    case WL_OUTPUT_TRANSFORM_270:
+      transform_ = WL_OUTPUT_TRANSFORM_90;
+      break;
+    case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+      transform_ = WL_OUTPUT_TRANSFORM_FLIPPED_270;
+      break;
+    case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+      transform_ = WL_OUTPUT_TRANSFORM_FLIPPED_90;
+      break;
+    default:
+      transform_ = transform;
+  }
+}
 
 void ClientBase::HandleMode(void* data,
                             struct wl_output* wl_output,
@@ -729,7 +793,9 @@ void ClientBase::HandleScale(void* data,
 std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
     const gfx::Size& size,
     int32_t drm_format,
-    int32_t bo_usage) {
+    int32_t bo_usage,
+    wl_buffer_listener* buffer_listener,
+    void* data) {
   std::unique_ptr<Buffer> buffer;
 #if defined(USE_GBM)
   if (device_) {
@@ -740,13 +806,75 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
 
   if (!buffer) {
     buffer = std::make_unique<Buffer>();
-
     size_t stride = size.width() * kBytesPerPixel;
-    buffer->shared_memory.reset(new base::SharedMemory());
-    buffer->shared_memory->CreateAndMapAnonymous(stride * size.height());
-    buffer->shm_pool.reset(wl_shm_create_pool(
-        globals_.shm.get(), buffer->shared_memory->handle().GetHandle(),
-        buffer->shared_memory->requested_size()));
+    size_t length = size.height() * stride;
+    uint8_t* mapped_data;
+
+    if (use_memfd_) {
+      // udmabuf_create requires a page aligned buffer.
+      length = base::bits::Align(length, getpagesize());
+      int memfd = memfd_create("memfd", MFD_ALLOW_SEALING);
+      if (memfd < 0) {
+        PLOG(ERROR) << "memfd_create failed";
+        return nullptr;
+      }
+
+      // Truncate the chunk of memory to be page aligned so that the server
+      // has the option of using the shared memory region as a dma-buf through
+      // udmabuf_create.
+      int res = HANDLE_EINTR(ftruncate(memfd, length));
+      if (res < 0) {
+        PLOG(ERROR) << "ftruncate failed";
+        return nullptr;
+      }
+
+      // Seal the fd with F_SEAL_SHRINK so that the server has the option of
+      // using the shared memory region as a dma-buf through udmabuf_create.
+      if (fcntl(memfd, F_ADD_SEALS, F_SEAL_SHRINK) < 0) {
+        PLOG(ERROR) << "Failed to seal memfd";
+        return nullptr;
+      }
+      mapped_data = static_cast<uint8_t*>(
+          mmap(nullptr, length, PROT_WRITE | PROT_READ, MAP_SHARED, memfd, 0));
+
+      if (mapped_data == MAP_FAILED) {
+        PLOG(ERROR) << "Failed to mmap";
+        return nullptr;
+      }
+
+      buffer->shared_memory_mapping = MemfdMemoryMapping(mapped_data, length);
+      buffer->shm_pool.reset(
+          wl_shm_create_pool(globals_.shm.get(), memfd, length));
+
+      close(memfd);
+
+    } else {
+      base::UnsafeSharedMemoryRegion shared_memory_region =
+          base::UnsafeSharedMemoryRegion::Create(length);
+
+      if (!shared_memory_region.IsValid()) {
+        LOG(ERROR) << "Shared Memory Region is not valid";
+        return nullptr;
+      }
+
+      base::WritableSharedMemoryMapping map = shared_memory_region.Map();
+
+      if (!map.IsValid()) {
+        LOG(ERROR) << "WritableSharedMemoryMapping is not valid";
+        return nullptr;
+      }
+
+      mapped_data = map.GetMemoryAs<uint8_t>();
+      buffer->shared_memory_mapping = std::move(map);
+
+      base::subtle::PlatformSharedMemoryRegion platform_shared_memory =
+          base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+              std::move(shared_memory_region));
+
+      buffer->shm_pool.reset(wl_shm_create_pool(
+          globals_.shm.get(), platform_shared_memory.GetPlatformHandle().fd,
+          buffer->shared_memory_mapping.size()));
+    }
 
     buffer->buffer.reset(static_cast<wl_buffer*>(
         wl_shm_pool_create_buffer(buffer->shm_pool.get(), 0, size.width(),
@@ -759,12 +887,13 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateBuffer(
     buffer->sk_surface = SkSurface::MakeRasterDirect(
         SkImageInfo::Make(size.width(), size.height(), kColorType,
                           kOpaque_SkAlphaType),
-        static_cast<uint8_t*>(buffer->shared_memory->memory()), stride);
+        mapped_data, stride);
     DCHECK(buffer->sk_surface);
   }
 
-  wl_buffer_add_listener(buffer->buffer.get(), &g_buffer_listener,
-                         buffer.get());
+  wl_buffer_add_listener(buffer->buffer.get(),
+                         buffer_listener ? buffer_listener : &g_buffer_listener,
+                         data ? data : buffer.get());
   return buffer;
 }
 
@@ -787,10 +916,12 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
 
     buffer->params.reset(
         zwp_linux_dmabuf_v1_create_params(globals_.linux_dmabuf.get()));
-    for (size_t i = 0; i < gbm_bo_get_num_planes(buffer->bo.get()); ++i) {
+    for (size_t i = 0;
+         i < static_cast<size_t>(gbm_bo_get_plane_count(buffer->bo.get()));
+         ++i) {
       base::ScopedFD fd(gbm_bo_get_plane_fd(buffer->bo.get(), i));
-      uint32_t stride = gbm_bo_get_plane_stride(buffer->bo.get(), i);
-      uint32_t offset = gbm_bo_get_plane_offset(buffer->bo.get(), i);
+      uint32_t stride = gbm_bo_get_stride_for_plane(buffer->bo.get(), i);
+      uint32_t offset = gbm_bo_get_offset(buffer->bo.get(), i);
       zwp_linux_buffer_params_v1_add(buffer->params.get(), fd.get(), i, offset,
                                      stride, 0, 0);
     }
@@ -801,22 +932,23 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
     buffer->buffer.reset(zwp_linux_buffer_params_v1_create_immed(
         buffer->params.get(), size.width(), size.height(), drm_format, flags));
 
-    if (gbm_bo_get_num_planes(buffer->bo.get()) != 1)
+    if (gbm_bo_get_plane_count(buffer->bo.get()) != 1)
       return buffer;
 
-    EGLint khr_image_attrs[] = {EGL_DMA_BUF_PLANE0_FD_EXT,
-                                fd.get(),
-                                EGL_WIDTH,
-                                size.width(),
-                                EGL_HEIGHT,
-                                size.height(),
-                                EGL_LINUX_DRM_FOURCC_EXT,
-                                drm_format,
-                                EGL_DMA_BUF_PLANE0_PITCH_EXT,
-                                gbm_bo_get_plane_stride(buffer->bo.get(), 0),
-                                EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-                                0,
-                                EGL_NONE};
+    EGLint khr_image_attrs[] = {
+        EGL_DMA_BUF_PLANE0_FD_EXT,
+        fd.get(),
+        EGL_WIDTH,
+        size.width(),
+        EGL_HEIGHT,
+        size.height(),
+        EGL_LINUX_DRM_FOURCC_EXT,
+        drm_format,
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,
+        gbm_bo_get_stride_for_plane(buffer->bo.get(), 0),
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+        0,
+        EGL_NONE};
     EGLImageKHR image = eglCreateImageKHR(
         eglGetCurrentDisplay(), EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
         nullptr /* no client buffer */, khr_image_attrs);
@@ -843,8 +975,25 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
     DCHECK(buffer->sk_surface);
 
 #if defined(USE_VULKAN)
+    if (!vk_implementation_)
+      return buffer;
     // TODO(dcastagna): remove this hack as soon as the extension
     // "VK_EXT_external_memory_dma_buf" is available.
+#define VK_STRUCTURE_TYPE_DMA_BUF_IMAGE_CREATE_INFO_INTEL 1024
+    typedef struct VkDmaBufImageCreateInfo_ {
+      VkStructureType
+          sType;  // Must be VK_STRUCTURE_TYPE_DMA_BUF_IMAGE_CREATE_INFO_INTEL
+      const void* pNext;  // Pointer to next structure.
+      int fd;
+      VkFormat format;
+      VkExtent3D extent;  // Depth must be 1
+      uint32_t strideInBytes;
+    } VkDmaBufImageCreateInfo;
+    typedef VkResult(VKAPI_PTR * PFN_vkCreateDmaBufImageINTEL)(
+        VkDevice device, const VkDmaBufImageCreateInfo* pCreateInfo,
+        const VkAllocationCallbacks* pAllocator, VkDeviceMemory* pMem,
+        VkImage* pImage);
+
     PFN_vkCreateDmaBufImageINTEL create_dma_buf_image_intel =
         reinterpret_cast<PFN_vkCreateDmaBufImageINTEL>(
             vkGetDeviceProcAddr(vk_device_->get(), "vkCreateDmaBufImageINTEL"));
@@ -886,8 +1035,8 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
         .components =
             {
                 .r = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
                 .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
                 .a = VK_COMPONENT_SWIZZLE_IDENTITY,
             },
         .subresourceRange =

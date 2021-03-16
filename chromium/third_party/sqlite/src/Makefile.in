@@ -422,6 +422,7 @@ TESTSRC = \
   $(TOP)/src/test_tclsh.c \
   $(TOP)/src/test_tclvar.c \
   $(TOP)/src/test_thread.c \
+  $(TOP)/src/test_vdbecov.c \
   $(TOP)/src/test_vfs.c \
   $(TOP)/src/test_windirent.c \
   $(TOP)/src/test_window.c \
@@ -608,7 +609,6 @@ SHELL_OPT += -DSQLITE_ENABLE_DBPAGE_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_DBSTAT_VTAB
 SHELL_OPT += -DSQLITE_ENABLE_OFFSET_SQL_FUNC
 SHELL_OPT += -DSQLITE_ENABLE_DESERIALIZE
-SHELL_OPT += -DSQLITE_INTROSPECTION_PRAGMAS
 FUZZERSHELL_OPT = -DSQLITE_ENABLE_JSON1
 FUZZCHECK_OPT = -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_MEMSYS5 -DSQLITE_OSS_FUZZ
 FUZZCHECK_OPT += -DSQLITE_MAX_MEMORY=50000000
@@ -1050,12 +1050,9 @@ opcodes.h:	parse.h $(TOP)/src/vdbe.c $(TOP)/tool/mkopcodeh.tcl
 #
 parse.h:	parse.c
 
-parse.c:	$(TOP)/src/parse.y lemon$(BEXE) $(TOP)/tool/addopcodes.tcl
+parse.c:	$(TOP)/src/parse.y lemon$(BEXE)
 	cp $(TOP)/src/parse.y .
-	rm -f parse.h
-	./lemon$(BEXE) $(OPT_FEATURE_FLAGS) $(OPTS) parse.y
-	mv parse.h parse.h.temp
-	$(TCLSH_CMD) $(TOP)/tool/addopcodes.tcl parse.h.temp >parse.h
+	./lemon$(BEXE) $(OPT_FEATURE_FLAGS) $(OPTS) -S parse.y
 
 sqlite3.h:	$(TOP)/src/sqlite.h.in $(TOP)/manifest mksourceid$(BEXE) $(TOP)/VERSION
 	$(TCLSH_CMD) $(TOP)/tool/mksqlite3h.tcl $(TOP) >sqlite3.h
@@ -1149,10 +1146,10 @@ fts3_write.lo:	$(TOP)/ext/fts3/fts3_write.c $(HDR) $(EXTHDR)
 rtree.lo:	$(TOP)/ext/rtree/rtree.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) -DSQLITE_CORE -c $(TOP)/ext/rtree/rtree.c
 
-sqlite3session.lo:	$(TOP)/ext/userauth/userauth.c $(HDR) $(EXTHDR)
+userauth.lo:	$(TOP)/ext/userauth/userauth.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) -DSQLITE_CORE -c $(TOP)/ext/userauth/userauth.c
 
-userauth.lo:	$(TOP)/ext/session/sqlite3session.c $(HDR) $(EXTHDR)
+sqlite3session.lo:	$(TOP)/ext/session/sqlite3session.c $(HDR) $(EXTHDR)
 	$(LTCOMPILE) -DSQLITE_CORE -c $(TOP)/ext/session/sqlite3session.c
 
 json1.lo:	$(TOP)/ext/misc/json1.c
@@ -1180,10 +1177,10 @@ FTS5_SRC = \
    $(TOP)/ext/fts5/fts5_varint.c \
    $(TOP)/ext/fts5/fts5_vocab.c  \
 
-fts5parse.c:	$(TOP)/ext/fts5/fts5parse.y lemon
+fts5parse.c:	$(TOP)/ext/fts5/fts5parse.y lemon$(BEXE)
 	cp $(TOP)/ext/fts5/fts5parse.y .
 	rm -f fts5parse.h
-	./lemon$(BEXE) $(OPTS) fts5parse.y
+	./lemon$(BEXE) $(OPTS) -S fts5parse.y
 
 fts5parse.h: fts5parse.c
 
@@ -1245,10 +1242,6 @@ fuzztest:	fuzzcheck$(TEXE) $(FUZZDATA) sessionfuzz$(TEXE) $(TOP)/test/sessionfuz
 	./fuzzcheck$(TEXE) $(FUZZDATA)
 	./sessionfuzz$(TEXE) run $(TOP)/test/sessionfuzz-data1.db
 
-fastfuzztest:	fuzzcheck$(TEXE) $(FUZZDATA) sessionfuzz$(TEXE) $(TOP)/test/sessionfuzz-data1.db
-	./fuzzcheck$(TEXE) --limit-mem 100M $(FUZZDATA)
-	./sessionfuzz$(TEXE) run $(TOP)/test/sessionfuzz-data1.db
-
 valgrindfuzz:	fuzzcheck$(TEXT) $(FUZZDATA) sessionfuzz$(TEXE) $(TOP)/test/sessionfuzz-data1.db
 	valgrind ./fuzzcheck$(TEXE) --cell-size-check --limit-mem 10M --timeout 600 $(FUZZDATA)
 	valgrind ./sessionfuzz$(TEXE) run $(TOP)/test/sessionfuzz-data1.db
@@ -1266,7 +1259,7 @@ quicktest:	./testfixture$(TEXE)
 # This is the common case.  Run many tests that do not take too long,
 # including fuzzcheck, sqlite3_analyzer, and sqldiff tests.
 #
-test:	fastfuzztest sourcetest $(TESTPROGS) tcltest
+test:	fuzztest sourcetest $(TESTPROGS) tcltest
 
 # Run a test using valgrind.  This can take a really long time
 # because valgrind is so much slower than a native machine.
@@ -1374,8 +1367,9 @@ loadfts$(EXE): $(TOP)/tool/loadfts.c libsqlite3.la
 # releasetest.tcl script.
 #
 VALIDIDS=' sqlite3(changeset|changegroup|session)?_'
-checksymbols: sqlite3.lo
-	nm -g --defined-only sqlite3.lo | egrep -v $(VALIDIDS); test $$? -ne 0
+checksymbols: sqlite3.o
+	nm -g --defined-only sqlite3.o
+	nm -g --defined-only sqlite3.o | egrep -v $(VALIDIDS); test $$? -ne 0
 	echo '0 errors out of 1 tests'
 
 # Build the amalgamation-autoconf package.  The amalamgation-tarball target builds
@@ -1424,7 +1418,7 @@ install:	sqlite3$(TEXE) lib_install sqlite3.h sqlite3.pc ${HAVE_TCL:1=tcl_instal
 	$(INSTALL) -m 0644 sqlite3.pc $(DESTDIR)$(pkgconfigdir)
 
 pkgIndex.tcl:
-	echo 'package ifneeded sqlite3 $(RELEASE) [list load $(TCLLIBDIR)/libtclsqlite3$(SHLIB_SUFFIX) sqlite3]' > $@
+	echo 'package ifneeded sqlite3 $(RELEASE) [list load [file join $$dir libtclsqlite3[info sharedlibextension]] sqlite3]' > $@
 tcl_install:	lib_install libtclsqlite3.la pkgIndex.tcl
 	$(INSTALL) -d $(DESTDIR)$(TCLLIBDIR)
 	$(LTINSTALL) libtclsqlite3.la $(DESTDIR)$(TCLLIBDIR)

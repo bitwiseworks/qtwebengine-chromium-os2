@@ -137,7 +137,7 @@ static int cidxDisconnect(sqlite3_vtab *pVtab){
 **
 **   No parameters:         A degenerate plan.  The result is zero rows.
 **   1 Parameter:           Scan all of the index starting with first entry
-**   2 parameters:          Scan the index starting after the "after_key".
+**   2 parameters:          Scan the index starting after the "after_key".    
 **
 ** Provide successively smaller costs for each of these plans to encourage
 ** the query planner to select the one with the most parameters.
@@ -304,8 +304,8 @@ static int cidx_isspace(char c){
 }
 
 static int cidx_isident(char c){
-  return c<0
-    || (c>='0' && c<='9') || (c>='a' && c<='z')
+  return c<0 
+    || (c>='0' && c<='9') || (c>='a' && c<='z') 
     || (c>='A' && c<='Z') || c=='_';
 }
 
@@ -333,7 +333,7 @@ static int cidx_isident(char c){
 ** cleared.
 */
 static int cidxFindNext(
-  const char *zIn,
+  const char *zIn, 
   const char **pzOut,
   int *pbDoNotTrim                /* OUT: True if prev is -- comment */
 ){
@@ -369,9 +369,9 @@ static int cidxFindNext(
           return CIDX_PARSE_CLOSE;
         case ',':
           return CIDX_PARSE_COMMA;
-
-        case '"':
-        case '\'':
+  
+        case '"': 
+        case '\'': 
         case '`': {
           char q = *z;
           z++;
@@ -384,11 +384,11 @@ static int cidxFindNext(
           }
           break;
         }
-
+  
         case '[':
           while( *z++!=']' );
           break;
-
+  
         default:
           z++;
           break;
@@ -470,9 +470,9 @@ static int cidxLookupIndex(
 
   sqlite3_stmt *pFindTab = 0;
   sqlite3_stmt *pInfo = 0;
-
+    
   /* Find the table for this index. */
-  pFindTab = cidxPrepare(&rc, pCsr,
+  pFindTab = cidxPrepare(&rc, pCsr, 
       "SELECT tbl_name, sql FROM sqlite_master WHERE name=%Q AND type='index'",
       zIdx
   );
@@ -518,7 +518,7 @@ static int cidxLookupIndex(
   if( rc==SQLITE_OK && zTab==0 ){
     rc = SQLITE_ERROR;
   }
-
+  
   if( rc!=SQLITE_OK ){
     sqlite3_free(zTab);
     cidxFreeIndex(pIdx);
@@ -531,9 +531,9 @@ static int cidxLookupIndex(
 }
 
 static int cidxDecodeAfter(
-  CidxCursor *pCsr,
-  int nCol,
-  const char *zAfterKey,
+  CidxCursor *pCsr, 
+  int nCol, 
+  const char *zAfterKey, 
   char ***pazAfter
 ){
   char **azAfter;
@@ -574,7 +574,7 @@ static int cidxDecodeAfter(
       /* Check numbers */
       else{
         azAfter[i] = p;
-        while( (*p>='0' && *p<='9')
+        while( (*p>='0' && *p<='9') 
             || *p=='.' || *p=='+' || *p=='-' || *p=='e' || *p=='E'
         ){
           p++;
@@ -607,7 +607,7 @@ static char *cidxWhere(
   int i;
 
   for(i=0; i<iGt; i++){
-    zRet = cidxMprintf(pRc, "%z%s(%s) IS %s", zRet,
+    zRet = cidxMprintf(pRc, "%z%s(%s) IS %s", zRet, 
         zSep, aCol[i].zExpr, (azAfter[i] ? azAfter[i] : "NULL")
     );
     zSep = " AND ";
@@ -617,8 +617,8 @@ static char *cidxWhere(
     zRet = cidxMprintf(pRc, "%z%s(%s) IS NULL", zRet, zSep, aCol[iGt].zExpr);
   }
   else if( azAfter[iGt] ){
-    zRet = cidxMprintf(pRc, "%z%s(%s) %s %s", zRet,
-        zSep, aCol[iGt].zExpr, (aCol[iGt].bDesc ? "<" : ">"),
+    zRet = cidxMprintf(pRc, "%z%s(%s) %s %s", zRet, 
+        zSep, aCol[iGt].zExpr, (aCol[iGt].bDesc ? "<" : ">"), 
         azAfter[iGt]
     );
   }else{
@@ -667,7 +667,7 @@ static char *cidxColumnList(
 
         case CIDX_CLIST_SUBWHERE:
           if( p->bKey==0 ){
-            zRet = cidxMprintf(pRc, "%z%s%s IS i.i%d", zRet,
+            zRet = cidxMprintf(pRc, "%z%s%s IS i.i%d", zRet, 
                 zSep, p->zExpr, i
             );
             zSep = " AND ";
@@ -676,7 +676,7 @@ static char *cidxColumnList(
 
         case CIDX_CLIST_SUBEXPR:
           if( p->bKey==1 ){
-            zRet = cidxMprintf(pRc, "%z%s%s IS i.i%d", zRet,
+            zRet = cidxMprintf(pRc, "%z%s%s IS i.i%d", zRet, 
                 zSep, p->zExpr, i
             );
             zSep = " AND ";
@@ -733,8 +733,8 @@ int cidxGenerateScanSql(
       *pzSqlOut = cidxMprintf(&rc,
           "SELECT (SELECT %s FROM %Q AS t WHERE %s), %s "
           "FROM (SELECT %s FROM %Q INDEXED BY %Q %s%sORDER BY %s) AS i",
-          zSubExpr, zTab, zSubWhere, zCurrentKey,
-          zSrcList, zTab, zIdxName,
+          zSubExpr, zTab, zSubWhere, zCurrentKey, 
+          zSrcList, zTab, zIdxName, 
           (pIdx->zWhere ? "WHERE " : ""), (pIdx->zWhere ? pIdx->zWhere : ""),
           zOrderBy
       );
@@ -742,8 +742,8 @@ int cidxGenerateScanSql(
       const char *zSep = "";
       char *zSql;
       int i;
-
-      zSql = cidxMprintf(&rc,
+  
+      zSql = cidxMprintf(&rc, 
           "SELECT (SELECT %s FROM %Q WHERE %s), %s FROM (",
           zSubExpr, zTab, zSubWhere, zCurrentKey
       );
@@ -756,7 +756,7 @@ int cidxGenerateScanSql(
               "%sSELECT * FROM ("
                 "SELECT %s FROM %Q INDEXED BY %Q WHERE %s%s%z ORDER BY %s"
               ")",
-              zSql, zSep, zSrcList, zTab, zIdxName,
+              zSql, zSep, zSrcList, zTab, zIdxName, 
               pIdx->zWhere ? pIdx->zWhere : "",
               pIdx->zWhere ? " AND " : "",
               zWhere, zOrderBy
@@ -781,11 +781,11 @@ int cidxGenerateScanSql(
 }
 
 
-/*
+/* 
 ** Position a cursor back to the beginning.
 */
 static int cidxFilter(
-  sqlite3_vtab_cursor *pCursor,
+  sqlite3_vtab_cursor *pCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -826,12 +826,12 @@ static int cidxFilter(
   return rc;
 }
 
-/*
+/* 
 ** Return a column value.
 */
 static int cidxColumn(
-  sqlite3_vtab_cursor *pCursor,
-  sqlite3_context *ctx,
+  sqlite3_vtab_cursor *pCursor, 
+  sqlite3_context *ctx, 
   int iCol
 ){
   CidxCursor *pCsr = (CidxCursor*)pCursor;
@@ -918,8 +918,8 @@ static int ciInit(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_checkindex_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   SQLITE_EXTENSION_INIT2(pApi);

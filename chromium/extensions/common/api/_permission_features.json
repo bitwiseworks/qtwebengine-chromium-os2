@@ -199,7 +199,23 @@
     "extension_types": ["platform_app"],
     "platforms": ["chromeos"]
   },
+  "crashReportPrivate": {
+    "channel": "dev",
+    "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
+    "whitelist": [
+      "0EA6B717932AD64C469C1CCB6911457733295907",  // Secure Shell App (stable)
+      "58B0C2968C335964D5433E89CA4D86628A0E3D4B",  // Secure Shell App (dev)
+      "3BC1ED0B3E6EFDC7BD4D3D1D75D44B52DEE0A226",  // Secure Shell Ext (stable)
+      "38C361D4A0726CE45D3572D65071B6BDB3092371",  // Secure Shell Ext (dev)
+      "06BE211D5F014BAB34BC22D9DDA09C63A81D828E"   // http://crbug.com/946241
+    ]
+  },
   "declarativeNetRequest": {
+    "channel": "beta",
+    "extension_types": ["extension"],
+    "min_manifest_version": 2
+  },
+  "declarativeNetRequestFeedback": {
     "channel": "beta",
     "extension_types": ["extension"],
     "min_manifest_version": 2
@@ -247,14 +263,6 @@
     "extension_types": ["extension", "platform_app"],
     "platforms": ["chromeos"]
   },
-  "extensionview": {
-    "channel": "stable",
-    "extension_types": ["platform_app"],
-    "whitelist": [
-      // Used in browser tests: http://crbug.com/515284
-      "BD2EB5085B5324203BCCC3DF3CF102B8AB850402"
-    ]
-  },
   "externally_connectable.all_urls": {
     "channel": "stable",
     "extension_types": [
@@ -294,9 +302,6 @@
       "2FC374607C2DF285634B67C64A2E356C607091C3",  // Quickoffice
       "3727DD3E564B6055387425027AD74C58784ACC15",  // Quickoffice internal
       "12E618C3C6E97495AAECF2AC12DEB082353241C6",  // QO component extension
-      "D5736E4B5CF695CB93A2FB57E4FDC6E5AFAB6FE2",  // http://crbug.com/312900
-      "D57DE394F36DC1C3220E7604C575D29C51A6C495",  // http://crbug.com/319444
-      "3F65507A3B39259B38C8173C6FFA3D12DF64CCE9",  // http://crbug.com/371562
       "2B6C6A4A5940017146F3E58B7F90116206E84685",  // http://crbug.com/642141
       "B6C2EFAB3EC3BF6EF03701408B6B09A67B2D0069",  // http://crbug.com/642141
       "96FF2FFA5C9173C76D47184B3E86D267B37781DE",  // http://crbug.com/642141
@@ -318,10 +323,7 @@
     "whitelist": [
       "2FC374607C2DF285634B67C64A2E356C607091C3",  // Quickoffice
       "3727DD3E564B6055387425027AD74C58784ACC15",  // Quickoffice internal
-      "12E618C3C6E97495AAECF2AC12DEB082353241C6",  // QO component extension
-      "D5736E4B5CF695CB93A2FB57E4FDC6E5AFAB6FE2",  // http://crbug.com/312900
-      "D57DE394F36DC1C3220E7604C575D29C51A6C495",  // http://crbug.com/319444
-      "3F65507A3B39259B38C8173C6FFA3D12DF64CCE9"   // http://crbug.com/371562
+      "12E618C3C6E97495AAECF2AC12DEB082353241C6"  // QO component extension
     ]
   }],
   "fileSystem.requestDownloads": {
@@ -415,9 +417,6 @@
       "7AE714FFD394E073F0294CFA134C9F91DB5FBAA4",  // CCD Development
       "C7DA3A55C2355F994D3FDDAD120B426A0DF63843",  // CCD Testing
       "75E3CFFFC530582C583E4690EF97C70B9C8423B7",  // CCD Release
-      "D5736E4B5CF695CB93A2FB57E4FDC6E5AFAB6FE2",  // http://crbug.com/312900.
-      "D57DE394F36DC1C3220E7604C575D29C51A6C495",  // http://crbug.com/319444.
-      "3F65507A3B39259B38C8173C6FFA3D12DF64CCE9",  // http://crbug.com/371562.
       "06BE211D5F014BAB34BC22D9DDA09C63A81D828E",  // Official XKB virtual kbd
       "CFBF7EE448FA48960FFDA7CEB30F7A21B26AA981",  // Official m17n virtual kbd
       "B9EF10DDFEA11EF77873CC5009809E5037FC4C7A",  // Google input tools
@@ -437,6 +436,10 @@
       "97B23E01B2AA064E8332EE43A7A85C628AADC3F2",  // Sample app_remoting app.
       "63ED55E43214C211F82122ED56407FF1A807F2A3",  // Media Router Dev
       "226CF815E39A363090A1E547D53063472B8279FA",  // Media Router Stable
+      "0EA6B717932AD64C469C1CCB6911457733295907",  // Secure Shell App (stable)
+      "58B0C2968C335964D5433E89CA4D86628A0E3D4B",  // Secure Shell App (dev)
+      "3BC1ED0B3E6EFDC7BD4D3D1D75D44B52DEE0A226",  // Secure Shell Ext (stable)
+      "38C361D4A0726CE45D3572D65071B6BDB3092371",  // Secure Shell Ext (dev)
       // TODO (ntang) Remove the following 2 hashes by 12/31/2017.
       "B620CF4203315F9F2E046EDED22C7571A935958D",  // http://crbug.com/510270
       "B206D8716769728278D2D300349C6CB7D7DE2EF9",  // http://crbug.com/510270
@@ -448,7 +451,10 @@
       "75C7F4B720314B6CB1B5817CD86089DB95CD2461",  // Chromevox on chromecast
       "46578A13607D38F1DC8E280C4F499FB0A2F9565C",  // http://crbug.com/819404
       "898FB5A39687D210766B8998BA4530B99C9E6586",  // http://crbug.com/819404
-      "82F30B65397BC3E4ADE627BBD857AB8A58210648"   // http://crbug.com/819404
+      "82F30B65397BC3E4ADE627BBD857AB8A58210648",  // http://crbug.com/819404
+      "A3E3DE9E9F16B41D4A2FAD106BD6CA76B94A0C94",  // http://crbug.com/932466
+      "B41E7F08E1179CC03CBD1F49E57CF353A40ADE07",  // http://crbug.com/932466
+      "C74B2AF138F9EDECD04D0965AB36CA66C8290466"   // http://crbug.com/957772
     ]
   },
   "nativeMessaging": {
@@ -469,7 +475,12 @@
     "session_types": ["kiosk.autolaunched"]
   }, {
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
+    "extension_types": [
+      "extension",
+      "legacy_packaged_app",
+      "platform_app",
+      "login_screen_extension"
+    ],
     "platforms": ["chromeos", "mac", "win", "linux"],
     "whitelist": [
       "0DE0F05680A4A056BCEC864ED8DDA84296F82B40",  // http://crbug.com/434651
@@ -495,7 +506,15 @@
       "61FF4757F9420B62B19BA5C96084649339DB31F5",  // http://crbug.com/731941
       "6FB7E1B6C0247B687AC14772E87A117F5F5E4497",  // http://crbug.com/731941
       "9834387FDA1F66A1B5CA06CB442137B556F12F2A",  // http://crbug.com/772346
-      "A9A9FC0228ADF541F0334F22BEFB8F9C245B21D7"   // http://crbug.com/839189
+      "A9A9FC0228ADF541F0334F22BEFB8F9C245B21D7",  // http://crbug.com/839189
+      // TODO(crbug.com/1075877, hendrich) remove this when
+      // enterprise.networkingAttributes has landed
+      "E219EE36A3B40612FD2A8CD6937B03EF0C97D3FE", // Imprivata (login screen) crbug.com/1075877
+      "4DBFC1C52D6660DD90791976DF7FEF7B3D360509", // Imprivata (login screen) crbug.com/1075877
+      "CDA6A10BE50CE65C59B766D0CE6A27E8E0A1533F", // Imprivata (login screen) crbug.com/1075877
+      "A24DE1B21A67E25FB62AC8491642038FE25DA75B", // Imprivata (in-session) crbug.com/1075877
+      "6B25164FFE2BADB5F1DBBD301CC022170267022D", // Imprivata (in-session) crbug.com/1075877
+      "4D15F9AFCF54E56F0A6E06D22DD15F133DCF0882"  // Imprivata (in-session) crbug.com/1075877
     ]
   }],
   "networkingPrivate": {
@@ -566,11 +585,33 @@
       ]
     }
   ],
-  "storage": {
-    "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
-    "min_manifest_version": 2
-  },
+  "storage": [
+    {
+      "channel": "stable",
+      "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
+      "min_manifest_version": 2
+    },
+    {
+      "channel": "stable",
+      "extension_types": ["login_screen_extension"],
+      "min_manifest_version": 2,
+      "whitelist": [
+        "7FE4A999359A456C4B0FB7B7AD85CEA29CA50519",  // Login screen APIs test extension
+        "E219EE36A3B40612FD2A8CD6937B03EF0C97D3FE", // Imprivata (login screen) crbug.com/1065112
+        "4DBFC1C52D6660DD90791976DF7FEF7B3D360509", // Imprivata (login screen) crbug.com/1065112
+        "CDA6A10BE50CE65C59B766D0CE6A27E8E0A1533F", // Imprivata (login screen) crbug.com/1065112
+        "D85454743B32D9F5ABF3E5F18DF78809F3A0ABD4", // Imprivata (login screen) crbug.com/1065112
+        "04569B963251EB28C0906099668D98EE65ECA2D8", // Imprivata (login screen) crbug.com/1065112
+        "7BF5B69C3ACA9E6ACA5C480661B8073EB9FA32A9", // Imprivata (login screen) crbug.com/1065112
+        "5F2EF8E9F7E975090278D6A0AD039860430C5684", // Imprivata (login screen) crbug.com/1065112
+        "97A4DC8AFC1FCF665C71B624A55675C297AB256C", // Imprivata (login screen) crbug.com/1065112
+        "A00EB72B456C374F1EA86C09833C7DBB6CD95CAE", // Imprivata (login screen) crbug.com/1065112
+        "51DDBADA37EF4D25AD03CB1BB6451799456FE183", // Imprivata (login screen) crbug.com/1065112
+        "DD97CAE4D8658003658140109BC119188A19A5B8", // Imprivata (login screen) crbug.com/1065112
+        "320857126E2180A5751AA384B7B7332A4964BD8C"  // Imprivata (login screen) crbug.com/1065112
+      ]
+    }
+  ],
   "system.cpu": [
     {
       "channel": "stable",
@@ -747,8 +788,14 @@
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app"]
    },
-  "webRequestBlocking": {
+  "webRequestBlocking": [{
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
-  }
+    "extension_types": ["extension", "legacy_packaged_app"],
+    "max_manifest_version": 2
+  }, {
+    "channel": "stable",
+    "extension_types": ["extension"],
+    "location": "policy",
+    "min_manifest_version": 3
+  }]
 }

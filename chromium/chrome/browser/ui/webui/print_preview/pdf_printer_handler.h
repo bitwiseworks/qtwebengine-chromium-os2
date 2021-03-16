@@ -23,41 +23,32 @@ namespace content {
 class WebContents;
 }
 
-namespace gfx {
-class Size;
-}
-
-namespace printing {
-class StickySettings;
-}
-
 class GURL;
 class Profile;
 
 namespace printing {
+
+class PrintPreviewStickySettings;
 
 class PdfPrinterHandler : public PrinterHandler,
                           public ui::SelectFileDialog::Listener {
  public:
   PdfPrinterHandler(Profile* profile,
                     content::WebContents* preview_web_contents,
-                    StickySettings* sticky_settings);
+                    PrintPreviewStickySettings* sticky_settings);
 
   ~PdfPrinterHandler() override;
 
   // PrinterHandler implementation
   void Reset() override;
   // Required by PrinterHandler implementation but should never be called.
-  void StartGetPrinters(const AddedPrintersCallback& added_printers_callback,
+  void StartGetPrinters(AddedPrintersCallback added_printers_callback,
                         GetPrintersDoneCallback done_callback) override;
   void StartGetCapability(const std::string& destination_id,
                           GetCapabilityCallback callback) override;
-  void StartPrint(const std::string& destination_id,
-                  const std::string& capability,
-                  const base::string16& job_title,
-                  const std::string& ticket_json,
-                  const gfx::Size& page_size,
-                  const scoped_refptr<base::RefCountedMemory>& print_data,
+  void StartPrint(const base::string16& job_title,
+                  base::Value settings,
+                  scoped_refptr<base::RefCountedMemory> print_data,
                   PrintCallback callback) override;
 
   // SelectFileDialog::Listener implementation.
@@ -67,7 +58,7 @@ class PdfPrinterHandler : public PrinterHandler,
   void FileSelectionCanceled(void* params) override;
 
   // Sets |pdf_file_saved_closure_| to |closure|.
-  void SetPdfSavedClosureForTesting(const base::Closure& closure);
+  void SetPdfSavedClosureForTesting(base::OnceClosure closure);
 
   // Exposed for testing.
   static base::FilePath GetFileNameForPrintJobTitle(
@@ -98,7 +89,7 @@ class PdfPrinterHandler : public PrinterHandler,
                            const base::FilePath& directory);
 
   Profile* const profile_;
-  StickySettings* const sticky_settings_;
+  PrintPreviewStickySettings* const sticky_settings_;
 
   // Holds the path to the print to pdf request. It is empty if no such request
   // exists.
@@ -106,7 +97,7 @@ class PdfPrinterHandler : public PrinterHandler,
 
   // Notifies tests that want to know if the PDF has been saved. This doesn't
   // notify the test if it was a successful save, only that it was attempted.
-  base::Closure pdf_file_saved_closure_;
+  base::OnceClosure pdf_file_saved_closure_;
 
   // The data to print
   scoped_refptr<base::RefCountedMemory> print_data_;
@@ -114,7 +105,7 @@ class PdfPrinterHandler : public PrinterHandler,
   // The callback to call when complete.
   PrintCallback print_callback_;
 
-  base::WeakPtrFactory<PdfPrinterHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<PdfPrinterHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PdfPrinterHandler);
 };

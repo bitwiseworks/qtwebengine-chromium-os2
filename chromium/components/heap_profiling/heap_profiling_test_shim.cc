@@ -5,9 +5,9 @@
 #include "components/heap_profiling/heap_profiling_test_shim.h"
 
 #include "base/android/jni_string.h"
+#include "components/heap_profiling/jni_headers/HeapProfilingTestShim_jni.h"
 #include "components/heap_profiling/test_driver.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
-#include "jni/HeapProfilingTestShim_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -19,8 +19,7 @@ static jlong JNI_HeapProfilingTestShim_Init(JNIEnv* env,
 }
 
 HeapProfilingTestShim::HeapProfilingTestShim(JNIEnv* env, jobject obj) {}
-
-HeapProfilingTestShim::~HeapProfilingTestShim() {}
+HeapProfilingTestShim::~HeapProfilingTestShim() = default;
 
 void HeapProfilingTestShim::Destroy(JNIEnv* env,
                                     const JavaParamRef<jobject>& obj) {
@@ -42,7 +41,5 @@ jboolean HeapProfilingTestShim::RunTestForMode(
   options.stack_mode = heap_profiling::ConvertStringToStackMode(
       base::android::ConvertJavaStringToUTF8(stack_mode));
   options.profiling_already_started = !dynamically_start_profiling;
-  options.should_sample = should_sample;
-  options.sample_everything = sample_everything;
   return driver.RunTest(options);
 }

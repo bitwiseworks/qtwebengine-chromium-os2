@@ -45,11 +45,7 @@ struct RtcpTimeData;
 // Following the initialization of either audio or video an initialization
 // status will be sent via this callback.
 using CastTransportStatusCallback =
-    base::Callback<void(CastTransportStatus status)>;
-
-using BulkRawEventsCallback =
-    base::Callback<void(std::unique_ptr<std::vector<FrameEvent>>,
-                        std::unique_ptr<std::vector<PacketEvent>>)>;
+    base::RepeatingCallback<void(CastTransportStatus status)>;
 
 // Interface to handle received RTCP messages on RTP sender.
 class RtcpObserver {
@@ -76,7 +72,7 @@ class CastTransport {
   // from CastTransport.
   class Client {
    public:
-    virtual ~Client(){};
+    virtual ~Client() {}
 
     // Audio and Video transport status change is reported on this callback.
     virtual void OnStatusChanged(CastTransportStatus status) = 0;

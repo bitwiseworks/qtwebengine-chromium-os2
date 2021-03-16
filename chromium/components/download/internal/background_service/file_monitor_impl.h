@@ -33,23 +33,23 @@ class FileMonitorImpl : public FileMonitor {
   ~FileMonitorImpl() override;
 
   // FileMonitor implementation.
-  void Initialize(const InitCallback& callback) override;
+  void Initialize(InitCallback callback) override;
   void DeleteUnknownFiles(
       const Model::EntryList& known_entries,
       const std::vector<DriverEntry>& known_driver_entries) override;
   void CleanupFilesForCompletedEntries(
       const Model::EntryList& entries,
-      const base::Closure& completion_callback) override;
+      base::OnceClosure completion_callback) override;
   void DeleteFiles(const std::set<base::FilePath>& files_to_remove,
                    stats::FileCleanupReason reason) override;
-  void HardRecover(const InitCallback& callback) override;
+  void HardRecover(InitCallback callback) override;
 
  private:
   const base::FilePath download_file_dir_;
   const base::TimeDelta file_keep_alive_time_;
 
   scoped_refptr<base::SequencedTaskRunner> file_thread_task_runner_;
-  base::WeakPtrFactory<FileMonitorImpl> weak_factory_;
+  base::WeakPtrFactory<FileMonitorImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FileMonitorImpl);
 };

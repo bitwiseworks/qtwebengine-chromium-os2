@@ -25,7 +25,7 @@ ViewportScrollCallback::ViewportScrollCallback(
 
 ViewportScrollCallback::~ViewportScrollCallback() = default;
 
-void ViewportScrollCallback::Trace(blink::Visitor* visitor) {
+void ViewportScrollCallback::Trace(Visitor* visitor) {
   visitor->Trace(browser_controls_);
   visitor->Trace(overscroll_controller_);
   visitor->Trace(root_frame_viewport_);
@@ -35,7 +35,8 @@ void ViewportScrollCallback::Trace(blink::Visitor* visitor) {
 bool ViewportScrollCallback::ShouldScrollBrowserControls(
     const ScrollOffset& delta,
     ScrollGranularity granularity) const {
-  if (granularity != kScrollByPixel && granularity != kScrollByPrecisePixel)
+  if (granularity != ScrollGranularity::kScrollByPixel &&
+      granularity != ScrollGranularity::kScrollByPrecisePixel)
     return false;
 
   if (!root_frame_viewport_)
@@ -58,8 +59,7 @@ bool ViewportScrollCallback::ScrollBrowserControls(ScrollState& state) {
       browser_controls_->ScrollBegin();
 
     FloatSize delta(state.deltaX(), state.deltaY());
-    ScrollGranularity granularity =
-        ScrollGranularity(static_cast<int>(state.deltaGranularity()));
+    ScrollGranularity granularity = state.delta_granularity();
     if (ShouldScrollBrowserControls(delta, granularity)) {
       FloatSize remaining_delta = browser_controls_->ScrollBy(delta);
       FloatSize consumed = delta - remaining_delta;
@@ -100,10 +100,10 @@ ScrollResult ViewportScrollCallback::PerformNativeScroll(ScrollState& state) {
   DCHECK(root_frame_viewport_);
 
   FloatSize delta(state.deltaX(), state.deltaY());
-  ScrollGranularity granularity =
-      ScrollGranularity(static_cast<int>(state.deltaGranularity()));
+  ScrollGranularity granularity = state.delta_granularity();
 
-  ScrollResult result = root_frame_viewport_->UserScroll(granularity, delta);
+  ScrollResult result = root_frame_viewport_->UserScroll(
+      granularity, delta, ScrollableArea::ScrollCallback());
 
   // The viewport consumes everything.
   // TODO(bokan): This isn't actually consuming everything but doing so breaks

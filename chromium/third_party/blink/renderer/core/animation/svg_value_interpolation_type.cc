@@ -31,21 +31,29 @@ class SVGValueNonInterpolableValue : public NonInterpolableValue {
 };
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(SVGValueNonInterpolableValue);
-DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(SVGValueNonInterpolableValue);
+template <>
+struct DowncastTraits<SVGValueNonInterpolableValue> {
+  static bool AllowFrom(const NonInterpolableValue* value) {
+    return value && AllowFrom(*value);
+  }
+  static bool AllowFrom(const NonInterpolableValue& value) {
+    return value.GetType() == SVGValueNonInterpolableValue::static_type_;
+  }
+};
 
 InterpolationValue SVGValueInterpolationType::MaybeConvertSVGValue(
     const SVGPropertyBase& value) const {
   SVGPropertyBase* referenced_value =
       const_cast<SVGPropertyBase*>(&value);  // Take ref.
   return InterpolationValue(
-      InterpolableList::Create(0),
+      std::make_unique<InterpolableList>(0),
       SVGValueNonInterpolableValue::Create(referenced_value));
 }
 
 SVGPropertyBase* SVGValueInterpolationType::AppliedSVGValue(
     const InterpolableValue&,
     const NonInterpolableValue* non_interpolable_value) const {
-  return ToSVGValueNonInterpolableValue(*non_interpolable_value).SvgValue();
+  return To<SVGValueNonInterpolableValue>(*non_interpolable_value).SvgValue();
 }
 
 }  // namespace blink

@@ -34,7 +34,7 @@ typedef struct XWMAContext {
     int64_t data_end;
 } XWMAContext;
 
-static int xwma_probe(AVProbeData *p)
+static int xwma_probe(const AVProbeData *p)
 {
     if (!memcmp(p->buf, "RIFF", 4) && !memcmp(p->buf + 8, "XWMA", 4))
         return AVPROBE_SCORE_MAX;
@@ -130,15 +130,15 @@ static int xwma_read_header(AVFormatContext *s)
             avpriv_request_sample(s, "Unexpected extradata (%d bytes)",
                                   st->codecpar->extradata_size);
         } else if (st->codecpar->codec_id == AV_CODEC_ID_WMAPRO) {
-            if (ff_alloc_extradata(st->codecpar, 18))
-                return AVERROR(ENOMEM);
+            if ((ret = ff_alloc_extradata(st->codecpar, 18)) < 0)
+                return ret;
 
             memset(st->codecpar->extradata, 0, st->codecpar->extradata_size);
             st->codecpar->extradata[ 0] = st->codecpar->bits_per_coded_sample;
             st->codecpar->extradata[14] = 224;
         } else {
-            if (ff_alloc_extradata(st->codecpar, 6))
-                return AVERROR(ENOMEM);
+            if ((ret = ff_alloc_extradata(st->codecpar, 6)) < 0)
+                return ret;
 
             memset(st->codecpar->extradata, 0, st->codecpar->extradata_size);
             /* setup extradata with our experimentally obtained value */

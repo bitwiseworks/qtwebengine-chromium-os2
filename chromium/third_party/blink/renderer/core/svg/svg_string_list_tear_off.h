@@ -33,6 +33,7 @@
 
 #include "third_party/blink/renderer/core/svg/properties/svg_property_tear_off.h"
 #include "third_party/blink/renderer/core/svg/svg_string_list.h"
+#include "third_party/blink/renderer/platform/bindings/v8_binding.h"
 
 namespace blink {
 
@@ -40,14 +41,6 @@ class SVGStringListTearOff : public SVGPropertyTearOff<SVGStringListBase> {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SVGStringListTearOff* Create(
-      SVGStringListBase* target,
-      SVGAnimatedPropertyBase* binding,
-      PropertyIsAnimValType property_is_anim_val) {
-    return MakeGarbageCollected<SVGStringListTearOff>(target, binding,
-                                                      property_is_anim_val);
-  }
-
   SVGStringListTearOff(SVGStringListBase*,
                        SVGAnimatedPropertyBase* binding,
                        PropertyIsAnimValType);
@@ -104,11 +97,12 @@ class SVGStringListTearOff : public SVGPropertyTearOff<SVGStringListBase> {
     return item;
   }
 
-  bool AnonymousIndexedSetter(uint32_t index,
-                              const String& item,
-                              ExceptionState& exception_state) {
+  IndexedPropertySetterResult AnonymousIndexedSetter(
+      uint32_t index,
+      const String& item,
+      ExceptionState& exception_state) {
     replaceItem(item, index, exception_state);
-    return true;
+    return IndexedPropertySetterResult::kIntercepted;
   }
 
   String removeItem(uint32_t index, ExceptionState& exception_state) {

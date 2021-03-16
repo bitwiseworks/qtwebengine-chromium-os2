@@ -63,10 +63,10 @@ void DhcpPacFileAdapterFetcher::Fetch(
   scoped_refptr<DhcpQuery> dhcp_query(ImplCreateDhcpQuery());
   task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&DhcpPacFileAdapterFetcher::DhcpQuery::GetPacURLForAdapter,
-                 dhcp_query.get(), adapter_name),
-      base::Bind(&DhcpPacFileAdapterFetcher::OnDhcpQueryDone, AsWeakPtr(),
-                 dhcp_query, traffic_annotation));
+      base::BindOnce(&DhcpPacFileAdapterFetcher::DhcpQuery::GetPacURLForAdapter,
+                     dhcp_query.get(), adapter_name),
+      base::BindOnce(&DhcpPacFileAdapterFetcher::OnDhcpQueryDone, AsWeakPtr(),
+                     dhcp_query, traffic_annotation));
 }
 
 void DhcpPacFileAdapterFetcher::Cancel() {
@@ -154,10 +154,11 @@ void DhcpPacFileAdapterFetcher::OnDhcpQueryDone(
   } else {
     state_ = STATE_WAIT_URL;
     script_fetcher_ = ImplCreateScriptFetcher();
-    script_fetcher_->Fetch(pac_url_, &pac_script_,
-                           base::Bind(&DhcpPacFileAdapterFetcher::OnFetcherDone,
-                                      base::Unretained(this)),
-                           traffic_annotation);
+    script_fetcher_->Fetch(
+        pac_url_, &pac_script_,
+        base::BindOnce(&DhcpPacFileAdapterFetcher::OnFetcherDone,
+                       base::Unretained(this)),
+        traffic_annotation);
   }
 }
 
@@ -214,7 +215,7 @@ std::string DhcpPacFileAdapterFetcher::GetPacURLFromDhcp(
   std::wstring adapter_name_wide = base::SysMultiByteToWide(adapter_name,
                                                             CP_ACP);
 
-  DHCPCAPI_PARAMS_ARRAY send_params = { 0, NULL };
+  DHCPCAPI_PARAMS_ARRAY send_params = {0, nullptr};
 
   DHCPCAPI_PARAMS wpad_params = { 0 };
   wpad_params.OptionId = 252;
@@ -245,14 +246,11 @@ std::string DhcpPacFileAdapterFetcher::GetPacURLFromDhcp(
     // (e.g. http://support.microsoft.com/kb/885270) so we won't take any
     // chances on non-standard, poorly documented usage.
     base::ScopedBlockingCall scoped_blocking_call(
-        base::BlockingType::MAY_BLOCK);
-    res = ::DhcpRequestParams(DHCPCAPI_REQUEST_SYNCHRONOUS,
-                              NULL,
-                              const_cast<LPWSTR>(adapter_name_wide.c_str()),
-                              NULL,
-                              send_params, request_params,
-                              result_buffer.get(), &result_buffer_size,
-                              NULL);
+        FROM_HERE, base::BlockingType::MAY_BLOCK);
+    res = ::DhcpRequestParams(
+        DHCPCAPI_REQUEST_SYNCHRONOUS, nullptr,
+        const_cast<LPWSTR>(adapter_name_wide.c_str()), nullptr, send_params,
+        request_params, result_buffer.get(), &result_buffer_size, nullptr);
     ++retry_count;
   } while (res == ERROR_MORE_DATA && retry_count <= 3);
 

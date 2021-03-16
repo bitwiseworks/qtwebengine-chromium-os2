@@ -53,9 +53,9 @@ static int dbHandleFromObj(Tcl_Interp *interp, Tcl_Obj *pObj, sqlite3 **pDb){
 ** The following code is copied byte-for-byte from the sessions module
 ** documentation.  It is used by some of the sessions modules tests to
 ** ensure that the example in the documentation does actually work.
-*/
+*/ 
 /*
-** Argument zSql points to a buffer containing an SQL script to execute
+** Argument zSql points to a buffer containing an SQL script to execute 
 ** against the database handle passed as the first argument. As well as
 ** executing the SQL script, this function collects a changeset recording
 ** all changes made to the "main" database file. Assuming no error occurs,
@@ -251,7 +251,7 @@ static int SQLITE_TCLAPI test_session_cmd(
     Tcl_WrongNumArgs(interp, 1, objv, "SUBCOMMAND ...");
     return TCL_ERROR;
   }
-  rc = Tcl_GetIndexFromObjStruct(interp,
+  rc = Tcl_GetIndexFromObjStruct(interp, 
       objv[1], aSub, sizeof(aSub[0]), "sub-command", 0, &iSub
   );
   if( rc!=TCL_OK ) return rc;
@@ -289,7 +289,7 @@ static int SQLITE_TCLAPI test_session_cmd(
         }
       }
       if( rc==SQLITE_OK ){
-        Tcl_SetObjResult(interp, Tcl_NewByteArrayObj(o.p, o.n));
+        Tcl_SetObjResult(interp, Tcl_NewByteArrayObj(o.p, o.n)); 
       }
       sqlite3_free(o.p);
       if( rc!=SQLITE_OK ){
@@ -324,7 +324,7 @@ static int SQLITE_TCLAPI test_session_cmd(
       Tcl_SetObjResult(interp, Tcl_NewBooleanObj(val));
       break;
     }
-
+            
     case 6: {      /* table_filter */
       if( p->pFilterScript ) Tcl_DecrRefCount(p->pFilterScript);
       p->interp = interp;
@@ -336,7 +336,7 @@ static int SQLITE_TCLAPI test_session_cmd(
 
     case 8: {      /* diff */
       char *zErr = 0;
-      rc = sqlite3session_diff(pSession,
+      rc = sqlite3session_diff(pSession, 
           Tcl_GetString(objv[2]),
           Tcl_GetString(objv[3]),
           &zErr
@@ -470,7 +470,7 @@ static int test_filter_handler(
   Tcl_IncrRefCount(pEval);
 
   if( TCL_OK!=Tcl_ListObjAppendElement(0, pEval, Tcl_NewStringObj(zTab, -1))
-   || TCL_OK!=Tcl_EvalObjEx(interp, pEval, TCL_EVAL_GLOBAL)
+   || TCL_OK!=Tcl_EvalObjEx(interp, pEval, TCL_EVAL_GLOBAL) 
    || TCL_OK!=Tcl_GetIntFromObj(interp, Tcl_GetObjResult(interp), &res)
   ){
     Tcl_BackgroundError(interp);
@@ -478,7 +478,7 @@ static int test_filter_handler(
 
   Tcl_DecrRefCount(pEval);
   return res;
-}
+}  
 
 static int test_conflict_handler(
   void *pCtx,                     /* Pointer to TestConflictHandler structure */
@@ -509,13 +509,13 @@ static int test_conflict_handler(
     /* Append the operation type. */
     Tcl_ListObjAppendElement(0, pEval, Tcl_NewStringObj(
         op==SQLITE_INSERT ? "INSERT" :
-        op==SQLITE_UPDATE ? "UPDATE" :
+        op==SQLITE_UPDATE ? "UPDATE" : 
         "DELETE", -1
     ));
-
+  
     /* Append the table name. */
     Tcl_ListObjAppendElement(0, pEval, Tcl_NewStringObj(zTab, -1));
-
+  
     /* Append the conflict type. */
     switch( eConf ){
       case SQLITE_CHANGESET_DATA:
@@ -531,7 +531,7 @@ static int test_conflict_handler(
         Tcl_ListObjAppendElement(interp, pEval,Tcl_NewStringObj("CONSTRAINT",-1));
         break;
     }
-
+  
     /* If this is not an INSERT, append the old row */
     if( op!=SQLITE_INSERT ){
       int i;
@@ -574,8 +574,8 @@ static int test_conflict_handler(
     /***********************************************************************
      ** This block is purely for testing some error conditions.
      */
-    if( eConf==SQLITE_CHANGESET_CONSTRAINT
-     || eConf==SQLITE_CHANGESET_NOTFOUND
+    if( eConf==SQLITE_CHANGESET_CONSTRAINT 
+     || eConf==SQLITE_CHANGESET_NOTFOUND 
     ){
       sqlite3_value *pVal;
       int rc = sqlite3changeset_conflict(pIter, 0, &pVal);
@@ -610,7 +610,7 @@ static int test_conflict_handler(
       assert( rc==SQLITE_RANGE );
     }
     if( eConf!=SQLITE_CHANGESET_FOREIGN_KEY ){
-      /* eConf!=FOREIGN_KEY is always true at this point. The condition is
+      /* eConf!=FOREIGN_KEY is always true at this point. The condition is 
       ** just there to make it clearer what is being tested.  */
       int nDummy;
       int rc = sqlite3changeset_fk_conflicts(pIter, &nDummy);
@@ -640,9 +640,9 @@ static int test_conflict_handler(
 }
 
 /*
-** The conflict handler used by sqlite3changeset_apply_replace_all().
+** The conflict handler used by sqlite3changeset_apply_replace_all(). 
 ** This conflict handler calls sqlite3_value_text16() on all available
-** sqlite3_value objects and then returns CHANGESET_REPLACE, or
+** sqlite3_value objects and then returns CHANGESET_REPLACE, or 
 ** CHANGESET_OMIT if REPLACE is not applicable. This is used to test the
 ** effect of a malloc failure within an sqlite3_value_xxx() function
 ** invoked by a conflict-handler callback.
@@ -781,11 +781,11 @@ static int SQLITE_TCLAPI testSqlite3changesetApply(
 
   if( sStr.nStream==0 ){
     if( bV2==0 ){
-      rc = sqlite3changeset_apply(db, nChangeset, pChangeset,
+      rc = sqlite3changeset_apply(db, nChangeset, pChangeset, 
           (objc==5)?test_filter_handler:0, test_conflict_handler, (void *)&ctx
       );
     }else{
-      rc = sqlite3changeset_apply_v2(db, nChangeset, pChangeset,
+      rc = sqlite3changeset_apply_v2(db, nChangeset, pChangeset, 
           (objc==5)?test_filter_handler:0, test_conflict_handler, (void *)&ctx,
           &pRebase, &nRebase, flags
       );
@@ -795,12 +795,12 @@ static int SQLITE_TCLAPI testSqlite3changesetApply(
     sStr.nData = nChangeset;
     if( bV2==0 ){
       rc = sqlite3changeset_apply_strm(db, testStreamInput, (void*)&sStr,
-          (objc==5) ? test_filter_handler : 0,
+          (objc==5) ? test_filter_handler : 0, 
           test_conflict_handler, (void *)&ctx
       );
     }else{
       rc = sqlite3changeset_apply_v2_strm(db, testStreamInput, (void*)&sStr,
-          (objc==5) ? test_filter_handler : 0,
+          (objc==5) ? test_filter_handler : 0, 
           test_conflict_handler, (void *)&ctx,
           &pRebase, &nRebase, flags
       );
@@ -843,7 +843,7 @@ static int SQLITE_TCLAPI test_sqlite3changeset_apply_v2(
 }
 
 /*
-** sqlite3changeset_apply_replace_all DB CHANGESET
+** sqlite3changeset_apply_replace_all DB CHANGESET 
 */
 static int SQLITE_TCLAPI test_sqlite3changeset_apply_replace_all(
   void * clientData,
@@ -1062,7 +1062,7 @@ static int SQLITE_TCLAPI test_sqlite3session_foreach(
     pVar = Tcl_NewObj();
     Tcl_ListObjAppendElement(0, pVar, Tcl_NewStringObj(
           op==SQLITE_INSERT ? "INSERT" :
-          op==SQLITE_UPDATE ? "UPDATE" :
+          op==SQLITE_UPDATE ? "UPDATE" : 
           "DELETE", -1
     ));
 
@@ -1151,7 +1151,7 @@ static int SQLITE_TCLAPI test_rebaser_cmd(
     Tcl_WrongNumArgs(interp, 1, objv, "SUBCOMMAND ...");
     return TCL_ERROR;
   }
-  rc = Tcl_GetIndexFromObjStruct(interp,
+  rc = Tcl_GetIndexFromObjStruct(interp, 
       objv[1], aSub, sizeof(aSub[0]), "sub-command", 0, &iSub
   );
   if( rc!=TCL_OK ) return rc;
@@ -1184,7 +1184,7 @@ static int SQLITE_TCLAPI test_rebaser_cmd(
       sStr.nStream = test_tcl_integer(interp, SESSION_STREAM_TCL_VAR);
 
       if( sStr.nStream ){
-        rc = sqlite3rebaser_rebase_strm(p,
+        rc = sqlite3rebaser_rebase_strm(p, 
             testStreamInput, (void*)&sStr,
             testStreamOutput, (void*)&sOut
         );
@@ -1264,7 +1264,7 @@ static int SQLITE_TCLAPI test_sqlite3session_config(
     Tcl_WrongNumArgs(interp, 1, objv, "OP VALUE");
     return SQLITE_ERROR;
   }
-  rc = Tcl_GetIndexFromObjStruct(interp,
+  rc = Tcl_GetIndexFromObjStruct(interp, 
       objv[1], aSub, sizeof(aSub[0]), "sub-command", 0, &iSub
   );
   if( rc!=TCL_OK ) return rc;
@@ -1289,7 +1289,7 @@ int TestSession_Init(Tcl_Interp *interp){
     { "sqlite3changeset_concat", test_sqlite3changeset_concat },
     { "sqlite3changeset_apply", test_sqlite3changeset_apply },
     { "sqlite3changeset_apply_v2", test_sqlite3changeset_apply_v2 },
-    { "sqlite3changeset_apply_replace_all",
+    { "sqlite3changeset_apply_replace_all", 
       test_sqlite3changeset_apply_replace_all },
     { "sql_exec_changeset", test_sql_exec_changeset },
     { "sqlite3rebaser_create", test_sqlite3rebaser_create },

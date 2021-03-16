@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "core/fxcrt/fx_safe_types.h"
 #include "core/fxge/cfx_graphstatedata.h"
 #include "core/fxge/cfx_pathdata.h"
 #include "core/fxge/cfx_renderdevice.h"
@@ -21,7 +22,7 @@ CBC_TwoDimWriter::CBC_TwoDimWriter(bool bFixedSize)
 
 CBC_TwoDimWriter::~CBC_TwoDimWriter() = default;
 
-bool CBC_TwoDimWriter::RenderResult(const std::vector<uint8_t>& code,
+bool CBC_TwoDimWriter::RenderResult(pdfium::span<const uint8_t> code,
                                     int32_t codeWidth,
                                     int32_t codeHeight) {
   if (code.empty())
@@ -34,8 +35,8 @@ bool CBC_TwoDimWriter::RenderResult(const std::vector<uint8_t>& code,
   float moduleHSize = std::min(m_ModuleWidth, m_ModuleHeight);
   moduleHSize = std::min(moduleHSize, 8.0f);
   moduleHSize = std::max(moduleHSize, 1.0f);
-  pdfium::base::CheckedNumeric<int32_t> scaledWidth = tempWidth;
-  pdfium::base::CheckedNumeric<int32_t> scaledHeight = tempHeight;
+  FX_SAFE_INT32 scaledWidth = tempWidth;
+  FX_SAFE_INT32 scaledHeight = tempHeight;
   scaledWidth *= moduleHSize;
   scaledHeight *= moduleHSize;
   m_outputWidth = scaledWidth.ValueOrDie();
@@ -89,8 +90,8 @@ void CBC_TwoDimWriter::RenderDeviceResult(CFX_RenderDevice* device,
   CFX_GraphStateData stateData;
   CFX_PathData path;
   path.AppendRect(0, 0, m_Width, m_Height);
-  device->DrawPath(&path, matrix, &stateData, m_backgroundColor,
-                   m_backgroundColor, FXFILL_ALTERNATE);
+  device->DrawPath(&path, matrix, &stateData, kBackgroundColor,
+                   kBackgroundColor, FXFILL_ALTERNATE);
   int32_t leftPos = m_leftPadding;
   int32_t topPos = m_topPadding;
 
@@ -119,7 +120,7 @@ void CBC_TwoDimWriter::RenderDeviceResult(CFX_RenderDevice* device,
                         topPos + start_y_output * m_multiY,
                         leftPos + end_x_output * m_multiX,
                         topPos + end_y_output * m_multiY);
-        device->DrawPath(&rect, &matri, &data, m_barColor, 0, FXFILL_WINDING);
+        device->DrawPath(&rect, &matri, &data, kBarColor, 0, FXFILL_WINDING);
       }
     }
   }

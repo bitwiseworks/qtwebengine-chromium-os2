@@ -7,6 +7,7 @@
 #include <tuple>
 
 #include "content/public/browser/child_process_security_policy.h"
+#include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_map_factory.h"
 #include "extensions/common/extension.h"
@@ -16,17 +17,6 @@ namespace extensions {
 
 // Item
 struct ProcessMap::Item {
-  Item() : process_id(0), site_instance_id(0) {
-  }
-
-  // Purposely implicit constructor needed on older gcc's. See:
-  // http://codereview.chromium.org/8769022/
-  explicit Item(const ProcessMap::Item& other)
-      : extension_id(other.extension_id),
-        process_id(other.process_id),
-        site_instance_id(other.site_instance_id) {
-  }
-
   Item(const std::string& extension_id, int process_id,
        int site_instance_id)
       : extension_id(extension_id),
@@ -37,6 +27,9 @@ struct ProcessMap::Item {
   ~Item() {
   }
 
+  Item(ProcessMap::Item&&) = default;
+  Item& operator=(ProcessMap::Item&&) = default;
+
   bool operator<(const ProcessMap::Item& other) const {
     return std::tie(extension_id, process_id, site_instance_id) <
            std::tie(other.extension_id, other.process_id,
@@ -44,8 +37,11 @@ struct ProcessMap::Item {
   }
 
   std::string extension_id;
-  int process_id;
-  int site_instance_id;
+  int process_id = 0;
+  int site_instance_id = 0;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(Item);
 };
 
 
@@ -112,16 +108,27 @@ std::set<std::string> ProcessMap::GetExtensionsInProcess(int process_id) const {
 
 Feature::Context ProcessMap::GetMostLikelyContextType(
     const Extension* extension,
-    int process_id) const {
+    int process_id,
+    const GURL* url) const {
   // WARNING: This logic must match ScriptContextSet::ClassifyJavaScriptContext,
   // as much as possible.
 
+  // TODO(crbug.com/1055168): Move this into the !extension if statement below
+  // or document why we want to return WEBUI_CONTEXT for content scripts in
+  // WebUIs.
+  // TODO(crbug.com/1055656): HasWebUIBindings does not always return true for
+  // WebUIs. This should be changed to use something else.
   if (content::ChildProcessSecurityPolicy::GetInstance()->HasWebUIBindings(
           process_id)) {
     return Feature::WEBUI_CONTEXT;
   }
 
   if (!extension) {
+    // Note that blob/filesystem schemes associated with an inner URL of
+    // chrome-untrusted will be considered regular pages.
+    if (url && url->SchemeIs(content::kChromeUIUntrustedScheme))
+      return Feature::WEBUI_UNTRUSTED_CONTEXT;
+
     return Feature::WEB_PAGE_CONTEXT;
   }
 

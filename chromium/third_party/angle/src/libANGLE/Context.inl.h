@@ -17,7 +17,7 @@
 #define ANGLE_HANDLE_ERR(X) \
     (void)(X);              \
     return;
-#define ANGLE_CONTEXT_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, ANGLE_HANDLE_ERR);
+#define ANGLE_CONTEXT_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, ANGLE_HANDLE_ERR)
 
 namespace gl
 {
@@ -43,6 +43,18 @@ ANGLE_INLINE void MarkTransformFeedbackBufferUsage(const Context *context,
     {
         TransformFeedback *transformFeedback = context->getState().getCurrentTransformFeedback();
         transformFeedback->onVerticesDrawn(context, count, instanceCount);
+    }
+}
+
+ANGLE_INLINE void MarkShaderStorageBufferUsage(const Context *context)
+{
+    for (size_t index : context->getStateCache().getActiveShaderStorageBufferIndices())
+    {
+        gl::Buffer *buffer = context->getState().getIndexedShaderStorageBuffer(index).get();
+        if (buffer)
+        {
+            buffer->onDataChanged();
+        }
     }
 }
 
@@ -122,7 +134,7 @@ ANGLE_INLINE void StateCache::onBufferBindingChange(Context *context)
     updateBasicDrawElementsError();
 }
 
-ANGLE_INLINE void Context::bindBuffer(BufferBinding target, GLuint buffer)
+ANGLE_INLINE void Context::bindBuffer(BufferBinding target, BufferID buffer)
 {
     Buffer *bufferObject =
         mState.mBufferManager->checkBufferAllocation(mImplementation.get(), buffer);

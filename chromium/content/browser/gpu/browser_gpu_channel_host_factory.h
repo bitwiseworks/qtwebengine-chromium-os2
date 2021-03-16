@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
@@ -37,6 +38,11 @@ class CONTENT_EXPORT BrowserGpuChannelHostFactory
   gpu::GpuChannelHost* GetGpuChannel();
   int GetGpuChannelId() { return gpu_client_id_; }
 
+  // Close the channel if there is no usage other usage of the channel.
+  // Note this is different from |CloseChannel| as this can be called at
+  // any point. The next EstablishGpuChannel will simply return a new channel.
+  void MaybeCloseChannel();
+
   // Closes the channel to the GPU process. This should be called before the IO
   // thread stops.
   void CloseChannel();
@@ -54,7 +60,6 @@ class CONTENT_EXPORT BrowserGpuChannelHostFactory
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
 
  private:
-  struct CreateRequest;
   class EstablishRequest;
 
   BrowserGpuChannelHostFactory();

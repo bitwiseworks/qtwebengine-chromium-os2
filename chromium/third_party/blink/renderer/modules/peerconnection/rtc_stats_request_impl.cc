@@ -29,20 +29,12 @@
 
 namespace blink {
 
-RTCStatsRequestImpl* RTCStatsRequestImpl::Create(ExecutionContext* context,
-                                                 RTCPeerConnection* requester,
-                                                 V8RTCStatsCallback* callback,
-                                                 MediaStreamTrack* selector) {
-  return MakeGarbageCollected<RTCStatsRequestImpl>(context, requester, callback,
-                                                   selector);
-}
-
 RTCStatsRequestImpl::RTCStatsRequestImpl(ExecutionContext* context,
                                          RTCPeerConnection* requester,
                                          V8RTCStatsCallback* callback,
                                          MediaStreamTrack* selector)
-    : ContextLifecycleObserver(context),
-      success_callback_(ToV8PersistentCallbackFunction(callback)),
+    : ExecutionContextLifecycleObserver(context),
+      success_callback_(callback),
       component_(selector ? selector->Component() : nullptr),
       requester_(requester) {
   DCHECK(requester_);
@@ -51,7 +43,7 @@ RTCStatsRequestImpl::RTCStatsRequestImpl(ExecutionContext* context,
 RTCStatsRequestImpl::~RTCStatsRequestImpl() = default;
 
 RTCStatsResponseBase* RTCStatsRequestImpl::CreateResponse() {
-  return RTCStatsResponse::Create();
+  return MakeGarbageCollected<RTCStatsResponse>();
 }
 
 bool RTCStatsRequestImpl::HasSelector() {
@@ -72,7 +64,7 @@ void RTCStatsRequestImpl::RequestSucceeded(RTCStatsResponseBase* response) {
   Clear();
 }
 
-void RTCStatsRequestImpl::ContextDestroyed(ExecutionContext*) {
+void RTCStatsRequestImpl::ContextDestroyed() {
   Clear();
 }
 
@@ -81,12 +73,12 @@ void RTCStatsRequestImpl::Clear() {
   requester_.Clear();
 }
 
-void RTCStatsRequestImpl::Trace(blink::Visitor* visitor) {
+void RTCStatsRequestImpl::Trace(Visitor* visitor) {
   visitor->Trace(success_callback_);
   visitor->Trace(component_);
   visitor->Trace(requester_);
   RTCStatsRequest::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

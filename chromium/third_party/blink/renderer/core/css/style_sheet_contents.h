@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/text_position.h"
+#include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -46,33 +47,20 @@ class StyleRuleImport;
 class StyleRuleNamespace;
 enum class ParseSheetResult;
 
-class CORE_EXPORT StyleSheetContents
-    : public GarbageCollectedFinalized<StyleSheetContents> {
+class CORE_EXPORT StyleSheetContents final
+    : public GarbageCollected<StyleSheetContents> {
  public:
-  static StyleSheetContents* Create(const CSSParserContext* context) {
-    return MakeGarbageCollected<StyleSheetContents>(nullptr, String(), context);
-  }
-  static StyleSheetContents* Create(const String& original_url,
-                                    const CSSParserContext* context) {
-    return MakeGarbageCollected<StyleSheetContents>(nullptr, original_url,
-                                                    context);
-  }
-  static StyleSheetContents* Create(StyleRuleImport* owner_rule,
-                                    const String& original_url,
-                                    const CSSParserContext* context) {
-    return MakeGarbageCollected<StyleSheetContents>(owner_rule, original_url,
-                                                    context);
-  }
-
   static const Document* SingleOwnerDocument(const StyleSheetContents*);
 
-  StyleSheetContents(StyleRuleImport* owner_rule,
-                     const String& original_url,
-                     const CSSParserContext*);
+  StyleSheetContents(const CSSParserContext* context,
+                     const String& original_url = String(),
+                     StyleRuleImport* owner_rule = nullptr);
   StyleSheetContents(const StyleSheetContents&);
   StyleSheetContents() = delete;
   ~StyleSheetContents();
 
+  // TODO(xiaochengh): |parser_context_| should never be null. Make it return a
+  // const reference here to avoid confusion.
   const CSSParserContext* ParserContext() const { return parser_context_; }
 
   const AtomicString& DefaultNamespace() const { return default_namespace_; }
@@ -203,7 +191,7 @@ class CORE_EXPORT StyleSheetContents
 
   String SourceMapURL() const { return source_map_url_; }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   StyleSheetContents& operator=(const StyleSheetContents&) = delete;

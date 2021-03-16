@@ -11,6 +11,7 @@
 #include "components/sync/driver/syncable_service_based_model_type_controller.h"
 
 namespace syncer {
+class ModelTypeStoreService;
 class SyncClient;
 class SyncService;
 }  // namespace syncer
@@ -28,11 +29,12 @@ class HistoryDeleteDirectivesModelTypeController
   HistoryDeleteDirectivesModelTypeController(
       const base::RepeatingClosure& dump_stack,
       syncer::SyncService* sync_service,
+      syncer::ModelTypeStoreService* model_type_store_service,
       syncer::SyncClient* sync_client);
   ~HistoryDeleteDirectivesModelTypeController() override;
 
   // DataTypeController overrides.
-  bool ReadyForStart() const override;
+  PreconditionState GetPreconditionState() const override;
   void LoadModels(const syncer::ConfigureContext& configure_context,
                   const ModelLoadCallback& model_load_callback) override;
   void Stop(syncer::ShutdownReason shutdown_reason,
@@ -42,10 +44,6 @@ class HistoryDeleteDirectivesModelTypeController
   void OnStateChanged(syncer::SyncService* sync) override;
 
  private:
-  // Triggers a SingleDataTypeUnrecoverable error and returns true if the
-  // type is no longer ready, else does nothing and returns false.
-  bool DisableTypeIfNecessary();
-
   syncer::SyncService* const sync_service_;
 
   DISALLOW_COPY_AND_ASSIGN(HistoryDeleteDirectivesModelTypeController);

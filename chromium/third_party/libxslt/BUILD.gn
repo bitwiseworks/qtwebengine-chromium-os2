@@ -72,7 +72,6 @@ static_library("bundled_libxslt") {
     "src/libxslt/xsltlocale.h",
     "src/libxslt/xsltutils.c",
     "src/libxslt/xsltutils.h",
-    "src/libxslt/xsltwin32config.h.in",
     "win32/config.h",
   ]
 
@@ -101,9 +100,9 @@ static_library("bundled_libxslt") {
     include_dirs = [ "mac" ]
   }
 
-  deps = [
-    "//third_party/libxml",
-  ]
+  deps = [ "//third_party/libxml" ]
+
+  visibility = [ ":libxslt" ]
 }
 
 if (use_system_libxslt) {
@@ -113,9 +112,11 @@ if (use_system_libxslt) {
   }
   source_set("libxslt") {
     public_configs = [ ":system_libxslt" ]
+    visibility = [ "//third_party/blink/renderer/*" ]
   }
 } else {
   group("libxslt") {
     public_deps = [ ":bundled_libxslt" ]
+    visibility = [ "//third_party/blink/renderer/*" ]
   }
 }

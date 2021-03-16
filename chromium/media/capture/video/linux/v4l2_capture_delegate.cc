@@ -74,7 +74,6 @@ struct {
     {V4L2_PIX_FMT_Z16, PIXEL_FORMAT_Y16, 1},
     {V4L2_PIX_FMT_INVZ, PIXEL_FORMAT_Y16, 1},
     {V4L2_PIX_FMT_YUYV, PIXEL_FORMAT_YUY2, 1},
-    {V4L2_PIX_FMT_UYVY, PIXEL_FORMAT_UYVY, 1},
     {V4L2_PIX_FMT_RGB24, PIXEL_FORMAT_RGB24, 1},
     // MJPEG is usually sitting fairly low since we don't want to have to
     // decode. However, it is needed for large resolutions due to USB bandwidth
@@ -238,7 +237,8 @@ V4L2CaptureDelegate::V4L2CaptureDelegate(
     V4L2CaptureDevice* v4l2,
     const VideoCaptureDeviceDescriptor& device_descriptor,
     const scoped_refptr<base::SingleThreadTaskRunner>& v4l2_task_runner,
-    int power_line_frequency)
+    int power_line_frequency,
+    int rotation)
     : v4l2_(v4l2),
       v4l2_task_runner_(v4l2_task_runner),
       device_descriptor_(device_descriptor),
@@ -246,8 +246,7 @@ V4L2CaptureDelegate::V4L2CaptureDelegate(
       device_fd_(v4l2),
       is_capturing_(false),
       timeout_count_(0),
-      rotation_(0),
-      weak_factory_(this) {}
+      rotation_(rotation) {}
 
 void V4L2CaptureDelegate::AllocateAndStart(
     int width,
@@ -359,30 +358,10 @@ void V4L2CaptureDelegate::AllocateAndStart(
   capture_format_.frame_rate = frame_rate;
   capture_format_.pixel_format = pixel_format;
 
-  v4l2_requestbuffers r_buffer;
-  FillV4L2RequestBuffer(&r_buffer, kNumVideoBuffers);
-  if (DoIoctl(VIDIOC_REQBUFS, &r_buffer) < 0) {
-    SetErrorState(VideoCaptureError::kV4L2ErrorRequestingMmapBuffers, FROM_HERE,
-                  "Error requesting MMAP buffers from V4L2");
+  if (!StartStream())
     return;
-  }
-  for (unsigned int i = 0; i < r_buffer.count; ++i) {
-    if (!MapAndQueueBuffer(i)) {
-      SetErrorState(VideoCaptureError::kV4L2AllocateBufferFailed, FROM_HERE,
-                    "Allocate buffer failed");
-      return;
-    }
-  }
-
-  v4l2_buf_type capture_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (DoIoctl(VIDIOC_STREAMON, &capture_type) < 0) {
-    SetErrorState(VideoCaptureError::kV4L2VidiocStreamonFailed, FROM_HERE,
-                  "VIDIOC_STREAMON failed");
-    return;
-  }
 
   client_->OnStarted();
-  is_capturing_ = true;
 
   // Post task to start fetching frames from v4l2.
   v4l2_task_runner_->PostTask(
@@ -391,28 +370,10 @@ void V4L2CaptureDelegate::AllocateAndStart(
 
 void V4L2CaptureDelegate::StopAndDeAllocate() {
   DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
-  // The order is important: stop streaming, clear |buffer_pool_|,
-  // thus munmap()ing the v4l2_buffers, and then return them to the OS.
-  v4l2_buf_type capture_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-  if (DoIoctl(VIDIOC_STREAMOFF, &capture_type) < 0) {
-    SetErrorState(VideoCaptureError::kV4L2VidiocStreamoffFailed, FROM_HERE,
-                  "VIDIOC_STREAMOFF failed");
-    return;
-  }
-
-  buffer_tracker_pool_.clear();
-
-  v4l2_requestbuffers r_buffer;
-  FillV4L2RequestBuffer(&r_buffer, 0);
-  if (DoIoctl(VIDIOC_REQBUFS, &r_buffer) < 0) {
-    SetErrorState(VideoCaptureError::kV4L2FailedToVidiocReqbufsWithCount0,
-                  FROM_HERE, "Failed to VIDIOC_REQBUFS with count = 0");
-  }
-
+  StopStream();
   // At this point we can close the device.
   // This is also needed for correctly changing settings later via VIDIOC_S_FMT.
   device_fd_.reset();
-  is_capturing_ = false;
   client_.reset();
 }
 
@@ -430,6 +391,8 @@ void V4L2CaptureDelegate::GetPhotoState(
 
   mojom::PhotoStatePtr photo_capabilities = mojo::CreateEmptyPhotoState();
 
+  photo_capabilities->pan = RetrieveUserControlRange(V4L2_CID_PAN_ABSOLUTE);
+  photo_capabilities->tilt = RetrieveUserControlRange(V4L2_CID_TILT_ABSOLUTE);
   photo_capabilities->zoom = RetrieveUserControlRange(V4L2_CID_ZOOM_ABSOLUTE);
 
   v4l2_queryctrl manual_focus_ctrl = {};
@@ -536,12 +499,42 @@ void V4L2CaptureDelegate::SetPhotoOptions(
   if (!device_fd_.is_valid() || !is_capturing_)
     return;
 
+  if (settings->has_pan) {
+    v4l2_control pan_current = {};
+    pan_current.id = V4L2_CID_PAN_ABSOLUTE;
+    pan_current.value = settings->pan;
+    if (DoIoctl(VIDIOC_S_CTRL, &pan_current) < 0)
+      DPLOG(ERROR) << "setting pan to " << settings->pan;
+  }
+
+  if (settings->has_tilt) {
+    v4l2_control tilt_current = {};
+    tilt_current.id = V4L2_CID_TILT_ABSOLUTE;
+    tilt_current.value = settings->tilt;
+    if (DoIoctl(VIDIOC_S_CTRL, &tilt_current) < 0)
+      DPLOG(ERROR) << "setting tilt to " << settings->tilt;
+  }
+
   if (settings->has_zoom) {
     v4l2_control zoom_current = {};
     zoom_current.id = V4L2_CID_ZOOM_ABSOLUTE;
     zoom_current.value = settings->zoom;
     if (DoIoctl(VIDIOC_S_CTRL, &zoom_current) < 0)
       DPLOG(ERROR) << "setting zoom to " << settings->zoom;
+  }
+
+  if (settings->has_focus_mode &&
+      (settings->focus_mode == mojom::MeteringMode::MANUAL ||
+       settings->focus_mode == mojom::MeteringMode::CONTINUOUS)) {
+    v4l2_control auto_focus = {};
+    auto_focus.id = V4L2_CID_FOCUS_AUTO;
+    auto_focus.value =
+        settings->focus_mode == mojom::MeteringMode::MANUAL ? false : true;
+    if (DoIoctl(VIDIOC_S_CTRL, &auto_focus) < 0)
+      DPLOG(ERROR) << "setting focusMode to "
+                   << (settings->focus_mode == mojom::MeteringMode::MANUAL
+                           ? "manual"
+                           : "continuous");
   }
 
   if (settings->has_focus_distance &&
@@ -821,6 +814,34 @@ bool V4L2CaptureDelegate::MapAndQueueBuffer(int index) {
   return true;
 }
 
+bool V4L2CaptureDelegate::StartStream() {
+  DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
+  DCHECK(!is_capturing_);
+
+  v4l2_requestbuffers r_buffer;
+  FillV4L2RequestBuffer(&r_buffer, kNumVideoBuffers);
+  if (DoIoctl(VIDIOC_REQBUFS, &r_buffer) < 0) {
+    SetErrorState(VideoCaptureError::kV4L2ErrorRequestingMmapBuffers, FROM_HERE,
+                  "Error requesting MMAP buffers from V4L2");
+    return false;
+  }
+  for (unsigned int i = 0; i < r_buffer.count; ++i) {
+    if (!MapAndQueueBuffer(i)) {
+      SetErrorState(VideoCaptureError::kV4L2AllocateBufferFailed, FROM_HERE,
+                    "Allocate buffer failed");
+      return false;
+    }
+  }
+  v4l2_buf_type capture_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  if (DoIoctl(VIDIOC_STREAMON, &capture_type) < 0) {
+    SetErrorState(VideoCaptureError::kV4L2VidiocStreamonFailed, FROM_HERE,
+                  "VIDIOC_STREAMON failed");
+    return false;
+  }
+  is_capturing_ = true;
+  return true;
+}
+
 void V4L2CaptureDelegate::DoCapture() {
   DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
   if (!is_capturing_)
@@ -841,7 +862,21 @@ void V4L2CaptureDelegate::DoCapture() {
   // throw an error if it times out too many times.
   if (result == 0) {
     timeout_count_++;
-    if (timeout_count_ >= kContinuousTimeoutLimit) {
+    if (timeout_count_ == 1) {
+      // TODO(crbug.com/1010557): this is an unfortunate workaround for an issue
+      // with the Huddly GO camera where the device seems to get into a deadlock
+      // state. As best as we can tell for now, there is a synchronization issue
+      // in older kernels, and stopping and starting the stream gets the camera
+      // out of this bad state. Upgrading the kernel is difficult so this is our
+      // way out for now.
+      DLOG(WARNING) << "Restarting camera stream";
+      if (!StopStream() || !StartStream())
+        return;
+      v4l2_task_runner_->PostTask(
+          FROM_HERE,
+          base::BindOnce(&V4L2CaptureDelegate::DoCapture, GetWeakPtr()));
+      return;
+    } else if (timeout_count_ >= kContinuousTimeoutLimit) {
       SetErrorState(
           VideoCaptureError::kV4L2MultipleContinuousTimeoutsWhileReadPolling,
           FROM_HERE, "Multiple continuous timeouts while read-polling.");
@@ -897,9 +932,16 @@ void V4L2CaptureDelegate::DoCapture() {
       client_->OnFrameDropped(
           VideoCaptureFrameDropReason::kV4L2InvalidNumberOfBytesInBuffer);
     } else {
+      // TODO(julien.isorce): build gfx color space from v4l2 color space.
+      // primary = v4l2_format->fmt.pix.colorspace;
+      // range = v4l2_format->fmt.pix.quantization;
+      // matrix = v4l2_format->fmt.pix.ycbcr_enc;
+      // transfer = v4l2_format->fmt.pix.xfer_func;
+      // See http://crbug.com/959919.
       client_->OnIncomingCapturedData(
           buffer_tracker->start(), buffer_tracker->payload_size(),
-          capture_format_, rotation_, now, timestamp);
+          capture_format_, gfx::ColorSpace(), rotation_, false /* flip_y */,
+          now, timestamp);
     }
 
     while (!take_photo_callbacks_.empty()) {
@@ -923,6 +965,33 @@ void V4L2CaptureDelegate::DoCapture() {
 
   v4l2_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&V4L2CaptureDelegate::DoCapture, GetWeakPtr()));
+}
+
+bool V4L2CaptureDelegate::StopStream() {
+  DCHECK(v4l2_task_runner_->BelongsToCurrentThread());
+  DCHECK(is_capturing_);
+  is_capturing_ = false;
+
+  // The order is important: stop streaming, clear |buffer_pool_|,
+  // thus munmap()ing the v4l2_buffers, and then return them to the OS.
+  v4l2_buf_type capture_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+  if (DoIoctl(VIDIOC_STREAMOFF, &capture_type) < 0) {
+    SetErrorState(VideoCaptureError::kV4L2VidiocStreamoffFailed, FROM_HERE,
+                  "VIDIOC_STREAMOFF failed");
+    return false;
+  }
+
+  buffer_tracker_pool_.clear();
+
+  v4l2_requestbuffers r_buffer;
+  FillV4L2RequestBuffer(&r_buffer, 0);
+  if (DoIoctl(VIDIOC_REQBUFS, &r_buffer) < 0) {
+    SetErrorState(VideoCaptureError::kV4L2FailedToVidiocReqbufsWithCount0,
+                  FROM_HERE, "Failed to VIDIOC_REQBUFS with count = 0");
+    return false;
+  }
+
+  return true;
 }
 
 void V4L2CaptureDelegate::SetErrorState(VideoCaptureError error,

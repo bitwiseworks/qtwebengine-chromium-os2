@@ -17,7 +17,8 @@ namespace blink {
 
 class FontBuilderTest {
  public:
-  FontBuilderTest() : dummy_(DummyPageHolder::Create(IntSize(800, 600))) {
+  FontBuilderTest()
+      : dummy_(std::make_unique<DummyPageHolder>(IntSize(800, 600))) {
     GetSettings().SetDefaultFontSize(16.0f);
   }
 
@@ -48,8 +49,7 @@ TEST_F(FontBuilderInitTest, InitialFontSizeNotScaled) {
 
   FontBuilder builder(&GetDocument());
   builder.SetInitial(1.0f);  // FIXME: Remove unused param.
-  builder.CreateFont(GetDocument().GetStyleEngine().GetFontSelector(),
-                     *initial);
+  builder.CreateFont(*initial, initial.get());
 
   EXPECT_EQ(16.0f, initial->GetFontDescription().ComputedSize());
 }
@@ -68,13 +68,15 @@ TEST_P(FontBuilderAdditiveTest, OnlySetValueIsModified) {
   FontDescription parent_description;
   funcs.set_base_value(parent_description);
 
+  scoped_refptr<ComputedStyle> parent_style = ComputedStyle::Create();
+  parent_style->SetFontDescription(parent_description);
+
   scoped_refptr<ComputedStyle> style = ComputedStyle::Create();
-  style->SetFontDescription(parent_description);
+  style->InheritFrom(*parent_style);
 
   FontBuilder font_builder(&GetDocument());
   funcs.set_value(font_builder);
-  font_builder.CreateFont(GetDocument().GetStyleEngine().GetFontSelector(),
-                          *style);
+  font_builder.CreateFont(*style, parent_style.get());
 
   FontDescription output_description = style->GetFontDescription();
 
@@ -166,6 +168,13 @@ static void FontKerningValue(FontBuilder& b) {
   b.SetKerning(FontDescription::kNoneKerning);
 }
 
+static void FontOpticalSizingBase(FontDescription& d) {
+  d.SetFontOpticalSizing(kAutoOpticalSizing);
+}
+static void FontOpticalSizingValue(FontBuilder& b) {
+  b.SetFontOpticalSizing(kNoneOpticalSizing);
+}
+
 static void FontFontSmoothingBase(FontDescription& d) {
   d.SetFontSmoothing(kAntialiased);
 }
@@ -190,7 +199,7 @@ static void FontScriptValue(FontBuilder& b) {
   b.SetLocale(LayoutLocale::Get("se"));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AllFields,
     FontBuilderAdditiveTest,
     testing::Values(
@@ -206,6 +215,7 @@ INSTANTIATE_TEST_CASE_P(
         FunctionPair(FontKerningBase, FontKerningValue),
         FunctionPair(FontFontSmoothingBase, FontFontSmoothingValue),
         FunctionPair(FontSizeBase, FontSizeValue),
-        FunctionPair(FontScriptBase, FontScriptValue)));
+        FunctionPair(FontScriptBase, FontScriptValue),
+        FunctionPair(FontOpticalSizingBase, FontOpticalSizingValue)));
 
 }  // namespace blink

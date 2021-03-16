@@ -10,25 +10,37 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/memory/read_only_shared_memory_region.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/default_tick_clock.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
+#include "components/viz/common/frame_sinks/copy_output_util.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
 #include "components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_manager.h"
 #include "media/base/limits.h"
 #include "media/base/video_util.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/size.h"
 
 using media::VideoCaptureOracle;
 using media::VideoFrame;
 using media::VideoFrameMetadata;
+
+#define UMA_HISTOGRAM_CAPTURE_DURATION_CUSTOM_TIMES(name, sample)         \
+  UMA_HISTOGRAM_CUSTOM_TIMES(                                             \
+      base::StringPrintf("Viz.FrameSinkVideoCapturer.%s.CaptureDuration", \
+                         name),                                           \
+      sample, base::TimeDelta::FromMilliseconds(1),                       \
+      base::TimeDelta::FromSeconds(1), 50)
 
 namespace viz {
 
@@ -51,23 +63,28 @@ constexpr gfx::ColorSpace FrameSinkVideoCapturerImpl::kDefaultColorSpace;
 
 FrameSinkVideoCapturerImpl::FrameSinkVideoCapturerImpl(
     FrameSinkVideoCapturerManager* frame_sink_manager,
-    mojom::FrameSinkVideoCapturerRequest request)
+    mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver,
+    std::unique_ptr<media::VideoCaptureOracle> oracle,
+    bool log_to_webrtc)
     : frame_sink_manager_(frame_sink_manager),
-      binding_(this),
       copy_request_source_(base::UnguessableToken::Create()),
       clock_(base::DefaultTickClock::GetInstance()),
-      oracle_(true /* enable_auto_throttling */),
+      oracle_(std::move(oracle)),
       frame_pool_(kDesignLimitMaxFrames),
-      feedback_weak_factory_(&oracle_),
-      capture_weak_factory_(this) {
+      feedback_weak_factory_(oracle_.get()),
+      log_to_webrtc_(log_to_webrtc) {
   DCHECK(frame_sink_manager_);
-
+  DCHECK(oracle_);
+  if (log_to_webrtc_) {
+    oracle_->SetLogCallback(base::BindRepeating(
+        &FrameSinkVideoCapturerImpl::OnLog, base::Unretained(this)));
+  }
   // Instantiate a default base::OneShotTimer instance.
   refresh_frame_retry_timer_.emplace();
 
-  if (request.is_pending()) {
-    binding_.Bind(std::move(request));
-    binding_.set_connection_error_handler(
+  if (receiver.is_valid()) {
+    receiver_.Bind(std::move(receiver));
+    receiver_.set_disconnect_handler(
         base::BindOnce(&FrameSinkVideoCapturerManager::OnCapturerConnectionLost,
                        base::Unretained(frame_sink_manager_), this));
   }
@@ -138,6 +155,7 @@ void FrameSinkVideoCapturerImpl::SetFormat(media::VideoPixelFormat format,
   }
 
   if (format_changed) {
+    frame_pool_.ClearFrameMarking();
     RefreshEntireSourceSoon();
   }
 }
@@ -165,7 +183,7 @@ void FrameSinkVideoCapturerImpl::SetMinCapturePeriod(
     }
   }
 
-  oracle_.SetMinCapturePeriod(min_capture_period);
+  oracle_->SetMinCapturePeriod(min_capture_period);
   if (refresh_frame_retry_timer_->IsRunning()) {
     // With the change in the minimum capture period, a pending refresh might
     // be ready to execute now (or sooner than it would have been).
@@ -177,7 +195,7 @@ void FrameSinkVideoCapturerImpl::SetMinSizeChangePeriod(
     base::TimeDelta min_period) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  oracle_.SetMinSizeChangePeriod(min_period);
+  oracle_->SetMinSizeChangePeriod(min_period);
 }
 
 void FrameSinkVideoCapturerImpl::SetResolutionConstraints(
@@ -197,12 +215,13 @@ void FrameSinkVideoCapturerImpl::SetResolutionConstraints(
     return;
   }
 
-  oracle_.SetCaptureSizeConstraints(min_size, max_size, use_fixed_aspect_ratio);
+  oracle_->SetCaptureSizeConstraints(min_size, max_size,
+                                     use_fixed_aspect_ratio);
   RefreshEntireSourceSoon();
 }
 
 void FrameSinkVideoCapturerImpl::SetAutoThrottlingEnabled(bool enabled) {
-  oracle_.SetAutoThrottlingEnabled(enabled);
+  oracle_->SetAutoThrottlingEnabled(enabled);
 }
 
 void FrameSinkVideoCapturerImpl::ChangeTarget(
@@ -220,15 +239,15 @@ void FrameSinkVideoCapturerImpl::ChangeTarget(
 }
 
 void FrameSinkVideoCapturerImpl::Start(
-    mojom::FrameSinkVideoConsumerPtr consumer) {
+    mojo::PendingRemote<mojom::FrameSinkVideoConsumer> consumer) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(consumer);
 
   Stop();
-  consumer_ = std::move(consumer);
+  consumer_.Bind(std::move(consumer));
   // In the future, if the connection to the consumer is lost before a call to
   // Stop(), make that call on its behalf.
-  consumer_.set_connection_error_handler(base::BindOnce(
+  consumer_.set_disconnect_handler(base::BindOnce(
       &FrameSinkVideoCapturerImpl::Stop, base::Unretained(this)));
   RefreshEntireSourceSoon();
 }
@@ -240,7 +259,7 @@ void FrameSinkVideoCapturerImpl::Stop() {
 
   // Cancel any captures in-flight and any captured frames pending delivery.
   capture_weak_factory_.InvalidateWeakPtrs();
-  oracle_.CancelAllCaptures();
+  oracle_->CancelAllCaptures();
   while (!delivery_queue_.empty()) {
     delivery_queue_.pop();
   }
@@ -262,13 +281,13 @@ void FrameSinkVideoCapturerImpl::RequestRefreshFrame() {
 
 void FrameSinkVideoCapturerImpl::CreateOverlay(
     int32_t stacking_index,
-    mojom::FrameSinkVideoCaptureOverlayRequest request) {
+    mojo::PendingReceiver<mojom::FrameSinkVideoCaptureOverlay> receiver) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // This will cause an existing overlay with the same stacking index to be
   // dropped, per mojom-documented behavior.
   overlays_.emplace(stacking_index, std::make_unique<VideoCaptureOverlay>(
-                                        this, std::move(request)));
+                                        this, std::move(receiver)));
 }
 
 void FrameSinkVideoCapturerImpl::ScheduleRefreshFrame() {
@@ -286,14 +305,14 @@ base::TimeDelta FrameSinkVideoCapturerImpl::GetDelayBeforeNextRefreshAttempt()
   // of frame captures that are expected to take place due to compositor update
   // events. However, the delay should not be excessively long either. Two frame
   // periods should be "just right."
-  return 2 * std::max(oracle_.estimated_frame_duration(),
-                      oracle_.min_capture_period());
+  return 2 * std::max(oracle_->estimated_frame_duration(),
+                      oracle_->min_capture_period());
 }
 
 void FrameSinkVideoCapturerImpl::RefreshEntireSourceSoon() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  dirty_rect_ = kMaxRect;
+  InvalidateEntireSource();
   RefreshSoon();
 }
 
@@ -321,13 +340,18 @@ void FrameSinkVideoCapturerImpl::RefreshSoon() {
     ScheduleRefreshFrame();
     return;
   }
-  if (source_size != oracle_.source_size()) {
-    oracle_.SetSourceSize(source_size);
-    dirty_rect_ = kMaxRect;
+  if (source_size != oracle_->source_size()) {
+    oracle_->SetSourceSize(source_size);
+    InvalidateEntireSource();
+    if (log_to_webrtc_) {
+      consumer_->OnLog(
+          base::StringPrintf("VFC: RefreshSoon() changed active frame size: %s",
+                             source_size.ToString().c_str()));
+    }
   }
 
-  MaybeCaptureFrame(VideoCaptureOracle::kRefreshRequest,
-                    gfx::Rect(oracle_.source_size()), clock_->NowTicks(),
+  MaybeCaptureFrame(VideoCaptureOracle::kRefreshRequest, gfx::Rect(),
+                    clock_->NowTicks(),
                     *resolved_target_->GetLastActivatedFrameMetadata());
 }
 
@@ -342,11 +366,16 @@ void FrameSinkVideoCapturerImpl::OnFrameDamaged(
   DCHECK(!expected_display_time.is_null());
   DCHECK(resolved_target_);
 
-  if (frame_size == oracle_.source_size()) {
+  if (frame_size == oracle_->source_size()) {
     InvalidateRect(damage_rect);
   } else {
-    oracle_.SetSourceSize(frame_size);
-    dirty_rect_ = kMaxRect;
+    oracle_->SetSourceSize(frame_size);
+    InvalidateEntireSource();
+    if (log_to_webrtc_ && consumer_) {
+      consumer_->OnLog(
+          base::StringPrintf("VFC: OnFramedamaged() changed frame size: %s",
+                             frame_size.ToString().c_str()));
+    }
   }
 
   MaybeCaptureFrame(VideoCaptureOracle::kCompositorUpdate, damage_rect,
@@ -356,7 +385,7 @@ void FrameSinkVideoCapturerImpl::OnFrameDamaged(
 gfx::Size FrameSinkVideoCapturerImpl::GetSourceSize() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  return oracle_.source_size();
+  return oracle_->source_size();
 }
 
 void FrameSinkVideoCapturerImpl::InvalidateRect(const gfx::Rect& rect) {
@@ -365,6 +394,14 @@ void FrameSinkVideoCapturerImpl::InvalidateRect(const gfx::Rect& rect) {
   gfx::Rect positive_rect = rect;
   positive_rect.Intersect(kMaxRect);
   dirty_rect_.Union(positive_rect);
+  content_version_++;
+}
+
+void FrameSinkVideoCapturerImpl::InvalidateEntireSource() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  dirty_rect_ = kMaxRect;
+  content_version_++;
 }
 
 void FrameSinkVideoCapturerImpl::OnOverlayConnectionLost(
@@ -401,7 +438,7 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
   DCHECK(resolved_target_);
 
   // Consult the oracle to determine whether this frame should be captured.
-  if (oracle_.ObserveEventAndDecideCapture(event, damage_rect, event_time)) {
+  if (oracle_->ObserveEventAndDecideCapture(event, damage_rect, event_time)) {
     // Regardless of the type of |event|, there is no longer a need for the
     // refresh frame retry timer to fire. The following is a no-op, if the timer
     // was not running.
@@ -428,19 +465,18 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
   }
 
   // Reserve a buffer from the pool for the next frame.
-  const OracleFrameNumber oracle_frame_number = oracle_.next_frame_number();
+  const OracleFrameNumber oracle_frame_number = oracle_->next_frame_number();
   const gfx::Size capture_size =
-      AdjustSizeForPixelFormat(oracle_.capture_size());
+      AdjustSizeForPixelFormat(oracle_->capture_size());
+
+  const bool can_resurrect_content =
+      content_version_in_marked_frame_ == content_version_ &&
+      frame_pool_.HasMarkedFrameWithSize(capture_size);
   scoped_refptr<VideoFrame> frame;
-  if (dirty_rect_.IsEmpty()) {
-    frame = frame_pool_.ResurrectLastVideoFrame(pixel_format_, capture_size);
-    // If the resurrection failed, promote to a full frame capture.
-    if (!frame) {
-      TRACE_EVENT_INSTANT0("gpu.capture", "ResurrectionFailed",
-                           TRACE_EVENT_SCOPE_THREAD);
-      dirty_rect_ = kMaxRect;
-      frame = frame_pool_.ReserveVideoFrame(pixel_format_, capture_size);
-    }
+  if (can_resurrect_content) {
+    TRACE_EVENT_INSTANT0("gpu.capture", "UsingResurrectedFrame",
+                         TRACE_EVENT_SCOPE_THREAD);
+    frame = frame_pool_.ResurrectOrDuplicateContentFromMarkedFrame();
   } else {
     frame = frame_pool_.ReserveVideoFrame(pixel_format_, capture_size);
   }
@@ -458,7 +494,7 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
         "gpu.capture", "PipelineLimited", TRACE_EVENT_SCOPE_THREAD, "trigger",
         VideoCaptureOracle::EventAsString(event), "atten_util_percent",
         base::saturated_cast<int>(utilization * 100.0f + 0.5f));
-    oracle_.RecordWillNotCapture(utilization);
+    oracle_->RecordWillNotCapture(utilization);
     if (next_capture_frame_number_ == 0) {
       // The pool was unable to provide a buffer for the very first capture, and
       // so there is no expectation of recovery. Thus, treat this as a fatal
@@ -483,13 +519,16 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
 
   // At this point, the capture is going to proceed. Populate the VideoFrame's
   // metadata, and notify the oracle.
+  const int64_t capture_frame_number = next_capture_frame_number_++;
   VideoFrameMetadata* const metadata = frame->metadata();
   metadata->SetTimeTicks(VideoFrameMetadata::CAPTURE_BEGIN_TIME,
                          clock_->NowTicks());
+  metadata->SetInteger(VideoFrameMetadata::CAPTURE_COUNTER,
+                       capture_frame_number);
   metadata->SetTimeDelta(VideoFrameMetadata::FRAME_DURATION,
-                         oracle_.estimated_frame_duration());
+                         oracle_->estimated_frame_duration());
   metadata->SetDouble(VideoFrameMetadata::FRAME_RATE,
-                      1.0 / oracle_.min_capture_period().InSecondsF());
+                      1.0 / oracle_->min_capture_period().InSecondsF());
   metadata->SetTimeTicks(VideoFrameMetadata::REFERENCE_TIME, event_time);
   metadata->SetDouble(VideoFrameMetadata::DEVICE_SCALE_FACTOR,
                       frame_metadata.device_scale_factor);
@@ -499,18 +538,19 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
                       frame_metadata.root_scroll_offset.x());
   metadata->SetDouble(VideoFrameMetadata::ROOT_SCROLL_OFFSET_Y,
                       frame_metadata.root_scroll_offset.y());
-  metadata->SetDouble(VideoFrameMetadata::TOP_CONTROLS_HEIGHT,
-                      frame_metadata.top_controls_height);
-  metadata->SetDouble(VideoFrameMetadata::TOP_CONTROLS_SHOWN_RATIO,
-                      frame_metadata.top_controls_shown_ratio);
+  if (frame_metadata.top_controls_visible_height.has_value()) {
+    last_top_controls_visible_height_ =
+        *frame_metadata.top_controls_visible_height;
+  }
+  metadata->SetDouble(VideoFrameMetadata::TOP_CONTROLS_VISIBLE_HEIGHT,
+                      last_top_controls_visible_height_);
 
-  oracle_.RecordCapture(utilization);
-  const int64_t frame_number = next_capture_frame_number_++;
+  oracle_->RecordCapture(utilization);
   TRACE_EVENT_ASYNC_BEGIN2("gpu.capture", "Capture", oracle_frame_number,
-                           "frame_number", frame_number, "trigger",
+                           "frame_number", capture_frame_number, "trigger",
                            VideoCaptureOracle::EventAsString(event));
 
-  const gfx::Size& source_size = oracle_.source_size();
+  const gfx::Size& source_size = oracle_->source_size();
   DCHECK(!source_size.IsEmpty());
   gfx::Rect content_rect;
   if (pixel_format_ == media::PIXEL_FORMAT_I420) {
@@ -521,6 +561,25 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
     content_rect =
         media::ComputeLetterboxRegion(frame->visible_rect(), source_size);
   }
+
+  // Determine what rectangluar region has changed since the last captured
+  // frame.
+  gfx::Rect update_rect;
+  if (dirty_rect_ == kMaxRect ||
+      frame->visible_rect() != last_frame_visible_rect_) {
+    // Source or VideoFrame size change: Assume entire frame (including
+    // letterboxed regions) have changed.
+    update_rect = last_frame_visible_rect_ = frame->visible_rect();
+  } else {
+    update_rect = copy_output::ComputeResultRect(
+        dirty_rect_, gfx::Vector2d(source_size.width(), source_size.height()),
+        gfx::Vector2d(content_rect.width(), content_rect.height()));
+    update_rect.Offset(content_rect.OffsetFromOrigin());
+    if (pixel_format_ == media::PIXEL_FORMAT_I420)
+      update_rect = ExpandRectToI420SubsampleBoundaries(update_rect);
+  }
+  metadata->SetRect(media::VideoFrameMetadata::CAPTURE_UPDATE_RECT,
+                    update_rect);
   // Extreme edge-case: If somehow the source size is so tiny that the content
   // region becomes empty, just deliver a frame filled with black.
   if (content_rect.IsEmpty()) {
@@ -532,15 +591,40 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
       frame->set_color_space(gfx::ColorSpace::CreateSRGB());
     }
     dirty_rect_ = gfx::Rect();
-    DidCaptureFrame(frame_number, oracle_frame_number, gfx::Rect(),
-                    std::move(frame));
+    OnFrameReadyForDelivery(capture_frame_number, oracle_frame_number,
+                            gfx::Rect(), std::move(frame));
     return;
   }
 
-  // For passive refreshes, just deliver the resurrected frame.
-  if (dirty_rect_.IsEmpty()) {
-    DidCaptureFrame(frame_number, oracle_frame_number, content_rect,
-                    std::move(frame));
+  // If the frame is a resurrected one, just deliver it since it already
+  // contains the most up-to-date capture of the source content.
+  if (can_resurrect_content) {
+    if (log_to_webrtc_) {
+      std::string strides = "";
+      switch (frame->format()) {
+        case media::PIXEL_FORMAT_I420:
+          strides = base::StringPrintf("strideY:%d StrideU:%d StrideV:%d",
+                                       frame->stride(VideoFrame::kYPlane),
+                                       frame->stride(VideoFrame::kUPlane),
+                                       frame->stride(VideoFrame::kVPlane));
+          break;
+        case media::PIXEL_FORMAT_ARGB:
+          strides = base::StringPrintf("strideRGBA:%d",
+                                       frame->stride(VideoFrame::kARGBPlane));
+          break;
+        default:
+          strides = "strides:???";
+      }
+      consumer_->OnLog(base::StringPrintf(
+          "VFC: Ressurecting frame format=%s frame_coded_size: %s "
+          "frame_visible_rect: %s frame_natural_size: %s %s",
+          VideoPixelFormatToString(frame->format()).c_str(),
+          frame->coded_size().ToString().c_str(),
+          frame->visible_rect().ToString().c_str(),
+          frame->natural_size().ToString().c_str(), strides.c_str()));
+    }
+    OnFrameReadyForDelivery(capture_frame_number, oracle_frame_number,
+                            content_rect, std::move(frame));
     return;
   }
 
@@ -550,11 +634,11 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
           ? CopyOutputRequest::ResultFormat::I420_PLANES
           : CopyOutputRequest::ResultFormat::RGBA_BITMAP,
       base::BindOnce(&FrameSinkVideoCapturerImpl::DidCopyFrame,
-                     capture_weak_factory_.GetWeakPtr(), frame_number,
-                     oracle_frame_number, content_rect,
+                     capture_weak_factory_.GetWeakPtr(), capture_frame_number,
+                     oracle_frame_number, content_version_, content_rect,
                      VideoCaptureOverlay::MakeCombinedRenderer(
                          GetOverlaysInOrder(), content_rect, frame->format()),
-                     std::move(frame))));
+                     std::move(frame), base::TimeTicks::Now())));
   request->set_source(copy_request_source_);
   request->set_area(gfx::Rect(source_size));
   request->SetScaleRatio(
@@ -564,21 +648,73 @@ void FrameSinkVideoCapturerImpl::MaybeCaptureFrame(
   // just the part of the result that would have changed due to aggregated
   // damage over all the frames that weren't captured.
   request->set_result_selection(gfx::Rect(content_rect.size()));
+
+  // Clear the |dirty_rect_|, to indicate all changes at the source are now
+  // being captured.
   dirty_rect_ = gfx::Rect();
+
+  if (log_to_webrtc_) {
+    std::string format =
+        pixel_format_ == media::PIXEL_FORMAT_I420 ? "I420" : "RGBA_bitmap";
+    consumer_->OnLog(base::StringPrintf(
+        "VFC: Sending CopyRequest: "
+        "format=%s area:%s "
+        "scale_from: %s "
+        "scale_to: %s "
+        "frame pool utilization: %f",
+        format.c_str(), request->area().ToString().c_str(),
+        request->scale_from().ToString().c_str(),
+        request->scale_to().ToString().c_str(), utilization));
+  }
+
   resolved_target_->RequestCopyOfOutput(LocalSurfaceId(), std::move(request));
 }
 
 void FrameSinkVideoCapturerImpl::DidCopyFrame(
-    int64_t frame_number,
+    int64_t capture_frame_number,
     OracleFrameNumber oracle_frame_number,
+    int64_t content_version,
     const gfx::Rect& content_rect,
     VideoCaptureOverlay::OnceRenderer overlay_renderer,
     scoped_refptr<VideoFrame> frame,
+    base::TimeTicks request_time,
     std::unique_ptr<CopyOutputResult> result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_GE(frame_number, next_delivery_frame_number_);
+  DCHECK_GE(capture_frame_number, next_delivery_frame_number_);
   DCHECK(frame);
   DCHECK(result);
+
+  if (log_to_webrtc_ && consumer_) {
+    std::string format = "";
+    std::string strides = "";
+    switch (result->format()) {
+      case CopyOutputResult::Format::I420_PLANES:
+        format = "I420";
+        strides = base::StringPrintf("strideY:%d StrideU:%d StrideV:%d",
+                                     frame->stride(VideoFrame::kYPlane),
+                                     frame->stride(VideoFrame::kUPlane),
+                                     frame->stride(VideoFrame::kVPlane));
+        break;
+      case CopyOutputResult::Format::RGBA_BITMAP:
+        format = "RGBA_Bitmap";
+        strides = base::StringPrintf("strideRGBA:%d",
+                                     frame->stride(VideoFrame::kARGBPlane));
+        break;
+      case CopyOutputResult::Format::RGBA_TEXTURE:
+        format = "RGBA_Texture";
+        strides = base::StringPrintf("strideRGBA:%d",
+                                     frame->stride(VideoFrame::kARGBPlane));
+        break;
+    }
+    consumer_->OnLog(base::StringPrintf(
+        "VFC: got CopyOutputResult: format=%s size:%s frame_coded_size: %s "
+        "frame_visible_rect: %s frame_natural_size: %s content_rect: %s %s",
+        format.c_str(), result->size().ToString().c_str(),
+        frame->coded_size().ToString().c_str(),
+        frame->visible_rect().ToString().c_str(),
+        frame->natural_size().ToString().c_str(),
+        content_rect.ToString().c_str(), strides.c_str()));
+  }
 
   // Stop() should have canceled any outstanding copy requests. So, by reaching
   // this point, |consumer_| should be bound.
@@ -601,23 +737,34 @@ void FrameSinkVideoCapturerImpl::DidCopyFrame(
     uint8_t* const v = frame->visible_data(VideoFrame::kVPlane) +
                        (content_rect.y() / 2) * v_stride +
                        (content_rect.x() / 2);
-    if (result->ReadI420Planes(y, y_stride, u, u_stride, v, v_stride)) {
+    bool success =
+        result->ReadI420Planes(y, y_stride, u, u_stride, v, v_stride);
+    if (success) {
       // Per CopyOutputResult header comments, I420_PLANES results are always in
       // the Rec.709 color space.
       frame->set_color_space(gfx::ColorSpace::CreateREC709());
+      UMA_HISTOGRAM_CAPTURE_DURATION_CUSTOM_TIMES(
+          "I420", base::TimeTicks::Now() - request_time);
     } else {
       frame = nullptr;
     }
+    UMA_HISTOGRAM_BOOLEAN("Viz.FrameSinkVideoCapturer.I420.CaptureSucceeded",
+                          success);
   } else {
     int stride = frame->stride(VideoFrame::kARGBPlane);
     DCHECK_EQ(media::PIXEL_FORMAT_ARGB, pixel_format_);
     uint8_t* const pixels = frame->visible_data(VideoFrame::kARGBPlane) +
                             content_rect.y() * stride + content_rect.x() * 4;
-    if (result->ReadRGBAPlane(pixels, stride)) {
+    bool success = result->ReadRGBAPlane(pixels, stride);
+    if (success) {
       frame->set_color_space(result->GetRGBAColorSpace());
+      UMA_HISTOGRAM_CAPTURE_DURATION_CUSTOM_TIMES(
+          "RGBA", base::TimeTicks::Now() - request_time);
     } else {
       frame = nullptr;
     }
+    UMA_HISTOGRAM_BOOLEAN("Viz.FrameSinkVideoCapturer.RGBA.CaptureSucceeded",
+                          success);
   }
 
   if (frame) {
@@ -634,19 +781,27 @@ void FrameSinkVideoCapturerImpl::DidCopyFrame(
     media::LetterboxVideoFrame(
         frame.get(), gfx::Rect(content_rect.origin(),
                                AdjustSizeForPixelFormat(result->size())));
+
+    if (content_version > content_version_in_marked_frame_ ||
+        (content_version == content_version_in_marked_frame_ &&
+         frame->coded_size() != marked_frame_size_)) {
+      frame_pool_.MarkFrame(*frame);
+      marked_frame_size_ = frame->coded_size();
+      content_version_in_marked_frame_ = content_version;
+    }
   }
 
-  DidCaptureFrame(frame_number, oracle_frame_number, content_rect,
-                  std::move(frame));
+  OnFrameReadyForDelivery(capture_frame_number, oracle_frame_number,
+                          content_rect, std::move(frame));
 }
 
-void FrameSinkVideoCapturerImpl::DidCaptureFrame(
-    int64_t frame_number,
+void FrameSinkVideoCapturerImpl::OnFrameReadyForDelivery(
+    int64_t capture_frame_number,
     OracleFrameNumber oracle_frame_number,
     const gfx::Rect& content_rect,
     scoped_refptr<VideoFrame> frame) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK_GE(frame_number, next_delivery_frame_number_);
+  DCHECK_GE(capture_frame_number, next_delivery_frame_number_);
 
   if (frame) {
     frame->metadata()->SetTimeTicks(VideoFrameMetadata::CAPTURE_END_TIME,
@@ -655,9 +810,10 @@ void FrameSinkVideoCapturerImpl::DidCaptureFrame(
 
   // Ensure frames are delivered in-order by using a min-heap, and only
   // deliver the next frame(s) in-sequence when they are found at the top.
-  delivery_queue_.emplace(frame_number, oracle_frame_number, content_rect,
-                          std::move(frame));
-  while (delivery_queue_.top().frame_number == next_delivery_frame_number_) {
+  delivery_queue_.emplace(capture_frame_number, oracle_frame_number,
+                          content_rect, std::move(frame));
+  while (delivery_queue_.top().capture_frame_number ==
+         next_delivery_frame_number_) {
     auto& next = delivery_queue_.top();
     MaybeDeliverFrame(next.oracle_frame_number, next.content_rect,
                       std::move(next.frame));
@@ -679,16 +835,13 @@ void FrameSinkVideoCapturerImpl::MaybeDeliverFrame(
   // also rewrites the media timestamp in terms of the smooth flow of the
   // original source content.
   base::TimeTicks media_ticks;
-  if (!oracle_.CompleteCapture(oracle_frame_number, !!frame, &media_ticks)) {
+  if (!oracle_->CompleteCapture(oracle_frame_number, !!frame, &media_ticks)) {
     // The following is used by
     // chrome/browser/extension/api/cast_streaming/performance_test.cc, in
     // addition to the usual runtime tracing.
     TRACE_EVENT_ASYNC_END1("gpu.capture", "Capture", oracle_frame_number,
                            "success", false);
 
-    // Mark the whole source as dirty, since this frame may have contained
-    // updated content that will not be delivered.
-    dirty_rect_ = kMaxRect;
     ScheduleRefreshFrame();
     return;
   }
@@ -724,14 +877,13 @@ void FrameSinkVideoCapturerImpl::MaybeDeliverFrame(
   info->visible_rect = frame->visible_rect();
   DCHECK(frame->ColorSpace().IsValid());  // Ensure it was set by this point.
   info->color_space = frame->ColorSpace();
-  const gfx::Rect update_rect = frame->visible_rect();
 
-  // Create an InFlightFrameDelivery for this frame, owned by its mojo binding.
+  // Create an InFlightFrameDelivery for this frame, owned by its mojo receiver.
   // It responds to the consumer's Done() notification by returning the video
   // frame to the |frame_pool_|. It responds to the optional ProvideFeedback()
   // by forwarding the measurement to the |oracle_|.
-  mojom::FrameSinkVideoConsumerFrameCallbacksPtr callbacks;
-  mojo::MakeStrongBinding(
+  mojo::PendingRemote<mojom::FrameSinkVideoConsumerFrameCallbacks> callbacks;
+  mojo::MakeSelfOwnedReceiver(
       std::make_unique<InFlightFrameDelivery>(
           base::BindOnce(
               [](scoped_refptr<VideoFrame> frame) {
@@ -741,11 +893,11 @@ void FrameSinkVideoCapturerImpl::MaybeDeliverFrame(
           base::BindOnce(&VideoCaptureOracle::RecordConsumerFeedback,
                          feedback_weak_factory_.GetWeakPtr(),
                          oracle_frame_number)),
-      mojo::MakeRequest(&callbacks));
+      callbacks.InitWithNewPipeAndPassReceiver());
 
   // Send the frame to the consumer.
-  consumer_->OnFrameCaptured(std::move(handle), std::move(info), update_rect,
-                             content_rect, std::move(callbacks));
+  consumer_->OnFrameCaptured(std::move(handle), std::move(info), content_rect,
+                             std::move(callbacks));
 }
 
 gfx::Size FrameSinkVideoCapturerImpl::AdjustSizeForPixelFormat(
@@ -767,12 +919,28 @@ gfx::Size FrameSinkVideoCapturerImpl::AdjustSizeForPixelFormat(
   return result;
 }
 
+// static
+gfx::Rect FrameSinkVideoCapturerImpl::ExpandRectToI420SubsampleBoundaries(
+    const gfx::Rect& rect) {
+  const int x = rect.x() & ~1;
+  const int y = rect.y() & ~1;
+  const int r = rect.right() + (rect.right() & 1);
+  const int b = rect.bottom() + (rect.bottom() & 1);
+  return gfx::Rect(x, y, r - x, b - y);
+}
+
+void FrameSinkVideoCapturerImpl::OnLog(const std::string& message) {
+  if (log_to_webrtc_ && consumer_) {
+    consumer_->OnLog(message);
+  }
+}
+
 FrameSinkVideoCapturerImpl::CapturedFrame::CapturedFrame(
-    int64_t frame_number,
+    int64_t capture_frame_number,
     OracleFrameNumber oracle_frame_number,
     const gfx::Rect& content_rect,
     scoped_refptr<media::VideoFrame> frame)
-    : frame_number(frame_number),
+    : capture_frame_number(capture_frame_number),
       oracle_frame_number(oracle_frame_number),
       content_rect(content_rect),
       frame(std::move(frame)) {}
@@ -786,7 +954,7 @@ bool FrameSinkVideoCapturerImpl::CapturedFrame::operator<(
     const FrameSinkVideoCapturerImpl::CapturedFrame& other) const {
   // Reverse the sort order; so std::priority_queue<CapturedFrame> becomes a
   // min-heap instead of a max-heap.
-  return other.frame_number < frame_number;
+  return other.capture_frame_number < capture_frame_number;
 }
 
 }  // namespace viz

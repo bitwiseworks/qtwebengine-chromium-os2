@@ -4,6 +4,7 @@
 
 #include "extensions/shell/browser/shell_desktop_controller_aura.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
@@ -110,7 +111,7 @@ IN_PROC_BROWSER_TEST_F(ShellDesktopControllerAuraBrowserTest, TwoAppWindows) {
             browser_context(), app_->id(),
             "chrome.app.window.create('/hello.html');"));
         ResultCatcher catcher;
-        catcher.GetNextResult();
+        ASSERT_TRUE(catcher.GetNextResult());
 
         // Close the first app window.
         GetAppWindow()->OnNativeClose();

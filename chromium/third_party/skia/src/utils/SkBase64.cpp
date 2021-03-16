@@ -6,7 +6,7 @@
  */
 
 
-#include "SkBase64.h"
+#include "include/utils/SkBase64.h"
 
 #define DecodePad -2
 #define EncodePad 64
@@ -34,8 +34,9 @@ SkBase64::SkBase64() : fLength((size_t) -1), fData(nullptr) {
 #endif
 
 SkBase64::Error SkBase64::decode(const void* srcPtr, size_t size, bool writeDestination) {
-    unsigned char* dst = (unsigned char*) fData;
-    const unsigned char* dstStart = (const unsigned char*) fData;
+    unsigned char* dst = (unsigned char*)fData;
+    int i = 0;
+
     const unsigned char* src = (const unsigned char*) srcPtr;
     bool padTwo = false;
     bool padThree = false;
@@ -79,28 +80,28 @@ handlePad:
             int one = (uint8_t) (bytes[0] << 2);
             two = bytes[1];
             one |= two >> 4;
-            two = (uint8_t) (two << 4);
+            two = (uint8_t) ((two << 4) & 0xFF);
             three = bytes[2];
             two |= three >> 2;
-            three = (uint8_t) (three << 6);
+            three = (uint8_t) ((three << 6) & 0xFF);
             three |= bytes[3];
             SkASSERT(one < 256 && two < 256 && three < 256);
-            *dst = (unsigned char) one;
+            dst[i] = (unsigned char) one;
         }
-        dst++;
+        i++;
         if (padTwo)
             break;
         if (writeDestination)
-            *dst = (unsigned char) two;
-        dst++;
+            dst[i] = (unsigned char) two;
+        i++;
         if (padThree)
             break;
         if (writeDestination)
-            *dst = (unsigned char) three;
-        dst++;
+            dst[i] = (unsigned char) three;
+        i++;
     }
 goHome:
-    fLength = dst - dstStart;
+    fLength = i;
     return kNoError;
 }
 

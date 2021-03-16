@@ -18,8 +18,8 @@
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_clock.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/blacklist/opt_out_blacklist/opt_out_blacklist_delegate.h"
@@ -89,7 +89,7 @@ class TestPreviewsBlackList : public PreviewsBlackList {
 
 class PreviewsBlackListTest : public testing::Test {
  public:
-  PreviewsBlackListTest() : field_trial_list_(nullptr), passed_reasons_({}) {}
+  PreviewsBlackListTest() : passed_reasons_({}) {}
   ~PreviewsBlackListTest() override {}
 
   void TearDown() override { variations::testing::ClearAllVariationParams(); }
@@ -123,43 +123,42 @@ class PreviewsBlackListTest : public testing::Test {
 
   void SetHostThresholdParam(int per_host_threshold) {
     params_["per_host_opt_out_threshold"] =
-        base::IntToString(per_host_threshold);
+        base::NumberToString(per_host_threshold);
   }
 
   void SetHostIndifferentThresholdParam(int host_indifferent_threshold) {
     params_["host_indifferent_opt_out_threshold"] =
-        base::IntToString(host_indifferent_threshold);
+        base::NumberToString(host_indifferent_threshold);
   }
 
   void SetHostDurationParam(int duration_in_days) {
     params_["per_host_black_list_duration_in_days"] =
-        base::IntToString(duration_in_days);
+        base::NumberToString(duration_in_days);
   }
 
   void SetHostIndifferentDurationParam(int duration_in_days) {
     params_["host_indifferent_black_list_duration_in_days"] =
-        base::IntToString(duration_in_days);
+        base::NumberToString(duration_in_days);
   }
 
   void SetSingleOptOutDurationParam(int single_opt_out_duration) {
     params_["single_opt_out_duration_in_seconds"] =
-        base::IntToString(single_opt_out_duration);
+        base::NumberToString(single_opt_out_duration);
   }
 
   void SetMaxHostInBlackListParam(size_t max_hosts_in_blacklist) {
     params_["max_hosts_in_blacklist"] =
-        base::IntToString(max_hosts_in_blacklist);
+        base::NumberToString(max_hosts_in_blacklist);
   }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   // Observer to |black_list_|.
   TestOptOutBlacklistDelegate blacklist_delegate_;
 
   base::SimpleTestClock test_clock_;
   std::map<std::string, std::string> params_;
-  base::FieldTrialList field_trial_list_;
 
   std::unique_ptr<TestPreviewsBlackList> black_list_;
   std::vector<PreviewsEligibilityReason> passed_reasons_;

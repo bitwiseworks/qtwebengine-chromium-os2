@@ -11,6 +11,7 @@
 #include "base/compiler_specific.h"
 #include "base/time/time.h"
 #include "base/version.h"
+#include "components/variations/client_filterable_state.h"
 #include "components/variations/processed_study.h"
 #include "components/variations/proto/study.pb.h"
 #include "components/variations/proto/variations_seed.pb.h"
@@ -45,6 +46,14 @@ bool CheckStudyPlatform(const Study::Filter& filter, Study::Platform platform);
 bool CheckStudyLowEndDevice(const Study::Filter& filter,
                             bool is_low_end_device);
 
+// Checks whether a study is applicable given |is_enterprise| per |filter|.
+bool CheckStudyEnterprise(const Study::Filter& filter,
+                          const ClientFilterableState& client_state);
+
+// Checks whether a study is applicable given the ChromeVariations policy value.
+bool CheckStudyPolicyRestriction(const Study::Filter& filter,
+                                 RestrictionPolicy policy_restriction);
+
 // Checks whether a study is applicable for the given date/time per |filter|.
 bool CheckStudyStartDate(const Study::Filter& filter,
                          const base::Time& date_time);
@@ -56,6 +65,10 @@ bool CheckStudyEndDate(const Study::Filter& filter,
 // Checks whether a study is applicable for the given version per |filter|.
 bool CheckStudyVersion(const Study::Filter& filter,
                        const base::Version& version);
+
+// Checks whether a study is applicable for the given OS version per |filter|.
+bool CheckStudyOSVersion(const Study::Filter& filter,
+                         const base::Version& os_version);
 
 // Checks whether a study is applicable for the given |country| per |filter|.
 bool CheckStudyCountry(const Study::Filter& filter, const std::string& country);

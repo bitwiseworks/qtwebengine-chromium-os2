@@ -242,7 +242,7 @@ static int memstatNext(sqlite3_vtab_cursor *cur){
       i++;
     }
     pCur->aVal[0] = 0;
-    pCur->aVal[1] = 0;
+    pCur->aVal[1] = 0;    
     switch( aMemstatColumn[i].eType ){
       case MSV_GSTAT: {
         if( sqlite3_libversion_number()>=3010000 ){
@@ -275,7 +275,7 @@ static int memstatNext(sqlite3_vtab_cursor *cur){
   }
   return SQLITE_OK;
 }
-
+  
 
 /*
 ** Return values of columns for the row at which the memstat_cursor
@@ -336,11 +336,11 @@ static int memstatEof(sqlite3_vtab_cursor *cur){
 /*
 ** This method is called to "rewind" the memstat_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to memstatColumn() or memstatRowid() or
+** once prior to any call to memstatColumn() or memstatRowid() or 
 ** memstatEof().
 */
 static int memstatFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -368,7 +368,7 @@ static int memstatBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** memstat virtual table.
 */
 static sqlite3_module memstatModule = {
@@ -413,8 +413,8 @@ int sqlite3MemstatVtabInit(sqlite3 *db){
 __declspec(dllexport)
 #endif
 int sqlite3_memstat_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

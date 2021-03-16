@@ -5,13 +5,23 @@
 #ifndef SERVICES_PROXY_RESOLVER_MOJO_PROXY_RESOLVER_V8_TRACING_BINDINGS_H_
 #define SERVICES_PROXY_RESOLVER_MOJO_PROXY_RESOLVER_V8_TRACING_BINDINGS_H_
 
+#include <memory>
+#include <string>
 #include <utility>
 
+#include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_checker.h"
+#include "net/base/address_family.h"
+#include "net/base/host_port_pair.h"
+#include "net/base/network_isolation_key.h"
+#include "net/dns/host_resolver.h"
 #include "net/log/net_log_with_source.h"
-#include "net/proxy_resolution/proxy_resolver_v8_tracing.h"
+#include "net/proxy_resolution/proxy_resolve_dns_operation.h"
 #include "services/proxy_resolver/host_resolver_mojo.h"
+#include "services/proxy_resolver/proxy_host_resolver.h"
+#include "services/proxy_resolver/proxy_resolver_v8_tracing.h"
+#include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
 
 namespace proxy_resolver {
 
@@ -22,7 +32,7 @@ namespace proxy_resolver {
 // be called from the origin task runner.
 template <typename Client>
 class MojoProxyResolverV8TracingBindings
-    : public net::ProxyResolverV8Tracing::Bindings,
+    : public ProxyResolverV8Tracing::Bindings,
       public HostResolverMojo::Impl {
  public:
   explicit MojoProxyResolverV8TracingBindings(Client* client)
@@ -41,7 +51,7 @@ class MojoProxyResolverV8TracingBindings
     client_->OnError(line_number, base::UTF16ToUTF8(message));
   }
 
-  net::HostResolver* GetHostResolver() override {
+  ProxyHostResolver* GetHostResolver() override {
     DCHECK(thread_checker_.CalledOnValidThread());
     return &host_resolver_;
   }
@@ -53,14 +63,18 @@ class MojoProxyResolverV8TracingBindings
 
  private:
   // HostResolverMojo::Impl override.
-  void ResolveDns(std::unique_ptr<net::HostResolver::RequestInfo> request_info,
-                  mojom::HostResolverRequestClientPtr client) override {
+  void ResolveDns(
+      const std::string& hostname,
+      net::ProxyResolveDnsOperation operation,
+      const net::NetworkIsolationKey& network_isolation_key,
+      mojo::PendingRemote<mojom::HostResolverRequestClient> client) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    client_->ResolveDns(std::move(request_info), std::move(client));
+    client_->ResolveDns(hostname, operation, network_isolation_key,
+                        std::move(client));
   }
 
   base::ThreadChecker thread_checker_;
-  Client* client_;
+  Client* const client_;
   HostResolverMojo host_resolver_;
 };
 

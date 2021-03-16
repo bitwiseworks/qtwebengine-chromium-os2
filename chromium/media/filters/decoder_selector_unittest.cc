@@ -9,10 +9,10 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/gmock_callback_support.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/base/demuxer_stream.h"
-#include "media/base/gmock_callback_support.h"
 #include "media/base/media_util.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
@@ -26,6 +26,8 @@
 #include "media/filters/decrypting_video_decoder.h"
 #endif  // !defined(OS_ANDROID)
 
+using ::base::test::RunCallback;
+using ::base::test::RunOnceCallback;
 using ::testing::_;
 using ::testing::IsNull;
 using ::testing::NiceMock;
@@ -50,16 +52,16 @@ enum DecoderCapability {
   kAlwaysSucceed,
 };
 
-bool IsConfigSupported(DecoderCapability capability, bool is_encrypted) {
+Status IsConfigSupported(DecoderCapability capability, bool is_encrypted) {
   switch (capability) {
     case kAlwaysFail:
-      return false;
+      return StatusCode::kCodeOnlyForTesting;
     case kClearOnly:
-      return !is_encrypted;
+      return is_encrypted ? StatusCode::kCodeOnlyForTesting : OkStatus();
     case kEncryptedOnly:
-      return is_encrypted;
+      return is_encrypted ? OkStatus() : StatusCode::kCodeOnlyForTesting;
     case kAlwaysSucceed:
-      return true;
+      return OkStatus();
   }
 }
 
@@ -89,13 +91,14 @@ class AudioDecoderSelectorTestParam {
   // Decoder::Initialize() takes different parameters depending on the type.
   static void ExpectInitialize(MockDecoder* decoder,
                                DecoderCapability capability) {
-    EXPECT_CALL(*decoder, Initialize(_, _, _, _, _))
-        .WillRepeatedly(
-            [capability](const AudioDecoderConfig& config, CdmContext*,
-                         const AudioDecoder::InitCB& init_cb,
-                         const AudioDecoder::OutputCB&, const WaitingCB&) {
-              init_cb.Run(IsConfigSupported(capability, config.is_encrypted()));
-            });
+    EXPECT_CALL(*decoder, Initialize_(_, _, _, _, _))
+        .WillRepeatedly([capability](const AudioDecoderConfig& config,
+                                     CdmContext*, AudioDecoder::InitCB& init_cb,
+                                     const AudioDecoder::OutputCB&,
+                                     const WaitingCB&) {
+          std::move(init_cb).Run(
+              IsConfigSupported(capability, config.is_encrypted()));
+        });
   }
 };
 
@@ -125,12 +128,13 @@ class VideoDecoderSelectorTestParam {
 
   static void ExpectInitialize(MockDecoder* decoder,
                                DecoderCapability capability) {
-    EXPECT_CALL(*decoder, Initialize(_, _, _, _, _, _))
+    EXPECT_CALL(*decoder, Initialize_(_, _, _, _, _, _))
         .WillRepeatedly(
             [capability](const VideoDecoderConfig& config, bool low_delay,
-                         CdmContext*, const VideoDecoder::InitCB& init_cb,
+                         CdmContext*, VideoDecoder::InitCB& init_cb,
                          const VideoDecoder::OutputCB&, const WaitingCB&) {
-              init_cb.Run(IsConfigSupported(capability, config.is_encrypted()));
+              std::move(init_cb).Run(
+                  IsConfigSupported(capability, config.is_encrypted()));
             });
   }
 };
@@ -162,7 +166,7 @@ class DecoderSelectorTest : public ::testing::Test {
         demuxer_stream_(TypeParam::kStreamType) {}
 
   void OnWaiting(WaitingReason reason) { NOTREACHED(); }
-  void OnOutput(const scoped_refptr<Output>& output) { NOTREACHED(); }
+  void OnOutput(scoped_refptr<Output> output) { NOTREACHED(); }
 
   MOCK_METHOD2_T(OnDecoderSelected,
                  void(std::string, std::unique_ptr<DecryptingDemuxerStream>));
@@ -198,7 +202,7 @@ class DecoderSelectorTest : public ::testing::Test {
     if (use_decrypting_decoder_) {
       decoders.push_back(
           std::make_unique<typename TypeParam::DecryptingDecoder>(
-              scoped_task_environment_.GetMainThreadTaskRunner(), &media_log_));
+              task_environment_.GetMainThreadTaskRunner(), &media_log_));
     }
 #endif  // !defined(OS_ANDROID)
 
@@ -229,11 +233,13 @@ class DecoderSelectorTest : public ::testing::Test {
     switch (TypeParam::kStreamType) {
       case DemuxerStream::AUDIO:
         EXPECT_CALL(*decryptor_, InitializeAudioDecoder(_, _))
-            .WillRepeatedly(RunCallback<1>(capability == kDecryptAndDecode));
+            .WillRepeatedly(
+                RunOnceCallback<1>(capability == kDecryptAndDecode));
         break;
       case DemuxerStream::VIDEO:
         EXPECT_CALL(*decryptor_, InitializeVideoDecoder(_, _))
-            .WillRepeatedly(RunCallback<1>(capability == kDecryptAndDecode));
+            .WillRepeatedly(
+                RunOnceCallback<1>(capability == kDecryptAndDecode));
         break;
       default:
         NOTREACHED();
@@ -243,7 +249,7 @@ class DecoderSelectorTest : public ::testing::Test {
   void CreateDecoderSelector() {
     decoder_selector_ =
         std::make_unique<DecoderSelector<TypeParam::kStreamType>>(
-            scoped_task_environment_.GetMainThreadTaskRunner(),
+            task_environment_.GetMainThreadTaskRunner(),
             base::BindRepeating(&Self::CreateDecoders, base::Unretained(this)),
             &media_log_);
     decoder_selector_->Initialize(
@@ -286,9 +292,9 @@ class DecoderSelectorTest : public ::testing::Test {
     RunUntilIdle();
   }
 
-  void RunUntilIdle() { scoped_task_environment_.RunUntilIdle(); }
+  void RunUntilIdle() { task_environment_.RunUntilIdle(); }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   NullMediaLog media_log_;
 
   std::unique_ptr<StreamTraits> traits_;
@@ -309,7 +315,7 @@ class DecoderSelectorTest : public ::testing::Test {
 using DecoderSelectorTestParams =
     ::testing::Types<AudioDecoderSelectorTestParam,
                      VideoDecoderSelectorTestParam>;
-TYPED_TEST_CASE(DecoderSelectorTest, DecoderSelectorTestParams);
+TYPED_TEST_SUITE(DecoderSelectorTest, DecoderSelectorTestParams);
 
 // Tests for clear streams. CDM will not be used for clear streams so
 // DecryptorCapability doesn't really matter.

@@ -28,8 +28,9 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
 
@@ -76,12 +77,6 @@ class LayoutState {
 
   bool IsPaginated() const { return is_paginated_; }
 
-  // The page logical offset is the object's offset from the top of the page in
-  // the page progression direction (so an x-offset in vertical text and a
-  // y-offset for horizontal text).
-  LayoutUnit PageLogicalOffset(const LayoutBox&,
-                               const LayoutUnit& child_logical_offset) const;
-
   LayoutUnit HeightOffsetForTableHeaders() const {
     return height_offset_for_table_headers_;
   }
@@ -95,6 +90,8 @@ class LayoutState {
   void SetHeightOffsetForTableFooters(LayoutUnit offset) {
     height_offset_for_table_footers_ = offset;
   }
+
+  const AtomicString& PageName() const { return page_name_; }
 
   const LayoutSize& PaginationOffset() const { return pagination_offset_; }
   bool ContainingBlockLogicalWidthChanged() const {
@@ -133,6 +130,8 @@ class LayoutState {
   // The height we need to make available for repeating table footers in
   // paginated layout.
   LayoutUnit height_offset_for_table_footers_;
+
+  AtomicString page_name_;
 
   LayoutObject& layout_object_;
   DISALLOW_COPY_AND_ASSIGN(LayoutState);

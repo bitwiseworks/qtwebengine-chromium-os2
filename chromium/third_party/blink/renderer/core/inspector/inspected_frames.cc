@@ -43,9 +43,9 @@ InspectedFrames::Iterator& InspectedFrames::Iterator::operator++() {
   Frame* frame = current_->Tree().TraverseNext(root_);
   current_ = nullptr;
   for (; frame; frame = frame->Tree().TraverseNext(root_)) {
-    if (!frame->IsLocalFrame())
+    auto* local = DynamicTo<LocalFrame>(frame);
+    if (!local)
       continue;
-    LocalFrame* local = ToLocalFrame(frame);
     if (local->GetProbeSink() == root_->GetProbeSink()) {
       current_ = local;
       break;
@@ -68,7 +68,7 @@ bool InspectedFrames::Iterator::operator!=(const Iterator& other) {
   return !(*this == other);
 }
 
-void InspectedFrames::Trace(blink::Visitor* visitor) {
+void InspectedFrames::Trace(Visitor* visitor) {
   visitor->Trace(root_);
 }
 

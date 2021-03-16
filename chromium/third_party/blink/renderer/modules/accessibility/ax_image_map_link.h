@@ -40,12 +40,13 @@ class AXObjectCacheImpl;
 
 class AXImageMapLink final : public AXNodeObject {
  public:
-  static AXImageMapLink* Create(HTMLAreaElement*, AXObjectCacheImpl&);
   explicit AXImageMapLink(HTMLAreaElement*, AXObjectCacheImpl&);
   ~AXImageMapLink() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
-  HTMLAreaElement* AreaElement() const { return ToHTMLAreaElement(GetNode()); }
+  HTMLAreaElement* AreaElement() const {
+    return To<HTMLAreaElement>(GetNode());
+  }
 
   HTMLMapElement* MapElement() const;
 
@@ -69,7 +70,12 @@ class AXImageMapLink final : public AXNodeObject {
   DISALLOW_COPY_AND_ASSIGN(AXImageMapLink);
 };
 
-DEFINE_AX_OBJECT_TYPE_CASTS(AXImageMapLink, IsImageMapLink());
+template <>
+struct DowncastTraits<AXImageMapLink> {
+  static bool AllowFrom(const AXObject& object) {
+    return object.IsImageMapLink();
+  }
+};
 
 }  // namespace blink
 

@@ -13,8 +13,8 @@
 #include "dbus/message.h"
 #include "dbus/object_path.h"
 #include "dbus/object_proxy.h"
-#include "services/device/media_transfer_protocol/mtp_storage_info.pb.h"
 #include "services/device/media_transfer_protocol/mtp_file_entry.pb.h"
+#include "services/device/media_transfer_protocol/mtp_storage_info.pb.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace device {
@@ -24,13 +24,9 @@ namespace {
 const char kInvalidResponseMsg[] = "Invalid Response: ";
 uint32_t kMaxChunkSize = 1024 * 1024;  // D-Bus has message size limits.
 
-mojom::MtpFileEntry GetMojoMtpFileEntryFromProtobuf(
-    const MtpFileEntry& entry) {
+mojom::MtpFileEntry GetMojoMtpFileEntryFromProtobuf(const MtpFileEntry& entry) {
   return mojom::MtpFileEntry(
-      entry.item_id(),
-      entry.parent_id(),
-      entry.file_name(),
-      entry.file_size(),
+      entry.item_id(), entry.parent_id(), entry.file_name(), entry.file_size(),
       entry.modification_time(),
       static_cast<mojom::MtpFileEntry::FileType>(entry.file_type()));
 }
@@ -38,20 +34,12 @@ mojom::MtpFileEntry GetMojoMtpFileEntryFromProtobuf(
 mojom::MtpStorageInfo GetMojoMtpStorageInfoFromProtobuf(
     const MtpStorageInfo& protobuf) {
   return mojom::MtpStorageInfo(
-        protobuf.storage_name(),
-        protobuf.vendor(),
-        protobuf.vendor_id(),
-        protobuf.product(),
-        protobuf.product_id(),
-        protobuf.device_flags(),
-        protobuf.storage_type(),
-        protobuf.filesystem_type(),
-        protobuf.access_capability(),
-        protobuf.max_capacity(),
-        protobuf.free_space_in_bytes(),
-        protobuf.free_space_in_objects(),
-        protobuf.storage_description(),
-        protobuf.volume_identifier());
+      protobuf.storage_name(), protobuf.vendor(), protobuf.vendor_id(),
+      protobuf.product(), protobuf.product_id(), protobuf.device_flags(),
+      protobuf.storage_type(), protobuf.filesystem_type(),
+      protobuf.access_capability(), protobuf.max_capacity(),
+      protobuf.free_space_in_bytes(), protobuf.free_space_in_objects(),
+      protobuf.storage_description(), protobuf.volume_identifier());
 }
 
 // The MediaTransferProtocolDaemonClient implementation.
@@ -59,12 +47,9 @@ class MediaTransferProtocolDaemonClientImpl
     : public MediaTransferProtocolDaemonClient {
  public:
   explicit MediaTransferProtocolDaemonClientImpl(dbus::Bus* bus)
-      : proxy_(bus->GetObjectProxy(
-          mtpd::kMtpdServiceName,
-          dbus::ObjectPath(mtpd::kMtpdServicePath))),
-        listen_for_changes_called_(false),
-        weak_ptr_factory_(this) {
-  }
+      : proxy_(bus->GetObjectProxy(mtpd::kMtpdServiceName,
+                                   dbus::ObjectPath(mtpd::kMtpdServicePath))),
+        listen_for_changes_called_(false) {}
 
   // MediaTransferProtocolDaemonClient override.
   void EnumerateStorages(EnumerateStoragesCallback callback,
@@ -277,16 +262,18 @@ class MediaTransferProtocolDaemonClientImpl
     listen_for_changes_called_ = true;
 
     static const SignalEventTuple kSignalEventTuples[] = {
-      { mtpd::kMTPStorageAttached, true },
-      { mtpd::kMTPStorageDetached, false },
+        {mtpd::kMTPStorageAttached, true},
+        {mtpd::kMTPStorageDetached, false},
     };
     for (const auto& event : kSignalEventTuples) {
       proxy_->ConnectToSignal(
           mtpd::kMtpdInterface, event.signal_name,
-          base::Bind(&MediaTransferProtocolDaemonClientImpl::OnMTPStorageSignal,
-                     weak_ptr_factory_.GetWeakPtr(), handler, event.is_attach),
-          base::Bind(&MediaTransferProtocolDaemonClientImpl::OnSignalConnected,
-                     weak_ptr_factory_.GetWeakPtr()));
+          base::BindRepeating(
+              &MediaTransferProtocolDaemonClientImpl::OnMTPStorageSignal,
+              weak_ptr_factory_.GetWeakPtr(), handler, event.is_attach),
+          base::BindOnce(
+              &MediaTransferProtocolDaemonClientImpl::OnSignalConnected,
+              weak_ptr_factory_.GetWeakPtr()));
     }
   }
 
@@ -430,8 +417,7 @@ class MediaTransferProtocolDaemonClientImpl
     file_entries.reserve(entries_protobuf.file_entries_size());
     for (int i = 0; i < entries_protobuf.file_entries_size(); ++i) {
       const auto& entry = entries_protobuf.file_entries(i);
-      file_entries.push_back(
-          GetMojoMtpFileEntryFromProtobuf(entry));
+      file_entries.push_back(GetMojoMtpFileEntryFromProtobuf(entry));
     }
     std::move(callback).Run(file_entries);
   }
@@ -504,13 +490,12 @@ class MediaTransferProtocolDaemonClientImpl
     handler.Run(is_attach, storage_name);
   }
 
-
   // Handles the result of signal connection setup.
   void OnSignalConnected(const std::string& interface,
                          const std::string& signal,
                          bool succeeded) {
-    LOG_IF(ERROR, !succeeded) << "Connect to " << interface << " "
-                              << signal << " failed.";
+    LOG_IF(ERROR, !succeeded)
+        << "Connect to " << interface << " " << signal << " failed.";
   }
 
   dbus::ObjectProxy* const proxy_;
@@ -519,7 +504,8 @@ class MediaTransferProtocolDaemonClientImpl
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<MediaTransferProtocolDaemonClientImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<MediaTransferProtocolDaemonClientImpl> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaTransferProtocolDaemonClientImpl);
 };

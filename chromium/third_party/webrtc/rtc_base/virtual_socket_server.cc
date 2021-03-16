@@ -13,11 +13,11 @@
 #include <errno.h>
 #include <math.h>
 
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
 
+#include "absl/algorithm/container.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/fake_clock.h"
 #include "rtc_base/logging.h"
@@ -523,7 +523,7 @@ void VirtualSocket::OnSocketServerReadyToSend() {
 
 VirtualSocketServer::VirtualSocketServer() : VirtualSocketServer(nullptr) {}
 
-VirtualSocketServer::VirtualSocketServer(FakeClock* fake_clock)
+VirtualSocketServer::VirtualSocketServer(ThreadProcessingFakeClock* fake_clock)
     : fake_clock_(fake_clock),
       msg_queue_(nullptr),
       stop_on_idle_(false),
@@ -599,7 +599,7 @@ VirtualSocket* VirtualSocketServer::CreateSocketInternal(int family, int type) {
   return socket;
 }
 
-void VirtualSocketServer::SetMessageQueue(MessageQueue* msg_queue) {
+void VirtualSocketServer::SetMessageQueue(Thread* msg_queue) {
   msg_queue_ = msg_queue;
   if (msg_queue_) {
     msg_queue_->SignalQueueDestroyed.connect(
@@ -614,7 +614,7 @@ bool VirtualSocketServer::Wait(int cmsWait, bool process_io) {
   }
   // Note: we don't need to do anything with |process_io| since we don't have
   // any real I/O. Received packets come in the form of queued messages, so
-  // MessageQueue will ensure WakeUp is called if another thread sends a
+  // Thread will ensure WakeUp is called if another thread sends a
   // packet.
   wakeup_.Wait(cmsWait);
   return true;
@@ -637,7 +637,7 @@ bool VirtualSocketServer::ProcessMessagesUntilIdle() {
     if (fake_clock_) {
       // If using a fake clock, advance it in millisecond increments until the
       // queue is empty.
-      fake_clock_->AdvanceTime(webrtc::TimeDelta::ms(1));
+      fake_clock_->AdvanceTime(webrtc::TimeDelta::Millis(1));
     } else {
       // Otherwise, run a normal message loop.
       Message msg;
@@ -1108,7 +1108,7 @@ VirtualSocketServer::Function* VirtualSocketServer::Invert(Function* f) {
   for (Function::size_type i = 0; i < f->size(); ++i)
     std::swap((*f)[i].first, (*f)[i].second);
 
-  std::sort(f->begin(), f->end(), FunctionDomainCmp());
+  absl::c_sort(*f, FunctionDomainCmp());
   return f;
 }
 
@@ -1129,8 +1129,7 @@ VirtualSocketServer::Function* VirtualSocketServer::Resample(Function* f,
 }
 
 double VirtualSocketServer::Evaluate(Function* f, double x) {
-  Function::iterator iter =
-      std::lower_bound(f->begin(), f->end(), x, FunctionDomainCmp());
+  Function::iterator iter = absl::c_lower_bound(*f, x, FunctionDomainCmp());
   if (iter == f->begin()) {
     return (*f)[0].second;
   } else if (iter == f->end()) {

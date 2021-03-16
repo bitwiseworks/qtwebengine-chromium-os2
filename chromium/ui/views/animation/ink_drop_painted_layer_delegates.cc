@@ -4,6 +4,8 @@
 
 #include "ui/views/animation/ink_drop_painted_layer_delegates.h"
 
+#include <vector>
+
 #include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkDrawLooper.h"
@@ -31,7 +33,7 @@ namespace views {
 BasePaintedLayerDelegate::BasePaintedLayerDelegate(SkColor color)
     : color_(color) {}
 
-BasePaintedLayerDelegate::~BasePaintedLayerDelegate() {}
+BasePaintedLayerDelegate::~BasePaintedLayerDelegate() = default;
 
 gfx::Vector2dF BasePaintedLayerDelegate::GetCenteringOffset() const {
   return gfx::RectF(GetPaintedBounds()).CenterPoint().OffsetFromOrigin();
@@ -49,7 +51,7 @@ void BasePaintedLayerDelegate::OnDeviceScaleFactorChanged(
 CircleLayerDelegate::CircleLayerDelegate(SkColor color, int radius)
     : BasePaintedLayerDelegate(color), radius_(radius) {}
 
-CircleLayerDelegate::~CircleLayerDelegate() {}
+CircleLayerDelegate::~CircleLayerDelegate() = default;
 
 gfx::RectF CircleLayerDelegate::GetPaintedBounds() const {
   const int diameter = radius_ * 2;
@@ -77,7 +79,7 @@ void CircleLayerDelegate::OnPaintLayer(const ui::PaintContext& context) {
 RectangleLayerDelegate::RectangleLayerDelegate(SkColor color, gfx::SizeF size)
     : BasePaintedLayerDelegate(color), size_(size) {}
 
-RectangleLayerDelegate::~RectangleLayerDelegate() {}
+RectangleLayerDelegate::~RectangleLayerDelegate() = default;
 
 gfx::RectF RectangleLayerDelegate::GetPaintedBounds() const {
   return gfx::RectF(size_);
@@ -107,7 +109,7 @@ RoundedRectangleLayerDelegate::RoundedRectangleLayerDelegate(
       size_(size),
       corner_radius_(corner_radius) {}
 
-RoundedRectangleLayerDelegate::~RoundedRectangleLayerDelegate() {}
+RoundedRectangleLayerDelegate::~RoundedRectangleLayerDelegate() = default;
 
 gfx::RectF RoundedRectangleLayerDelegate::GetPaintedBounds() const {
   return gfx::RectF(size_);
@@ -144,7 +146,7 @@ BorderShadowLayerDelegate::BorderShadowLayerDelegate(
       fill_color_(fill_color),
       corner_radius_(corner_radius) {}
 
-BorderShadowLayerDelegate::~BorderShadowLayerDelegate() {}
+BorderShadowLayerDelegate::~BorderShadowLayerDelegate() = default;
 
 gfx::RectF BorderShadowLayerDelegate::GetPaintedBounds() const {
   gfx::Rect total_rect(bounds_);

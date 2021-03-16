@@ -31,9 +31,11 @@ class GPU_GLES2_EXPORT WrappedSkImageFactory
   std::unique_ptr<SharedImageBacking> CreateSharedImage(
       const Mailbox& mailbox,
       viz::ResourceFormat format,
+      SurfaceHandle surface_handle,
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
-      uint32_t usage) override;
+      uint32_t usage,
+      bool is_thread_safe) override;
   std::unique_ptr<SharedImageBacking> CreateSharedImage(
       const Mailbox& mailbox,
       viz::ResourceFormat format,
@@ -50,6 +52,8 @@ class GPU_GLES2_EXPORT WrappedSkImageFactory
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
       uint32_t usage) override;
+  bool CanImportGpuMemoryBuffer(
+      gfx::GpuMemoryBufferType memory_buffer_type) override;
 
  private:
   SharedContextState* const context_state_;

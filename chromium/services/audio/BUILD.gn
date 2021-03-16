@@ -4,32 +4,9 @@
 
 import("//build/config/chromecast_build.gni")
 import("//media/webrtc/audio_processing.gni")
-import("//services/catalog/public/tools/catalog.gni")
-import("//services/service_manager/public/cpp/service_executable.gni")
-import("//services/service_manager/public/service_manifest.gni")
 import("//testing/test.gni")
 
-# Currently standalone service binaries are not supported on Android or iOS.
-standalone_supported = !(is_android || is_ios)
-
-service_executable("audio") {
-  sources = [
-    "service_main.cc",
-  ]
-
-  deps = [
-    ":lib",
-    "//services/audio/public/cpp",
-    "//services/audio/public/mojom",
-  ]
-}
-
-service_manifest("manifest") {
-  name = "audio"
-  source = "manifest.json"
-}
-
-source_set("lib") {
+source_set("audio") {
   sources = [
     "debug_recording.cc",
     "debug_recording.h",
@@ -83,13 +60,13 @@ source_set("lib") {
     "sync_reader.h",
     "system_info.cc",
     "system_info.h",
-    "traced_service_ref.cc",
-    "traced_service_ref.h",
     "user_input_monitor.cc",
     "user_input_monitor.h",
   ]
 
   deps = [
+    ":testing_api_support",
+    "//build:chromecast_buildflags",
     "//components/crash/core/common:crash_key",  # Temporary: crbug.com/888478
   ]
 
@@ -102,8 +79,7 @@ source_set("lib") {
     "//media",
     "//media/webrtc",
     "//services/audio/public/mojom",
-    "//services/service_manager/public/cpp",
-    "//services/service_manager/sandbox:sandbox",
+    "//services/service_manager/sandbox",
   ]
 
   if (is_linux) {
@@ -126,10 +102,26 @@ source_set("lib") {
     "//media:media_config",
     "//media/audio:platform_config",
   ]
+}
 
-  if (is_chromecast) {
-    defines = [ "IS_CHROMECAST" ]
-  }
+# NOTE: This is its own component target because it exposes static storage
+# consumed by multiple binary targets that get linked together (e.g.
+# content/utility and content_browsertests in a component build). Consider
+# making the entire ":audio" target a component library and merging this in.
+component("testing_api_support") {
+  visibility = [ ":audio" ]
+
+  sources = [
+    "testing_api_binder.cc",
+    "testing_api_binder.h",
+  ]
+
+  public_deps = [
+    "//base",
+    "//services/audio/public/mojom",
+  ]
+
+  defines = [ "IS_AUDIO_SERVICE_TESTING_API_SUPPORT_IMPL" ]
 }
 
 source_set("tests") {
@@ -152,7 +144,6 @@ source_set("tests") {
     "public/cpp/output_device_unittest.cc",
     "service_metrics_unittest.cc",
     "snooper_node_unittest.cc",
-    "stream_factory_unittest.cc",
     "sync_reader_unittest.cc",
     "test/audio_system_to_service_adapter_test.cc",
     "test/debug_recording_session_unittest.cc",
@@ -167,72 +158,25 @@ source_set("tests") {
     "test/mock_group_member.h",
     "test/mock_log.cc",
     "test/mock_log.h",
-    "test/service_lifetime_connector_test.cc",
-    "test/service_lifetime_test_template.h",
-    "test/service_observer_mock.cc",
-    "test/service_observer_mock.h",
     "user_input_monitor_unittest.cc",
   ]
 
   deps = [
     ":audio",
-    ":lib",
-    ":tests_catalog_source",
     "//base/test:test_support",
     "//media:test_support",
     "//mojo/core/embedder",
     "//services/audio/public/cpp",
     "//services/audio/public/cpp:test_support",
     "//services/audio/public/mojom",
-    "//services/service_manager/public/cpp",
-    "//services/service_manager/public/cpp/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
 
-  if (standalone_supported) {
-    sources += [ "test/standalone_service_test.cc" ]
-    deps += [ ":standalone_unittest_catalog_source" ]
-  }
-
-  data_deps = [
-    ":audio",
-  ]
-}
-
-# Embedded tests support.
-service_manifest("unittest_manifest") {
-  name = "audio_unittests"
-  source = "test/service_unittest_manifest.json"
-  packaged_services = [ ":manifest" ]
-}
-
-catalog("tests_catalog") {
-  testonly = true
-  embedded_services = [ ":unittest_manifest" ]
-}
-
-catalog_cpp_source("tests_catalog_source") {
-  testonly = true
-  catalog = ":tests_catalog"
-  generated_function_name = "audio::CreateUnittestCatalog"
-}
-
-# Standalone tests support.
-if (standalone_supported) {
-  service_manifest("standalone_unittest_manifest") {
-    name = "audio_unittests"
-    source = "test/service_unittest_manifest.json"
-    generated_namespace = "standalone_audio_unittest"
-  }
-
-  catalog("standalone_unittest_catalog") {
-    embedded_services = [ ":standalone_unittest_manifest" ]
-    standalone_services = [ ":manifest" ]
-  }
-
-  catalog_cpp_source("standalone_unittest_catalog_source") {
-    catalog = ":standalone_unittest_catalog"
-    generated_function_name = "audio::CreateStandaloneUnittestCatalog"
+  if (is_chromeos || is_chromecast) {
+    sources += [
+      "public/cpp/sounds/audio_stream_handler_unittest.cc",
+      "public/cpp/sounds/sounds_manager_unittest.cc",
+    ]
   }
 }

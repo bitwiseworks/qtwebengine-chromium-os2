@@ -38,8 +38,9 @@ class CPWL_List_Notify {
 
 class CPWL_ListBox : public CPWL_Wnd {
  public:
-  CPWL_ListBox(const CreateParams& cp,
-               std::unique_ptr<PrivateData> pAttachedData);
+  CPWL_ListBox(
+      const CreateParams& cp,
+      std::unique_ptr<IPWL_SystemHandler::PerWindowData> pAttachedData);
   ~CPWL_ListBox() override;
 
   // CPWL_Wnd
@@ -72,6 +73,7 @@ class CPWL_ListBox : public CPWL_Wnd {
   void ResetContent();
   void Reset();
   void Select(int32_t nItemIndex);
+  void Deselect(int32_t nItemIndex);
   void SetCaret(int32_t nItemIndex);
   void SetHoverSel(bool bHoverSel);
 
@@ -95,8 +97,8 @@ class CPWL_ListBox : public CPWL_Wnd {
  protected:
   bool m_bMouseDown = false;
   bool m_bHoverSel = false;
+  std::unique_ptr<CPWL_List_Notify> m_pListNotify;  // Must outlive |m_pList|.
   std::unique_ptr<CPWL_ListCtrl> m_pList;
-  std::unique_ptr<CPWL_List_Notify> m_pListNotify;
   UnownedPtr<IPWL_Filler_Notify> m_pFillerNotify;
 
  private:

@@ -38,18 +38,13 @@ class PLATFORM_EXPORT Filter final : public GarbageCollected<Filter> {
  public:
   enum UnitScaling { kUserSpace, kBoundingBox };
 
-  static Filter* Create(const FloatRect& reference_box,
-                        const FloatRect& filter_region,
-                        float scale,
-                        UnitScaling);
-  static Filter* Create(float scale);
-
+  Filter(float scale);
   Filter(const FloatRect& reference_box,
          const FloatRect& filter_region,
          float scale,
          UnitScaling);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   float Scale() const { return scale_; }
   FloatRect MapLocalRectToAbsoluteRect(const FloatRect&) const;

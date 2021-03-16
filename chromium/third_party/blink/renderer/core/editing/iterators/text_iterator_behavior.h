@@ -7,16 +7,18 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 class CORE_EXPORT TextIteratorBehavior final {
+  DISALLOW_NEW();
+
  public:
   class CORE_EXPORT Builder;
 
   TextIteratorBehavior(const TextIteratorBehavior& other);
   TextIteratorBehavior();
-  ~TextIteratorBehavior();
 
   bool operator==(const TextIteratorBehavior& other) const;
   bool operator!=(const TextIteratorBehavior& other) const;
@@ -69,6 +71,8 @@ class CORE_EXPORT TextIteratorBehavior final {
   bool SuppressesExtraNewlineEmission() const {
     return values_.bits.suppresses_newline_emission;
   }
+
+  bool IgnoresDisplayLock() const { return values_.bits.ignores_display_lock; }
   static TextIteratorBehavior EmitsObjectReplacementCharacterBehavior();
   static TextIteratorBehavior IgnoresStyleVisibilityBehavior();
   static TextIteratorBehavior DefaultRangeLengthBehavior();
@@ -98,11 +102,14 @@ class CORE_EXPORT TextIteratorBehavior final {
       bool does_not_emit_space_beyond_range_end : 1;
       bool skips_unselectable_content : 1;
       bool suppresses_newline_emission : 1;
+      bool ignores_display_lock : 1;
     } bits;
   } values_;
 };
 
 class CORE_EXPORT TextIteratorBehavior::Builder final {
+  STACK_ALLOCATED();
+
  public:
   explicit Builder(const TextIteratorBehavior&);
   Builder();
@@ -129,6 +136,7 @@ class CORE_EXPORT TextIteratorBehavior::Builder final {
   Builder& SetDoesNotEmitSpaceBeyondRangeEnd(bool);
   Builder& SetSkipsUnselectableContent(bool);
   Builder& SetSuppressesExtraNewlineEmission(bool);
+  Builder& SetIgnoresDisplayLock(bool);
 
  private:
   TextIteratorBehavior behavior_;

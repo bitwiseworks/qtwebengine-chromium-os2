@@ -12,6 +12,7 @@
 #include "base/time/time.h"
 #include "extensions/browser/crx_file_info.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
+#include "extensions/common/extension_id.h"
 
 class GURL;
 
@@ -23,7 +24,7 @@ class ExtensionDownloaderDelegate {
 
   // Passed as an argument to ExtensionDownloader::OnExtensionDownloadFailed()
   // to detail the reason for the failure.
-  enum Error {
+  enum class Error {
     // Background networking is disabled.
     DISABLED,
 
@@ -37,9 +38,94 @@ class ExtensionDownloaderDelegate {
     // this extension.
     NO_UPDATE_AVAILABLE,
 
+    // The update entry for the extension contained no fetch URL.
+    CRX_FETCH_URL_EMPTY,
+
+    // The update entry for the extension contained invalid fetch URL.
+    CRX_FETCH_URL_INVALID,
+
     // There was an update for this extension but the download of the crx
     // failed.
     CRX_FETCH_FAILED,
+  };
+
+  // Passed as an argument to OnExtensionDownloadStageChanged() to detail how
+  // downloading is going on. Typical sequence is: PENDING ->
+  // QUEUED_FOR_MANIFEST -> DOWNLOADING_MANIFEST -> PARSING_MANIFEST ->
+  // MANIFEST_LOADED -> QUEUED_FOR_CRX -> DOWNLOADING_CRX -> FINISHED. Stages
+  // QUEUED_FOR_MANIFEST and QUEUED_FOR_CRX are optional and may be skipped.
+  // Failure on any stage will result in skipping all remained stages, moving to
+  // FINISHED instantly. Special stages DOWNLOADING_MANIFEST_RETRY and
+  // DOWNLOADING_CRX_RETRY are similar to QUEUED_* ones, but signify that
+  // download failed at least once already. So, this may result in sequence like
+  // ... -> MANIFEST_LOADED -> QUEUED_FOR_CRX -> DOWNLOADING_CRX ->
+  // DOWNLOADING_CRX_RETRY -> DOWNLOADING_CRX -> FINISHED.
+  // Note: enum used for UMA. Do NOT reorder or remove entries. Don't forget to
+  // update enums.xml (name: ExtensionInstallationDownloadingStage) when adding
+  // new entries.
+  enum class Stage {
+    // Downloader just received extension download request.
+    PENDING = 0,
+
+    // Extension is in manifest loading queue.
+    QUEUED_FOR_MANIFEST = 1,
+
+    // There is an active request to download extension's manifest.
+    DOWNLOADING_MANIFEST = 2,
+
+    // There were one or more unsuccessful tries to download manifest, but we'll
+    // try more.
+    DOWNLOADING_MANIFEST_RETRY = 3,
+
+    // Manifest downloaded and is about to parse.
+    PARSING_MANIFEST = 4,
+
+    // Manifest downloaded and successfully parsed.
+    MANIFEST_LOADED = 5,
+
+    // Extension in CRX loading queue.
+    QUEUED_FOR_CRX = 6,
+
+    // There is an active request to download extension archive.
+    DOWNLOADING_CRX = 7,
+
+    // There were one or more unsuccessful tries to download archive, but we'll
+    // try more.
+    DOWNLOADING_CRX_RETRY = 8,
+
+    // Downloading finished, either successfully or not.
+    FINISHED = 9,
+
+    // Magic constant used by the histogram macros.
+    // Always update it to the max value.
+    kMaxValue = FINISHED,
+  };
+
+  // Passes as an argument to OnExtensionDownloadCacheStatusRetrieved to inform
+  // delegate about cache status.
+  // Note: enum used for UMA. Do NOT reorder or remove entries. Don't forget to
+  // update enums.xml (name: ExtensionInstallationCacheStatus) when adding new
+  // entries.
+  enum class CacheStatus {
+    // No information about cache status. This is never reported by
+    // ExtensionDownloader, but may be used later in statistics.
+    CACHE_UNKNOWN = 0,
+
+    // There is no cache at all.
+    CACHE_DISABLED = 1,
+
+    // Extension was not found in cache.
+    CACHE_MISS = 2,
+
+    // There is an extension in cache, but its version is not as expected.
+    CACHE_OUTDATED = 3,
+
+    // Cache entry is good and will be used.
+    CACHE_HIT = 4,
+
+    // Magic constant used by the histogram macros.
+    // Always update it to the max value.
+    kMaxValue = CACHE_HIT,
   };
 
   // Passed as an argument to the completion callbacks to signal whether
@@ -54,6 +140,25 @@ class ExtensionDownloaderDelegate {
     // The start of day, from the server's perspective. This is only valid
     // when |did_ping| is true.
     base::Time day_start;
+  };
+
+  // Contains the error codes when Force installed extension fail to install
+  // with error CRX_FETCH_FAILED or MANIFEST_FETCH_FAILED.
+  struct FailureData {
+    FailureData();
+    FailureData(const FailureData& other);
+    FailureData(const int net_error_code, const int fetch_attempts);
+    FailureData(const int net_error_code,
+                const base::Optional<int> response,
+                const int fetch_attempts);
+    ~FailureData();
+
+    // Network error code in case of CRX_FETCH_FAILED.
+    const int network_error_code;
+    // Response code in case of CRX_FETCH_FAILED.
+    const base::Optional<int> response_code;
+    // Number of fetch attempts made in case of CRX_FETCH_FAILED.
+    const int fetch_tries;
   };
 
   // A callback that is called to indicate if ExtensionDownloader should ignore
@@ -73,12 +178,25 @@ class ExtensionDownloaderDelegate {
   // be called with all request ids that resulted in that extension being
   // checked.
 
+  // Invoked several times during downloading, |stage| contains current stage
+  // of downloading.
+  virtual void OnExtensionDownloadStageChanged(const ExtensionId& id,
+                                               Stage stage);
+
+  // Invoked once during downloading, after fetching and parsing update
+  // manifest, |cache_status| contains information about what have we found in
+  // local cache about the extension.
+  virtual void OnExtensionDownloadCacheStatusRetrieved(
+      const ExtensionId& id,
+      CacheStatus cache_status);
+
   // Invoked if the extension couldn't be downloaded. |error| contains the
   // failure reason.
-  virtual void OnExtensionDownloadFailed(const std::string& id,
+  virtual void OnExtensionDownloadFailed(const ExtensionId& id,
                                          Error error,
                                          const PingResult& ping_result,
-                                         const std::set<int>& request_ids);
+                                         const std::set<int>& request_ids,
+                                         const FailureData& data);
 
   // Invoked if the extension had an update available and its crx was
   // successfully downloaded to |path|. |ownership_passed| is true if delegate
@@ -113,20 +231,20 @@ class ExtensionDownloaderDelegate {
   // Invoked to fill the PingData for the given extension id. Returns false
   // if PingData should not be included for this extension's update check
   // (this is the default).
-  virtual bool GetPingDataForExtension(const std::string& id,
+  virtual bool GetPingDataForExtension(const ExtensionId& id,
                                        ManifestFetchData::PingData* ping);
 
   // Invoked to get the update url data for this extension's update url, if
   // there is any. The default implementation returns an empty string.
-  virtual std::string GetUpdateUrlData(const std::string& id);
+  virtual std::string GetUpdateUrlData(const ExtensionId& id);
 
   // Invoked to determine whether extension |id| is currently
   // pending installation.
-  virtual bool IsExtensionPending(const std::string& id) = 0;
+  virtual bool IsExtensionPending(const ExtensionId& id) = 0;
 
   // Invoked to get the current version of extension |id|. Returns false if
   // that extension is not installed.
-  virtual bool GetExtensionExistingVersion(const std::string& id,
+  virtual bool GetExtensionExistingVersion(const ExtensionId& id,
                                            std::string* version) = 0;
 };
 

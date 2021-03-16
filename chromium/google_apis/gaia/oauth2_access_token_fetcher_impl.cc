@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_functions.h"
@@ -20,12 +21,9 @@
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/base/escape.h"
-#include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
-#include "net/url_request/url_request_status.h"
 #include "services/network/public/cpp/resource_request.h"
-#include "services/network/public/cpp/resource_response.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 
@@ -119,8 +117,7 @@ static std::unique_ptr<network::SimpleURLLoader> CreateURLLoader(
 
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url;
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   if (!body.empty())
     resource_request->method = "POST";
 
@@ -150,7 +147,7 @@ std::unique_ptr<base::DictionaryValue> ParseGetAccessTokenResponse(
   if (!data)
     return nullptr;
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(*data);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(*data);
   if (!value.get() || value->type() != base::Value::Type::DICTIONARY)
     value.reset();
 
@@ -209,8 +206,6 @@ void OAuth2AccessTokenFetcherImpl::EndGetAccessToken(
   int histogram_value;
   if (url_loader_->NetError() == net::OK && url_loader_->ResponseInfo() &&
       url_loader_->ResponseInfo()->headers) {
-    // Note that the SimpleURLLoader reports net::ERR_FAILED for HTTP codes
-    // other than 200s.
     histogram_value = url_loader_->ResponseInfo()->headers->response_code();
   } else {
     histogram_value = url_loader_->NetError();

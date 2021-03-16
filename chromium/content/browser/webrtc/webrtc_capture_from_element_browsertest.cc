@@ -23,8 +23,7 @@
 // process and hence does not support capture: https://crbug.com/641559.
 #define MAYBE_CaptureFromMediaElement DISABLED_CaptureFromMediaElement
 #else
-// crbug.com/769903: Disabling due to TSAN error.
-#define MAYBE_CaptureFromMediaElement DISABLED_CaptureFromMediaElement
+#define MAYBE_CaptureFromMediaElement CaptureFromMediaElement
 #endif
 
 namespace {
@@ -63,8 +62,6 @@ class WebRtcCaptureFromElementBrowserTest
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     WebRtcContentBrowserTestBase::SetUpCommandLine(command_line);
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kEnableBlinkFeatures, "MediaCaptureFromVideo");
 
     // Allow <video>/<audio>.play() when not initiated by user gesture.
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
@@ -109,19 +106,12 @@ IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
   MakeTypicalCall("testCanvasCapture(drawWebGL);", kCanvasCaptureTestHtmlFile);
 }
 
-#if defined(OS_WIN) || defined(OS_MACOSX)
 // https://crbug.com/869723
 // Flaky on Windows 10 with Viz (i.e. in viz_content_browsertests).
-// https://crbug.com/916928
-// Flaky on chromium.mac/Mac10.10 Tests
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames \
-  DISABLED_VerifyCanvasCaptureOffscreenCanvasFrames
-#else
-#define MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames \
-  VerifyCanvasCaptureOffscreenCanvasFrames
-#endif
+// https://crbug.com/989759
+// Flaky on other platforms due to frame delivery for offscreen canvases.
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       MAYBE_VerifyCanvasCaptureOffscreenCanvasFrames) {
+                       DISABLED_VerifyCanvasCaptureOffscreenCanvasFrames) {
   MakeTypicalCall("testCanvasCapture(drawOffscreenCanvas);",
                   kCanvasCaptureTestHtmlFile);
 }
@@ -134,43 +124,28 @@ IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
 
 IN_PROC_BROWSER_TEST_P(WebRtcCaptureFromElementBrowserTest,
                        MAYBE_CaptureFromMediaElement) {
-#if defined(OS_ANDROID)
-  // TODO(mcasas): flaky on Lollipop Low-End devices, investigate and reconnect
-  // https://crbug.com/626299
-  if (base::SysInfo::IsLowEndDevice() &&
-      base::android::BuildInfo::GetInstance()->sdk_int() <
-          base::android::SDK_VERSION_MARSHMALLOW) {
-    return;
-  }
-#endif
-
   MakeTypicalCall(JsReplace("testCaptureFromMediaElement($1, $2, $3, $4)",
                             GetParam().filename, GetParam().has_video,
                             GetParam().has_audio, GetParam().use_audio_tag),
                   kVideoAudioHtmlFile);
 }
 
+// https://crbug.com/986020.
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       CaptureFromCanvas2DHandlesContextLoss) {
+                       DISABLED_CaptureFromCanvas2DHandlesContextLoss) {
   MakeTypicalCall("testCanvas2DContextLoss(true);",
                   kCanvasCaptureColorTestHtmlFile);
 }
 
-// See https://crbug.com/898286.
-#if defined(OS_ANDROID)
-#define MAYBE_CaptureFromOpaqueCanvas2DHandlesContextLoss \
-  DISABLED_CaptureFromOpaqueCanvas2DHandlesContextLoss
-#else
-#define MAYBE_CaptureFromOpaqueCanvas2DHandlesContextLoss \
-  CaptureFromOpaqueCanvas2DHandlesContextLoss
-#endif
+// Not supported on android https://crbug.com/898286.
+// Not supported on accelerated canvases https://crbug.com/954142.
 IN_PROC_BROWSER_TEST_F(WebRtcCaptureFromElementBrowserTest,
-                       MAYBE_CaptureFromOpaqueCanvas2DHandlesContextLoss) {
+                       DISABLED_CaptureFromOpaqueCanvas2DHandlesContextLoss) {
   MakeTypicalCall("testCanvas2DContextLoss(false);",
                   kCanvasCaptureColorTestHtmlFile);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        WebRtcCaptureFromElementBrowserTest,
-                        testing::ValuesIn(kFileAndTypeParameters));
+INSTANTIATE_TEST_SUITE_P(All,
+                         WebRtcCaptureFromElementBrowserTest,
+                         testing::ValuesIn(kFileAndTypeParameters));
 }  // namespace content

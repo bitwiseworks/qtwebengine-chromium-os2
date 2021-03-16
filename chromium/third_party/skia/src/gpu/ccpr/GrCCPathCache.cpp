@@ -5,11 +5,11 @@
  * found in the LICENSE file.
  */
 
-#include "GrCCPathCache.h"
+#include "src/gpu/ccpr/GrCCPathCache.h"
 
-#include "GrOnFlushResourceProvider.h"
-#include "GrProxyProvider.h"
-#include "SkNx.h"
+#include "include/private/SkNx.h"
+#include "src/gpu/GrOnFlushResourceProvider.h"
+#include "src/gpu/GrProxyProvider.h"
 
 static constexpr int kMaxKeyDataCountU32 = 256;  // 1kB of uint32_t's.
 
@@ -75,6 +75,8 @@ sk_sp<GrCCPathCache::Key> GrCCPathCache::Key::Make(uint32_t pathCacheUniqueID,
     return key;
 }
 
+void GrCCPathCache::Key::operator delete(void* p) { ::operator delete(p); }
+
 const uint32_t* GrCCPathCache::Key::data() const {
     // The shape key is a variable-length footer to the entry allocation.
     return reinterpret_cast<const uint32_t*>(reinterpret_cast<const char*>(this) + sizeof(Key));
@@ -85,7 +87,7 @@ uint32_t* GrCCPathCache::Key::data() {
     return reinterpret_cast<uint32_t*>(reinterpret_cast<char*>(this) + sizeof(Key));
 }
 
-void GrCCPathCache::Key::onChange() {
+void GrCCPathCache::Key::changed() {
     // Our key's corresponding path was invalidated. Post a thread-safe eviction message.
     SkMessageBus<sk_sp<Key>>::Post(sk_ref_sp(this));
 }
@@ -145,7 +147,7 @@ public:
             memcpy(&out[kStrokeWidthIdx], &width, sizeof(float));
             memcpy(&out[kStrokeMiterIdx], &miterLimit, sizeof(float));
             out[kStrokeCapJoinIdx] = (stroke.getCap() << 16) | stroke.getJoin();
-            GR_STATIC_ASSERT(sizeof(out[kStrokeWidthIdx]) == sizeof(float));
+            static_assert(sizeof(out[kStrokeWidthIdx]) == sizeof(float), "");
         }
 
         // Shape unstyled key.
@@ -226,12 +228,13 @@ GrCCPathCache::OnFlushEntryRef GrCCPathCache::find(
         ++entry->fHitCount;
 
         if (entry->fCachedAtlas) {
-            SkASSERT(SkToBool(entry->fCachedAtlas->peekOnFlushRefCnt())
-                             == SkToBool(entry->fCachedAtlas->getOnFlushProxy()));
+            SkASSERT(SkToBool(entry->fCachedAtlas->peekOnFlushRefCnt()) ==
+                     SkToBool(entry->fCachedAtlas->getOnFlushProxy()));
             if (!entry->fCachedAtlas->getOnFlushProxy()) {
-                entry->fCachedAtlas->setOnFlushProxy(
-                    onFlushRP->findOrCreateProxyByUniqueKey(entry->fCachedAtlas->textureKey(),
-                                                            GrCCAtlas::kTextureOrigin));
+                if (sk_sp<GrTextureProxy> onFlushProxy = onFlushRP->findOrCreateProxyByUniqueKey(
+                            entry->fCachedAtlas->textureKey(), GrSurfaceProxy::UseAllocator::kNo)) {
+                    entry->fCachedAtlas->setOnFlushProxy(std::move(onFlushProxy));
+                }
             }
             if (!entry->fCachedAtlas->getOnFlushProxy()) {
                 // Our atlas's backing texture got purged from the GrResourceCache. Release the
@@ -240,7 +243,7 @@ GrCCPathCache::OnFlushEntryRef GrCCPathCache::find(
             }
         }
     }
-    entry->fHitRect.join(clippedDrawBounds.makeOffset(-maskShift->x(), -maskShift->y()));
+    entry->fHitRect.join(clippedDrawBounds.makeOffset(-*maskShift));
     SkASSERT(!entry->fCachedAtlas || entry->fCachedAtlas->getOnFlushProxy());
     return OnFlushEntryRef::OnFlushRef(entry);
 }
@@ -253,7 +256,7 @@ void GrCCPathCache::evict(const GrCCPathCache::Key& key, GrCCPathCacheEntry* ent
     }
     SkASSERT(*entry->fCacheKey == key);
     SkASSERT(!entry->hasBeenEvicted());
-    entry->fCacheKey->markShouldUnregisterFromPath();  // Unregister the path listener.
+    entry->fCacheKey->markShouldDeregister();  // Unregister the path listener.
     entry->releaseCachedAtlas(this);
     fLRU.remove(entry);
     fHashTable.remove(key);
@@ -320,7 +323,7 @@ void GrCCPathCache::evictInvalidatedCacheKeys() {
     SkTArray<sk_sp<Key>> invalidatedKeys;
     fInvalidatedKeysInbox.poll(&invalidatedKeys);
     for (const sk_sp<Key>& key : invalidatedKeys) {
-        bool isInCache = !key->shouldUnregisterFromPath();  // Gets set upon exiting the cache.
+        bool isInCache = !key->shouldDeregister();  // Gets set upon exiting the cache.
         if (isInCache) {
             this->evict(*key);
         }
@@ -352,8 +355,7 @@ GrCCPathCache::OnFlushEntryRef::~OnFlushEntryRef() {
 
 void GrCCPathCacheEntry::setCoverageCountAtlas(
         GrOnFlushResourceProvider* onFlushRP, GrCCAtlas* atlas, const SkIVector& atlasOffset,
-        const SkRect& devBounds, const SkRect& devBounds45, const SkIRect& devIBounds,
-        const SkIVector& maskShift) {
+        const GrOctoBounds& octoBounds, const SkIRect& devIBounds, const SkIVector& maskShift) {
     SkASSERT(fOnFlushRefCnt > 0);
     SkASSERT(!fCachedAtlas);  // Otherwise we would need to call releaseCachedAtlas().
 
@@ -369,10 +371,8 @@ void GrCCPathCacheEntry::setCoverageCountAtlas(
 
     fAtlasOffset = atlasOffset + maskShift;
 
-    float dx = (float)maskShift.fX, dy = (float)maskShift.fY;
-    fDevBounds = devBounds.makeOffset(-dx, -dy);
-    fDevBounds45 = GrCCPathProcessor::MakeOffset45(devBounds45, -dx, -dy);
-    fDevIBounds = devIBounds.makeOffset(-maskShift.fX, -maskShift.fY);
+    fOctoBounds.setOffset(octoBounds, -maskShift.fX, -maskShift.fY);
+    fDevIBounds = devIBounds.makeOffset(-maskShift);
 }
 
 GrCCPathCacheEntry::ReleaseAtlasResult GrCCPathCacheEntry::upgradeToLiteralCoverageAtlas(
@@ -381,7 +381,7 @@ GrCCPathCacheEntry::ReleaseAtlasResult GrCCPathCacheEntry::upgradeToLiteralCover
     SkASSERT(!this->hasBeenEvicted());
     SkASSERT(fOnFlushRefCnt > 0);
     SkASSERT(fCachedAtlas);
-    SkASSERT(GrCCAtlas::CoverageType::kFP16_CoverageCount == fCachedAtlas->coverageType());
+    SkASSERT(GrCCAtlas::CoverageType::kA8_LiteralCoverage != fCachedAtlas->coverageType());
 
     ReleaseAtlasResult releaseAtlasResult = this->releaseCachedAtlas(pathCache);
 

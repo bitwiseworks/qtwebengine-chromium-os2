@@ -13,7 +13,7 @@
 #include "net/android/network_change_notifier_delegate_android.h"
 #include "net/base/ip_address.h"
 #include "net/base/network_change_notifier.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -153,8 +153,7 @@ class TestNetworkObserver : public NetworkChangeNotifier::NetworkObserver {
 
 }  // namespace
 
-class BaseNetworkChangeNotifierAndroidTest
-    : public TestWithScopedTaskEnvironment {
+class BaseNetworkChangeNotifierAndroidTest : public TestWithTaskEnvironment {
  protected:
   typedef NetworkChangeNotifier::ConnectionType ConnectionType;
   typedef NetworkChangeNotifier::ConnectionSubtype ConnectionSubtype;
@@ -162,8 +161,9 @@ class BaseNetworkChangeNotifierAndroidTest
   ~BaseNetworkChangeNotifierAndroidTest() override {}
 
   void RunTest(
-      const base::Callback<int(void)>& notifications_count_getter,
-      const base::Callback<ConnectionType(void)>&  connection_type_getter) {
+      const base::RepeatingCallback<int(void)>& notifications_count_getter,
+      const base::RepeatingCallback<ConnectionType(void)>&
+          connection_type_getter) {
     EXPECT_EQ(0, notifications_count_getter.Run());
     EXPECT_EQ(NetworkChangeNotifier::CONNECTION_UNKNOWN,
               connection_type_getter.Run());
@@ -311,10 +311,10 @@ class NetworkChangeNotifierDelegateAndroidTest
 // delegate's observers are instances of NetworkChangeNotifierAndroid.
 TEST_F(NetworkChangeNotifierDelegateAndroidTest, DelegateObserverNotified) {
   // Test the logic with a single observer.
-  RunTest(base::Bind(&NetworkChangeNotifierDelegateAndroidObserver::
-                         type_notifications_count,
-                     base::Unretained(&delegate_observer_)),
-          base::Bind(
+  RunTest(base::BindRepeating(&NetworkChangeNotifierDelegateAndroidObserver::
+                                  type_notifications_count,
+                              base::Unretained(&delegate_observer_)),
+          base::BindRepeating(
               &NetworkChangeNotifierDelegateAndroid::GetCurrentConnectionType,
               base::Unretained(&delegate_)));
   // Check that *all* the observers are notified. Both observers should have the
@@ -330,10 +330,12 @@ TEST_F(NetworkChangeNotifierDelegateAndroidTest, DelegateObserverNotified) {
 // NetworkChangeNotifierAndroid should reflect that state.
 TEST_F(NetworkChangeNotifierAndroidTest,
        NotificationsSentToNetworkChangeNotifierAndroid) {
-  RunTest(base::Bind(&NetworkChangeNotifierObserver::notifications_count,
-                     base::Unretained(&connection_type_observer_)),
-          base::Bind(&NetworkChangeNotifierAndroid::GetCurrentConnectionType,
-                     base::Unretained(&notifier_)));
+  RunTest(
+      base::BindRepeating(&NetworkChangeNotifierObserver::notifications_count,
+                          base::Unretained(&connection_type_observer_)),
+      base::BindRepeating(
+          &NetworkChangeNotifierAndroid::GetCurrentConnectionType,
+          base::Unretained(&notifier_)));
 }
 
 // When a NetworkChangeNotifierAndroid's connection state changes, it should
@@ -341,10 +343,9 @@ TEST_F(NetworkChangeNotifierAndroidTest,
 TEST_F(NetworkChangeNotifierAndroidTest,
        NotificationsSentToClientsOfNetworkChangeNotifier) {
   RunTest(
-      base::Bind(
-          &NetworkChangeNotifierObserver::notifications_count,
-          base::Unretained(&connection_type_observer_)),
-      base::Bind(&NetworkChangeNotifier::GetConnectionType));
+      base::BindRepeating(&NetworkChangeNotifierObserver::notifications_count,
+                          base::Unretained(&connection_type_observer_)),
+      base::BindRepeating(&NetworkChangeNotifier::GetConnectionType));
   // Check that *all* the observers are notified.
   EXPECT_EQ(connection_type_observer_.notifications_count(),
             other_connection_type_observer_.notifications_count());

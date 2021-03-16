@@ -15,7 +15,7 @@ class Context;
 
 // Deserializes the context-dependent object graph rooted at a given object.
 // The PartialDeserializer is not expected to deserialize any code objects.
-class PartialDeserializer final : public Deserializer {
+class V8_EXPORT_PRIVATE PartialDeserializer final : public Deserializer {
  public:
   static MaybeHandle<Context> DeserializeContext(
       Isolate* isolate, const SnapshotData* data, bool can_rehash,
@@ -33,6 +33,8 @@ class PartialDeserializer final : public Deserializer {
 
   void DeserializeEmbedderFields(
       v8::DeserializeEmbedderFieldsCallback embedder_fields_deserializer);
+
+  void SetupOffHeapArrayBufferBackingStores();
 };
 
 }  // namespace internal

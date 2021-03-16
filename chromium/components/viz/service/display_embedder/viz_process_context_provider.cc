@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
@@ -19,16 +20,18 @@
 #include "components/viz/common/gpu/context_lost_observer.h"
 #include "components/viz/common/gpu/context_lost_reason.h"
 #include "components/viz/common/resources/platform_color.h"
+#include "components/viz/common/viz_utils.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/raster_implementation_gles.h"
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/command_buffer/client/transfer_buffer.h"
-#include "gpu/command_buffer/common/skia_utils.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_preferences.h"
+#include "gpu/config/skia_limits.h"
 #include "gpu/ipc/common/surface_handle.h"
+#include "gpu/ipc/in_process_command_buffer.h"
 #include "gpu/skia_bindings/gles2_implementation_with_grcontext_support.h"
 #include "gpu/skia_bindings/grcontext_for_gles2_interface.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -42,7 +45,7 @@ namespace {
 
 gpu::ContextCreationAttribs CreateAttributes(
     bool requires_alpha_channel,
-    const gfx::ColorSpace& color_space) {
+    const RendererSettings& renderer_settings) {
   gpu::ContextCreationAttribs attributes;
   attributes.alpha_size = requires_alpha_channel ? 8 : -1;
   attributes.depth_size = 0;
@@ -63,17 +66,17 @@ gpu::ContextCreationAttribs CreateAttributes(
   attributes.lose_context_when_out_of_memory = true;
 
 #if defined(OS_ANDROID)
-  if (color_space == gfx::ColorSpace::CreateSRGB()) {
+  if (renderer_settings.color_space == gfx::ColorSpace::CreateSRGB()) {
     attributes.color_space = gpu::COLOR_SPACE_SRGB;
-  } else if (color_space == gfx::ColorSpace::CreateDisplayP3D65()) {
+  } else if (renderer_settings.color_space ==
+             gfx::ColorSpace::CreateDisplayP3D65()) {
     attributes.color_space = gpu::COLOR_SPACE_DISPLAY_P3;
   } else {
     // The browser only sends the above two color spaces.
     NOTREACHED();
   }
 
-  if (!requires_alpha_channel &&
-      base::SysInfo::AmountOfPhysicalMemoryMB() <= 512) {
+  if (!requires_alpha_channel && PreferRGB565ResourcesForDisplay()) {
     // See compositor_impl_android.cc for more information about this.
     // It is inside GetCompositorContextAttributes().
     attributes.alpha_size = 0;
@@ -92,15 +95,6 @@ void UmaRecordContextLost(ContextLostReason reason) {
   UMA_HISTOGRAM_ENUMERATION("GPU.ContextLost.DisplayCompositor", reason);
 }
 
-gfx::ColorSpace ColorSpaceForRendererSettings(
-    const RendererSettings& renderer_settings) {
-#if defined(OS_ANDROID)
-  return renderer_settings.color_space;
-#else
-  return gfx::ColorSpace();
-#endif
-}
-
 gpu::SharedMemoryLimits SharedMemoryLimitsForRendererSettings(
     const RendererSettings& renderer_settings) {
 #if defined(OS_ANDROID)
@@ -114,15 +108,14 @@ gpu::SharedMemoryLimits SharedMemoryLimitsForRendererSettings(
 }  // namespace
 
 VizProcessContextProvider::VizProcessContextProvider(
-    scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
+    gpu::CommandBufferTaskExecutor* task_executor,
     gpu::SurfaceHandle surface_handle,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     gpu::ImageFactory* image_factory,
     gpu::GpuChannelManagerDelegate* gpu_channel_manager_delegate,
     const RendererSettings& renderer_settings)
-    : attributes_(
-          CreateAttributes(renderer_settings.requires_alpha_channel,
-                           ColorSpaceForRendererSettings(renderer_settings))) {
+    : attributes_(CreateAttributes(renderer_settings.requires_alpha_channel,
+                                   renderer_settings)) {
   InitializeContext(std::move(task_executor), surface_handle,
                     gpu_memory_buffer_manager, image_factory,
                     gpu_channel_manager_delegate,
@@ -141,11 +134,17 @@ VizProcessContextProvider::VizProcessContextProvider(
   }
 }
 
+VizProcessContextProvider::VizProcessContextProvider() = default;
+
 VizProcessContextProvider::~VizProcessContextProvider() {
   if (context_result_ == gpu::ContextResult::kSuccess) {
     base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
         this);
   }
+
+  // cache_controller_ might ne nullptr if we failed to initialize
+  if (cache_controller_)
+    cache_controller_->SetGrContext(nullptr);
 }
 
 void VizProcessContextProvider::AddRef() const {
@@ -174,12 +173,13 @@ class GrContext* VizProcessContextProvider::GrContext() {
 
   size_t max_resource_cache_bytes;
   size_t max_glyph_cache_texture_bytes;
-  gpu::raster::DetermineGrCacheLimitsFromAvailableMemory(
+  gpu::DetermineGrCacheLimitsFromAvailableMemory(
       &max_resource_cache_bytes, &max_glyph_cache_texture_bytes);
 
   gr_context_ = std::make_unique<skia_bindings::GrContextForGLES2Interface>(
       ContextGL(), ContextSupport(), ContextCapabilities(),
       max_resource_cache_bytes, max_glyph_cache_texture_bytes);
+  cache_controller_->SetGrContext(gr_context_->get());
   return gr_context_->get();
 }
 
@@ -215,9 +215,16 @@ void VizProcessContextProvider::RemoveObserver(ContextLostObserver* obs) {
 }
 
 void VizProcessContextProvider::SetUpdateVSyncParametersCallback(
-    const gpu::InProcessCommandBuffer::UpdateVSyncParametersCallback&
-        callback) {
-  command_buffer_->SetUpdateVSyncParametersCallback(callback);
+    UpdateVSyncParametersCallback callback) {
+  command_buffer_->SetUpdateVSyncParametersCallback(std::move(callback));
+}
+
+void VizProcessContextProvider::SetGpuVSyncCallback(GpuVSyncCallback callback) {
+  command_buffer_->SetGpuVSyncCallback(std::move(callback));
+}
+
+void VizProcessContextProvider::SetGpuVSyncEnabled(bool enabled) {
+  command_buffer_->SetGpuVSyncEnabled(enabled);
 }
 
 bool VizProcessContextProvider::UseRGB565PixelFormat() const {
@@ -230,7 +237,7 @@ uint32_t VizProcessContextProvider::GetCopyTextureInternalFormat() {
 }
 
 void VizProcessContextProvider::InitializeContext(
-    scoped_refptr<gpu::CommandBufferTaskExecutor> task_executor,
+    gpu::CommandBufferTaskExecutor* task_executor,
     gpu::SurfaceHandle surface_handle,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     gpu::ImageFactory* image_factory,
@@ -238,13 +245,16 @@ void VizProcessContextProvider::InitializeContext(
     const gpu::SharedMemoryLimits& mem_limits) {
   const bool is_offscreen = surface_handle == gpu::kNullSurfaceHandle;
 
-  command_buffer_ =
-      std::make_unique<gpu::InProcessCommandBuffer>(std::move(task_executor));
+  gpu_task_scheduler_helper_ =
+      base::MakeRefCounted<gpu::GpuTaskSchedulerHelper>(task_executor);
+  command_buffer_ = std::make_unique<gpu::InProcessCommandBuffer>(
+      task_executor,
+      GURL("chrome://gpu/VizProcessContextProvider::InitializeContext"));
   context_result_ = command_buffer_->Initialize(
       /*surface=*/nullptr, is_offscreen, surface_handle, attributes_,
-      /*share_command_buffer=*/nullptr, gpu_memory_buffer_manager,
-      image_factory, gpu_channel_manager_delegate,
-      base::ThreadTaskRunnerHandle::Get(), nullptr, nullptr);
+      gpu_memory_buffer_manager, image_factory, gpu_channel_manager_delegate,
+      base::ThreadTaskRunnerHandle::Get(),
+      gpu_task_scheduler_helper_->GetTaskSequence(), nullptr, nullptr);
   if (context_result_ != gpu::ContextResult::kSuccess) {
     DLOG(ERROR) << "Failed to initialize InProcessCommmandBuffer";
     return;
@@ -258,6 +268,8 @@ void VizProcessContextProvider::InitializeContext(
     DLOG(ERROR) << "Failed to initialize GLES2CmdHelper";
     return;
   }
+
+  gpu_task_scheduler_helper_->Initialize(gles2_helper_.get());
 
   transfer_buffer_ = std::make_unique<gpu::TransferBuffer>(gles2_helper_.get());
 
@@ -298,6 +310,14 @@ bool VizProcessContextProvider::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
   DCHECK_EQ(context_result_, gpu::ContextResult::kSuccess);
+  if (args.level_of_detail ==
+      base::trace_event::MemoryDumpLevelOfDetail::BACKGROUND) {
+    if (gr_context_)
+      gpu::raster::DumpBackgroundGrMemoryStatistics(gr_context_->get(), pmd);
+
+    // Early out, no need for more detail in a BACKGROUND dump.
+    return true;
+  }
 
   gles2_implementation_->OnMemoryDump(args, pmd);
   gles2_helper_->OnMemoryDump(args, pmd);
@@ -308,6 +328,23 @@ bool VizProcessContextProvider::OnMemoryDump(
         gles2_implementation_->ShareGroupTracingGUID());
   }
   return true;
+}
+
+base::ScopedClosureRunner VizProcessContextProvider::GetCacheBackBufferCb() {
+  return command_buffer_->GetCacheBackBufferCb();
+}
+
+scoped_refptr<gpu::GpuTaskSchedulerHelper>
+VizProcessContextProvider::GetGpuTaskSchedulerHelper() {
+  return gpu_task_scheduler_helper_;
+}
+
+gpu::SharedImageManager* VizProcessContextProvider::GetSharedImageManager() {
+  return command_buffer_->GetSharedImageManager();
+}
+
+gpu::MemoryTracker* VizProcessContextProvider::GetMemoryTracker() {
+  return command_buffer_->GetMemoryTracker();
 }
 
 }  // namespace viz

@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from __future__ import print_function
+
 import re
 
 from common import ParseFlags
@@ -89,7 +91,7 @@ def GetChromeVersion():
     version = chrome_version[chrome_version.find('/') + 1:]
     version_split = version.split('.')
     milestone = int(version_split[0])
-    print 'Running on Chrome M%d (%s)' % (milestone, version)
+    print('Running on Chrome M%d (%s)' % (milestone, version))
     return milestone
 
 def ChromeVersionBeforeM(milestone):
@@ -117,6 +119,21 @@ def ChromeVersionEqualOrAfterM(milestone):
         args[0].skipTest('This test does not run below M%d.' % milestone)
     return wrapper
   return puesdo_wrapper
+
+def ChromeVersionBetweenInclusiveM(after, before):
+  def puesdo_wrapper(func):
+    def wrapper(*args, **kwargs):
+      global chrome_version
+      if chrome_version == None:
+        chrome_version = GetChromeVersion()
+      if chrome_version <= before and chrome_version >= after:
+        func(*args, **kwargs)
+      else:
+        args[0].skipTest('This test only runs between M%d and M%d (inclusive).'
+          % (after, before))
+    return wrapper
+  return puesdo_wrapper
+
 
 def Slow(func):
   def wrapper(*args, **kwargs):

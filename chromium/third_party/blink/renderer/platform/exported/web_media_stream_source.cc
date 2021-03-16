@@ -34,11 +34,12 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
-#include "third_party/blink/public/platform/web_audio_destination_consumer.h"
-#include "third_party/blink/public/platform/web_media_constraints.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
+#include "third_party/blink/renderer/platform/mediastream/webaudio_destination_consumer.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -67,16 +68,9 @@ WebMediaStreamSource::operator MediaStreamSource*() const {
 
 void WebMediaStreamSource::Initialize(const WebString& id,
                                       Type type,
-                                      const WebString& name) {
-  private_ = MediaStreamSource::Create(
-      id, static_cast<MediaStreamSource::StreamType>(type), name, false);
-}
-
-void WebMediaStreamSource::Initialize(const WebString& id,
-                                      Type type,
                                       const WebString& name,
                                       bool remote) {
-  private_ = MediaStreamSource::Create(
+  private_ = MakeGarbageCollected<MediaStreamSource>(
       id, static_cast<MediaStreamSource::StreamType>(type), name, remote);
 }
 
@@ -188,7 +182,7 @@ void ConsumerWrapper::ConsumeAudio(AudioBus* bus, size_t number_of_frames) {
 
   // Wrap AudioBus.
   size_t number_of_channels = bus->NumberOfChannels();
-  WebVector<const float*> bus_vector(number_of_channels);
+  Vector<const float*> bus_vector(number_of_channels);
   for (size_t i = 0; i < number_of_channels; ++i)
     bus_vector[i] = bus->Channel(i)->Data();
 

@@ -33,14 +33,14 @@ class NavigationMonitorImpl : public NavigationMonitor {
 
   int current_navigation_count_;
 
-  base::CancelableClosure navigation_finished_callback_;
+  base::CancelableOnceClosure navigation_finished_callback_;
 
-  base::CancelableClosure backup_navigation_finished_callback_;
+  base::CancelableOnceClosure backup_navigation_finished_callback_;
 
   base::TimeDelta navigation_completion_delay_;
   base::TimeDelta navigation_timeout_delay_;
 
-  base::WeakPtrFactory<NavigationMonitorImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<NavigationMonitorImpl> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NavigationMonitorImpl);
 };

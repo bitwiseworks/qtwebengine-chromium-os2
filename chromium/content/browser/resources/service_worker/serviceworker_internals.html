@@ -1,13 +1,13 @@
 <!doctype html>
-<html i18n-values="dir:textdirection;lang:language">
+<html dir="ltr" lang="en">
 <head>
   <meta charset="utf-8">
   <title>chrome://serviceworker-internals</title>
-  <link rel="stylesheet" href="chrome://resources/css/tabs.css">
+  <link rel="stylesheet" href="chrome://resources/css/text_defaults.css">
   <link rel="stylesheet" href="chrome://resources/css/widgets.css">
   <link rel="stylesheet" href="serviceworker_internals.css">
 </head>
-<body i18n-values=".style.fontFamily:fontfamily;.style.fontSize:fontsize">
+<body>
   <!-- templates -->
   <div style="display:none">
     <div id="serviceworker-version-template" class="serviceworker-version">
@@ -42,6 +42,10 @@
       <div class="serviceworker-rid">
         <span>DevTools agent route ID:</span>
         <span jscontent="$this.devtools_agent_route_id"></span>
+      </div>
+      <div class="serviceworker-clients" jsselect="$this.clients">
+        <div>Client: </div>
+        <div transclude="serviceworker-client-template"></div>
       </div>
       <div>
         <div>Log:</div>
@@ -135,7 +139,15 @@
         </label>
       </div>
     </div>
-  </div>
+    <div id="serviceworker-client-template" class="serviceworker-client">
+      <div>
+        <span>ID: </span><span jscontent="$this.client_id"></span>
+      </div>
+      <div>
+        <span>URL: </span><span jscontent="$this.url"></span>
+      </div>
+    </div>
+  </div> <!-- templates end -->
   <h1>ServiceWorker</h1>
   <div class="content">
     <div id="serviceworker-options"></div>
@@ -144,9 +156,6 @@
   <script src="chrome://resources/js/util.js"></script>
   <script src="chrome://resources/js/cr.js"></script>
   <script src="serviceworker_internals.js"></script>
-  <script src="chrome://resources/js/load_time_data.js"></script>
   <script src="chrome://resources/js/jstemplate_compiled.js"></script>
-  <script src="strings.js"></script>
-  <script src="chrome://resources/js/i18n_template.js"></script>
 </body>
 </html>

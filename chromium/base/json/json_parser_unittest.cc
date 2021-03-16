@@ -87,9 +87,8 @@ TEST_F(JSONParserTest, ConsumeList) {
   TestLastThree(parser.get());
 
   ASSERT_TRUE(value);
-  base::ListValue* list;
-  EXPECT_TRUE(value->GetAsList(&list));
-  EXPECT_EQ(2u, list->GetSize());
+  ASSERT_TRUE(value->is_list());
+  EXPECT_EQ(2u, value->GetList().size());
 }
 
 TEST_F(JSONParserTest, ConsumeDictionary) {
@@ -101,11 +100,10 @@ TEST_F(JSONParserTest, ConsumeDictionary) {
   TestLastThree(parser.get());
 
   ASSERT_TRUE(value);
-  base::DictionaryValue* dict;
-  EXPECT_TRUE(value->GetAsDictionary(&dict));
-  std::string str;
-  EXPECT_TRUE(dict->GetString("abc", &str));
-  EXPECT_EQ("def", str);
+  ASSERT_TRUE(value->is_dict());
+  const std::string* str = value->FindStringKey("abc");
+  ASSERT_TRUE(str);
+  EXPECT_EQ("def", *str);
 }
 
 TEST_F(JSONParserTest, ConsumeLiterals) {
@@ -223,110 +221,95 @@ TEST_F(JSONParserTest, ConsumeNumbers) {
 }
 
 TEST_F(JSONParserTest, ErrorMessages) {
-  // Error strings should not be modified in case of success.
-  std::string error_message;
-  int error_code = 0;
-  std::unique_ptr<Value> root = JSONReader::ReadAndReturnError(
-      "[42]", JSON_PARSE_RFC, &error_code, &error_message);
-  EXPECT_TRUE(error_message.empty());
-  EXPECT_EQ(0, error_code);
+  JSONReader::ValueWithError root =
+      JSONReader::ReadAndReturnValueWithError("[42]", JSON_PARSE_RFC);
+  EXPECT_TRUE(root.error_message.empty());
+  EXPECT_EQ(0, root.error_code);
 
   // Test line and column counting
   const char big_json[] = "[\n0,\n1,\n2,\n3,4,5,6 7,\n8,\n9\n]";
   // error here ----------------------------------^
-  root = JSONReader::ReadAndReturnError(big_json, JSON_PARSE_RFC, &error_code,
-                                        &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError(big_json, JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(5, 10, JSONReader::kSyntaxError),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, root.error_code);
 
-  error_code = 0;
-  error_message = "";
   // Test line and column counting with "\r\n" line ending
   const char big_json_crlf[] =
       "[\r\n0,\r\n1,\r\n2,\r\n3,4,5,6 7,\r\n8,\r\n9\r\n]";
   // error here ----------------------^
-  root = JSONReader::ReadAndReturnError(big_json_crlf, JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError(big_json_crlf, JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(5, 10, JSONReader::kSyntaxError),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, root.error_code);
 
   // Test each of the error conditions
-  root = JSONReader::ReadAndReturnError("{},{}", JSON_PARSE_RFC, &error_code,
-                                        &error_message);
-  EXPECT_FALSE(root.get());
-  EXPECT_EQ(JSONParser::FormatErrorMessage(1, 3,
-      JSONReader::kUnexpectedDataAfterRoot), error_message);
-  EXPECT_EQ(JSONReader::JSON_UNEXPECTED_DATA_AFTER_ROOT, error_code);
+  root = JSONReader::ReadAndReturnValueWithError("{},{}", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
+  EXPECT_EQ(JSONParser::FormatErrorMessage(
+                1, 3, JSONReader::kUnexpectedDataAfterRoot),
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_UNEXPECTED_DATA_AFTER_ROOT, root.error_code);
 
   std::string nested_json;
   for (int i = 0; i < 201; ++i) {
     nested_json.insert(nested_json.begin(), '[');
     nested_json.append(1, ']');
   }
-  root = JSONReader::ReadAndReturnError(nested_json, JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError(nested_json, JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 200, JSONReader::kTooMuchNesting),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_TOO_MUCH_NESTING, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_TOO_MUCH_NESTING, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("[1,]", JSON_PARSE_RFC, &error_code,
-                                        &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError("[1,]", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 4, JSONReader::kTrailingComma),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_TRAILING_COMMA, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_TRAILING_COMMA, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("{foo:\"bar\"}", JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
-  EXPECT_EQ(JSONParser::FormatErrorMessage(1, 2,
-      JSONReader::kUnquotedDictionaryKey), error_message);
-  EXPECT_EQ(JSONReader::JSON_UNQUOTED_DICTIONARY_KEY, error_code);
+  root =
+      JSONReader::ReadAndReturnValueWithError("{foo:\"bar\"}", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
+  EXPECT_EQ(
+      JSONParser::FormatErrorMessage(1, 2, JSONReader::kUnquotedDictionaryKey),
+      root.error_message);
+  EXPECT_EQ(JSONReader::JSON_UNQUOTED_DICTIONARY_KEY, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("{\"foo\":\"bar\",}", JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError("{\"foo\":\"bar\",}",
+                                                 JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 14, JSONReader::kTrailingComma),
-            error_message);
+            root.error_message);
 
-  root = JSONReader::ReadAndReturnError("[nu]", JSON_PARSE_RFC, &error_code,
-                                        &error_message);
-  EXPECT_FALSE(root.get());
+  root = JSONReader::ReadAndReturnValueWithError("[nu]", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 2, JSONReader::kSyntaxError),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_SYNTAX_ERROR, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("[\"xxx\\xq\"]", JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root =
+      JSONReader::ReadAndReturnValueWithError("[\"xxx\\xq\"]", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 7, JSONReader::kInvalidEscape),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("[\"xxx\\uq\"]", JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root =
+      JSONReader::ReadAndReturnValueWithError("[\"xxx\\uq\"]", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 7, JSONReader::kInvalidEscape),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, root.error_code);
 
-  root = JSONReader::ReadAndReturnError("[\"xxx\\q\"]", JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_FALSE(root.get());
+  root =
+      JSONReader::ReadAndReturnValueWithError("[\"xxx\\q\"]", JSON_PARSE_RFC);
+  EXPECT_FALSE(root.value);
   EXPECT_EQ(JSONParser::FormatErrorMessage(1, 7, JSONReader::kInvalidEscape),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, error_code);
-
-  root = JSONReader::ReadAndReturnError(("[\"\\ufffe\"]"), JSON_PARSE_RFC,
-                                        &error_code, &error_message);
-  EXPECT_EQ(JSONParser::FormatErrorMessage(1, 8, JSONReader::kInvalidEscape),
-            error_message);
-  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, error_code);
+            root.error_message);
+  EXPECT_EQ(JSONReader::JSON_INVALID_ESCAPE, root.error_code);
 }
 
 TEST_F(JSONParserTest, Decode4ByteUtf8Char) {
@@ -334,24 +317,51 @@ TEST_F(JSONParserTest, Decode4ByteUtf8Char) {
   // reader should be able to handle (the character is \xf0\x9f\x98\x87).
   const char kUtf8Data[] =
       "[\"😇\",[],[],[],{\"google:suggesttype\":[]}]";
-  std::string error_message;
-  int error_code = 0;
-  std::unique_ptr<Value> root = JSONReader::ReadAndReturnError(
-      kUtf8Data, JSON_PARSE_RFC, &error_code, &error_message);
-  EXPECT_TRUE(root.get()) << error_message;
+  JSONReader::ValueWithError root =
+      JSONReader::ReadAndReturnValueWithError(kUtf8Data, JSON_PARSE_RFC);
+  EXPECT_TRUE(root.value) << root.error_message;
 }
 
 TEST_F(JSONParserTest, DecodeUnicodeNonCharacter) {
   // Tests Unicode code points (encoded as escaped UTF-16) that are not valid
   // characters.
-  EXPECT_FALSE(JSONReader::Read("[\"\\ufdd0\"]"));
-  EXPECT_FALSE(JSONReader::Read("[\"\\ufffe\"]"));
-  EXPECT_FALSE(JSONReader::Read("[\"\\ud83f\\udffe\"]"));
-
-  EXPECT_TRUE(
-      JSONReader::Read("[\"\\ufdd0\"]", JSON_REPLACE_INVALID_CHARACTERS));
-  EXPECT_TRUE(
-      JSONReader::Read("[\"\\ufffe\"]", JSON_REPLACE_INVALID_CHARACTERS));
+  EXPECT_TRUE(JSONReader::Read("[\"\\uFDD0\"]"));         // U+FDD0
+  EXPECT_TRUE(JSONReader::Read("[\"\\uFDDF\"]"));         // U+FDDF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uFDEF\"]"));         // U+FDEF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uFFFE\"]"));         // U+FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uFFFF\"]"));         // U+FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD83F\\uDFFE\"]"));  // U+01FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD83F\\uDFFF\"]"));  // U+01FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD87F\\uDFFE\"]"));  // U+02FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD87F\\uDFFF\"]"));  // U+02FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD8BF\\uDFFE\"]"));  // U+03FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD8BF\\uDFFF\"]"));  // U+03FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD8FF\\uDFFE\"]"));  // U+04FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD8FF\\uDFFF\"]"));  // U+04FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD93F\\uDFFE\"]"));  // U+05FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD93F\\uDFFF\"]"));  // U+05FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD97F\\uDFFE\"]"));  // U+06FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD97F\\uDFFF\"]"));  // U+06FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD9BF\\uDFFE\"]"));  // U+07FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD9BF\\uDFFF\"]"));  // U+07FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD9FF\\uDFFE\"]"));  // U+08FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uD9FF\\uDFFF\"]"));  // U+08FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDA3F\\uDFFE\"]"));  // U+09FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDA3F\\uDFFF\"]"));  // U+09FFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDA7F\\uDFFE\"]"));  // U+0AFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDA7F\\uDFFF\"]"));  // U+0AFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDABF\\uDFFE\"]"));  // U+0BFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDABF\\uDFFF\"]"));  // U+0BFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDAFF\\uDFFE\"]"));  // U+0CFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDAFF\\uDFFF\"]"));  // U+0CFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDB3F\\uDFFE\"]"));  // U+0DFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDB3F\\uDFFF\"]"));  // U+0DFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDB7F\\uDFFE\"]"));  // U+0EFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDB7F\\uDFFF\"]"));  // U+0EFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDBBF\\uDFFE\"]"));  // U+0FFFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDBBF\\uDFFF\"]"));  // U+0FFFFF
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDBFF\\uDFFE\"]"));  // U+10FFFE
+  EXPECT_TRUE(JSONReader::Read("[\"\\uDBFF\\uDFFF\"]"));  // U+10FFFF
 }
 
 TEST_F(JSONParserTest, DecodeNegativeEscapeSequence) {
@@ -359,28 +369,31 @@ TEST_F(JSONParserTest, DecodeNegativeEscapeSequence) {
   EXPECT_FALSE(JSONReader::Read("[\"\\u-00A\"]"));
 }
 
-// Verifies invalid utf-8 characters are replaced.
+// Verifies invalid code points are replaced.
 TEST_F(JSONParserTest, ReplaceInvalidCharacters) {
-  const std::string bogus_char = "󿿿";
-  const std::string quoted_bogus_char = "\"" + bogus_char + "\"";
-  std::unique_ptr<JSONParser> parser(
-      NewTestParser(quoted_bogus_char, JSON_REPLACE_INVALID_CHARACTERS));
-  Optional<Value> value(parser->ConsumeString());
-  ASSERT_TRUE(value);
-  std::string str;
-  EXPECT_TRUE(value->GetAsString(&str));
-  EXPECT_EQ(kUnicodeReplacementString, str);
-}
-
-TEST_F(JSONParserTest, ReplaceInvalidUTF16EscapeSequence) {
-  const std::string invalid = "\"\\ufffe\"";
+  // U+D800 is a lone surrogate.
+  const std::string invalid = "\"\xED\xA0\x80\"";
   std::unique_ptr<JSONParser> parser(
       NewTestParser(invalid, JSON_REPLACE_INVALID_CHARACTERS));
   Optional<Value> value(parser->ConsumeString());
   ASSERT_TRUE(value);
   std::string str;
   EXPECT_TRUE(value->GetAsString(&str));
-  EXPECT_EQ(kUnicodeReplacementString, str);
+  // Expect three U+FFFD (one for each UTF-8 byte in the invalid code
+  // point).
+  EXPECT_EQ("\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD", str);
+}
+
+TEST_F(JSONParserTest, ReplaceInvalidUTF16EscapeSequence) {
+  // U+D800 is a lone surrogate.
+  const std::string invalid = "\"_\\uD800_\"";
+  std::unique_ptr<JSONParser> parser(
+      NewTestParser(invalid, JSON_REPLACE_INVALID_CHARACTERS));
+  Optional<Value> value(parser->ConsumeString());
+  ASSERT_TRUE(value);
+  std::string str;
+  EXPECT_TRUE(value->GetAsString(&str));
+  EXPECT_EQ("_\xEF\xBF\xBD_", str);
 }
 
 TEST_F(JSONParserTest, ParseNumberErrors) {
@@ -410,24 +423,19 @@ TEST_F(JSONParserTest, ParseNumberErrors) {
     StringPiece input =
         MakeNotNullTerminatedInput(test_case.input, &input_owner);
 
-    std::unique_ptr<Value> result = JSONReader::Read(input);
-    if (test_case.parse_success) {
-      EXPECT_TRUE(result);
-    } else {
-      EXPECT_FALSE(result);
-    }
+    Optional<Value> result = JSONReader::Read(input);
+    EXPECT_EQ(test_case.parse_success, result.has_value());
 
     if (!result)
       continue;
 
-    double double_value = 0;
-    EXPECT_TRUE(result->GetAsDouble(&double_value));
-    EXPECT_EQ(test_case.value, double_value);
+    ASSERT_TRUE(result->is_double() || result->is_int());
+    EXPECT_EQ(test_case.value, result->GetDouble());
   }
 }
 
 TEST_F(JSONParserTest, UnterminatedInputs) {
-  const char* kCases[] = {
+  const char* const kCases[] = {
       // clang-format off
       "/",
       "//",

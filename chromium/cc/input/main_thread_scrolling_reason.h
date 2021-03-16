@@ -22,8 +22,9 @@ namespace cc {
 // [MainThread/Compositor]CanSetScrollReasons function is also updated.
 struct CC_EXPORT MainThreadScrollingReason {
   enum : uint32_t {
-    // Non-transient scrolling reasons.
     kNotScrollingOnMain = 0,
+
+    // Non-transient scrolling reasons.
     kHasBackgroundAttachmentFixedObjects = 1 << 0,
     kHasNonLayerViewportConstrainedObjects = 1 << 1,
     kThreadedScrollingDisabled = 1 << 2,
@@ -36,7 +37,6 @@ struct CC_EXPORT MainThreadScrollingReason {
     // animation. Note that a scroll handled by the main thread can result in an
     // animation running on the main thread or on the compositor thread.
     kHandlingScrollFromMainThread = 1 << 13,
-    kCustomScrollbarScrolling = 1 << 15,
 
     // Style-related scrolling on main reasons.
     // These *AndLCDText reasons are due to subpixel text rendering which can
@@ -80,8 +80,7 @@ struct CC_EXPORT MainThreadScrollingReason {
     uint32_t reasons_set_by_main_thread =
         kNotScrollingOnMain | kHasBackgroundAttachmentFixedObjects |
         kHasNonLayerViewportConstrainedObjects | kThreadedScrollingDisabled |
-        kScrollbarScrolling | kFrameOverlay | kHandlingScrollFromMainThread |
-        kCustomScrollbarScrolling;
+        kScrollbarScrolling | kFrameOverlay | kHandlingScrollFromMainThread;
     return (reasons & reasons_set_by_main_thread) == reasons;
   }
 

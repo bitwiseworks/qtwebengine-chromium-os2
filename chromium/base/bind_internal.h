@@ -7,9 +7,13 @@
 
 #include <stddef.h>
 
+#include <functional>
+#include <memory>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_internal.h"
 #include "base/compiler_specific.h"
 #include "base/memory/raw_scoped_refptr_mismatch_checker.h"
@@ -82,16 +86,6 @@ class UnretainedWrapper {
 };
 
 template <typename T>
-class ConstRefWrapper {
- public:
-  explicit ConstRefWrapper(const T& o) : ptr_(&o) {}
-  const T& get() const { return *ptr_; }
-
- private:
-  const T* ptr_;
-};
-
-template <typename T>
 class RetainedRefWrapper {
  public:
   explicit RetainedRefWrapper(T* o) : ptr_(o) {}
@@ -110,26 +104,16 @@ struct IgnoreResultHelper {
   T functor_;
 };
 
-// An alternate implementation is to avoid the destructive copy, and instead
-// specialize ParamTraits<> for OwnedWrapper<> to change the StorageType to
-// a class that is essentially a std::unique_ptr<>.
-//
-// The current implementation has the benefit though of leaving ParamTraits<>
-// fully in callback_internal.h as well as avoiding type conversions during
-// storage.
-template <typename T>
+template <typename T, typename Deleter = std::default_delete<T>>
 class OwnedWrapper {
  public:
   explicit OwnedWrapper(T* o) : ptr_(o) {}
-  ~OwnedWrapper() { delete ptr_; }
-  T* get() const { return ptr_; }
-  OwnedWrapper(OwnedWrapper&& other) {
-    ptr_ = other.ptr_;
-    other.ptr_ = NULL;
-  }
+  explicit OwnedWrapper(std::unique_ptr<T, Deleter>&& ptr)
+      : ptr_(std::move(ptr)) {}
+  T* get() const { return ptr_.get(); }
 
  private:
-  mutable T* ptr_;
+  std::unique_ptr<T, Deleter> ptr_;
 };
 
 // PassedWrapper is a copyable adapter for a scoper that ignores const.
@@ -337,21 +321,11 @@ template <typename Callable>
 struct IsCallableObject<Callable, void_t<decltype(&Callable::operator())>>
     : std::true_type {};
 
-// HasRefCountedTypeAsRawPtr selects true_type when any of the |Args| is a raw
-// pointer to a RefCounted type.
-// Implementation note: This non-specialized case handles zero-arity case only.
-// Non-zero-arity cases should be handled by the specialization below.
-template <typename... Args>
-struct HasRefCountedTypeAsRawPtr : std::false_type {};
-
-// Implementation note: Select true_type if the first parameter is a raw pointer
-// to a RefCounted type. Otherwise, skip the first parameter and check rest of
-// parameters recursively.
-template <typename T, typename... Args>
-struct HasRefCountedTypeAsRawPtr<T, Args...>
-    : std::conditional_t<NeedsScopedRefptrButGetsRawPtr<T>::value,
-                         std::true_type,
-                         HasRefCountedTypeAsRawPtr<Args...>> {};
+// HasRefCountedTypeAsRawPtr inherits from true_type when any of the |Args| is a
+// raw pointer to a RefCounted type.
+template <typename... Ts>
+struct HasRefCountedTypeAsRawPtr
+    : disjunction<NeedsScopedRefptrButGetsRawPtr<Ts>...> {};
 
 // ForceVoidReturn<>
 //
@@ -371,10 +345,9 @@ template <typename Functor, typename SFINAE>
 struct FunctorTraits;
 
 // For empty callable types.
-// This specialization is intended to allow binding captureless lambdas by
-// base::Bind(), based on the fact that captureless lambdas are empty while
-// capturing lambdas are not. This also allows any functors as far as it's an
-// empty class.
+// This specialization is intended to allow binding captureless lambdas, based
+// on the fact that captureless lambdas are empty while capturing lambdas are
+// not. This also allows any functors as far as it's an empty class.
 // Example:
 //
 //   // Captureless lambdas are allowed.
@@ -531,6 +504,40 @@ struct FunctorTraits<R (Receiver::*)(Args...) const> {
     return ((*receiver_ptr).*method)(std::forward<RunArgs>(args)...);
   }
 };
+
+#if defined(OS_WIN) && !defined(ARCH_CPU_64_BITS)
+
+// For __stdcall methods.
+template <typename R, typename Receiver, typename... Args>
+struct FunctorTraits<R (__stdcall Receiver::*)(Args...)> {
+  using RunType = R(Receiver*, Args...);
+  static constexpr bool is_method = true;
+  static constexpr bool is_nullable = true;
+
+  template <typename Method, typename ReceiverPtr, typename... RunArgs>
+  static R Invoke(Method method,
+                  ReceiverPtr&& receiver_ptr,
+                  RunArgs&&... args) {
+    return ((*receiver_ptr).*method)(std::forward<RunArgs>(args)...);
+  }
+};
+
+// For __stdcall const methods.
+template <typename R, typename Receiver, typename... Args>
+struct FunctorTraits<R (__stdcall Receiver::*)(Args...) const> {
+  using RunType = R(const Receiver*, Args...);
+  static constexpr bool is_method = true;
+  static constexpr bool is_nullable = true;
+
+  template <typename Method, typename ReceiverPtr, typename... RunArgs>
+  static R Invoke(Method method,
+                  ReceiverPtr&& receiver_ptr,
+                  RunArgs&&... args) {
+    return ((*receiver_ptr).*method)(std::forward<RunArgs>(args)...);
+  }
+};
+
+#endif  // defined(OS_WIN) && !defined(ARCH_CPU_64_BITS)
 
 #ifdef __cpp_noexcept_function_type
 // noexcept makes a distinct function type in C++17.
@@ -750,7 +757,6 @@ bool QueryCancellationTraitsImpl(BindStateBase::CancellationQueryMode mode,
           functor, std::get<indices>(bound_args)...);
   }
   NOTREACHED();
-  return false;
 }
 
 // Relays |base| to corresponding CallbackCancellationTraits<>::Run(). Returns
@@ -810,10 +816,10 @@ BanUnconstructedRefCountedReceiver(const Receiver& receiver, Unused&&...) {
   //
   //   scoped_refptr<Foo> oo = Foo::Create();
   DCHECK(receiver->HasAtLeastOneRef())
-      << "base::Bind() refuses to create the first reference to ref-counted "
-         "objects. That is typically happens around PostTask() in their "
-         "constructor, and such objects can be destroyed before `new` returns "
-         "if the task resolves fast enough.";
+      << "base::Bind{Once,Repeating}() refuses to create the first reference "
+         "to ref-counted objects. That typically happens around PostTask() in "
+         "their constructor, and such objects can be destroyed before `new` "
+         "returns if the task resolves fast enough.";
 }
 
 // BindState<>
@@ -821,8 +827,7 @@ BanUnconstructedRefCountedReceiver(const Receiver& receiver, Unused&&...) {
 // This stores all the state passed into Bind().
 template <typename Functor, typename... BoundArgs>
 struct BindState final : BindStateBase {
-  using IsCancellable = std::integral_constant<
-      bool,
+  using IsCancellable = bool_constant<
       CallbackCancellationTraits<Functor,
                                  std::tuple<BoundArgs...>>::is_cancellable>;
 
@@ -936,12 +941,12 @@ using MakeBindStateType =
 //   };
 //
 //   WeakPtr<Foo> oo = nullptr;
-//   base::Bind(&Foo::bar, oo).Run();
+//   base::BindOnce(&Foo::bar, oo).Run();
 template <typename T>
 struct IsWeakReceiver : std::false_type {};
 
 template <typename T>
-struct IsWeakReceiver<internal::ConstRefWrapper<T>> : IsWeakReceiver<T> {};
+struct IsWeakReceiver<std::reference_wrapper<T>> : IsWeakReceiver<T> {};
 
 template <typename T>
 struct IsWeakReceiver<WeakPtr<T>> : std::true_type {};
@@ -963,10 +968,8 @@ struct BindUnwrapTraits<internal::UnretainedWrapper<T>> {
 };
 
 template <typename T>
-struct BindUnwrapTraits<internal::ConstRefWrapper<T>> {
-  static const T& Unwrap(const internal::ConstRefWrapper<T>& o) {
-    return o.get();
-  }
+struct BindUnwrapTraits<std::reference_wrapper<T>> {
+  static T& Unwrap(std::reference_wrapper<T> o) { return o.get(); }
 };
 
 template <typename T>
@@ -974,9 +977,11 @@ struct BindUnwrapTraits<internal::RetainedRefWrapper<T>> {
   static T* Unwrap(const internal::RetainedRefWrapper<T>& o) { return o.get(); }
 };
 
-template <typename T>
-struct BindUnwrapTraits<internal::OwnedWrapper<T>> {
-  static T* Unwrap(const internal::OwnedWrapper<T>& o) { return o.get(); }
+template <typename T, typename Deleter>
+struct BindUnwrapTraits<internal::OwnedWrapper<T, Deleter>> {
+  static T* Unwrap(const internal::OwnedWrapper<T, Deleter>& o) {
+    return o.get();
+  }
 };
 
 template <typename T>

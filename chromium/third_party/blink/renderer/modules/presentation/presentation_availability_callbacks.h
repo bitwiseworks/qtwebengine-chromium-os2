@@ -5,12 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PRESENTATION_PRESENTATION_AVAILABILITY_CALLBACKS_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PRESENTATION_PRESENTATION_AVAILABILITY_CALLBACKS_H_
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_promise_property.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_request.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
-#include "third_party/blink/renderer/platform/wtf/noncopyable.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -20,7 +21,7 @@ namespace blink {
 // TODO(crbug.com/749327): Consider removing this class and have
 // PresentationAvailabilityState use PresentationAvailabilityProperty directly.
 class MODULES_EXPORT PresentationAvailabilityCallbacks
-    : public GarbageCollectedFinalized<PresentationAvailabilityCallbacks> {
+    : public GarbageCollected<PresentationAvailabilityCallbacks> {
  public:
   PresentationAvailabilityCallbacks(PresentationAvailabilityProperty*,
                                     const WTF::Vector<KURL>&);
@@ -29,13 +30,13 @@ class MODULES_EXPORT PresentationAvailabilityCallbacks
   virtual void Resolve(bool value);
   virtual void RejectAvailabilityNotSupported();
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   Member<PresentationAvailabilityProperty> resolver_;
   const WTF::Vector<KURL> urls_;
 
-  WTF_MAKE_NONCOPYABLE(PresentationAvailabilityCallbacks);
+  DISALLOW_COPY_AND_ASSIGN(PresentationAvailabilityCallbacks);
 };
 
 }  // namespace blink

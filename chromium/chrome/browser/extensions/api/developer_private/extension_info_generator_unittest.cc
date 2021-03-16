@@ -8,6 +8,8 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_writer.h"
@@ -15,7 +17,6 @@
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/developer_private/inspectable_views_finder.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -34,8 +35,6 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/extension_features.h"
-#include "extensions/common/feature_switch.h"
 #include "extensions/common/permissions/permission_message.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -77,10 +76,9 @@ const developer::ExtensionInfo* GetInfoFromList(
 std::string SiteControlsToString(
     const std::vector<developer::SiteControl>& controls) {
   base::Value list(base::Value::Type::LIST);
-  list.GetList().reserve(controls.size());
   for (const auto& control : controls) {
     std::unique_ptr<base::Value> control_value = control.ToValue();
-    list.GetList().push_back(std::move(*control_value));
+    list.Append(std::move(*control_value));
   }
 
   std::string json;
@@ -231,13 +229,6 @@ class ExtensionInfoGeneratorUnitTest : public ExtensionServiceTestBase {
 
 // Test some of the basic fields.
 TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
-  // Enable error console for testing.
-  FeatureSwitch::ScopedOverride error_console_override(
-      FeatureSwitch::error_console(), true);
-  // Disable runtime host permissions - they are tested extensively below.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      extensions_features::kRuntimeHostPermissions);
   profile()->GetPrefs()->SetBoolean(prefs::kExtensionsUIDeveloperMode, true);
 
   const char kName[] = "extension name";
@@ -303,8 +294,25 @@ TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
   EXPECT_FALSE(info->file_access.is_active);
   EXPECT_TRUE(info->incognito_access.is_enabled);
   EXPECT_FALSE(info->incognito_access.is_active);
-  PermissionMessages messages =
-      extension->permissions_data()->GetPermissionMessages();
+  EXPECT_TRUE(
+      base::StringPiece(info->icon_url).starts_with("data:image/png;base64,"));
+
+  // Strip out the kHostReadWrite permission created by the extension requesting
+  // host permissions above; runtime host permissions mean these are always
+  // present but not necessarily operative. There should only be one entry,
+  // though. This is necessary because the code below wants to assert that every
+  // entry in |messages| has a matching entry in
+  // |info->permissions.simple_permissions|, and kHostReadWrite is not a simple
+  // permission.
+  PermissionMessages messages;
+  for (const PermissionMessage& message :
+       extension->permissions_data()->GetPermissionMessages()) {
+    if (!message.permissions().ContainsID(
+            extensions::APIPermission::kHostReadWrite)) {
+      messages.push_back(message);
+    }
+  }
+
   ASSERT_EQ(messages.size(), info->permissions.simple_permissions.size());
   size_t i = 0;
   for (const PermissionMessage& message : messages) {
@@ -319,7 +327,7 @@ TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
     }
     ++i;
   }
-  EXPECT_FALSE(info->permissions.runtime_host_permissions);
+  EXPECT_TRUE(info->permissions.runtime_host_permissions);
 
   ASSERT_EQ(2u, info->runtime_errors.size());
   const api::developer_private::RuntimeError& runtime_error =
@@ -420,11 +428,6 @@ TEST_F(ExtensionInfoGeneratorUnitTest, GenerateExtensionsJSONData) {
 
 // Tests the generation of the runtime host permissions entries.
 TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissions) {
-  // Start with the switch enabled.
-  auto scoped_feature_list = std::make_unique<base::test::ScopedFeatureList>();
-  scoped_feature_list->InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   scoped_refptr<const Extension> all_urls_extension = CreateExtension(
       "all_urls", ListBuilder().Append(kAllHostsPermission).Build(),
       Manifest::INTERNAL);
@@ -479,33 +482,11 @@ TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissions) {
   EXPECT_FALSE(info->permissions.runtime_host_permissions);
 }
 
-TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissionsWithoutFeature) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
-  // Without the runtime host permissions feature enabled, the runtime host
-  // permissions entry should always be empty.
-  scoped_refptr<const Extension> all_urls_extension = CreateExtension(
-      "all_urls", ListBuilder().Append(kAllHostsPermission).Build(),
-      Manifest::INTERNAL);
-  std::unique_ptr<developer::ExtensionInfo> info =
-      GenerateExtensionInfo(all_urls_extension->id());
-  EXPECT_FALSE(info->permissions.runtime_host_permissions);
-  ASSERT_EQ(1u, info->permissions.simple_permissions.size());
-  EXPECT_EQ("Read and change all your data on the websites you visit",
-            info->permissions.simple_permissions[0].message);
-}
-
 // Tests that specific_site_controls is correctly populated when permissions
 // are granted by the user beyond what the extension originally requested in the
 // manifest.
 TEST_F(ExtensionInfoGeneratorUnitTest,
        RuntimeHostPermissionsBeyondRequestedScope) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   scoped_refptr<const Extension> extension =
       CreateExtension("extension", ListBuilder().Append("http://*/*").Build(),
                       Manifest::INTERNAL);
@@ -550,10 +531,6 @@ TEST_F(ExtensionInfoGeneratorUnitTest,
 // Tests that specific_site_controls is correctly populated when the extension
 // requests access to specific hosts.
 TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissionsSpecificHosts) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   scoped_refptr<const Extension> extension =
       CreateExtension("extension",
                       ListBuilder()
@@ -591,13 +568,46 @@ TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissionsSpecificHosts) {
   EXPECT_FALSE(runtime_hosts->has_all_hosts);
 }
 
+// Tests that requesting all_url style permissions as a runtime granted pattern
+// correctly is treated as having access to all sites.
+TEST_F(ExtensionInfoGeneratorUnitTest, RuntimeHostPermissionsAllURLs) {
+  scoped_refptr<const Extension> all_urls_extension = CreateExtension(
+      "all_urls", ListBuilder().Append(kAllHostsPermission).Build(),
+      Manifest::INTERNAL);
+
+  // Withholding host permissions should result in the extension being set to
+  // run on click.
+  ScriptingPermissionsModifier permissions_modifier(profile(),
+                                                    all_urls_extension);
+  permissions_modifier.SetWithholdHostPermissions(true);
+  std::unique_ptr<developer::ExtensionInfo> info =
+      GenerateExtensionInfo(all_urls_extension->id());
+  const developer::RuntimeHostPermissions* runtime_hosts =
+      info->permissions.runtime_host_permissions.get();
+  EXPECT_EQ(developer::HOST_ACCESS_ON_CLICK, runtime_hosts->host_access);
+  EXPECT_EQ(R"([{"granted":false,"host":"*://*/*"}])",
+            SiteControlsToString(runtime_hosts->hosts));
+
+  // Grant the requested pattern ("*://*/*").
+  URLPattern all_url(Extension::kValidHostPermissionSchemes,
+                     kAllHostsPermission);
+  PermissionSet all_url_set(APIPermissionSet(), ManifestPermissionSet(),
+                            URLPatternSet({all_url}), URLPatternSet({all_url}));
+  PermissionsUpdater(profile()).GrantRuntimePermissions(
+      *all_urls_extension, all_url_set, base::DoNothing::Once());
+
+  // Now the extension should look like it has access to all hosts, while still
+  // also counting as having permission withholding enabled.
+  info = GenerateExtensionInfo(all_urls_extension->id());
+  runtime_hosts = info->permissions.runtime_host_permissions.get();
+  EXPECT_EQ(developer::HOST_ACCESS_ON_ALL_SITES, runtime_hosts->host_access);
+  EXPECT_EQ(R"([{"granted":true,"host":"*://*/*"}])",
+            SiteControlsToString(runtime_hosts->hosts));
+}
+
 // Tests the population of withheld runtime hosts when they overlap with granted
 // patterns.
 TEST_F(ExtensionInfoGeneratorUnitTest, WithheldUrlsOverlapping) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   scoped_refptr<const Extension> extension =
       CreateExtension("extension",
                       ListBuilder()
@@ -706,10 +716,6 @@ TEST_F(ExtensionInfoGeneratorUnitTest, WithheldUrlsOverlapping) {
 // patterns.
 TEST_F(ExtensionInfoGeneratorUnitTest,
        WithheldUrlsOverlappingWithContentScript) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      extensions_features::kRuntimeHostPermissions);
-
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("extension")
           .AddPermissions({"*://example.com/*", "*://chromium.org/*"})

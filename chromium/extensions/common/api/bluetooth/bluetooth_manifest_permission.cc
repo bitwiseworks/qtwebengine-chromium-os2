@@ -9,7 +9,7 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "extensions/common/api/bluetooth/bluetooth_manifest_data.h"
 #include "extensions/common/api/extensions_manifest_types.h"
 #include "extensions/common/error_utils.h"
@@ -189,6 +189,10 @@ std::unique_ptr<ManifestPermission> BluetoothManifestPermission::Intersect(
 
 void BluetoothManifestPermission::AddPermission(const std::string& uuid) {
   uuids_.insert(uuid);
+}
+
+bool BluetoothManifestPermission::RequiresManagementUIWarning() const {
+  return false;
 }
 
 }  // namespace extensions

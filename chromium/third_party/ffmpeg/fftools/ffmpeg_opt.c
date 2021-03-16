@@ -1,3 +1,4 @@
+
 /*
  * ffmpeg option parsing
  *
@@ -268,7 +269,7 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
 {
     OptionsContext *o = optctx;
     StreamMap *m = NULL;
-    int i, negative = 0, file_idx;
+    int i, negative = 0, file_idx, disabled = 0;
     int sync_file_idx = -1, sync_stream_idx = 0;
     char *p, *sync;
     char *map;
@@ -301,6 +302,11 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
         if (i == input_files[sync_file_idx]->nb_streams) {
             av_log(NULL, AV_LOG_FATAL, "Sync stream specification in map %s does not "
                                        "match any streams.\n", arg);
+            exit_program(1);
+        }
+        if (input_streams[input_files[sync_file_idx]->ist_index + sync_stream_idx]->user_set_discard == AVDISCARD_ALL) {
+            av_log(NULL, AV_LOG_FATAL, "Sync stream specification in map %s matches a disabled input "
+                                       "stream.\n", arg);
             exit_program(1);
         }
     }
@@ -339,6 +345,10 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
                 if (check_stream_specifier(input_files[file_idx]->ctx, input_files[file_idx]->ctx->streams[i],
                             *p == ':' ? p + 1 : p) <= 0)
                     continue;
+                if (input_streams[input_files[file_idx]->ist_index + i]->user_set_discard == AVDISCARD_ALL) {
+                    disabled = 1;
+                    continue;
+                }
                 GROW_ARRAY(o->stream_maps, o->nb_stream_maps);
                 m = &o->stream_maps[o->nb_stream_maps - 1];
 
@@ -358,6 +368,10 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
     if (!m) {
         if (allow_unused) {
             av_log(NULL, AV_LOG_VERBOSE, "Stream map '%s' matches no streams; ignoring.\n", arg);
+        } else if (disabled) {
+            av_log(NULL, AV_LOG_FATAL, "Stream map '%s' matches disabled streams.\n"
+                                       "To ignore this, add a trailing '?' to the map.\n", arg);
+            exit_program(1);
         } else {
             av_log(NULL, AV_LOG_FATAL, "Stream map '%s' matches no streams.\n"
                                        "To ignore this, add a trailing '?' to the map.\n", arg);
@@ -437,7 +451,8 @@ static int opt_map_channel(void *optctx, const char *opt, const char *arg)
     /* allow trailing ? to map_channel */
     if (allow_unused = strchr(mapchan, '?'))
         *allow_unused = 0;
-    if (m->channel_idx < 0 || m->channel_idx >= st->codecpar->channels) {
+    if (m->channel_idx < 0 || m->channel_idx >= st->codecpar->channels ||
+        input_streams[input_files[m->file_idx]->ist_index + m->stream_idx]->user_set_discard == AVDISCARD_ALL) {
         if (allow_unused) {
             av_log(NULL, AV_LOG_VERBOSE, "mapchan: invalid audio channel #%d.%d.%d\n",
                     m->file_idx, m->stream_idx, m->channel_idx);
@@ -746,6 +761,13 @@ static void add_input_streams(OptionsContext *o, AVFormatContext *ic)
 
         MATCH_PER_STREAM_OPT(discard, str, discard_str, ic, st);
         ist->user_set_discard = AVDISCARD_NONE;
+
+        if ((o->video_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) ||
+            (o->audio_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) ||
+            (o->subtitle_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) ||
+            (o->data_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_DATA))
+                ist->user_set_discard = AVDISCARD_ALL;
+
         if (discard_str && av_opt_eval_int(&cc, discard_opt, discard_str, &ist->user_set_discard) < 0) {
             av_log(NULL, AV_LOG_ERROR, "Error parsing discard %s.\n",
                     discard_str);
@@ -910,7 +932,7 @@ static void assert_file_overwrite(const char *filename)
     if (!file_overwrite) {
         if (proto_name && !strcmp(proto_name, "file") && avio_check(filename, 0) == 0) {
             if (stdin_interaction && !no_file_overwrite) {
-                fprintf(stderr,"File '%s' already exists. Overwrite ? [y/N] ", filename);
+                fprintf(stderr,"File '%s' already exists. Overwrite? [y/N] ", filename);
                 fflush(stderr);
                 term_exit();
                 signal(SIGINT, SIG_DFL);
@@ -1660,6 +1682,8 @@ static OutputStream *new_video_stream(OptionsContext *o, AVFormatContext *oc, in
 
     MATCH_PER_STREAM_OPT(filter_scripts, str, ost->filters_script, oc, st);
     MATCH_PER_STREAM_OPT(filters,        str, ost->filters,        oc, st);
+    if (o->nb_filters > 1)
+        av_log(NULL, AV_LOG_ERROR, "Only '-vf %s' read, ignoring remaining -vf options: Use ',' to separate filters\n", ost->filters);
 
     if (!ost->stream_copy) {
         const char *p = NULL;
@@ -1841,6 +1865,8 @@ static OutputStream *new_audio_stream(OptionsContext *o, AVFormatContext *oc, in
 
     MATCH_PER_STREAM_OPT(filter_scripts, str, ost->filters_script, oc, st);
     MATCH_PER_STREAM_OPT(filters,        str, ost->filters,        oc, st);
+    if (o->nb_filters > 1)
+        av_log(NULL, AV_LOG_ERROR, "Only '-af %s' read, ignoring remaining -af options: Use ',' to separate filters\n", ost->filters);
 
     if (!ost->stream_copy) {
         char *sample_fmt = NULL;
@@ -2173,7 +2199,10 @@ static int open_output_file(OptionsContext *o, const char *filename)
             for (i = 0; i < nb_input_streams; i++) {
                 int new_area;
                 ist = input_streams[i];
-                new_area = ist->st->codecpar->width * ist->st->codecpar->height + 100000000*!!ist->st->codec_info_nb_frames;
+                new_area = ist->st->codecpar->width * ist->st->codecpar->height + 100000000*!!ist->st->codec_info_nb_frames
+                           + 5000000*!!(ist->st->disposition & AV_DISPOSITION_DEFAULT);
+                if (ist->user_set_discard == AVDISCARD_ALL)
+                    continue;
                 if((qcr!=MKTAG('A', 'P', 'I', 'C')) && (ist->st->disposition & AV_DISPOSITION_ATTACHED_PIC))
                     new_area = 1;
                 if (ist->st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
@@ -2194,7 +2223,10 @@ static int open_output_file(OptionsContext *o, const char *filename)
             for (i = 0; i < nb_input_streams; i++) {
                 int score;
                 ist = input_streams[i];
-                score = ist->st->codecpar->channels + 100000000*!!ist->st->codec_info_nb_frames;
+                score = ist->st->codecpar->channels + 100000000*!!ist->st->codec_info_nb_frames
+                        + 5000000*!!(ist->st->disposition & AV_DISPOSITION_DEFAULT);
+                if (ist->user_set_discard == AVDISCARD_ALL)
+                    continue;
                 if (ist->st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
                     score > best_score) {
                     best_score = score;
@@ -2216,6 +2248,8 @@ static int open_output_file(OptionsContext *o, const char *filename)
                     AVCodec const *output_codec =
                         avcodec_find_encoder(oc->oformat->subtitle_codec);
                     int input_props = 0, output_props = 0;
+                    if (input_streams[i]->user_set_discard == AVDISCARD_ALL)
+                        continue;
                     if (output_codec)
                         output_descriptor = avcodec_descriptor_get(output_codec->id);
                     if (input_descriptor)
@@ -2237,6 +2271,8 @@ static int open_output_file(OptionsContext *o, const char *filename)
         if (!o->data_disable ) {
             enum AVCodecID codec_id = av_guess_codec(oc->oformat, NULL, filename, NULL, AVMEDIA_TYPE_DATA);
             for (i = 0; codec_id != AV_CODEC_ID_NONE && i < nb_input_streams; i++) {
+                if (input_streams[i]->user_set_discard == AVDISCARD_ALL)
+                    continue;
                 if (input_streams[i]->st->codecpar->codec_type == AVMEDIA_TYPE_DATA
                     && input_streams[i]->st->codecpar->codec_id == codec_id )
                     new_data_stream(o, oc, i);
@@ -2275,6 +2311,11 @@ loop_end:
                 int src_idx = input_files[map->file_index]->ist_index + map->stream_index;
 
                 ist = input_streams[input_files[map->file_index]->ist_index + map->stream_index];
+                if (ist->user_set_discard == AVDISCARD_ALL) {
+                    av_log(NULL, AV_LOG_FATAL, "Stream #%d:%d is disabled and cannot be mapped.\n",
+                           map->file_index, map->stream_index);
+                    exit_program(1);
+                }
                 if(o->subtitle_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
                     continue;
                 if(o->   audio_disable && ist->st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
@@ -2729,13 +2770,14 @@ static int opt_target(void *optctx, const char *opt, const char *arg)
     } else {
         /* Try to determine PAL/NTSC by peeking in the input files */
         if (nb_input_files) {
-            int i, j, fr;
+            int i, j;
             for (j = 0; j < nb_input_files; j++) {
                 for (i = 0; i < input_files[j]->nb_streams; i++) {
                     AVStream *st = input_files[j]->ctx->streams[i];
+                    int64_t fr;
                     if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
                         continue;
-                    fr = st->time_base.den * 1000 / st->time_base.num;
+                    fr = st->time_base.den * 1000LL / st->time_base.num;
                     if (fr == 25000) {
                         norm = PAL;
                         break;
@@ -2965,8 +3007,11 @@ static int opt_preset(void *optctx, const char *opt, const char *arg)
 static int opt_old2new(void *optctx, const char *opt, const char *arg)
 {
     OptionsContext *o = optctx;
+    int ret;
     char *s = av_asprintf("%s:%c", opt + 1, *opt);
-    int ret = parse_option(o, s, arg, options);
+    if (!s)
+        return AVERROR(ENOMEM);
+    ret = parse_option(o, s, arg, options);
     av_free(s);
     return ret;
 }
@@ -2997,6 +3042,8 @@ static int opt_qscale(void *optctx, const char *opt, const char *arg)
         return parse_option(o, "q:v", arg, options);
     }
     s = av_asprintf("q%s", opt + 6);
+    if (!s)
+        return AVERROR(ENOMEM);
     ret = parse_option(o, s, arg, options);
     av_free(s);
     return ret;
@@ -3041,8 +3088,11 @@ static int opt_vsync(void *optctx, const char *opt, const char *arg)
 static int opt_timecode(void *optctx, const char *opt, const char *arg)
 {
     OptionsContext *o = optctx;
+    int ret;
     char *tcr = av_asprintf("timecode=%s", arg);
-    int ret = parse_option(o, "metadata:g", tcr, options);
+    if (!tcr)
+        return AVERROR(ENOMEM);
+    ret = parse_option(o, "metadata:g", tcr, options);
     if (ret >= 0)
         ret = av_dict_set(&o->g->codec_opts, "gop_timecode", arg, 0);
     av_free(tcr);
@@ -3144,7 +3194,7 @@ void show_help_default(const char *opt, const char *arg)
            "    -h      -- print basic options\n"
            "    -h long -- print more options\n"
            "    -h full -- print all options (including all format and codec specific options, very long)\n"
-           "    -h type=name -- print all options for the named decoder/encoder/demuxer/muxer/filter/bsf\n"
+           "    -h type=name -- print all options for the named decoder/encoder/demuxer/muxer/filter/bsf/protocol\n"
            "    See man %s for detailed description of the options.\n"
            "\n", program_name);
 
@@ -3152,7 +3202,7 @@ void show_help_default(const char *opt, const char *arg)
                       OPT_EXIT, 0, 0);
 
     show_help_options(options, "Global options (affect whole program "
-                      "instead of just one file:",
+                      "instead of just one file):",
                       0, per_file | OPT_EXIT | OPT_EXPERT, 0);
     if (show_advanced)
         show_help_options(options, "Advanced global options:", OPT_EXPERT,
@@ -3401,7 +3451,7 @@ const OptionDef options[] = {
     { "stdin",          OPT_BOOL | OPT_EXPERT,                       { &stdin_interaction },
       "enable or disable interaction on standard input" },
     { "timelimit",      HAS_ARG | OPT_EXPERT,                        { .func_arg = opt_timelimit },
-        "set max runtime in seconds", "limit" },
+        "set max runtime in seconds in CPU user time", "limit" },
     { "dump",           OPT_BOOL | OPT_EXPERT,                       { &do_pkt_dump },
         "dump each input packet" },
     { "hex",            OPT_BOOL | OPT_EXPERT,                       { &do_hex_dump },

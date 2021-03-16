@@ -4,7 +4,9 @@
 
 #include "ui/ozone/platform/cast/gl_surface_cast.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
@@ -62,7 +64,7 @@ bool GLSurfaceCast::SupportsSwapBuffersWithBounds() {
 
 gfx::SwapResult GLSurfaceCast::SwapBuffersWithBounds(
     const std::vector<gfx::Rect>& rects,
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   DCHECK(supports_swap_buffer_with_bounds_);
 
   // TODO(halliwell): Request new EGL extension so we're not abusing
@@ -75,12 +77,13 @@ gfx::SwapResult GLSurfaceCast::SwapBuffersWithBounds(
     rects_data[i * 4 + 3] = rects[i].height();
   }
 
-  return NativeViewGLSurfaceEGL::SwapBuffersWithDamage(rects_data, callback);
+  return NativeViewGLSurfaceEGL::SwapBuffersWithDamage(rects_data,
+                                                       std::move(callback));
 }
 
 bool GLSurfaceCast::Resize(const gfx::Size& size,
                            float scale_factor,
-                           ColorSpace color_space,
+                           const gfx::ColorSpace& color_space,
                            bool has_alpha) {
   return parent_->ResizeDisplay(size) &&
          NativeViewGLSurfaceEGL::Resize(size, scale_factor, color_space,

@@ -11,11 +11,13 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "ui/display/display_change_notifier.h"
 #include "ui/display/display_export.h"
 #include "ui/display/screen.h"
 #include "ui/display/win/color_profile_reader.h"
 #include "ui/display/win/uwp_text_scale_factor.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/win/singleton_hwnd_observer.h"
 
@@ -73,9 +75,11 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   static gfx::Rect ScreenToDIPRect(HWND hwnd, const gfx::Rect& pixel_bounds);
 
   // Converts a screen DIP rect to a screen physical rect.
-  // The DPI scale is performed relative to the display nearest to |hwnd|.
-  // If |hwnd| is null, scaling will be performed to the display nearest to
-  // |dip_bounds|.
+  // If |hwnd| is null, scaling will be performed using the DSF of the display
+  // nearest to |dip_bounds|; otherwise, scaling will be performed using the DSF
+  // of the display nearest to |hwnd|.  Thus if an existing HWND is moving to a
+  // different display, it's often more correct to pass null for |hwnd| to get
+  // the new display's scale factor rather than the old one's.
   static gfx::Rect DIPToScreenRect(HWND hwnd, const gfx::Rect& dip_bounds);
 
   // Converts a client physical rect to a client DIP rect.
@@ -93,6 +97,10 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // Converts a DIP size to a physical size.
   // The DPI scale is performed relative to the display nearest to |hwnd|.
   static gfx::Size DIPToScreenSize(HWND hwnd, const gfx::Size& dip_size);
+
+  // Returns the number of physical pixels per inch for a display associated
+  // with the point.
+  static gfx::Vector2dF GetPixelsPerInch(const gfx::PointF& point);
 
   // Returns the result of GetSystemMetrics for |metric| scaled to |monitor|'s
   // DPI. Use this function if you're already working with screen pixels, as
@@ -128,7 +136,7 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
 
   // Set a callback to use to query the status of HDR. This callback will be
   // called when the status of HDR may have changed.
-  using RequestHDRStatusCallback = base::RepeatingCallback<void()>;
+  using RequestHDRStatusCallback = base::RepeatingClosure;
   static void SetRequestHDRStatusCallback(
       RequestHDRStatusCallback request_hdr_status_callback);
 
@@ -218,7 +226,7 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
 
   // Returns the result of GetSystemMetrics for |metric| scaled to the specified
   // |scale_factor|.
-  static int GetSystemMetricsForScaleFactor(float scale_factor, int metric);
+  int GetSystemMetricsForScaleFactor(float scale_factor, int metric) const;
 
   void RecordDisplayScaleFactors() const;
 
@@ -241,7 +249,8 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   std::vector<Display> displays_;
 
   // A helper to read color profiles from the filesystem.
-  std::unique_ptr<ColorProfileReader> color_profile_reader_;
+  std::unique_ptr<ColorProfileReader> color_profile_reader_ =
+      std::make_unique<ColorProfileReader>(this);
 
   // Callback to use to query when the HDR status may have changed.
   RequestHDRStatusCallback request_hdr_status_callback_;
@@ -250,7 +259,8 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // advanced color" setting.
   bool hdr_enabled_ = false;
 
-  UwpTextScaleFactor* uwp_text_scale_factor_ = nullptr;
+  ScopedObserver<UwpTextScaleFactor, UwpTextScaleFactor::Observer>
+      scale_factor_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ScreenWin);
 };

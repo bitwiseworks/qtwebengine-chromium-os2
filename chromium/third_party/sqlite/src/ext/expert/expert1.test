@@ -47,7 +47,7 @@ foreach {tn setup} {
 
     proc do_rec_test {tn sql res} {
       set res [squish [string trim $res]]
-      set tst [subst -nocommands {
+      set tst [subst -nocommands { 
         squish [string trim [exec $::CMD -verbose 0 -sql {$sql;} test.db]]
       }]
       uplevel [list do_test $tn $tst $res]
@@ -80,7 +80,7 @@ foreach {tn setup} {
 
     proc do_rec_test {tn sql res} {
       set res [squish [string trim $res]]
-      set tst [subst -nocommands {
+      set tst [subst -nocommands { 
         squish [string trim [exec $::CLI test.db ".expert" {$sql;}]]
       }]
       uplevel [list do_test $tn $tst $res]
@@ -134,6 +134,7 @@ do_setup_rec_test $tn.5 {
   SEARCH TABLE t1 USING COVERING INDEX t1_idx_000123a7 (a=?)
 }
 
+if 0 {
 do_setup_rec_test $tn.6 {
   CREATE TABLE t1(a, b, c);
 } {
@@ -141,6 +142,7 @@ do_setup_rec_test $tn.6 {
 } {
   CREATE INDEX t1_idx_00000061 ON t1(a);
   SEARCH TABLE t1 USING COVERING INDEX t1_idx_00000061
+}
 }
 
 do_setup_rec_test $tn.7 {
@@ -187,7 +189,7 @@ do_setup_rec_test $tn.9.1 {
   SELECT * FROM "t t" WHERE a=?
 } {
   CREATE INDEX 't t_idx_00000061' ON 't t'(a);
-  SEARCH TABLE t t USING INDEX t t_idx_00000061 (a=?)
+  SEARCH TABLE t t USING INDEX t t_idx_00000061 (a=?) 
 }
 
 do_setup_rec_test $tn.9.2 {
@@ -229,7 +231,7 @@ do_setup_rec_test $tn.11.1 {
 } {
   CREATE INDEX t5_idx_000123a7 ON t5(a, b);
   CREATE INDEX t6_idx_00000063 ON t6(c);
-  SEARCH TABLE t6 USING INDEX t6_idx_00000063 (c=?)
+  SEARCH TABLE t6 USING INDEX t6_idx_00000063 (c=?) 
   SEARCH TABLE t5 USING COVERING INDEX t5_idx_000123a7 (a=? AND b=?)
 }
 
@@ -244,7 +246,7 @@ do_setup_rec_test $tn.12.1 {
   CREATE INDEX t7_idx_00000061 ON t7(a);
   MULTI-INDEX OR
     INDEX 1
-      SEARCH TABLE t7 USING INDEX t7_idx_00000061 (a=?)
+      SEARCH TABLE t7 USING INDEX t7_idx_00000061 (a=?) 
     INDEX 2
       SEARCH TABLE t7 USING INDEX t7_idx_00000062 (b=?)
 }
@@ -272,7 +274,7 @@ do_setup_rec_test $tn.13.3 {
 } {
   SELECT * FROM t8 WHERE a=? ORDER BY rowid
 } {
-  CREATE INDEX t8_idx_00000061 ON t8(a);
+  CREATE INDEX t8_idx_00000061 ON t8(a); 
   SEARCH TABLE t8 USING INDEX t8_idx_00000061 (a=?)
 }
 
@@ -287,7 +289,7 @@ do_setup_rec_test $tn.14 {
 } {
   INSERT INTO t9 VALUES(?, ?, ?);
 } {
-  CREATE INDEX t10_idx_00000062 ON t10(b);
+  CREATE INDEX t10_idx_00000062 ON t10(b); 
   SEARCH TABLE t10 USING INDEX t10_idx_00000062 (b=?)
 }
 
@@ -304,7 +306,7 @@ do_setup_rec_test $tn.15 {
   SELECT * FROM t2, t1 WHERE b=? AND d=? AND t2.rowid=t1.rowid
 } {
   CREATE INDEX t2_idx_00000064 ON t2(d);
-  SEARCH TABLE t2 USING INDEX t2_idx_00000064 (d=?)
+  SEARCH TABLE t2 USING INDEX t2_idx_00000064 (d=?) 
   SEARCH TABLE t1 USING INTEGER PRIMARY KEY (rowid=?)
 }
 
@@ -347,9 +349,9 @@ do_execsql_test 4.0 {
 do_candidates_test 4.1 {
   SELECT * FROM t1,t2 WHERE (b=? OR a=?) AND (c=? OR d=?)
 } {
-  CREATE INDEX t1_idx_00000062 ON t1(b); -- stat1: 100 20
-  CREATE INDEX t1_idx_00000061 ON t1(a); -- stat1: 100 50
-  CREATE INDEX t2_idx_00000063 ON t2(c); -- stat1: 100 20
+  CREATE INDEX t1_idx_00000062 ON t1(b); -- stat1: 100 20 
+  CREATE INDEX t1_idx_00000061 ON t1(a); -- stat1: 100 50 
+  CREATE INDEX t2_idx_00000063 ON t2(c); -- stat1: 100 20 
   CREATE INDEX t2_idx_00000064 ON t2(d); -- stat1: 100 5
 }
 
@@ -361,22 +363,22 @@ do_candidates_test 4.2 {
 }
 
 do_execsql_test 4.3 {
-  CREATE INDEX t1_idx_00000061 ON t1(a); -- stat1: 100 50
-  CREATE INDEX t1_idx_00000062 ON t1(b); -- stat1: 100 20
+  CREATE INDEX t1_idx_00000061 ON t1(a); -- stat1: 100 50 
+  CREATE INDEX t1_idx_00000062 ON t1(b); -- stat1: 100 20 
   CREATE INDEX t1_idx_000123a7 ON t1(a, b); -- stat1: 100 50 16
 
-  CREATE INDEX t2_idx_00000063 ON t2(c); -- stat1: 100 20
+  CREATE INDEX t2_idx_00000063 ON t2(c); -- stat1: 100 20 
   CREATE INDEX t2_idx_00000064 ON t2(d); -- stat1: 100 5
   CREATE INDEX t2_idx_0001295b ON t2(c, d); -- stat1: 100 20 5
 
   ANALYZE;
   SELECT * FROM sqlite_stat1 ORDER BY 1, 2;
 } {
-  t1 t1_idx_00000061 {100 50}
+  t1 t1_idx_00000061 {100 50} 
   t1 t1_idx_00000062 {100 20}
   t1 t1_idx_000123a7 {100 50 17}
-  t2 t2_idx_00000063 {100 20}
-  t2 t2_idx_00000064 {100 5}
+  t2 t2_idx_00000063 {100 20} 
+  t2 t2_idx_00000064 {100 5} 
   t2 t2_idx_0001295b {100 20 5}
 }
 

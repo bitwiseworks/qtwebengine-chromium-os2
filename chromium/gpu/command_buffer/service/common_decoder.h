@@ -22,9 +22,14 @@
 typedef int GLsizei;
 typedef int GLint;
 
+namespace gfx {
+class ColorSpace;
+}  // namespace gfx
+
 namespace gpu {
 
 class CommandBufferServiceBase;
+class DecoderClient;
 
 // This class is a helper base class for implementing the common parts of the
 // o3d/gl2 command buffer decoder.
@@ -111,12 +116,15 @@ class GPU_EXPORT CommonDecoder {
     DISALLOW_COPY_AND_ASSIGN(Bucket);
   };
 
-  explicit CommonDecoder(CommandBufferServiceBase* command_buffer_service);
+  explicit CommonDecoder(DecoderClient* client,
+                         CommandBufferServiceBase* command_buffer_service);
   ~CommonDecoder();
 
   CommandBufferServiceBase* command_buffer_service() const {
     return command_buffer_service_;
   }
+
+  DecoderClient* client() const { return client_; }
 
   // Sets the maximum size for buckets.
   void set_max_bucket_size(size_t max_bucket_size) {
@@ -185,6 +193,17 @@ class GPU_EXPORT CommonDecoder {
   // Gets an name for a common command.
   const char* GetCommonCommandName(cmd::CommandId command_id) const;
 
+  // Exit the command processing loop to allow context preemption and GPU
+  // watchdog checks in CommandExecutor().
+  virtual void ExitCommandProcessingEarly() {}
+
+  // Read a serialized gfx::ColorSpace. Return true on success and false if the
+  // serialization was invalid.
+  bool ReadColorSpace(uint32_t shm_id,
+                      uint32_t shm_offset,
+                      uint32_t color_space_size,
+                      gfx::ColorSpace* color_space);
+
  private:
   // Generate a member function prototype for each command in an automated and
   // typesafe way.
@@ -197,6 +216,7 @@ class GPU_EXPORT CommonDecoder {
   #undef COMMON_COMMAND_BUFFER_CMD_OP
 
   CommandBufferServiceBase* command_buffer_service_;
+  DecoderClient* client_;
   size_t max_bucket_size_;
 
   typedef std::map<uint32_t, std::unique_ptr<Bucket>> BucketMap;

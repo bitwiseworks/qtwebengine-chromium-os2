@@ -7,20 +7,36 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/component_export.h"
 #include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/unguessable_token.h"
+#include "build/build_config.h"
 #include "ipc/ipc_param_traits.h"
 #include "url/scheme_host_port.h"
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_canon.h"
 #include "url/url_constants.h"
+
+#if defined(OS_ANDROID)
+#include <jni.h>
+
+namespace base {
+namespace android {
+template <typename>
+class ScopedJavaLocalRef;
+template <typename>
+class JavaRef;
+}  // namespace android
+}  // namespace base
+#endif  // OS_ANDROID
 
 class GURL;
 
@@ -38,6 +54,11 @@ template <typename DataViewType, typename T>
 struct StructTraits;
 struct UrlOriginAdapter;
 }  // namespace mojo
+
+namespace net {
+class NetworkIsolationKey;
+class OpaqueNonTransientNetworkIsolationKeyTest;
+}  // namespace net
 
 namespace url {
 
@@ -130,6 +151,9 @@ class COMPONENT_EXPORT(URL) Origin {
   // 2. 'filesystem' URLs behave as 'blob' URLs (that is, the origin is parsed
   //    out of everything in the URL which follows the scheme).
   // 3. 'file' URLs all parse as ("file", "", 0).
+  //
+  // Note that the returned Origin may have a different scheme and host from
+  // |url| (e.g. in case of blob URLs - see OriginTest.ConstructFromGURL).
   static Origin Create(const GURL& url);
 
   // Creates an Origin for the resource |url| as if it were requested
@@ -261,8 +285,21 @@ class COMPONENT_EXPORT(URL) Origin {
   // |d|, and |d| is cross-origin to |a| and |c|.
   Origin DeriveNewOpaqueOrigin() const;
 
+  // Creates a string representation of the object that can be used for logging
+  // and debugging. It serializes the internal state, such as the nonce value
+  // and precursor information.
+  std::string GetDebugString() const;
+
+#if defined(OS_ANDROID)
+  base::android::ScopedJavaLocalRef<jobject> CreateJavaObject() const;
+  static Origin FromJavaObject(
+      const base::android::JavaRef<jobject>& java_origin);
+#endif  // OS_ANDROID
+
  private:
   friend class blink::SecurityOrigin;
+  friend class net::NetworkIsolationKey;
+  friend class net::OpaqueNonTransientNetworkIsolationKeyTest;
   friend class OriginTest;
   friend struct mojo::UrlOriginAdapter;
   friend struct ipc_fuzzer::FuzzTraits<Origin>;
@@ -357,6 +394,16 @@ class COMPONENT_EXPORT(URL) Origin {
   // used only when trying to send an Origin across an IPC pipe.
   base::Optional<base::UnguessableToken> GetNonceForSerialization() const;
 
+  // Serializes this Origin, including its nonce if it is opaque. If an opaque
+  // origin's |tuple_| is invalid or the nonce isn't initialized, nullopt is
+  // returned. Use of this method should be limited as an opaque origin will
+  // never be matchable in future browser sessions.
+  base::Optional<std::string> SerializeWithNonce() const;
+
+  // Deserializes an origin from |ToValueWithNonce|. Returns nullopt if the
+  // value was invalid in any way.
+  static base::Optional<Origin> Deserialize(const std::string& value);
+
   // The tuple is used for both tuple origins (e.g. https://example.com:80), as
   // well as for opaque origins, where it tracks the tuple origin from which
   // the opaque origin was initially derived (we call this the "precursor"
@@ -382,6 +429,21 @@ COMPONENT_EXPORT(URL) bool IsSameOriginWith(const GURL& a, const GURL& b);
 // value of |origin| gets preserved in crash dumps.
 #define DEBUG_ALIAS_FOR_ORIGIN(var_name, origin) \
   DEBUG_ALIAS_FOR_CSTR(var_name, (origin).Serialize().c_str(), 128)
+
+namespace debug {
+
+class COMPONENT_EXPORT(URL) ScopedOriginCrashKey
+    : public base::debug::ScopedCrashKeyString {
+ public:
+  ScopedOriginCrashKey(base::debug::CrashKeyString* crash_key,
+                       const url::Origin* value);
+  ~ScopedOriginCrashKey();
+
+  ScopedOriginCrashKey(const ScopedOriginCrashKey&) = delete;
+  ScopedOriginCrashKey& operator=(const ScopedOriginCrashKey&) = delete;
+};
+
+}  // namespace debug
 
 }  // namespace url
 

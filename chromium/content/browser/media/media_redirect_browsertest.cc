@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "build/build_config.h"
 #include "content/browser/media/media_browsertest.h"
 #include "content/public/test/browser_test_utils.h"
@@ -29,8 +30,8 @@ class MediaRedirectTest : public MediaBrowserTest {
     const GURL dest_url = http_test_server->GetURL("/" + media_file);
 
     http_test_server->RegisterRequestHandler(
-        base::Bind(&MediaRedirectTest::RedirectResponseHandler,
-                   base::Unretained(this), dest_url));
+        base::BindRepeating(&MediaRedirectTest::RedirectResponseHandler,
+                            base::Unretained(this), dest_url));
     http_test_server->StartAcceptingConnections();
 
     // Run the normal media playback test.

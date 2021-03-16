@@ -19,6 +19,7 @@ class Origin;
 
 namespace net {
 
+class NetworkIsolationKey;
 class URLRequestContext;
 
 // Uploads already-serialized reports and converts responses to one of the
@@ -37,14 +38,20 @@ class NET_EXPORT ReportingUploader {
   // |report_origin| must be that origin.
   virtual void StartUpload(const url::Origin& report_origin,
                            const GURL& url,
+                           const NetworkIsolationKey& network_isolation_key,
                            const std::string& json,
                            int max_depth,
                            UploadCallback callback) = 0;
+
+  // Cancels pending uploads.
+  virtual void OnShutdown() = 0;
 
   // Creates a real implementation of |ReportingUploader| that uploads reports
   // using |context|.
   static std::unique_ptr<ReportingUploader> Create(
       const URLRequestContext* context);
+
+  virtual int GetPendingUploadCountForTesting() const = 0;
 };
 
 }  // namespace net

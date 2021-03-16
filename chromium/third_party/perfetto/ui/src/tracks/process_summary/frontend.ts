@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {Actions} from '../../common/actions';
 import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {colorForTid} from '../../frontend/colorizer';
@@ -26,14 +25,10 @@ import {
   PROCESS_SUMMARY_TRACK,
 } from './common';
 
-const MARGIN_TOP = 7;
+const MARGIN_TOP = 5;
 const RECT_HEIGHT = 30;
-
-function getCurResolution() {
-  // Truncate the resolution to the closest power of 10.
-  const resolution = globals.frontendLocalState.timeScale.deltaPxToDuration(1);
-  return Math.pow(10, Math.floor(Math.log10(resolution)));
-}
+const TRACK_HEIGHT = MARGIN_TOP * 2 + RECT_HEIGHT;
+const SUMMARY_HEIGHT = TRACK_HEIGHT - MARGIN_TOP;
 
 class ProcessSummaryTrack extends Track<Config, Data> {
   static readonly kind = PROCESS_SUMMARY_TRACK;
@@ -41,47 +36,22 @@ class ProcessSummaryTrack extends Track<Config, Data> {
     return new ProcessSummaryTrack(trackState);
   }
 
-  private reqPending = false;
-
   constructor(trackState: TrackState) {
     super(trackState);
   }
 
-  // TODO(dproy): This code should be factored out.
-  reqDataDeferred() {
-    const {visibleWindowTime} = globals.frontendLocalState;
-    const reqStart = visibleWindowTime.start - visibleWindowTime.duration;
-    const reqEnd = visibleWindowTime.end + visibleWindowTime.duration;
-    const reqRes = getCurResolution();
-    this.reqPending = false;
-    globals.dispatch(Actions.reqTrackData({
-      trackId: this.trackState.id,
-      start: reqStart,
-      end: reqEnd,
-      resolution: reqRes
-    }));
+  getHeight(): number {
+    return TRACK_HEIGHT;
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D): void {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const data = this.data();
-
-    // If there aren't enough cached slices data in |data| request more to
-    // the controller.
-    const inRange = data !== undefined &&
-        (visibleWindowTime.start >= data.start &&
-         visibleWindowTime.end <= data.end);
-    if (!inRange || data === undefined ||
-        data.resolution !== getCurResolution()) {
-      if (!this.reqPending) {
-        this.reqPending = true;
-        setTimeout(() => this.reqDataDeferred(), 50);
-      }
-    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     checkerboardExcept(
         ctx,
+        this.getHeight(),
         timeScale.timeToPx(visibleWindowTime.start),
         timeScale.timeToPx(visibleWindowTime.end),
         timeScale.timeToPx(data.start),
@@ -94,7 +64,7 @@ class ProcessSummaryTrack extends Track<Config, Data> {
   renderSummary(ctx: CanvasRenderingContext2D, data: Data): void {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const startPx = Math.floor(timeScale.timeToPx(visibleWindowTime.start));
-    const bottomY = MARGIN_TOP + RECT_HEIGHT;
+    const bottomY = TRACK_HEIGHT;
 
     let lastX = startPx;
     let lastY = bottomY;
@@ -115,7 +85,7 @@ class ProcessSummaryTrack extends Track<Config, Data> {
       lastX = Math.floor(timeScale.timeToPx(startTime));
 
       ctx.lineTo(lastX, lastY);
-      lastY = MARGIN_TOP + Math.round(RECT_HEIGHT * (1 - utilization));
+      lastY = MARGIN_TOP + Math.round(SUMMARY_HEIGHT * (1 - utilization));
       ctx.lineTo(lastX, lastY);
     }
     ctx.lineTo(lastX, bottomY);

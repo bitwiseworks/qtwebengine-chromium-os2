@@ -6,34 +6,44 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/no_destructor.h"
 #include "device/fido/hid/fido_hid_device.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/mojom/constants.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace device {
 
-FidoHidDiscovery::FidoHidDiscovery(::service_manager::Connector* connector)
-    : FidoDeviceDiscovery(FidoTransportProtocol::kUsbHumanInterfaceDevice),
-      connector_(connector),
-      binding_(this),
-      weak_factory_(this) {
+namespace {
+
+FidoHidDiscovery::HidManagerBinder& GetHidManagerBinder() {
+  static base::NoDestructor<FidoHidDiscovery::HidManagerBinder> binder;
+  return *binder;
+}
+
+}  // namespace
+
+FidoHidDiscovery::FidoHidDiscovery()
+    : FidoDeviceDiscovery(FidoTransportProtocol::kUsbHumanInterfaceDevice) {
   // TODO(piperc@): Give this constant a name.
   filter_.SetUsagePage(0xf1d0);
 }
 
 FidoHidDiscovery::~FidoHidDiscovery() = default;
 
-void FidoHidDiscovery::StartInternal() {
-  DCHECK(connector_);
-  connector_->BindInterface(device::mojom::kServiceName,
-                            mojo::MakeRequest(&hid_manager_));
-  device::mojom::HidManagerClientAssociatedPtrInfo client;
-  binding_.Bind(mojo::MakeRequest(&client));
+// static
+void FidoHidDiscovery::SetHidManagerBinder(HidManagerBinder binder) {
+  GetHidManagerBinder() = std::move(binder);
+}
 
+void FidoHidDiscovery::StartInternal() {
+  const auto& binder = GetHidManagerBinder();
+  if (!binder)
+    return;
+
+  binder.Run(hid_manager_.BindNewPipeAndPassReceiver());
   hid_manager_->GetDevicesAndSetClient(
-      std::move(client), base::BindOnce(&FidoHidDiscovery::OnGetDevices,
-                                        weak_factory_.GetWeakPtr()));
+      receiver_.BindNewEndpointAndPassRemote(),
+      base::BindOnce(&FidoHidDiscovery::OnGetDevices,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void FidoHidDiscovery::DeviceAdded(

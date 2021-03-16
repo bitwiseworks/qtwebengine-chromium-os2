@@ -4,8 +4,6 @@
 
 #include "components/autofill/ios/browser/autofill_driver_ios_webframe.h"
 
-#include "ios/web/public/web_state/web_state.h"
-
 namespace autofill {
 
 // static
@@ -100,5 +98,7 @@ scoped_refptr<AutofillDriverIOSRefCountable>
 AutofillDriverIOSWebFrame::GetRetainableDriver() {
   return driver_;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(AutofillDriverIOSWebFrameFactory)
 
 }  //  namespace autofill

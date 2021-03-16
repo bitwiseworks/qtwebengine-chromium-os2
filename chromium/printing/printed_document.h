@@ -38,7 +38,7 @@ class PRINTING_EXPORT PrintedDocument
  public:
   // The cookie shall be unique and has a specific relationship with its
   // originating source and settings.
-  PrintedDocument(const PrintSettings& settings,
+  PrintedDocument(std::unique_ptr<PrintSettings> settings,
                   const base::string16& name,
                   int cookie);
 
@@ -46,6 +46,7 @@ class PRINTING_EXPORT PrintedDocument
   // Indicates that the PDF has been generated and the document is waiting for
   // conversion for printing. This is needed on Windows so that the print job
   // is not cancelled if the web contents dies before PDF conversion finishes.
+  // This is applicable when using the GDI print API.
   void SetConvertingPdf();
 
   // Sets a page's data. 0-based. Note: locks for a short amount of time.
@@ -59,7 +60,12 @@ class PRINTING_EXPORT PrintedDocument
   // requests to have this page be rendered and returns NULL.
   // Note: locks for a short amount of time.
   scoped_refptr<PrintedPage> GetPage(int page_number);
-#endif
+
+  // Drop the specified page's reference for the particular page number.
+  // Note: locks for a short amount of time.
+  void DropPage(const PrintedPage* page);
+#endif  // defined(OS_WIN)
+
   // Sets the document data. Note: locks for a short amount of time.
   void SetDocument(std::unique_ptr<MetafilePlayer> metafile,
                    const gfx::Size& page_size,
@@ -72,13 +78,14 @@ class PRINTING_EXPORT PrintedDocument
 // Draws the page in the context.
 // Note: locks for a short amount of time in debug only.
 #if defined(OS_WIN)
+  // This is applicable when using the Windows GDI print API.
   void RenderPrintedPage(const PrintedPage& page,
                          printing::NativeDrawingContext context) const;
-#elif defined(OS_POSIX)
+#endif
+
   // Draws the document in the context. Returns true on success and false on
   // failure. Fails if context->NewPage() or context->PageDone() fails.
   bool RenderPrintedDocument(PrintingContext* context);
-#endif
 
   // Returns true if all the necessary pages for the settings are already
   // rendered.
@@ -101,7 +108,7 @@ class PRINTING_EXPORT PrintedDocument
   int expected_page_count() const;
 
   // Getters. All these items are immutable hence thread-safe.
-  const PrintSettings& settings() const { return immutable_.settings_; }
+  const PrintSettings& settings() const { return *immutable_.settings_; }
   const base::string16& name() const { return immutable_.name_; }
   int cookie() const { return immutable_.cookie_; }
 
@@ -153,15 +160,20 @@ class PRINTING_EXPORT PrintedDocument
     // The total number of pages in the document.
     int page_count_ = 0;
 
+    std::unique_ptr<MetafilePlayer> metafile_;
+
 #if defined(OS_WIN)
     // Contains the pages' representation. This is a collection of PrintedPage.
     // Warning: Lock must be held when accessing this member.
+    // This is applicable when using the Windows GDI print API which has the
+    // extra conversion step from PDF to EMF prior to sending to device.
+    // The metafile_ field is not used in this scenario.
     PrintedPages pages_;
 
     // Whether the PDF is being converted for printing.
     bool converting_pdf_ = false;
 #endif
-    std::unique_ptr<MetafilePlayer> metafile_;
+
 #if defined(OS_MACOSX)
     gfx::Size page_size_;
     gfx::Rect page_content_rect_;
@@ -172,13 +184,13 @@ class PRINTING_EXPORT PrintedDocument
   // any lock held. This is because it can't be changed after the object's
   // construction.
   struct Immutable {
-    Immutable(const PrintSettings& settings,
+    Immutable(std::unique_ptr<PrintSettings> settings,
               const base::string16& name,
               int cookie);
     ~Immutable();
 
     // Print settings used to generate this document. Immutable.
-    PrintSettings settings_;
+    std::unique_ptr<PrintSettings> settings_;
 
     // Document name. Immutable.
     base::string16 name_;

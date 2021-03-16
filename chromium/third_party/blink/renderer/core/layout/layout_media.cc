@@ -25,6 +25,7 @@
 
 #include "third_party/blink/renderer/core/layout/layout_media.h"
 
+#include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
@@ -35,13 +36,13 @@
 namespace blink {
 
 LayoutMedia::LayoutMedia(HTMLMediaElement* video) : LayoutImage(video) {
-  SetImageResource(LayoutImageResource::Create());
+  SetImageResource(MakeGarbageCollected<LayoutImageResource>());
 }
 
 LayoutMedia::~LayoutMedia() = default;
 
 HTMLMediaElement* LayoutMedia::MediaElement() const {
-  return ToHTMLMediaElement(GetNode());
+  return To<HTMLMediaElement>(GetNode());
 }
 
 void LayoutMedia::UpdateLayout() {
@@ -49,7 +50,7 @@ void LayoutMedia::UpdateLayout() {
 
   LayoutImage::UpdateLayout();
 
-  LayoutRect new_rect(PhysicalContentBoxRect());
+  auto new_rect = PhysicalContentBoxRect().ToLayoutRect();
 
   LayoutState state(*this);
 
@@ -94,7 +95,8 @@ void LayoutMedia::UpdateLayout() {
     layout_box->SetLocation(new_rect.Location());
     layout_box->SetOverrideLogicalWidth(width);
     layout_box->SetOverrideLogicalHeight(new_rect.Height());
-    layout_box->ForceLayout();
+    // TODO(cbiesinger): Can this just be ForceLayout()?
+    layout_box->ForceLayoutWithPaintInvalidation();
   }
 
   ClearNeedsLayout();
@@ -129,7 +131,7 @@ bool LayoutMedia::IsChildAllowed(LayoutObject* child,
 }
 
 void LayoutMedia::PaintReplaced(const PaintInfo&,
-                                const LayoutPoint& paint_offset) const {}
+                                const PhysicalOffset& paint_offset) const {}
 
 LayoutUnit LayoutMedia::ComputePanelWidth(const LayoutRect& media_rect) const {
   // TODO(mlamouri): we don't know if the main frame has an horizontal scrollbar
@@ -153,9 +155,9 @@ LayoutUnit LayoutMedia::ComputePanelWidth(const LayoutRect& media_rect) const {
   // TODO(crbug.com/771379): Once we no longer assume that the video is in the
   // main frame for the visibility calculation below, we will only care about
   // the video's frame's scrollbar check below.
-  ScrollbarMode h_mode, v_mode;
+  mojom::blink::ScrollbarMode h_mode, v_mode;
   page_view->GetLayoutView()->CalculateScrollbarModes(h_mode, v_mode);
-  if (h_mode != kScrollbarAlwaysOff)
+  if (h_mode != mojom::blink::ScrollbarMode::kAlwaysOff)
     return media_rect.Width();
 
   // If the video's frame (can be different from main frame if video is in an
@@ -164,7 +166,7 @@ LayoutUnit LayoutMedia::ComputePanelWidth(const LayoutRect& media_rect) const {
   LocalFrameView* media_page_view = media_frame ? media_frame->View() : nullptr;
   if (media_page_view && media_page_view->GetLayoutView()) {
     media_page_view->GetLayoutView()->CalculateScrollbarModes(h_mode, v_mode);
-    if (h_mode != kScrollbarAlwaysOff)
+    if (h_mode != mojom::blink::ScrollbarMode::kAlwaysOff)
       return media_rect.Width();
   }
 
@@ -172,13 +174,13 @@ LayoutUnit LayoutMedia::ComputePanelWidth(const LayoutRect& media_rect) const {
   // On desktop, this will include scrollbars when they stay visible.
   const LayoutUnit visible_width(page->GetVisualViewport().VisibleWidth());
   // The bottom left corner of the video.
-  const FloatPoint bottom_left_point(LocalToAbsolute(
-      FloatPoint(media_rect.X(), media_rect.MaxY()),
-      kUseTransforms | kApplyContainerFlip | kTraverseDocumentBoundaries));
+  const FloatPoint bottom_left_point(
+      LocalToAbsoluteFloatPoint(FloatPoint(media_rect.X(), media_rect.MaxY()),
+                                kTraverseDocumentBoundaries));
   // The bottom right corner of the video.
-  const FloatPoint bottom_right_point(LocalToAbsolute(
+  const FloatPoint bottom_right_point(LocalToAbsoluteFloatPoint(
       FloatPoint(media_rect.MaxX(), media_rect.MaxY()),
-      kUseTransforms | kApplyContainerFlip | kTraverseDocumentBoundaries));
+      kTraverseDocumentBoundaries));
 
   const bool bottom_left_corner_visible = bottom_left_point.X() < visible_width;
   const bool bottom_right_corner_visible =

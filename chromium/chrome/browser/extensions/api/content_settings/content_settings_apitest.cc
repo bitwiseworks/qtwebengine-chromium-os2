@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
@@ -19,13 +20,13 @@
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/keep_alive_registry/scoped_keep_alive.h"
+#include "components/permissions/features.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/plugin_service.h"
@@ -78,100 +79,90 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
     EXPECT_TRUE(
         cookie_settings->IsCookieAccessAllowed(example_url, example_url));
     EXPECT_TRUE(cookie_settings->IsCookieSessionOnly(example_url));
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_IMAGES,
-                                     std::string()));
-    EXPECT_EQ(CONTENT_SETTING_BLOCK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_JAVASCRIPT,
-                                     std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_PLUGINS,
-                                     std::string()));
-    EXPECT_EQ(CONTENT_SETTING_BLOCK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_POPUPS,
+    EXPECT_EQ(
+        CONTENT_SETTING_ALLOW,
+        map->GetContentSetting(example_url, example_url,
+                               ContentSettingsType::IMAGES, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
+        map->GetContentSetting(example_url, example_url,
+                               ContentSettingsType::JAVASCRIPT, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_ALLOW,
+        map->GetContentSetting(example_url, example_url,
+                               ContentSettingsType::PLUGINS, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
+        map->GetContentSetting(example_url, example_url,
+                               ContentSettingsType::POPUPS, std::string()));
+    EXPECT_EQ(CONTENT_SETTING_ASK,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::GEOLOCATION,
                                      std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_GEOLOCATION,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::NOTIFICATIONS,
                                      std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::MEDIASTREAM_MIC,
                                      std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::MEDIASTREAM_CAMERA,
                                      std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::PPAPI_BROKER,
                                      std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_PPAPI_BROKER,
+              map->GetContentSetting(example_url, example_url,
+                                     ContentSettingsType::AUTOMATIC_DOWNLOADS,
                                      std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ASK,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
-                                     std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(example_url,
-                                     example_url,
-                                     CONTENT_SETTINGS_TYPE_AUTOPLAY,
-                                     std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_ALLOW,
+        map->GetContentSetting(example_url, example_url,
+                               ContentSettingsType::AUTOPLAY, std::string()));
 
     // Check content settings for www.google.com
     GURL url("http://www.google.com");
     EXPECT_FALSE(cookie_settings->IsCookieAccessAllowed(url, url));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_IMAGES, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::IMAGES,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_BLOCK,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_JAVASCRIPT, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::JAVASCRIPT,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::PLUGINS,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_POPUPS, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::POPUPS,
+                                     std::string()));
+    EXPECT_EQ(CONTENT_SETTING_BLOCK,
+              map->GetContentSetting(url, url, ContentSettingsType::GEOLOCATION,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_BLOCK,
               map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_GEOLOCATION, std::string()));
+                  url, url, ContentSettingsType::NOTIFICATIONS, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
+        map->GetContentSetting(url, url, ContentSettingsType::MEDIASTREAM_MIC,
+                               std::string()));
     EXPECT_EQ(
         CONTENT_SETTING_BLOCK,
         map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string()));
+            url, url, ContentSettingsType::MEDIASTREAM_CAMERA, std::string()));
     EXPECT_EQ(CONTENT_SETTING_BLOCK,
+              map->GetContentSetting(
+                  url, url, ContentSettingsType::PPAPI_BROKER, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_BLOCK,
         map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_BLOCK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_BLOCK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_PPAPI_BROKER, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_BLOCK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
-            std::string()));
+            url, url, ContentSettingsType::AUTOMATIC_DOWNLOADS, std::string()));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_AUTOPLAY, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::AUTOPLAY,
+                                     std::string()));
   }
 
   void CheckContentSettingsDefault() {
@@ -185,40 +176,41 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
     EXPECT_TRUE(cookie_settings->IsCookieAccessAllowed(url, url));
     EXPECT_FALSE(cookie_settings->IsCookieSessionOnly(url));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_IMAGES, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::IMAGES,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_ALLOW,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_JAVASCRIPT, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_DETECT_IMPORTANT_CONTENT,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::JAVASCRIPT,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_BLOCK,
-              map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_POPUPS, std::string()));
+              map->GetContentSetting(url, url, ContentSettingsType::PLUGINS,
+                                     std::string()));
+    EXPECT_EQ(CONTENT_SETTING_BLOCK,
+              map->GetContentSetting(url, url, ContentSettingsType::POPUPS,
+                                     std::string()));
+    EXPECT_EQ(CONTENT_SETTING_ASK,
+              map->GetContentSetting(url, url, ContentSettingsType::GEOLOCATION,
+                                     std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
               map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_GEOLOCATION, std::string()));
+                  url, url, ContentSettingsType::NOTIFICATIONS, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_ASK,
+        map->GetContentSetting(url, url, ContentSettingsType::MEDIASTREAM_MIC,
+                               std::string()));
     EXPECT_EQ(
         CONTENT_SETTING_ASK,
         map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string()));
+            url, url, ContentSettingsType::MEDIASTREAM_CAMERA, std::string()));
     EXPECT_EQ(CONTENT_SETTING_ASK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ASK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ASK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_PPAPI_BROKER, std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ASK,
-        map->GetContentSetting(
-            url, url, CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS,
-            std::string()));
-    EXPECT_EQ(CONTENT_SETTING_ALLOW,
               map->GetContentSetting(
-                  url, url, CONTENT_SETTINGS_TYPE_AUTOPLAY, std::string()));
+                  url, url, ContentSettingsType::PPAPI_BROKER, std::string()));
+    EXPECT_EQ(
+        CONTENT_SETTING_ASK,
+        map->GetContentSetting(
+            url, url, ContentSettingsType::AUTOMATIC_DOWNLOADS, std::string()));
+    EXPECT_EQ(CONTENT_SETTING_ALLOW,
+              map->GetContentSetting(url, url, ContentSettingsType::AUTOPLAY,
+                                     std::string()));
   }
 
   // Returns a snapshot of content settings for a given URL.
@@ -234,27 +226,27 @@ class ExtensionContentSettingsApiTest : public ExtensionApiTest {
         cookie_settings->IsCookieAccessAllowed(url, url));
     content_settings.push_back(cookie_settings->IsCookieSessionOnly(url));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_IMAGES, std::string()));
+        url, url, ContentSettingsType::IMAGES, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_JAVASCRIPT, std::string()));
+        url, url, ContentSettingsType::JAVASCRIPT, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_PLUGINS, std::string()));
+        url, url, ContentSettingsType::PLUGINS, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_POPUPS, std::string()));
+        url, url, ContentSettingsType::POPUPS, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_GEOLOCATION, std::string()));
+        url, url, ContentSettingsType::GEOLOCATION, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_NOTIFICATIONS, std::string()));
+        url, url, ContentSettingsType::NOTIFICATIONS, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, std::string()));
+        url, url, ContentSettingsType::MEDIASTREAM_MIC, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, std::string()));
+        url, url, ContentSettingsType::MEDIASTREAM_CAMERA, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_PPAPI_BROKER, std::string()));
+        url, url, ContentSettingsType::PPAPI_BROKER, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, std::string()));
+        url, url, ContentSettingsType::AUTOMATIC_DOWNLOADS, std::string()));
     content_settings.push_back(map->GetContentSetting(
-        url, url, CONTENT_SETTINGS_TYPE_AUTOPLAY, std::string()));
+        url, url, ContentSettingsType::AUTOPLAY, std::string()));
     return content_settings;
   }
 
@@ -343,8 +335,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest, IncognitoIsolation) {
 
   // Run extension, set all permissions to allow, and check if they are changed.
   EXPECT_TRUE(RunExtensionSubtest("content_settings/incognitoisolation",
-                                  "test.html?allow",
-                                  kFlagUseIncognito | kFlagEnableIncognito))
+                                  "test.html?allow", kFlagEnableIncognito,
+                                  kFlagUseIncognito))
       << message_;
 
   // Get content settings after running extension to ensure nothing is changed.
@@ -353,8 +345,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest, IncognitoIsolation) {
 
   // Run extension, set all permissions to block, and check if they are changed.
   EXPECT_TRUE(RunExtensionSubtest("content_settings/incognitoisolation",
-                                  "test.html?block",
-                                  kFlagUseIncognito | kFlagEnableIncognito))
+                                  "test.html?block", kFlagEnableIncognito,
+                                  kFlagUseIncognito))
       << message_;
 
   // Get content settings after running extension to ensure nothing is changed.
@@ -378,11 +370,11 @@ IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest,
 
   size_t num_values = 0;
   int images_type = ContentSettingTypeToHistogramValue(
-      CONTENT_SETTINGS_TYPE_IMAGES, &num_values);
+      ContentSettingsType::IMAGES, &num_values);
   int geolocation_type = ContentSettingTypeToHistogramValue(
-      CONTENT_SETTINGS_TYPE_GEOLOCATION, &num_values);
+      ContentSettingsType::GEOLOCATION, &num_values);
   int cookies_type = ContentSettingTypeToHistogramValue(
-      CONTENT_SETTINGS_TYPE_COOKIES, &num_values);
+      ContentSettingsType::COOKIES, &num_values);
 
   histogram_tester.ExpectBucketCount(
       "ContentSettings.ExtensionEmbeddedSettingSet", images_type, 1);
@@ -399,17 +391,40 @@ IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest,
       "ContentSettings.ExtensionNonEmbeddedSettingSet", 2);
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest, EmbeddedSettings) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(features::kPermissionDelegation);
+class ExtensionContentSettingsApiTestWithPermissionDelegationDisabled
+    : public ExtensionContentSettingsApiTest {
+ public:
+  ExtensionContentSettingsApiTestWithPermissionDelegationDisabled() {
+    feature_list_.InitAndDisableFeature(
+        permissions::features::kPermissionDelegation);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+class ExtensionContentSettingsApiTestWithPermissionDelegationEnabled
+    : public ExtensionContentSettingsApiTest {
+ public:
+  ExtensionContentSettingsApiTestWithPermissionDelegationEnabled() {
+    feature_list_.InitAndEnableFeature(
+        permissions::features::kPermissionDelegation);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    ExtensionContentSettingsApiTestWithPermissionDelegationDisabled,
+    EmbeddedSettings) {
   const char kExtensionPath[] = "content_settings/embeddedsettings";
   EXPECT_TRUE(RunExtensionSubtest(kExtensionPath, "test.html")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionContentSettingsApiTest,
-                       EmbeddedSettingsPermissionDelegation) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(features::kPermissionDelegation);
+IN_PROC_BROWSER_TEST_F(
+    ExtensionContentSettingsApiTestWithPermissionDelegationEnabled,
+    EmbeddedSettings) {
   const char kExtensionPath[] = "content_settings/embeddedsettings";
   EXPECT_TRUE(
       RunExtensionSubtest(kExtensionPath, "test.html?permission_delegation"))

@@ -32,25 +32,31 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_CSS_GRID_LINE_NAMES_VALUE_H_
 
 #include "third_party/blink/renderer/core/css/css_value_list.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
+namespace cssvalue {
 
 class CSSGridLineNamesValue : public CSSValueList {
  public:
-  static CSSGridLineNamesValue* Create() {
-    return MakeGarbageCollected<CSSGridLineNamesValue>();
-  }
-
   CSSGridLineNamesValue();
 
   String CustomCSSText() const;
 
-  void TraceAfterDispatch(blink::Visitor* visitor) {
+  void TraceAfterDispatch(blink::Visitor* visitor) const {
     CSSValueList::TraceAfterDispatch(visitor);
   }
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSGridLineNamesValue, IsGridLineNamesValue());
+}  // namespace cssvalue
+
+template <>
+struct DowncastTraits<cssvalue::CSSGridLineNamesValue> {
+  static bool AllowFrom(const CSSValue& value) {
+    return value.IsGridLineNamesValue();
+  }
+};
+
 }  // namespace blink
 
 #endif

@@ -9,7 +9,7 @@ given a database and a set of SQL queries. It works as follows:
      Information regarding the WHERE and ORDER BY clauses, and other query
      features that affect index selection are recorded.
 
-  1. The information gathered in step 2 is used to create candidate
+  1. The information gathered in step 2 is used to create candidate 
      indexes - indexes that the planner might have made use of in the previous
      step, had they been available.
 
@@ -32,8 +32,8 @@ as follows:
      by making one or more calls to **sqlite3\_expert\_sql()**. Each call may
      specify a single SQL statement, or multiple statements separated by
      semi-colons.
-
-  1. Optionally, the **sqlite3\_expert\_config()** API may be used to
+  
+  1. Optionally, the **sqlite3\_expert\_config()** API may be used to 
      configure the size of the data subset used to generate index statistics.
      Using a smaller subset of the data can speed up the analysis.
 

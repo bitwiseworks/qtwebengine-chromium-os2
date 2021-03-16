@@ -6,141 +6,141 @@
 
 #include "base/bind.h"
 #include "base/metrics/ukm_source_id.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_entry_builder.h"
 #include "services/metrics/public/cpp/ukm_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/metrics_proto/ukm/report.pb.h"
+#include "url/gurl.h"
 
 namespace ukm {
 
-namespace {
+using TestEvent1 = builders::PageLoad;
 
-class TestUkmRecorderImpl : public UkmRecorderImpl {
- public:
-  TestUkmRecorderImpl() {}
-  ~TestUkmRecorderImpl() override {}
+TEST(UkmRecorderImplTest, IsSampledIn) {
+  UkmRecorderImpl impl;
 
-  void set_sampled_in(bool sampled_in) { sampled_in_ = sampled_in; }
-
-  size_t sampled_callback_count() { return sampled_callback_count_; }
-
- protected:
-  // UkmRecorderImpl:
-  bool ShouldRestrictToWhitelistedSourceIds() const override { return false; }
-  bool ShouldRestrictToWhitelistedEntries() const override { return false; }
-  bool IsSampledIn(int sampling_rate) override {
-    ++sampled_callback_count_;
-    return sampled_in_;
+  for (int i = 0; i < 100; ++i) {
+    // These are constant regardless of the seed, source, and event.
+    EXPECT_FALSE(impl.IsSampledIn(-i, i, 0));
+    EXPECT_TRUE(impl.IsSampledIn(-i, i, 1));
   }
 
- private:
-  bool sampled_in_ = true;
-  size_t sampled_callback_count_ = 0;
-
-  DISALLOW_COPY_AND_ASSIGN(TestUkmRecorderImpl);
-};
-
-}  // namespace
-
-class UkmRecorderImplTest : public testing::Test {
- public:
-  UkmRecorderImplTest() {
-    impl_.StoreWhitelistedEntries();
-    impl_.EnableRecording(/*extensions=*/true);
-  }
-
-  UkmRecorderImpl& impl() { return impl_; }
-
-  void set_sampled_in(bool sampled_in) { impl_.set_sampled_in(sampled_in); }
-
-  size_t sampled_callback_count() { return impl_.sampled_callback_count(); }
-
-  size_t source_sampling_count() { return impl_.source_event_sampling_.size(); }
-
-  void RecordNavigation(SourceId source_id,
-                        const UkmSource::NavigationData& nav_data) {
-    impl_.RecordNavigation(source_id, nav_data);
-  }
-
-  void AddEntry(mojom::UkmEntryPtr entry) { impl_.AddEntry(std::move(entry)); }
-
-  void StoreRecordingsInReport(Report* report) {
-    impl_.StoreRecordingsInReport(report);
-  }
-
- private:
-  TestUkmRecorderImpl impl_;
-
-  DISALLOW_COPY_AND_ASSIGN(UkmRecorderImplTest);
-};
-
-TEST_F(UkmRecorderImplTest, PageSamplingCondition) {
-  EXPECT_FALSE(impl().UkmRecorderImpl::IsSampledIn(0));
-  EXPECT_TRUE(impl().UkmRecorderImpl::IsSampledIn(1));
-
-  // Actual sampling is "random" so there's no single operation to test.
-  // Instead, sample many times and expect that some, but less than 1/2,
-  // will be sampled-in.  This is sufficient to ensure that the condition
-  // is not "dead" (always false) and has not been mistakenly reversed...
-  // without the test being flaky.
-  const int kRandomCheckCount = 1000;
-  int sampled_in_count = 0;
-  for (int i = 0; i < kRandomCheckCount; ++i) {
-    // Sample 1-in-10...
-    if (impl().UkmRecorderImpl::IsSampledIn(10))
-      sampled_in_count += 1;
-  }
-  EXPECT_LT(0, sampled_in_count);
-  EXPECT_GT(kRandomCheckCount / 2, sampled_in_count);
+  // These depend on the source, event, and initial seed. There's no real
+  // predictability here but should see roughly 50% true and 50% false with
+  // no obvious correlation and the same for every run of the test.
+  impl.SetSamplingSeedForTesting(123);
+  EXPECT_FALSE(impl.IsSampledIn(1, 1, 2));
+  EXPECT_TRUE(impl.IsSampledIn(1, 2, 2));
+  EXPECT_FALSE(impl.IsSampledIn(2, 1, 2));
+  EXPECT_TRUE(impl.IsSampledIn(2, 2, 2));
+  EXPECT_TRUE(impl.IsSampledIn(3, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(3, 2, 2));
+  EXPECT_FALSE(impl.IsSampledIn(4, 1, 2));
+  EXPECT_TRUE(impl.IsSampledIn(4, 2, 2));
+  impl.SetSamplingSeedForTesting(456);
+  EXPECT_TRUE(impl.IsSampledIn(1, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(1, 2, 2));
+  EXPECT_TRUE(impl.IsSampledIn(2, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(2, 2, 2));
+  EXPECT_FALSE(impl.IsSampledIn(3, 1, 2));
+  EXPECT_TRUE(impl.IsSampledIn(3, 2, 2));
+  EXPECT_TRUE(impl.IsSampledIn(4, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(4, 2, 2));
+  impl.SetSamplingSeedForTesting(789);
+  EXPECT_TRUE(impl.IsSampledIn(1, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(1, 2, 2));
+  EXPECT_TRUE(impl.IsSampledIn(2, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(2, 2, 2));
+  EXPECT_FALSE(impl.IsSampledIn(3, 1, 2));
+  EXPECT_TRUE(impl.IsSampledIn(3, 2, 2));
+  EXPECT_TRUE(impl.IsSampledIn(4, 1, 2));
+  EXPECT_FALSE(impl.IsSampledIn(4, 2, 2));
 }
 
-TEST_F(UkmRecorderImplTest, PageSampling) {
-  SourceId page1_source =
-      ConvertToSourceId(101, base::UkmSourceId::Type::NAVIGATION_ID);
-  UkmSource::NavigationData page1_nav;
-  page1_nav.urls.push_back(GURL("https://www.google.com/"));
+TEST(UkmRecorderImplTest, PurgeExtensionRecordings) {
+  TestUkmRecorder recorder;
+  // Enable extension sync.
+  recorder.SetIsWebstoreExtensionCallback(
+      base::BindRepeating([](base::StringPiece) { return true; }));
 
-  // First event always has to do sampled in/out callback.
-  RecordNavigation(page1_source, page1_nav);
-  AddEntry(builders::PageLoad(page1_source)
-               .SetDocumentTiming_NavigationToLoadEventFired(1000)
-               .TakeEntry());
-  EXPECT_EQ(1U, sampled_callback_count());
+  // Record some sources and events.
+  SourceId id1 = ConvertToSourceId(1, SourceIdType::NAVIGATION_ID);
+  recorder.UpdateSourceURL(id1, GURL("https://www.google.ca"));
+  SourceId id2 = ConvertToSourceId(2, SourceIdType::NAVIGATION_ID);
+  recorder.UpdateSourceURL(id2, GURL("chrome-extension://abc/manifest.json"));
+  SourceId id3 = ConvertToSourceId(3, SourceIdType::NAVIGATION_ID);
+  recorder.UpdateSourceURL(id3, GURL("http://www.wikipedia.org"));
+  SourceId id4 = ConvertToSourceId(4, SourceIdType::NAVIGATION_ID);
+  recorder.UpdateSourceURL(id4, GURL("chrome-extension://abc/index.html"));
 
-  // Second event will use what was already determined.
-  AddEntry(builders::PageLoad(page1_source)
-               .SetDocumentTiming_NavigationToLoadEventFired(2000)
-               .TakeEntry());
-  EXPECT_EQ(1U, sampled_callback_count());
+  TestEvent1(id1).Record(&recorder);
+  TestEvent1(id2).Record(&recorder);
 
-  // Different event will again do the callback.
-  AddEntry(builders::Memory_Experimental(page1_source)
-               .SetCommandBuffer(3000)
-               .TakeEntry());
-  EXPECT_EQ(2U, sampled_callback_count());
+  // All sources and events have been recorded.
+  EXPECT_TRUE(recorder.extensions_enabled_);
+  EXPECT_TRUE(recorder.recording_is_continuous_);
+  EXPECT_EQ(4U, recorder.sources().size());
+  EXPECT_EQ(2U, recorder.entries().size());
 
-  SourceId page2_source =
-      ConvertToSourceId(102, base::UkmSourceId::Type::NAVIGATION_ID);
-  UkmSource::NavigationData page2_nav;
-  page2_nav.urls.push_back(GURL("https://www.example.com/"));
+  recorder.PurgeExtensionRecordings();
 
-  // New page will again have to do sampling.
-  RecordNavigation(page2_source, page2_nav);
-  AddEntry(builders::PageLoad(page2_source)
-               .SetDocumentTiming_NavigationToLoadEventFired(1000)
-               .TakeEntry());
-  EXPECT_EQ(3U, sampled_callback_count());
+  // Recorded sources of extension scheme and related events have been cleared.
+  EXPECT_EQ(2U, recorder.sources().size());
+  EXPECT_EQ(1U, recorder.sources().count(id1));
+  EXPECT_EQ(0U, recorder.sources().count(id2));
+  EXPECT_EQ(1U, recorder.sources().count(id3));
+  EXPECT_EQ(0U, recorder.sources().count(id4));
 
-  // First report won't clear this information.
-  EXPECT_EQ(2U, source_sampling_count());
-  Report report;
-  StoreRecordingsInReport(&report);
-  EXPECT_EQ(2U, source_sampling_count());
+  EXPECT_FALSE(recorder.recording_is_continuous_);
+  EXPECT_EQ(1U, recorder.entries().size());
+  EXPECT_EQ(id1, recorder.entries()[0]->source_id);
 
-  // Second report will clear sampling info because they weren't modified.
-  StoreRecordingsInReport(&report);
-  EXPECT_EQ(0U, source_sampling_count());
+  // Recording is disabled for extensions, thus new extension URL will not be
+  // recorded.
+  recorder.EnableRecording(/* extensions = */ false);
+  recorder.UpdateSourceURL(id4, GURL("chrome-extension://abc/index.html"));
+  EXPECT_FALSE(recorder.extensions_enabled_);
+  EXPECT_EQ(2U, recorder.sources().size());
+}
+
+TEST(UkmRecorderImplTest, WebApkSourceUrl) {
+  base::test::TaskEnvironment env;
+  ukm::TestAutoSetUkmRecorder test_ukm_recorder;
+
+  GURL url("https://example_url.com/manifest.json");
+  SourceId id = UkmRecorderImpl::GetSourceIdForWebApkManifestUrl(url);
+
+  ASSERT_NE(kInvalidSourceId, id);
+
+  const auto& sources = test_ukm_recorder.GetSources();
+  ASSERT_EQ(1ul, sources.size());
+  auto it = sources.find(id);
+  ASSERT_NE(sources.end(), it);
+  EXPECT_EQ(url, it->second->url());
+  EXPECT_EQ(1u, it->second->urls().size());
+  EXPECT_EQ(SourceIdType::WEBAPK_ID, GetSourceIdType(id));
+}
+
+TEST(UkmRecorderImplTest, PaymentAppScopeUrl) {
+  base::test::TaskEnvironment env;
+  ukm::TestAutoSetUkmRecorder test_ukm_recorder;
+
+  GURL url("https://bobpay.com");
+  SourceId id = UkmRecorderImpl::GetSourceIdForPaymentAppFromScope(url);
+
+  ASSERT_NE(kInvalidSourceId, id);
+
+  const auto& sources = test_ukm_recorder.GetSources();
+  ASSERT_EQ(1ul, sources.size());
+  auto it = sources.find(id);
+  ASSERT_NE(sources.end(), it);
+  EXPECT_EQ(url, it->second->url());
+  EXPECT_EQ(1u, it->second->urls().size());
+  EXPECT_EQ(SourceIdType::PAYMENT_APP_ID, GetSourceIdType(id));
 }
 
 }  // namespace ukm

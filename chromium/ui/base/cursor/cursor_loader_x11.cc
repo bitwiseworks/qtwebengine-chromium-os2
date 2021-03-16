@@ -10,8 +10,10 @@
 #include "build/build_config.h"
 #include "skia/ext/image_operations.h"
 #include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/cursor_size.h"
 #include "ui/base/cursor/cursor_util.h"
 #include "ui/base/cursor/cursors_aura.h"
+#include "ui/base/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/x/x11_util.h"
 #include "ui/display/display.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -20,201 +22,137 @@
 #include "ui/gfx/skbitmap_operations.h"
 #include "ui/gfx/skia_util.h"
 
+namespace ui {
+
 namespace {
 
-// Returns CSS cursor name from an Aura cursor ID.
-const char* CursorCssNameFromId(ui::CursorType id) {
-  switch (id) {
-    case ui::CursorType::kMiddlePanning:
-      return "all-scroll";
-    case ui::CursorType::kEastPanning:
-      return "e-resize";
-    case ui::CursorType::kNorthPanning:
-      return "n-resize";
-    case ui::CursorType::kNorthEastPanning:
-      return "ne-resize";
-    case ui::CursorType::kNorthWestPanning:
-      return "nw-resize";
-    case ui::CursorType::kSouthPanning:
-      return "s-resize";
-    case ui::CursorType::kSouthEastPanning:
-      return "se-resize";
-    case ui::CursorType::kSouthWestPanning:
-      return "sw-resize";
-    case ui::CursorType::kWestPanning:
-      return "w-resize";
-    case ui::CursorType::kNone:
-      return "none";
-    case ui::CursorType::kGrab:
-      return "grab";
-    case ui::CursorType::kGrabbing:
-      return "grabbing";
-
-#if defined(OS_CHROMEOS)
-    case ui::CursorType::kNull:
-    case ui::CursorType::kPointer:
-    case ui::CursorType::kNoDrop:
-    case ui::CursorType::kNotAllowed:
-    case ui::CursorType::kCopy:
-    case ui::CursorType::kMove:
-    case ui::CursorType::kEastResize:
-    case ui::CursorType::kNorthResize:
-    case ui::CursorType::kSouthResize:
-    case ui::CursorType::kWestResize:
-    case ui::CursorType::kNorthEastResize:
-    case ui::CursorType::kNorthWestResize:
-    case ui::CursorType::kSouthWestResize:
-    case ui::CursorType::kSouthEastResize:
-    case ui::CursorType::kIBeam:
-    case ui::CursorType::kAlias:
-    case ui::CursorType::kCell:
-    case ui::CursorType::kContextMenu:
-    case ui::CursorType::kCross:
-    case ui::CursorType::kHelp:
-    case ui::CursorType::kWait:
-    case ui::CursorType::kNorthSouthResize:
-    case ui::CursorType::kEastWestResize:
-    case ui::CursorType::kNorthEastSouthWestResize:
-    case ui::CursorType::kNorthWestSouthEastResize:
-    case ui::CursorType::kProgress:
-    case ui::CursorType::kColumnResize:
-    case ui::CursorType::kRowResize:
-    case ui::CursorType::kVerticalText:
-    case ui::CursorType::kZoomIn:
-    case ui::CursorType::kZoomOut:
-    case ui::CursorType::kHand:
-    case ui::CursorType::kDndNone:
-    case ui::CursorType::kDndMove:
-    case ui::CursorType::kDndCopy:
-    case ui::CursorType::kDndLink:
-      // In some environments, the image assets are not set (e.g. in
-      // content-browsertests, content-shell etc.).
-      return "left_ptr";
-#else  // defined(OS_CHROMEOS)
-    case ui::CursorType::kNull:
-      return "left_ptr";
-    case ui::CursorType::kPointer:
-      return "left_ptr";
-    case ui::CursorType::kMove:
-      // Returning "move" is the correct thing here, but Blink doesn't
-      // make a distinction between move and all-scroll.  Other
-      // platforms use a cursor more consistent with all-scroll, so
-      // use that.
-      return "all-scroll";
-    case ui::CursorType::kCross:
-      return "crosshair";
-    case ui::CursorType::kHand:
-      return "pointer";
-    case ui::CursorType::kIBeam:
-      return "text";
-    case ui::CursorType::kProgress:
-      return "progress";
-    case ui::CursorType::kWait:
-      return "wait";
-    case ui::CursorType::kHelp:
-      return "help";
-    case ui::CursorType::kEastResize:
-      return "e-resize";
-    case ui::CursorType::kNorthResize:
-      return "n-resize";
-    case ui::CursorType::kNorthEastResize:
-      return "ne-resize";
-    case ui::CursorType::kNorthWestResize:
-      return "nw-resize";
-    case ui::CursorType::kSouthResize:
-      return "s-resize";
-    case ui::CursorType::kSouthEastResize:
-      return "se-resize";
-    case ui::CursorType::kSouthWestResize:
-      return "sw-resize";
-    case ui::CursorType::kWestResize:
-      return "w-resize";
-    case ui::CursorType::kNorthSouthResize:
-      return "ns-resize";
-    case ui::CursorType::kEastWestResize:
-      return "ew-resize";
-    case ui::CursorType::kColumnResize:
-      return "col-resize";
-    case ui::CursorType::kRowResize:
-      return "row-resize";
-    case ui::CursorType::kNorthEastSouthWestResize:
-      return "nesw-resize";
-    case ui::CursorType::kNorthWestSouthEastResize:
-      return "nwse-resize";
-    case ui::CursorType::kVerticalText:
-      return "vertical-text";
-    case ui::CursorType::kZoomIn:
-      return "zoom-in";
-    case ui::CursorType::kZoomOut:
-      return "zoom-out";
-    case ui::CursorType::kCell:
-      return "cell";
-    case ui::CursorType::kContextMenu:
-      return "context-menu";
-    case ui::CursorType::kAlias:
-      return "alias";
-    case ui::CursorType::kNoDrop:
-      return "no-drop";
-    case ui::CursorType::kCopy:
-      return "copy";
-    case ui::CursorType::kNotAllowed:
-      return "not-allowed";
-    case ui::CursorType::kDndNone:
-      return "dnd-none";
-    case ui::CursorType::kDndMove:
-      return "dnd-move";
-    case ui::CursorType::kDndCopy:
-      return "dnd-copy";
-    case ui::CursorType::kDndLink:
-      return "dnd-link";
-#endif  // defined(OS_CHROMEOS)
-    case ui::CursorType::kCustom:
-      NOTREACHED();
-      return "left_ptr";
-  }
-  NOTREACHED() << "Case not handled for " << static_cast<int>(id);
-  return "left_ptr";
+// Load a cursor with a list of css names or shapes in order of decreasing
+// priority.
+::Cursor LoadFontCursor() {
+  return x11::None;
 }
 
-static const struct {
-  const char* css_name;
-  const char* fallback_name;
-  int fallback_shape;
-} kCursorFallbacks[] = {
-    // clang-format off
-    { "pointer",     "hand",            XC_hand2 },
-    { "progress",    "left_ptr_watch",  XC_watch },
-    { "wait",        nullptr,           XC_watch },
-    { "cell",        nullptr,           XC_plus },
-    { "all-scroll",  nullptr,           XC_fleur},
-    { "crosshair",   nullptr,           XC_cross },
-    { "text",        nullptr,           XC_xterm },
-    { "not-allowed", "crossed_circle",  x11::None },
-    { "grabbing",    nullptr,           XC_hand2 },
-    { "col-resize",  nullptr,           XC_sb_h_double_arrow },
-    { "row-resize",  nullptr,           XC_sb_v_double_arrow},
-    { "n-resize",    nullptr,           XC_top_side},
-    { "e-resize",    nullptr,           XC_right_side},
-    { "s-resize",    nullptr,           XC_bottom_side},
-    { "w-resize",    nullptr,           XC_left_side},
-    { "ne-resize",   nullptr,           XC_top_right_corner},
-    { "nw-resize",   nullptr,           XC_top_left_corner},
-    { "se-resize",   nullptr,           XC_bottom_right_corner},
-    { "sw-resize",   nullptr,           XC_bottom_left_corner},
-    { "ew-resize",   nullptr,           XC_sb_h_double_arrow},
-    { "ns-resize",   nullptr,           XC_sb_v_double_arrow},
-    { "nesw-resize", "fd_double_arrow", x11::None},
-    { "nwse-resize", "bd_double_arrow", x11::None},
-    { "dnd-none",    "grabbing",        XC_hand2 },
-    { "dnd-move",    "grabbing",        XC_hand2 },
-    { "dnd-copy",    "grabbing",        XC_hand2 },
-    { "dnd-link",    "grabbing",        XC_hand2 },
-    // clang-format on
-};
+template <typename... Ts>
+::Cursor LoadFontCursor(int shape, Ts... ts);
+
+template <typename... Ts>
+::Cursor LoadFontCursor(const char* name, Ts... ts) {
+  ::Cursor cursor = XcursorLibraryLoadCursor(gfx::GetXDisplay(), name);
+  if (cursor != x11::None)
+    return cursor;
+  return LoadFontCursor(ts...);
+}
+
+template <typename... Ts>
+::Cursor LoadFontCursor(int shape, Ts... ts) {
+  ::Cursor cursor = XCreateFontCursor(gfx::GetXDisplay(), shape);
+  if (cursor != x11::None)
+    return cursor;
+  return LoadFontCursor(ts...);
+}
+
+::Cursor LoadFontCursorForCursorType(mojom::CursorType id) {
+  switch (id) {
+    case mojom::CursorType::kMiddlePanning:
+      return LoadFontCursor("all-scroll", XC_fleur);
+    case mojom::CursorType::kMiddlePanningVertical:
+      return LoadFontCursor("v-scroll");
+    case mojom::CursorType::kMiddlePanningHorizontal:
+      return LoadFontCursor("h-scroll");
+    case mojom::CursorType::kNone:
+      return LoadFontCursor("none");
+    case mojom::CursorType::kGrab:
+      return LoadFontCursor("openhand", "grab");
+    case mojom::CursorType::kGrabbing:
+      return LoadFontCursor("closedhand", "grabbing", XC_hand2);
+    case mojom::CursorType::kNull:
+    case mojom::CursorType::kPointer:
+      return LoadFontCursor("left_ptr", XC_left_ptr);
+    case mojom::CursorType::kMove:
+      return LoadFontCursor("all-scroll", XC_fleur);
+    case mojom::CursorType::kCross:
+      return LoadFontCursor("crosshair", XC_cross);
+    case mojom::CursorType::kHand:
+      return LoadFontCursor("pointer", "hand", XC_hand2);
+    case mojom::CursorType::kIBeam:
+      return LoadFontCursor("text", XC_xterm);
+    case mojom::CursorType::kProgress:
+      return LoadFontCursor("progress", "left_ptr_watch", XC_watch);
+    case mojom::CursorType::kWait:
+      return LoadFontCursor("wait", XC_watch);
+    case mojom::CursorType::kHelp:
+      return LoadFontCursor("help");
+    case mojom::CursorType::kEastResize:
+    case mojom::CursorType::kEastPanning:
+      return LoadFontCursor("e-resize", XC_right_side);
+    case mojom::CursorType::kNorthResize:
+    case mojom::CursorType::kNorthPanning:
+      return LoadFontCursor("n-resize", XC_top_side);
+    case mojom::CursorType::kNorthEastResize:
+    case mojom::CursorType::kNorthEastPanning:
+      return LoadFontCursor("ne-resize", XC_top_right_corner);
+    case mojom::CursorType::kNorthWestResize:
+    case mojom::CursorType::kNorthWestPanning:
+      return LoadFontCursor("nw-resize", XC_top_left_corner);
+    case mojom::CursorType::kSouthResize:
+    case mojom::CursorType::kSouthPanning:
+      return LoadFontCursor("s-resize", XC_bottom_side);
+    case mojom::CursorType::kSouthEastResize:
+    case mojom::CursorType::kSouthEastPanning:
+      return LoadFontCursor("se-resize", XC_bottom_right_corner);
+    case mojom::CursorType::kSouthWestResize:
+    case mojom::CursorType::kSouthWestPanning:
+      return LoadFontCursor("sw-resize", XC_bottom_left_corner);
+    case mojom::CursorType::kWestResize:
+    case mojom::CursorType::kWestPanning:
+      return LoadFontCursor("w-resize", XC_right_side);
+    case mojom::CursorType::kNorthSouthResize:
+      return LoadFontCursor(XC_sb_v_double_arrow, "ns-resize");
+    case mojom::CursorType::kEastWestResize:
+      return LoadFontCursor(XC_sb_h_double_arrow, "ew-resize");
+    case mojom::CursorType::kColumnResize:
+      return LoadFontCursor("col-resize", XC_sb_h_double_arrow);
+    case mojom::CursorType::kRowResize:
+      return LoadFontCursor("row-resize", XC_sb_v_double_arrow);
+    case mojom::CursorType::kNorthEastSouthWestResize:
+      return LoadFontCursor("size_bdiag", "nesw-resize", "fd_double_arrow");
+    case mojom::CursorType::kNorthWestSouthEastResize:
+      return LoadFontCursor("size_fdiag", "nwse-resize", "bd_double_arrow");
+    case mojom::CursorType::kVerticalText:
+      return LoadFontCursor("vertical-text");
+    case mojom::CursorType::kZoomIn:
+      return LoadFontCursor("zoom-in");
+    case mojom::CursorType::kZoomOut:
+      return LoadFontCursor("zoom-out");
+    case mojom::CursorType::kCell:
+      return LoadFontCursor("cell", XC_plus);
+    case mojom::CursorType::kContextMenu:
+      return LoadFontCursor("context-menu");
+    case mojom::CursorType::kAlias:
+      return LoadFontCursor("alias");
+    case mojom::CursorType::kNoDrop:
+      return LoadFontCursor("no-drop");
+    case mojom::CursorType::kCopy:
+      return LoadFontCursor("copy");
+    case mojom::CursorType::kNotAllowed:
+      return LoadFontCursor("not-allowed", "crossed_circle");
+    case mojom::CursorType::kDndNone:
+      return LoadFontCursor("dnd-none", XC_hand2);
+    case mojom::CursorType::kDndMove:
+      return LoadFontCursor("dnd-move", XC_hand2);
+    case mojom::CursorType::kDndCopy:
+      return LoadFontCursor("dnd-copy", XC_hand2);
+    case mojom::CursorType::kDndLink:
+      return LoadFontCursor("dnd-link", XC_hand2);
+    case mojom::CursorType::kCustom:
+      NOTREACHED();
+      return LoadFontCursor();
+  }
+  NOTREACHED() << "Case not handled for " << static_cast<int>(id);
+  return LoadFontCursor();
+}
 
 }  // namespace
-
-namespace ui {
 
 CursorLoader* CursorLoader::Create() {
   return new CursorLoaderX11;
@@ -233,13 +171,17 @@ CursorLoaderX11::ImageCursor::~ImageCursor() {
 
 CursorLoaderX11::CursorLoaderX11()
     : display_(gfx::GetXDisplay()),
-      invisible_cursor_(CreateInvisibleCursor(), gfx::GetXDisplay()) {}
+      invisible_cursor_(CreateInvisibleCursor(), gfx::GetXDisplay()) {
+  auto* cursor_theme_manager = CursorThemeManagerLinux::GetInstance();
+  if (cursor_theme_manager)
+    cursor_theme_observer_.Add(cursor_theme_manager);
+}
 
 CursorLoaderX11::~CursorLoaderX11() {
   UnloadAll();
 }
 
-void CursorLoaderX11::LoadImageCursor(CursorType id,
+void CursorLoaderX11::LoadImageCursor(mojom::CursorType id,
                                       int resource_id,
                                       const gfx::Point& hot) {
   SkBitmap bitmap;
@@ -247,10 +189,11 @@ void CursorLoaderX11::LoadImageCursor(CursorType id,
 
   GetImageCursorBitmap(resource_id, scale(), rotation(), &hotspot, &bitmap);
   XcursorImage* x_image = SkBitmapToXcursorImage(&bitmap, hotspot);
-  image_cursors_[id].reset(new ImageCursor(x_image, scale(), rotation()));
+  image_cursors_[id] =
+      std::make_unique<ImageCursor>(x_image, scale(), rotation());
 }
 
-void CursorLoaderX11::LoadAnimatedCursor(CursorType id,
+void CursorLoaderX11::LoadAnimatedCursor(mojom::CursorType id,
                                          int resource_id,
                                          const gfx::Point& hot,
                                          int frame_delay_ms) {
@@ -287,30 +230,40 @@ void CursorLoaderX11::UnloadAll() {
 void CursorLoaderX11::SetPlatformCursor(gfx::NativeCursor* cursor) {
   DCHECK(cursor);
 
-  if (*cursor == CursorType::kNone) {
+  if (*cursor == mojom::CursorType::kNone) {
     cursor->SetPlatformCursor(invisible_cursor_.get());
     return;
   }
 
-  if (*cursor == CursorType::kCustom)
+  if (*cursor == mojom::CursorType::kCustom)
     return;
 
-  cursor->set_device_scale_factor(scale());
-  cursor->SetPlatformCursor(CursorFromId(cursor->native_type()));
+  cursor->set_image_scale_factor(scale());
+  cursor->SetPlatformCursor(CursorFromId(cursor->type()));
 }
 
-const XcursorImage* CursorLoaderX11::GetXcursorImageForTest(CursorType id) {
+const XcursorImage* CursorLoaderX11::GetXcursorImageForTest(
+    mojom::CursorType id) {
   return test::GetCachedXcursorImage(image_cursors_[id]->cursor);
 }
 
+void CursorLoaderX11::OnCursorThemeNameChanged(
+    const std::string& cursor_theme_name) {
+  XcursorSetTheme(display_, cursor_theme_name.c_str());
+  ClearThemeCursors();
+}
+
+void CursorLoaderX11::OnCursorThemeSizeChanged(int cursor_theme_size) {
+  XcursorSetDefaultSize(display_, cursor_theme_size);
+  ClearThemeCursors();
+}
+
 bool CursorLoaderX11::IsImageCursor(gfx::NativeCursor native_cursor) {
-  CursorType type = native_cursor.native_type();
+  mojom::CursorType type = native_cursor.type();
   return image_cursors_.count(type) || animated_cursors_.count(type);
 }
 
-::Cursor CursorLoaderX11::CursorFromId(CursorType id) {
-  const char* css_name = CursorCssNameFromId(id);
-
+::Cursor CursorLoaderX11::CursorFromId(mojom::CursorType id) {
   auto font_it = font_cursors_.find(id);
   if (font_it != font_cursors_.end())
     return font_it->second;
@@ -325,18 +278,7 @@ bool CursorLoaderX11::IsImageCursor(gfx::NativeCursor native_cursor) {
   }
 
   // First try to load the cursor directly.
-  ::Cursor cursor = XcursorLibraryLoadCursor(display_, css_name);
-  if (cursor == x11::None) {
-    // Try a similar cursor supplied by the native cursor theme.
-    for (const auto& mapping : kCursorFallbacks) {
-      if (strcmp(mapping.css_name, css_name) == 0) {
-        if (mapping.fallback_name)
-          cursor = XcursorLibraryLoadCursor(display_, mapping.fallback_name);
-        if (cursor == x11::None && mapping.fallback_shape)
-          cursor = XCreateFontCursor(display_, mapping.fallback_shape);
-      }
-    }
-  }
+  ::Cursor cursor = LoadFontCursorForCursorType(id);
   if (cursor != x11::None) {
     font_cursors_[id] = cursor;
     return cursor;
@@ -357,6 +299,11 @@ bool CursorLoaderX11::IsImageCursor(gfx::NativeCursor native_cursor) {
   DCHECK(cursor);
   font_cursors_[id] = cursor;
   return cursor;
+}
+
+void CursorLoaderX11::ClearThemeCursors() {
+  font_cursors_.clear();
+  image_cursors_.clear();
 }
 
 }  // namespace ui

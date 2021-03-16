@@ -5,7 +5,7 @@
 #ifndef MEDIA_CAPTURE_CONTENT_VIDEO_CAPTURE_ORACLE_H_
 #define MEDIA_CAPTURE_CONTENT_VIDEO_CAPTURE_ORACLE_H_
 
-#include "base/callback_forward.h"
+#include "base/callback.h"
 #include "base/time/time.h"
 #include "media/base/feedback_signal_accumulator.h"
 #include "media/capture/capture_export.h"
@@ -84,9 +84,9 @@ class CAPTURE_EXPORT VideoCaptureOracle {
   // Returns true iff the captured frame should be delivered.  |frame_timestamp|
   // is set to the timestamp that should be provided to the consumer of the
   // frame.
-  bool CompleteCapture(int frame_number,
-                       bool capture_was_successful,
-                       base::TimeTicks* frame_timestamp);
+  virtual bool CompleteCapture(int frame_number,
+                               bool capture_was_successful,
+                               base::TimeTicks* frame_timestamp);
 
   // Notify that all in-flight captures have been canceled.  This has the same
   // effect as calling CompleteCapture() with a non-success status for all
@@ -118,7 +118,7 @@ class CAPTURE_EXPORT VideoCaptureOracle {
   // Returns the capture frame size the client should use.  This is updated by
   // calls to ObserveEventAndDecideCapture().  The oracle prevents too-frequent
   // changes to the capture size, to avoid stressing the end-to-end pipeline.
-  gfx::Size capture_size() const { return capture_size_; }
+  virtual gfx::Size capture_size() const;
 
   // Returns the oracle's estimate of the last time animation was detected.
   base::TimeTicks last_time_animation_was_detected() const {
@@ -138,6 +138,11 @@ class CAPTURE_EXPORT VideoCaptureOracle {
   // Default minimum size change period if SetMinSizeChangePeriod is not called.
   static constexpr base::TimeDelta kDefaultMinSizeChangePeriod =
       base::TimeDelta::FromSeconds(3);
+
+  void SetLogCallback(
+      base::RepeatingCallback<void(const std::string&)> emit_log_cb);
+
+  void Log(const std::string& message);
 
  private:
   // Retrieve/Assign a frame timestamp by capture |frame_number|.  Only valid
@@ -253,6 +258,10 @@ class CAPTURE_EXPORT VideoCaptureOracle {
   // animation.  This determines whether capture size increases will be
   // aggressive (because content is not animating).
   base::TimeTicks last_time_animation_was_detected_;
+
+  // Callback for webrtc native log. It should check for corresponding feature
+  // inside.
+  base::RepeatingCallback<void(const std::string&)> emit_log_message_cb_;
 };
 
 }  // namespace media

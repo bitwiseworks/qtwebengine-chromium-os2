@@ -9,7 +9,7 @@
 **    May you share freely, never taking more than you give.
 **
 *************************************************************************
-** This file contains code to implement the "changesetfuzz" command
+** This file contains code to implement the "changesetfuzz" command 
 ** line utility for fuzzing changeset blobs without corrupting them.
 */
 
@@ -32,10 +32,10 @@
 **
 ** In the second form, arguments SEED and N must both be integers. In this
 ** case, this program writes N binary changesets to disk. Each output
-** changeset is a slightly modified - "fuzzed" - version of the input.
-** The output changesets are written to files name "INPUT-$n", where $n is
+** changeset is a slightly modified - "fuzzed" - version of the input. 
+** The output changesets are written to files name "INPUT-$n", where $n is 
 ** an integer between 0 and N-1, inclusive. Output changesets are always
-** well-formed. Parameter SEED is used to seed the PRNG - any two
+** well-formed. Parameter SEED is used to seed the PRNG - any two 
 ** invocations of this program with the same SEED and input changeset create
 ** the same N output changesets.
 **
@@ -43,7 +43,7 @@
 **
 **   1. Any two values within the changeset may be exchanged.
 **
-**   2. Any TEXT, BLOB, INTEGER or REAL value within the changeset
+**   2. Any TEXT, BLOB, INTEGER or REAL value within the changeset 
 **      may have a single bit of its content flipped.
 **
 **   3. Any value within a changeset may be replaced by a pseudo-randomly
@@ -51,7 +51,7 @@
 **
 ** The above operations never set a PRIMARY KEY column to NULL. Nor do they
 ** set any value to "undefined", or replace any "undefined" value with
-** another. Any such operation risks producing a changeset that is not
+** another. Any such operation risks producing a changeset that is not 
 ** well-formed.
 **
 **   4. A single change may be duplicated.
@@ -83,10 +83,10 @@
 **
 ** There are also schema changes:
 **
-**  12. A non-PK column may be added to a table. In this case a NULL
+**  12. A non-PK column may be added to a table. In this case a NULL 
 **      value is appended to all records.
 **
-**  13. A PK column may be added to a table. In this case a non-NULL
+**  13. A PK column may be added to a table. In this case a non-NULL 
 **      value is appended to all INSERT, DELETE and UPDATE old.* records.
 **      An "undefined" is appended to new.* UPDATE records.
 **
@@ -154,21 +154,22 @@ static void fuzzReadFile(const char *zFilename, int *pSz, void **ppBuf){
   pBuf = sqlite3_malloc64( sz ? sz : 1 );
   if( pBuf==0 ){
     fprintf(stderr, "cannot allocate %d to hold content of \"%s\"\n",
-            sz, zFilename);
+            (int)sz, zFilename);
     exit(1);
   }
   if( sz>0 ){
-    if( fread(pBuf, sz, 1, f)!=1 ){
-      fprintf(stderr, "cannot read all %d bytes of \"%s\"\n", sz, zFilename);
+    if( fread(pBuf, (size_t)sz, 1, f)!=1 ){
+      fprintf(stderr, "cannot read all %d bytes of \"%s\"\n",
+              (int)sz, zFilename);
       exit(1);
     }
     fclose(f);
   }
-  *pSz = sz;
+  *pSz = (int)sz;
   *ppBuf = pBuf;
 }
 
-/*
+/* 
 ** Write the contents of buffer pBuf, size nBuf bytes, into file zFilename
 ** on disk. zFilename, if it already exists, is clobbered.
 */
@@ -205,43 +206,43 @@ static struct sqlite3PrngType {
 } sqlite3Prng = {
     0xAF, 0x28,
   {
-    0x71, 0xF5, 0xB4, 0x6E, 0x80, 0xAB, 0x1D, 0xB8,
-    0xFB, 0xB7, 0x49, 0xBF, 0xFF, 0x72, 0x2D, 0x14,
-    0x79, 0x09, 0xE3, 0x78, 0x76, 0xB0, 0x2C, 0x0A,
-    0x8E, 0x23, 0xEE, 0xDF, 0xE0, 0x9A, 0x2F, 0x67,
-    0xE1, 0xBE, 0x0E, 0xA7, 0x08, 0x97, 0xEB, 0x77,
-    0x78, 0xBA, 0x9D, 0xCA, 0x49, 0x4C, 0x60, 0x9A,
-    0xF6, 0xBD, 0xDA, 0x7F, 0xBC, 0x48, 0x58, 0x52,
-    0xE5, 0xCD, 0x83, 0x72, 0x23, 0x52, 0xFF, 0x6D,
-    0xEF, 0x0F, 0x82, 0x29, 0xA0, 0x83, 0x3F, 0x7D,
-    0xA4, 0x88, 0x31, 0xE7, 0x88, 0x92, 0x3B, 0x9B,
-    0x3B, 0x2C, 0xC2, 0x4C, 0x71, 0xA2, 0xB0, 0xEA,
-    0x36, 0xD0, 0x00, 0xF1, 0xD3, 0x39, 0x17, 0x5D,
-    0x2A, 0x7A, 0xE4, 0xAD, 0xE1, 0x64, 0xCE, 0x0F,
-    0x9C, 0xD9, 0xF5, 0xED, 0xB0, 0x22, 0x5E, 0x62,
-    0x97, 0x02, 0xA3, 0x8C, 0x67, 0x80, 0xFC, 0x88,
-    0x14, 0x0B, 0x15, 0x10, 0x0F, 0xC7, 0x40, 0xD4,
-    0xF1, 0xF9, 0x0E, 0x1A, 0xCE, 0xB9, 0x1E, 0xA1,
-    0x72, 0x8E, 0xD7, 0x78, 0x39, 0xCD, 0xF4, 0x5D,
-    0x2A, 0x59, 0x26, 0x34, 0xF2, 0x73, 0x0B, 0xA0,
-    0x02, 0x51, 0x2C, 0x03, 0xA3, 0xA7, 0x43, 0x13,
-    0xE8, 0x98, 0x2B, 0xD2, 0x53, 0xF8, 0xEE, 0x91,
-    0x7D, 0xE7, 0xE3, 0xDA, 0xD5, 0xBB, 0xC0, 0x92,
-    0x9D, 0x98, 0x01, 0x2C, 0xF9, 0xB9, 0xA0, 0xEB,
-    0xCF, 0x32, 0xFA, 0x01, 0x49, 0xA5, 0x1D, 0x9A,
-    0x76, 0x86, 0x3F, 0x40, 0xD4, 0x89, 0x8F, 0x9C,
-    0xE2, 0xE3, 0x11, 0x31, 0x37, 0xB2, 0x49, 0x28,
-    0x35, 0xC0, 0x99, 0xB6, 0xD0, 0xBC, 0x66, 0x35,
-    0xF7, 0x83, 0x5B, 0xD7, 0x37, 0x1A, 0x2B, 0x18,
-    0xA6, 0xFF, 0x8D, 0x7C, 0x81, 0xA8, 0xFC, 0x9E,
-    0xC4, 0xEC, 0x80, 0xD0, 0x98, 0xA7, 0x76, 0xCC,
-    0x9C, 0x2F, 0x7B, 0xFF, 0x8E, 0x0E, 0xBB, 0x90,
+    0x71, 0xF5, 0xB4, 0x6E, 0x80, 0xAB, 0x1D, 0xB8, 
+    0xFB, 0xB7, 0x49, 0xBF, 0xFF, 0x72, 0x2D, 0x14, 
+    0x79, 0x09, 0xE3, 0x78, 0x76, 0xB0, 0x2C, 0x0A, 
+    0x8E, 0x23, 0xEE, 0xDF, 0xE0, 0x9A, 0x2F, 0x67, 
+    0xE1, 0xBE, 0x0E, 0xA7, 0x08, 0x97, 0xEB, 0x77, 
+    0x78, 0xBA, 0x9D, 0xCA, 0x49, 0x4C, 0x60, 0x9A, 
+    0xF6, 0xBD, 0xDA, 0x7F, 0xBC, 0x48, 0x58, 0x52, 
+    0xE5, 0xCD, 0x83, 0x72, 0x23, 0x52, 0xFF, 0x6D, 
+    0xEF, 0x0F, 0x82, 0x29, 0xA0, 0x83, 0x3F, 0x7D, 
+    0xA4, 0x88, 0x31, 0xE7, 0x88, 0x92, 0x3B, 0x9B, 
+    0x3B, 0x2C, 0xC2, 0x4C, 0x71, 0xA2, 0xB0, 0xEA, 
+    0x36, 0xD0, 0x00, 0xF1, 0xD3, 0x39, 0x17, 0x5D, 
+    0x2A, 0x7A, 0xE4, 0xAD, 0xE1, 0x64, 0xCE, 0x0F, 
+    0x9C, 0xD9, 0xF5, 0xED, 0xB0, 0x22, 0x5E, 0x62, 
+    0x97, 0x02, 0xA3, 0x8C, 0x67, 0x80, 0xFC, 0x88, 
+    0x14, 0x0B, 0x15, 0x10, 0x0F, 0xC7, 0x40, 0xD4, 
+    0xF1, 0xF9, 0x0E, 0x1A, 0xCE, 0xB9, 0x1E, 0xA1, 
+    0x72, 0x8E, 0xD7, 0x78, 0x39, 0xCD, 0xF4, 0x5D, 
+    0x2A, 0x59, 0x26, 0x34, 0xF2, 0x73, 0x0B, 0xA0, 
+    0x02, 0x51, 0x2C, 0x03, 0xA3, 0xA7, 0x43, 0x13, 
+    0xE8, 0x98, 0x2B, 0xD2, 0x53, 0xF8, 0xEE, 0x91, 
+    0x7D, 0xE7, 0xE3, 0xDA, 0xD5, 0xBB, 0xC0, 0x92, 
+    0x9D, 0x98, 0x01, 0x2C, 0xF9, 0xB9, 0xA0, 0xEB, 
+    0xCF, 0x32, 0xFA, 0x01, 0x49, 0xA5, 0x1D, 0x9A, 
+    0x76, 0x86, 0x3F, 0x40, 0xD4, 0x89, 0x8F, 0x9C, 
+    0xE2, 0xE3, 0x11, 0x31, 0x37, 0xB2, 0x49, 0x28, 
+    0x35, 0xC0, 0x99, 0xB6, 0xD0, 0xBC, 0x66, 0x35, 
+    0xF7, 0x83, 0x5B, 0xD7, 0x37, 0x1A, 0x2B, 0x18, 
+    0xA6, 0xFF, 0x8D, 0x7C, 0x81, 0xA8, 0xFC, 0x9E, 
+    0xC4, 0xEC, 0x80, 0xD0, 0x98, 0xA7, 0x76, 0xCC, 
+    0x9C, 0x2F, 0x7B, 0xFF, 0x8E, 0x0E, 0xBB, 0x90, 
     0xAE, 0x13, 0x06, 0xF5, 0x1C, 0x4E, 0x52, 0xF7
   }
 };
 
-/*
-** Generate and return single random byte
+/* 
+** Generate and return single random byte 
 */
 static unsigned char fuzzRandomByte(void){
   unsigned char t;
@@ -297,7 +298,7 @@ typedef struct FuzzChangeset FuzzChangeset;
 typedef struct FuzzChangesetGroup FuzzChangesetGroup;
 typedef struct FuzzChange FuzzChange;
 
-/*
+/* 
 ** Object containing partially parsed changeset.
 */
 struct FuzzChangeset {
@@ -310,7 +311,7 @@ struct FuzzChangeset {
   int nUpdate;                    /* Number of UPDATE changes in changeset */
 };
 
-/*
+/* 
 ** There is one object of this type for each change-group (table header)
 ** in the input changeset.
 */
@@ -343,7 +344,7 @@ struct FuzzChange {
 static void *fuzzMalloc(sqlite3_int64 nByte){
   void *pRet = sqlite3_malloc64(nByte);
   if( pRet ){
-    memset(pRet, 0, nByte);
+    memset(pRet, 0, (size_t)nByte);
   }
   return pRet;
 }
@@ -384,7 +385,7 @@ static int fuzzGetVarint(u8 *p, int *pnVal){
 static int fuzzPutVarint(u8 *p, int nVal){
   assert( nVal>0 && nVal<2097152 );
   if( nVal<128 ){
-    p[0] = nVal;
+    p[0] = (u8)nVal;
     return 1;
   }
   if( nVal<16384 ){
@@ -459,7 +460,7 @@ static int fuzzParseHeader(
       pGrp->aPK = p;
       p += pGrp->nCol;
       pGrp->zTab = (const char*)p;
-      p = &p[strlen(p)+1];
+      p = &p[strlen((const char*)p)+1];
 
       if( p>=pEnd ){
         rc = fuzzCorrupt();
@@ -478,7 +479,7 @@ static int fuzzParseHeader(
 }
 
 /*
-** Argument p points to a buffer containing a single changeset-record value.
+** Argument p points to a buffer containing a single changeset-record value. 
 ** This function attempts to determine the size of the value in bytes. If
 ** successful, it sets (*pSz) to the size and returns SQLITE_OK. Or, if the
 ** buffer does not contain a valid value, SQLITE_CORRUPT is returned and
@@ -513,9 +514,9 @@ static int fuzzChangeSize(u8 *p, int *pSz){
 }
 
 /*
-** When this function is called, (*ppRec) points to the start of a
+** When this function is called, (*ppRec) points to the start of a 
 ** record in a changeset being parsed. This function adds entries
-** to the pParse->apVal[] array for all values and advances (*ppRec)
+** to the pParse->apVal[] array for all values and advances (*ppRec) 
 ** to one byte past the end of the record. Argument pEnd points to
 ** one byte past the end of the input changeset.
 **
@@ -695,8 +696,6 @@ static int fuzzPrintRecord(FuzzChangesetGroup *pGrp, u8 **ppRec, int bPKOnly){
         case 0x03:                    /* text */
         case 0x04: {                  /* blob */
           int nTxt;
-          int sz;
-          int i;
           p += fuzzGetVarint(p, &nTxt);
           printf("%s%s", zPre, eType==0x03 ? "'" : "X'");
           for(i=0; i<nTxt; i++){
@@ -767,7 +766,7 @@ static void fuzzPrintGroup(FuzzChangeset *pParse, FuzzChangesetGroup *pGrp){
 ** Initialize the object passed as the second parameter with details
 ** of the change that will be attempted (type of change, to which part of the
 ** changeset it applies etc.). If successful, return SQLITE_OK. Or, if an
-** error occurs, return an SQLite error code.
+** error occurs, return an SQLite error code. 
 **
 ** If a negative value is returned, then the selected change would have
 ** produced a non-well-formed changeset. In this case the caller should
@@ -825,9 +824,9 @@ static int fuzzSelectChange(FuzzChangeset *pParse, FuzzChange *pChange){
     pParse->apGroup[iGrp] = pGrp;
   }
 
-  if( pChange->eType==FUZZ_VALUE_SUB
-   || pChange->eType==FUZZ_VALUE_MOD
-   || pChange->eType==FUZZ_VALUE_RND
+  if( pChange->eType==FUZZ_VALUE_SUB 
+   || pChange->eType==FUZZ_VALUE_MOD 
+   || pChange->eType==FUZZ_VALUE_RND 
   ){
     iSub = fuzzRandomInt(pParse->nVal);
     pChange->pSub1 = pParse->apVal[iSub];
@@ -859,7 +858,7 @@ static int fuzzSelectChange(FuzzChangeset *pParse, FuzzChange *pChange){
         case 0x03:                    /* text */
         case 0x04: {                  /* blob */
           int nByte = fuzzRandomInt(48);
-          pChange->aSub[1] = nByte;
+          pChange->aSub[1] = (u8)nByte;
           fuzzRandomBlob(nByte, &pChange->aSub[2]);
           if( pChange->aSub[0]==0x03 ){
             int i;
@@ -938,7 +937,7 @@ static int fuzzCopyChange(
     }
   }
 
-  if( pFuzz->iCurrent==pFuzz->iChange
+  if( pFuzz->iCurrent==pFuzz->iChange 
    && pFuzz->eType==FUZZ_CHANGE_FIELD && eType==SQLITE_UPDATE
   ){
     int sz;
@@ -983,7 +982,7 @@ static int fuzzCopyChange(
       u8 *pCopy = p;
 
       /* If this is a patchset, and the input is a DELETE, then the only
-      ** fields present are the PK fields. So, if this is not a PK, skip to
+      ** fields present are the PK fields. So, if this is not a PK, skip to 
       ** the next column. If the current fuzz is FUZZ_CHANGE_TYPE, then
       ** write a randomly selected value to the output.  */
       if( bPS && eType==SQLITE_DELETE && pGrp->aPK[i]==0 ){
@@ -1004,7 +1003,7 @@ static int fuzzCopyChange(
       }else if( p==pFuzz->pSub2 ){
         pCopy = pFuzz->pSub1;
       }else if( i==iUndef ){
-        pCopy = "\0";
+        pCopy = (u8*)"\0";
       }
 
       if( pCopy[0]==0x00 && eNew!=eType && eType==SQLITE_UPDATE && iRec==0 ){
@@ -1067,7 +1066,7 @@ static int fuzzCopyChange(
       for(i=0; i<pGrp->nCol; i++){
         int sz;
         u8 *pCopy = pCsr;
-        if( pGrp->aPK[i] ) pCopy = "\0";
+        if( pGrp->aPK[i] ) pCopy = (u8*)"\0";
         fuzzChangeSize(pCopy, &sz);
         memcpy(pOut, pCopy, sz);
         pOut += sz;
@@ -1077,11 +1076,11 @@ static int fuzzCopyChange(
     }
   }
 
-  /* If a column is being deleted from this group, and this change was an
-  ** UPDATE, and there are now no non-PK, non-undefined columns in the
+  /* If a column is being deleted from this group, and this change was an 
+  ** UPDATE, and there are now no non-PK, non-undefined columns in the 
   ** change, remove it altogether. */
-  if( pFuzz->eType==FUZZ_COLUMN_DEL && pFuzz->iGroup==iGrp
-   && eType==SQLITE_UPDATE && nUpdate==0
+  if( pFuzz->eType==FUZZ_COLUMN_DEL && pFuzz->iGroup==iGrp 
+   && eType==SQLITE_UPDATE && nUpdate==0 
   ){
     pOut = *ppOut;
   }
@@ -1093,7 +1092,7 @@ static int fuzzCopyChange(
 }
 
 /*
-** Fuzz the changeset parsed into object pParse and write the results
+** Fuzz the changeset parsed into object pParse and write the results 
 ** to file zOut on disk. Argument pBuf points to a buffer that is guaranteed
 ** to be large enough to hold the fuzzed changeset.
 **
@@ -1140,8 +1139,8 @@ static int fuzzDoOneFuzz(
         int nCol = pGrp->nCol;
         int iPKDel = 0;
         if( iGrp==change.iGroup ){
-          if( change.eType==FUZZ_COLUMN_ADD
-           || change.eType==FUZZ_COLUMN_ADDPK
+          if( change.eType==FUZZ_COLUMN_ADD 
+           || change.eType==FUZZ_COLUMN_ADDPK 
           ){
             nCol++;
           }else if( change.eType==FUZZ_COLUMN_DEL ){

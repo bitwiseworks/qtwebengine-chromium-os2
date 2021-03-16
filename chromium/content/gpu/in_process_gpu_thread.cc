@@ -11,8 +11,14 @@
 #include "content/gpu/gpu_process.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_preferences.h"
 #include "gpu/ipc/service/gpu_init.h"
+#include "media/gpu/buildflags.h"
+
+#if BUILDFLAG(USE_VAAPI)
+#include "media/gpu/vaapi/vaapi_wrapper.h"
+#endif
 
 #if defined(OS_ANDROID)
 #include "base/android/jni_android.h"
@@ -51,6 +57,10 @@ void InProcessGpuThread::Init() {
   gpu_init->InitializeInProcess(base::CommandLine::ForCurrentProcess(),
                                 gpu_preferences_);
 
+#if BUILDFLAG(USE_VAAPI)
+  media::VaapiWrapper::PreSandboxInitialization();
+#endif
+
   GetContentClient()->SetGpuInfo(gpu_init->gpu_info());
 
   // The process object takes ownership of the thread object, so do not
@@ -79,11 +89,11 @@ public:
         base::Thread::Options options;
 #if (defined(OS_WIN) || defined(OS_MACOSX)) && !defined(TOOLKIT_QT)
         // WGL needs to create its own window and pump messages on it.
-        options.message_loop_type = base::MessageLoop::TYPE_UI;
+        options.message_loop_type = base::MessagePumpType::UI;
 #endif
-#if defined(OS_ANDROID) || defined(OS_CHROMEOS)
-        options.priority = base::ThreadPriority::DISPLAY;
-#endif
+
+        if (base::FeatureList::IsEnabled(features::kGpuUseDisplayThreadPriority))
+          options.priority = base::ThreadPriority::DISPLAY;
         thread_->StartWithOptions(options);
     }
 

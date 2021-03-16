@@ -43,6 +43,11 @@ bool CheckTraceVisitor::VisitCallExpr(CallExpr* call) {
     return true;
   }
 
+  if (ImplicitCastExpr* expr = dyn_cast<ImplicitCastExpr>(callee)) {
+    if (CheckImplicitCastExpr(call, expr))
+      return true;
+  }
+
   // A tracing call will have either a |visitor| or a |m_field| argument.
   // A registerWeakMembers call will have a |this| argument.
   if (call->getNumArgs() != 1)
@@ -70,7 +75,6 @@ bool CheckTraceVisitor::VisitCallExpr(CallExpr* call) {
   if (CXXMemberCallExpr* expr = dyn_cast<CXXMemberCallExpr>(call)) {
     if (CheckTraceFieldMemberCall(expr) || CheckRegisterWeakMembers(expr))
       return true;
-
   }
 
   CheckTraceBaseCall(call);
@@ -103,23 +107,14 @@ namespace {
 class FindFieldVisitor : public RecursiveASTVisitor<FindFieldVisitor> {
  public:
   FindFieldVisitor();
-  MemberExpr* member() const;
   FieldDecl* field() const;
   bool TraverseMemberExpr(MemberExpr* member);
 
  private:
-  MemberExpr* member_;
   FieldDecl* field_;
 };
 
-FindFieldVisitor::FindFieldVisitor()
-    : member_(0),
-      field_(0) {
-}
-
-MemberExpr* FindFieldVisitor::member() const {
-  return member_;
-}
+FindFieldVisitor::FindFieldVisitor() : field_(0) {}
 
 FieldDecl* FindFieldVisitor::field() const {
   return field_;
@@ -127,7 +122,6 @@ FieldDecl* FindFieldVisitor::field() const {
 
 bool FindFieldVisitor::TraverseMemberExpr(MemberExpr* member) {
   if (FieldDecl* field = dyn_cast<FieldDecl>(member->getMemberDecl())) {
-    member_ = member;
     field_ = field;
     return false;
   }
@@ -174,7 +168,8 @@ void CheckTraceVisitor::CheckCXXDependentScopeMemberExpr(
     }
   }
 
-  // Check for TraceIfNeeded<T>::trace(visitor, &field)
+  // Check for TraceIfNeeded<T>::trace(visitor, &field) where T cannot be
+  // resolved
   if (call->getNumArgs() == 2 && fn_name == kTraceName &&
       tmpl->getName() == kTraceIfNeededName) {
     FindFieldVisitor finder;
@@ -209,7 +204,7 @@ bool CheckTraceVisitor::CheckTraceBaseCall(CallExpr* call) {
       return false;
 
     callee_record = type->getAsCXXRecordDecl();
-    func_name = trace_decl->getName();
+    func_name = std::string(trace_decl->getName());
   } else if (UnresolvedMemberExpr* callee =
              dyn_cast<UnresolvedMemberExpr>(call->getCallee())) {
     // Callee part may become unresolved if the type of the argument
@@ -379,4 +374,29 @@ void CheckTraceVisitor::MarkAllWeakMembersTraced() {
     if (field.second.edge()->IsWeakMember())
       field.second.MarkTraced();
   }
+}
+
+bool CheckTraceVisitor::CheckImplicitCastExpr(CallExpr* call,
+                                              ImplicitCastExpr* expr) {
+  DeclRefExpr* sub_expr = dyn_cast<DeclRefExpr>(expr->getSubExpr());
+  if (!sub_expr)
+    return false;
+  NestedNameSpecifier* qualifier = sub_expr->getQualifier();
+  if (!qualifier)
+    return false;
+  CXXRecordDecl* class_decl = qualifier->getAsRecordDecl();
+  if (!class_decl)
+    return false;
+  NamedDecl* found_decl = sub_expr->getFoundDecl();
+  std::string fn_name = found_decl->getNameAsString();
+  // Check for TraceIfNeeded<T>::trace(visitor, &field) where T can be resolved
+  if (call->getNumArgs() == 2 && fn_name == kTraceName &&
+      class_decl->getName() == kTraceIfNeededName) {
+    FindFieldVisitor finder;
+    finder.TraverseStmt(call->getArg(1));
+    if (finder.field())
+      FoundField(finder.field());
+    return true;
+  }
+  return false;
 }

@@ -11,19 +11,15 @@
 
 namespace wm {
 
-DefaultScreenPositionClient::DefaultScreenPositionClient() {
+DefaultScreenPositionClient::DefaultScreenPositionClient(
+    aura::Window* root_window)
+    : root_window_(root_window) {
+  DCHECK(root_window_);
+  aura::client::SetScreenPositionClient(root_window_, this);
 }
 
 DefaultScreenPositionClient::~DefaultScreenPositionClient() {
-}
-
-gfx::Point DefaultScreenPositionClient::GetOriginInScreen(
-    const aura::Window* root_window) {
-  aura::Window* window = const_cast<aura::Window*>(root_window);
-  display::Screen* screen = display::Screen::GetScreen();
-  gfx::Rect screen_bounds = root_window->GetHost()->GetBoundsInPixels();
-  gfx::Rect dip_bounds = screen->ScreenToDIPRectInWindow(window, screen_bounds);
-  return dip_bounds.origin();
+  aura::client::SetScreenPositionClient(root_window_, nullptr);
 }
 
 void DefaultScreenPositionClient::ConvertPointToScreen(
@@ -54,6 +50,15 @@ void DefaultScreenPositionClient::SetBounds(aura::Window* window,
                                             const gfx::Rect& bounds,
                                             const display::Display& display) {
   window->SetBounds(bounds);
+}
+
+gfx::Point DefaultScreenPositionClient::GetOriginInScreen(
+    const aura::Window* root_window) {
+  aura::Window* window = const_cast<aura::Window*>(root_window);
+  display::Screen* screen = display::Screen::GetScreen();
+  gfx::Rect screen_bounds = root_window->GetHost()->GetBoundsInPixels();
+  gfx::Rect dip_bounds = screen->ScreenToDIPRectInWindow(window, screen_bounds);
+  return dip_bounds.origin();
 }
 
 }  // namespace wm

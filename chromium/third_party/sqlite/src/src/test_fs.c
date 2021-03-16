@@ -26,8 +26,8 @@
 **   CREATE TABLE idx(id INTEGER PRIMARY KEY, path TEXT);
 **   INSERT INTO idx VALUES(4, '/etc/passwd');
 **
-** Adding the row to the idx table automatically creates a row in the
-** virtual table with rowid=4, path=/etc/passwd and a text field that
+** Adding the row to the idx table automatically creates a row in the 
+** virtual table with rowid=4, path=/etc/passwd and a text field that 
 ** contains data read from file /etc/passwd on disk.
 **
 *************************************************************************
@@ -49,7 +49,7 @@
 *************************************************************************
 ** Virtual table module "fstree"
 **
-** This module is also a read-only eponymous virtual table with the
+** This module is also a read-only eponymous virtual table with the 
 ** following schema:
 **
 **   CREATE TABLE fstree(path TEXT, size INT, data BLOB);
@@ -96,8 +96,8 @@
 typedef struct fs_vtab fs_vtab;
 typedef struct fs_cursor fs_cursor;
 
-/*
-** A fs virtual-table object
+/* 
+** A fs virtual-table object 
 */
 struct fs_vtab {
   sqlite3_vtab base;
@@ -129,7 +129,7 @@ struct FsdirCsr {
   char *zDir;                     /* Buffer containing directory scanned */
   DIR *pDir;                      /* Open directory */
   sqlite3_int64 iRowid;
-  struct DIRENT entry;            /* Current entry */
+  struct DIRENT *pEntry;
 };
 
 /*
@@ -236,16 +236,8 @@ static int fsdirNext(sqlite3_vtab_cursor *cur){
   FsdirCsr *pCsr = (FsdirCsr*)cur;
 
   if( pCsr->pDir ){
-    struct DIRENT *pRes = 0;
-#if defined(__MINGW_H)
-    pRes = readdir(pCsr->pDir);
-    if( pRes!=0 ){
-      memcpy(&pCsr->entry, pRes, sizeof(struct DIRENT));
-    }
-#else
-    readdir_r(pCsr->pDir, &pCsr->entry, &pRes);
-#endif
-    if( pRes==0 ){
+    pCsr->pEntry = readdir(pCsr->pDir);
+    if( pCsr->pEntry==0 ){
       closedir(pCsr->pDir);
       pCsr->pDir = 0;
     }
@@ -259,7 +251,7 @@ static int fsdirNext(sqlite3_vtab_cursor *cur){
 ** xFilter method implementation.
 */
 static int fsdirFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -286,7 +278,7 @@ static int fsdirFilter(
   memcpy(pCsr->zDir, zDir, nDir+1);
 
   pCsr->pDir = opendir(pCsr->zDir);
-  return fsdirNext(pVtabCursor);
+  return fsdirNext(pVtabCursor); 
 }
 
 /*
@@ -308,7 +300,7 @@ static int fsdirColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
       break;
 
     case 1: /* name */
-      sqlite3_result_text(ctx, pCsr->entry.d_name, -1, SQLITE_TRANSIENT);
+      sqlite3_result_text(ctx, pCsr->pEntry->d_name, -1, SQLITE_TRANSIENT);
       break;
 
     default:
@@ -475,14 +467,14 @@ static int fstreeNext(sqlite3_vtab_cursor *cur){
 ** xFilter method implementation.
 */
 static int fstreeFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
   FstreeCsr *pCsr = (FstreeCsr*)pVtabCursor;
   FstreeVtab *pTab = (FstreeVtab*)(pCsr->base.pVtab);
   int rc;
-  const char *zSql =
+  const char *zSql = 
 "WITH r(d) AS ("
 "  SELECT CASE WHEN dir=?2 THEN ?3 ELSE dir END || '/' || name "
 "    FROM fsdir WHERE dir=?1 AND name NOT LIKE '.%'"
@@ -556,7 +548,7 @@ static int fstreeFilter(
   sqlite3_free(zRoot);
 #endif
 
-  return fstreeNext(pVtabCursor);
+  return fstreeNext(pVtabCursor); 
 }
 
 /*
@@ -696,7 +688,7 @@ static int fsNext(sqlite3_vtab_cursor *cur){
 }
 
 static int fsFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -722,7 +714,7 @@ static int fsFilter(
   }
 
   if( rc==SQLITE_OK ){
-    rc = fsNext(pVtabCursor);
+    rc = fsNext(pVtabCursor); 
   }
   return rc;
 }
@@ -808,7 +800,7 @@ static sqlite3_module fsModule = {
   fsConnect,
   fsConnect,
   fsBestIndex,
-  fsDisconnect,
+  fsDisconnect, 
   fsDisconnect,
   fsOpen,                      /* xOpen - open a cursor */
   fsClose,                     /* xClose - close a cursor */
@@ -917,7 +909,7 @@ int Sqlitetestfs_Init(Tcl_Interp *interp){
   };
   int i;
   for(i=0; i<sizeof(aObjCmd)/sizeof(aObjCmd[0]); i++){
-    Tcl_CreateObjCommand(interp, aObjCmd[i].zName,
+    Tcl_CreateObjCommand(interp, aObjCmd[i].zName, 
         aObjCmd[i].xProc, aObjCmd[i].clientData, 0);
   }
 #endif

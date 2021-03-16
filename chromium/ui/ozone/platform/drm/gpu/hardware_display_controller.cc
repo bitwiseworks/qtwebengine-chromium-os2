@@ -7,8 +7,10 @@
 #include <drm.h>
 #include <string.h>
 #include <xf86drm.h>
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
@@ -26,6 +28,12 @@
 #include "ui/ozone/platform/drm/gpu/drm_dumb_buffer.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane.h"
 #include "ui/ozone/platform/drm/gpu/page_flip_request.h"
+
+// Vendor ID for downstream, interim ChromeOS specific modifiers.
+#define DRM_FORMAT_MOD_VENDOR_CHROMEOS 0xf0
+// TODO(gurchetansingh) Remove once DRM_FORMAT_MOD_ARM_AFBC is used by all
+// kernels and allocators.
+#define DRM_FORMAT_MOD_CHROMEOS_ROCKCHIP_AFBC fourcc_mod_code(CHROMEOS, 1)
 
 namespace ui {
 
@@ -50,7 +58,7 @@ void DrawCursor(DrmDumbBuffer* cursor, const SkBitmap& image) {
   // Clear to transparent in case |image| is smaller than the canvas.
   SkCanvas* canvas = cursor->GetCanvas();
   canvas->clear(SK_ColorTRANSPARENT);
-  canvas->drawBitmapRect(image, damage, NULL);
+  canvas->drawBitmapRect(image, damage, nullptr);
 }
 
 }  // namespace
@@ -58,36 +66,44 @@ void DrawCursor(DrmDumbBuffer* cursor, const SkBitmap& image) {
 HardwareDisplayController::HardwareDisplayController(
     std::unique_ptr<CrtcController> controller,
     const gfx::Point& origin)
-    : origin_(origin),
-      is_disabled_(controller->is_disabled()),
-      weak_ptr_factory_(this) {
+    : origin_(origin), is_disabled_(controller->is_disabled()) {
   AddCrtc(std::move(controller));
   AllocateCursorBuffers();
 }
 
-HardwareDisplayController::~HardwareDisplayController() {
-}
+HardwareDisplayController::~HardwareDisplayController() = default;
 
 bool HardwareDisplayController::Modeset(const DrmOverlayPlane& primary,
-                                        drmModeModeInfo mode) {
+                                        const drmModeModeInfo& mode) {
   TRACE_EVENT0("drm", "HDC::Modeset");
-  DCHECK(primary.buffer.get());
-  bool status = true;
-  for (const auto& controller : crtc_controllers_)
-    status &= controller->Modeset(primary, mode);
-
-  is_disabled_ = false;
-  ResetCursor();
-  OnModesetComplete(primary);
-  return status;
+  return ModesetCrtc(primary, /*use_current_crtc_mode=*/false, mode);
 }
 
 bool HardwareDisplayController::Enable(const DrmOverlayPlane& primary) {
   TRACE_EVENT0("drm", "HDC::Enable");
+  drmModeModeInfo empty_mode = {};
+  return ModesetCrtc(primary, /*use_current_crtc_mode=*/true, empty_mode);
+}
+
+bool HardwareDisplayController::ModesetCrtc(const DrmOverlayPlane& primary,
+                                            bool use_current_crtc_mode,
+                                            const drmModeModeInfo& mode) {
   DCHECK(primary.buffer.get());
   bool status = true;
-  for (const auto& controller : crtc_controllers_)
-    status &= controller->Modeset(primary, controller->mode());
+
+  GetDrmDevice()->plane_manager()->BeginFrame(&owned_hardware_planes_);
+  DrmOverlayPlaneList plane_list;
+  plane_list.push_back(primary.Clone());
+
+  for (const auto& controller : crtc_controllers_) {
+    status &=
+        controller->AssignOverlayPlanes(&owned_hardware_planes_, plane_list,
+                                        /*is_modesetting=*/true);
+
+    status &= controller->Modeset(
+        primary, use_current_crtc_mode ? controller->mode() : mode,
+        owned_hardware_planes_);
+  }
 
   is_disabled_ = false;
   ResetCursor();
@@ -99,6 +115,10 @@ void HardwareDisplayController::Disable() {
   TRACE_EVENT0("drm", "HDC::Disable");
 
   for (const auto& controller : crtc_controllers_)
+    // TODO(crbug.com/1015104): Modeset and Disable operations should go
+    // together. The current split is due to how the legacy/atomic split
+    // evolved. It should be cleaned up under the more generic
+    // HardwareDisplayPlaneManager{Legacy,Atomic} calls.
     controller->Disable();
 
   bool ret = GetDrmDevice()->plane_manager()->DisableOverlayPlanes(
@@ -135,9 +155,9 @@ void HardwareDisplayController::SchedulePageFlip(
       .Run(gfx::SwapResult::SWAP_ACK, std::move(out_fence));
 
   // Everything was submitted successfully, wait for asynchronous completion.
-  page_flip_request->TakeCallback(base::BindOnce(
-      &CompletePageFlip, weak_ptr_factory_.GetWeakPtr(),
-      base::Passed(&presentation_callback), base::Passed(&plane_list)));
+  page_flip_request->TakeCallback(
+      base::BindOnce(&CompletePageFlip, weak_ptr_factory_.GetWeakPtr(),
+                     std::move(presentation_callback), std::move(plane_list)));
   page_flip_request_ = std::move(page_flip_request);
 }
 
@@ -166,18 +186,19 @@ bool HardwareDisplayController::ScheduleOrTestPageFlip(
 
   bool status = true;
   for (const auto& controller : crtc_controllers_) {
-    status &= controller->AssignOverlayPlanes(&owned_hardware_planes_,
-                                              pending_planes);
+    status &= controller->AssignOverlayPlanes(
+        &owned_hardware_planes_, pending_planes, /*is_modesetting=*/false);
   }
 
   status &= GetDrmDevice()->plane_manager()->Commit(
-      &owned_hardware_planes_, page_flip_request, out_fence);
+      &owned_hardware_planes_, /*should_modeset=*/false, page_flip_request,
+      out_fence);
 
   return status;
 }
 
 std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
-    uint32_t format) {
+    uint32_t format) const {
   std::vector<uint64_t> modifiers;
 
   if (crtc_controllers_.empty())
@@ -200,7 +221,7 @@ std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
 
 std::vector<uint64_t>
 HardwareDisplayController::GetFormatModifiersForModesetting(
-    uint32_t fourcc_format) {
+    uint32_t fourcc_format) const {
   const auto& modifiers = GetFormatModifiers(fourcc_format);
   std::vector<uint64_t> filtered_modifiers;
   for (auto modifier : modifiers) {
@@ -347,6 +368,7 @@ void HardwareDisplayController::OnModesetComplete(
   // pending planes to the same values so that the callback keeps the correct
   // state.
   page_flip_request_ = nullptr;
+  owned_hardware_planes_.legacy_page_flips.clear();
   current_planes_.clear();
   current_planes_.push_back(primary.Clone());
   time_of_last_flip_ = base::TimeTicks::Now();

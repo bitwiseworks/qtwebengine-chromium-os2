@@ -13,12 +13,13 @@
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/viz/test/test_context_provider.h"
-#include "components/viz/test/test_gles2_interface.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
-#include "gpu/GLES2/gl2extchromium.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
+#include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/command_buffer/common/sync_token.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/khronos/GLES2/gl2ext.h"
 #include "ui/display/types/display_snapshot.h"
 
 using ::testing::_;
@@ -27,6 +28,20 @@ using ::testing::Ne;
 using ::testing::Return;
 
 namespace viz {
+
+namespace {
+
+constexpr gfx::BufferFormat kBufferQueueFormat = gfx::BufferFormat::RGBA_8888;
+constexpr gfx::ColorSpace kBufferQueueColorSpace =
+    gfx::ColorSpace::CreateSRGB();
+
+}  // namespace
+
+class FakeSyncTokenProvider : public BufferQueue::SyncTokenProvider {
+ public:
+  ~FakeSyncTokenProvider() override = default;
+  gpu::SyncToken GenSyncToken() override { return gpu::SyncToken(); }
+};
 
 class StubGpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
  public:
@@ -38,9 +53,7 @@ class StubGpuMemoryBufferImpl : public gfx::GpuMemoryBuffer {
   void* memory(size_t plane) override { return nullptr; }
   void Unmap() override {}
   gfx::Size GetSize() const override { return gfx::Size(); }
-  gfx::BufferFormat GetFormat() const override {
-    return gfx::BufferFormat::BGRX_8888;
-  }
+  gfx::BufferFormat GetFormat() const override { return kBufferQueueFormat; }
   int stride(size_t plane) const override { return 0; }
   gfx::GpuMemoryBufferType GetType() const override {
     return gfx::EMPTY_BUFFER;
@@ -101,49 +114,32 @@ const gpu::SurfaceHandle kFakeSurfaceHandle =
 const gpu::SurfaceHandle kFakeSurfaceHandle = 1;
 #endif
 
-const unsigned int kBufferQueueInternalformat = GL_RGBA;
-const gfx::BufferFormat kBufferQueueFormat = gfx::BufferFormat::RGBA_8888;
-
-class MockBufferQueue : public BufferQueue {
+class BufferQueueTest : public ::testing::Test,
+                        public BufferQueue::SyncTokenProvider {
  public:
-  MockBufferQueue(gpu::gles2::GLES2Interface* gl,
-                  gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
-                  unsigned int target,
-                  unsigned int internalformat)
-      : BufferQueue(gl,
-                    target,
-                    kBufferQueueInternalformat,
-                    kBufferQueueFormat,
-                    gpu_memory_buffer_manager,
-                    kFakeSurfaceHandle) {}
-  MOCK_METHOD4(CopyBufferDamage,
-               void(int, int, const gfx::Rect&, const gfx::Rect&));
-};
-
-class BufferQueueTest : public ::testing::Test {
- public:
-  BufferQueueTest() : doublebuffering_(true), first_frame_(true) {}
+  BufferQueueTest() = default;
 
   void SetUp() override {
-    InitWithContext(std::make_unique<TestGLES2Interface>());
+    InitWithSharedImageInterface(std::make_unique<TestSharedImageInterface>());
   }
 
-  void InitWithContext(std::unique_ptr<TestGLES2Interface> context) {
-    context_provider_ = TestContextProvider::Create(std::move(context));
+  void TearDown() override { output_surface_.reset(); }
+
+  gpu::SyncToken GenSyncToken() override { return gpu::SyncToken(); }
+
+  void InitWithSharedImageInterface(
+      std::unique_ptr<TestSharedImageInterface> sii) {
+    context_provider_ = TestContextProvider::Create(std::move(sii));
     context_provider_->BindToCurrentThread();
-    gpu_memory_buffer_manager_.reset(new StubGpuMemoryBufferManager);
-    mock_output_surface_ = new MockBufferQueue(context_provider_->ContextGL(),
-                                               gpu_memory_buffer_manager_.get(),
-                                               GL_TEXTURE_2D,
-                                               kBufferQueueInternalformat);
-    output_surface_.reset(mock_output_surface_);
-    output_surface_->Initialize();
+    output_surface_.reset(new BufferQueue(
+        context_provider_->SharedImageInterface(), kFakeSurfaceHandle));
+    output_surface_->SetSyncTokenProvider(this);
   }
 
-  unsigned current_surface() {
+  gpu::Mailbox current_surface() {
     return output_surface_->current_surface_
-               ? output_surface_->current_surface_->image
-               : 0;
+               ? output_surface_->current_surface_->mailbox
+               : gpu::Mailbox();
   }
   const std::vector<std::unique_ptr<BufferQueue::AllocatedSurface>>&
   available_surfaces() {
@@ -168,44 +164,46 @@ class BufferQueueTest : public ::testing::Test {
   int CountBuffers() {
     int n = available_surfaces().size() + in_flight_surfaces().size() +
             (displayed_frame() ? 1 : 0);
-    if (current_surface())
+    if (!current_surface().IsZero())
       n++;
     return n;
   }
 
   // Check that each buffer is unique if present.
   void CheckUnique() {
-    std::set<unsigned> buffers;
+    std::set<gpu::Mailbox> buffers;
     EXPECT_TRUE(InsertUnique(&buffers, current_surface()));
     if (displayed_frame())
-      EXPECT_TRUE(InsertUnique(&buffers, displayed_frame()->image));
+      EXPECT_TRUE(InsertUnique(&buffers, displayed_frame()->mailbox));
     for (auto& surface : available_surfaces())
-      EXPECT_TRUE(InsertUnique(&buffers, surface->image));
+      EXPECT_TRUE(InsertUnique(&buffers, surface->mailbox));
     for (auto& surface : in_flight_surfaces()) {
       if (surface)
-        EXPECT_TRUE(InsertUnique(&buffers, surface->image));
+        EXPECT_TRUE(InsertUnique(&buffers, surface->mailbox));
     }
   }
 
-  void SwapBuffers() {
-    output_surface_->SwapBuffers(gfx::Rect(output_surface_->size_));
+  void SwapBuffers(const gfx::Rect& damage) {
+    output_surface_->SwapBuffers(damage);
   }
+
+  void SwapBuffers() { SwapBuffers(gfx::Rect(output_surface_->size_)); }
 
   void SendDamagedFrame(const gfx::Rect& damage) {
     // We don't care about the GL-level implementation here, just how it uses
     // damage rects.
-    output_surface_->BindFramebuffer();
-    output_surface_->SwapBuffers(damage);
-    if (doublebuffering_ || !first_frame_)
-      output_surface_->PageFlipComplete();
-    first_frame_ = false;
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
+    SwapBuffers(damage);
+    output_surface_->PageFlipComplete();
   }
 
   void SendFullFrame() { SendDamagedFrame(gfx::Rect(output_surface_->size_)); }
 
  protected:
-  bool InsertUnique(std::set<unsigned>* set, unsigned value) {
-    if (!value)
+  bool InsertUnique(std::set<gpu::Mailbox>* set, gpu::Mailbox value) {
+    if (value.IsZero())
       return true;
     if (set->find(value) != set->end())
       return false;
@@ -214,163 +212,108 @@ class BufferQueueTest : public ::testing::Test {
   }
 
   scoped_refptr<TestContextProvider> context_provider_;
-  std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager_;
   std::unique_ptr<BufferQueue> output_surface_;
-  MockBufferQueue* mock_output_surface_;
-  bool doublebuffering_;
-  bool first_frame_;
 };
 
-namespace {
 const gfx::Size screen_size = gfx::Size(30, 30);
 const gfx::Rect screen_rect = gfx::Rect(screen_size);
 const gfx::Rect small_damage = gfx::Rect(gfx::Size(10, 10));
 const gfx::Rect large_damage = gfx::Rect(gfx::Size(20, 20));
 const gfx::Rect overlapping_damage = gfx::Rect(gfx::Size(5, 20));
 
-GLuint CreateImageDefault() {
-  static GLuint id = 0;
-  return ++id;
-}
-
-class MockedContext : public TestGLES2Interface {
+class MockedSharedImageInterface : public TestSharedImageInterface {
  public:
-  MockedContext() {
-    ON_CALL(*this, CreateImageCHROMIUM(_, _, _, _))
-        .WillByDefault(testing::InvokeWithoutArgs(&CreateImageDefault));
+  MockedSharedImageInterface() {
+    ON_CALL(*this, CreateSharedImage(_, _, _, _, _))
+        .WillByDefault(Return(gpu::Mailbox()));
+    // this, &MockedSharedImageInterface::TestCreateSharedImage));
   }
-  MOCK_METHOD2(BindFramebuffer, void(GLenum, GLuint));
-  MOCK_METHOD2(BindTexture, void(GLenum, GLuint));
-  MOCK_METHOD2(BindTexImage2DCHROMIUM, void(GLenum, GLint));
-  MOCK_METHOD4(CreateImageCHROMIUM,
-               GLuint(ClientBuffer, GLsizei, GLsizei, GLenum));
-  MOCK_METHOD1(DestroyImageCHROMIUM, void(GLuint));
-  MOCK_METHOD5(FramebufferTexture2D,
-               void(GLenum, GLenum, GLenum, GLuint, GLint));
+  MOCK_METHOD5(CreateSharedImage,
+               gpu::Mailbox(ResourceFormat format,
+                            const gfx::Size& size,
+                            const gfx::ColorSpace& color_space,
+                            uint32_t usage,
+                            gpu::SurfaceHandle surface_handle));
+  MOCK_METHOD2(UpdateSharedImage,
+               void(const gpu::SyncToken& sync_token,
+                    const gpu::Mailbox& mailbox));
+  MOCK_METHOD2(DestroySharedImage,
+               void(const gpu::SyncToken& sync_token,
+                    const gpu::Mailbox& mailbox));
+  // Use this to call CreateSharedImage() defined in TestSharedImageInterface.
+  gpu::Mailbox TestCreateSharedImage(ResourceFormat format,
+                                     const gfx::Size& size,
+                                     const gfx::ColorSpace& color_space,
+                                     uint32_t usage,
+                                     gpu::SurfaceHandle surface_handle) {
+    return TestSharedImageInterface::CreateSharedImage(
+        format, size, color_space, usage, surface_handle);
+  }
 };
 
-class BufferQueueMockedContextTest : public BufferQueueTest {
+class BufferQueueMockedSharedImageInterfaceTest : public BufferQueueTest {
  public:
   void SetUp() override {
-    context_ = new MockedContext();
-    InitWithContext(base::WrapUnique<TestGLES2Interface>(context_));
+    sii_ = new MockedSharedImageInterface();
+    InitWithSharedImageInterface(
+        base::WrapUnique<TestSharedImageInterface>(sii_));
   }
 
  protected:
-  MockedContext* context_;
+  MockedSharedImageInterface* sii_;
 };
 
-scoped_refptr<TestContextProvider> CreateMockedContextProvider(
-    MockedContext** context) {
-  std::unique_ptr<MockedContext> owned_context(new MockedContext);
-  *context = owned_context.get();
+scoped_refptr<TestContextProvider> CreateMockedSharedImageInterfaceProvider(
+    MockedSharedImageInterface** sii) {
+  std::unique_ptr<MockedSharedImageInterface> owned_sii(
+      new MockedSharedImageInterface);
+  *sii = owned_sii.get();
   scoped_refptr<TestContextProvider> context_provider =
-      TestContextProvider::Create(std::move(owned_context));
+      TestContextProvider::Create(std::move(owned_sii));
   context_provider->BindToCurrentThread();
   return context_provider;
 }
 
 std::unique_ptr<BufferQueue> CreateBufferQueue(
-    unsigned int target,
-    gpu::gles2::GLES2Interface* gl,
-    gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager) {
-  std::unique_ptr<BufferQueue> buffer_queue(new BufferQueue(
-      gl, target, kBufferQueueInternalformat, kBufferQueueFormat,
-      gpu_memory_buffer_manager, kFakeSurfaceHandle));
-  buffer_queue->Initialize();
+    gpu::SharedImageInterface* sii,
+    BufferQueue::SyncTokenProvider* sync_token_provider) {
+  std::unique_ptr<BufferQueue> buffer_queue(
+      new BufferQueue(sii, kFakeSurfaceHandle));
+  buffer_queue->SetSyncTokenProvider(sync_token_provider);
   return buffer_queue;
 }
 
-TEST(BufferQueueStandaloneTest, FboInitialization) {
-  MockedContext* context;
+TEST(BufferQueueStandaloneTest, BufferCreationAndDestruction) {
+  MockedSharedImageInterface* sii;
   scoped_refptr<TestContextProvider> context_provider =
-      CreateMockedContextProvider(&context);
-  std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager(
-      new StubGpuMemoryBufferManager);
-  std::unique_ptr<BufferQueue> output_surface =
-      CreateBufferQueue(GL_TEXTURE_2D, context_provider->ContextGL(),
-                        gpu_memory_buffer_manager.get());
+      CreateMockedSharedImageInterfaceProvider(&sii);
+  std::unique_ptr<BufferQueue::SyncTokenProvider> sync_token_provider(
+      new FakeSyncTokenProvider);
+  std::unique_ptr<BufferQueue> output_surface = CreateBufferQueue(
+      context_provider->SharedImageInterface(), sync_token_provider.get());
 
-  EXPECT_CALL(*context, BindFramebuffer(GL_FRAMEBUFFER, Ne(0U)));
-  ON_CALL(*context, FramebufferTexture2D(_, _, _, _, _))
-      .WillByDefault(Return());
+  EXPECT_TRUE(output_surface->Reshape(screen_size, kBufferQueueColorSpace,
+                                      kBufferQueueFormat));
 
-  output_surface->Reshape(gfx::Size(10, 20), 1.0f, gfx::ColorSpace(), false);
-}
-
-TEST(BufferQueueStandaloneTest, FboBinding) {
-  GLenum targets[] = {GL_TEXTURE_2D, GL_TEXTURE_RECTANGLE_ARB};
-  for (size_t i = 0; i < 2; ++i) {
-    GLenum target = targets[i];
-
-    MockedContext* context;
-    scoped_refptr<TestContextProvider> context_provider =
-        CreateMockedContextProvider(&context);
-    std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager(
-        new StubGpuMemoryBufferManager);
-    std::unique_ptr<BufferQueue> output_surface = CreateBufferQueue(
-        target, context_provider->ContextGL(), gpu_memory_buffer_manager.get());
-
-    EXPECT_CALL(*context, BindTexture(target, Ne(0U)));
-    EXPECT_CALL(*context, DestroyImageCHROMIUM(1));
-    Expectation image =
-        EXPECT_CALL(*context,
-                    CreateImageCHROMIUM(_, 0, 0, kBufferQueueInternalformat))
-            .WillOnce(Return(1));
-    Expectation fb =
-        EXPECT_CALL(*context, BindFramebuffer(GL_FRAMEBUFFER, Ne(0U)));
-    Expectation tex = EXPECT_CALL(*context, BindTexture(target, Ne(0U)));
-    Expectation bind_tex =
-        EXPECT_CALL(*context, BindTexImage2DCHROMIUM(target, 1))
-            .After(tex, image);
-    EXPECT_CALL(*context,
-                FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                     target, Ne(0U), _))
-        .After(fb, bind_tex);
-
-    output_surface->BindFramebuffer();
+  const gpu::Mailbox expected_mailbox = gpu::Mailbox::GenerateForSharedImage();
+  {
+    testing::InSequence dummy;
+    EXPECT_CALL(*sii, CreateSharedImage(
+                          _, _, _,
+                          gpu::SHARED_IMAGE_USAGE_SCANOUT |
+                              gpu::SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT,
+                          _))
+        .WillOnce(Return(expected_mailbox));
+    EXPECT_CALL(*sii, DestroySharedImage(_, expected_mailbox));
   }
-}
-
-TEST(BufferQueueStandaloneTest, CheckBoundFramebuffer) {
-  scoped_refptr<TestContextProvider> context_provider =
-      TestContextProvider::Create();
-  context_provider->BindToCurrentThread();
-  std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager;
-  std::unique_ptr<BufferQueue> output_surface;
-  gpu_memory_buffer_manager.reset(new StubGpuMemoryBufferManager);
-
-  output_surface.reset(new BufferQueue(
-      context_provider->ContextGL(), GL_TEXTURE_2D,
-      kBufferQueueInternalformat, kBufferQueueFormat,
-      gpu_memory_buffer_manager.get(), kFakeSurfaceHandle));
-  output_surface->Initialize();
-  output_surface->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
-  // Trigger a sub-buffer copy to exercise all paths.
-  output_surface->BindFramebuffer();
-  output_surface->SwapBuffers(screen_rect);
-  output_surface->PageFlipComplete();
-  output_surface->BindFramebuffer();
-  output_surface->SwapBuffers(small_damage);
-
-  int current_fbo = 0;
-  context_provider->ContextGL()->GetIntegerv(GL_FRAMEBUFFER_BINDING,
-                                             &current_fbo);
-  EXPECT_EQ(static_cast<int>(output_surface->fbo()), current_fbo);
+  gpu::SyncToken creation_sync_token;
+  EXPECT_EQ(expected_mailbox,
+            output_surface->GetCurrentBuffer(&creation_sync_token));
 }
 
 TEST_F(BufferQueueTest, PartialSwapReuse) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
-  ASSERT_TRUE(doublebuffering_);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, small_damage, screen_rect))
-      .Times(1);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, small_damage, small_damage))
-      .Times(1);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, large_damage, small_damage))
-      .Times(1);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   SendFullFrame();
   SendDamagedFrame(small_damage);
   SendDamagedFrame(small_damage);
@@ -380,11 +323,8 @@ TEST_F(BufferQueueTest, PartialSwapReuse) {
 }
 
 TEST_F(BufferQueueTest, PartialSwapFullFrame) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
-  ASSERT_TRUE(doublebuffering_);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, small_damage, screen_rect))
-      .Times(1);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   SendFullFrame();
   SendDamagedFrame(small_damage);
   SendFullFrame();
@@ -392,15 +332,40 @@ TEST_F(BufferQueueTest, PartialSwapFullFrame) {
   EXPECT_EQ(next_frame()->damage, screen_rect);
 }
 
+// Make sure that each time we swap buffers, the damage gets propagated to the
+// previously swapped buffers.
+TEST_F(BufferQueueTest, PartialSwapWithTripleBuffering) {
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
+  SendFullFrame();
+  SendFullFrame();
+  // Let's triple buffer.
+  gpu::SyncToken creation_sync_token;
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
+  SwapBuffers(small_damage);
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
+  EXPECT_EQ(3, CountBuffers());
+  // The whole buffer needs to be redrawn since it's a newly allocated buffer
+  EXPECT_EQ(output_surface_->CurrentBufferDamage(), screen_rect);
+
+  SendDamagedFrame(overlapping_damage);
+  // The next buffer should include damage from |overlapping_damage| and
+  // |small_damage|.
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
+  const auto current_buffer_damage = output_surface_->CurrentBufferDamage();
+  EXPECT_TRUE(current_buffer_damage.Contains(overlapping_damage));
+  EXPECT_TRUE(current_buffer_damage.Contains(small_damage));
+
+  // Let's make sure the damage is not trivially the whole screen.
+  EXPECT_NE(current_buffer_damage, screen_rect);
+}
+
 TEST_F(BufferQueueTest, PartialSwapOverlapping) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
-  ASSERT_TRUE(doublebuffering_);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, small_damage, screen_rect))
-      .Times(1);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(_, _, overlapping_damage, small_damage))
-      .Times(1);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
 
   SendFullFrame();
   SendDamagedFrame(small_damage);
@@ -408,45 +373,57 @@ TEST_F(BufferQueueTest, PartialSwapOverlapping) {
   EXPECT_EQ(next_frame()->damage, overlapping_damage);
 }
 
-TEST_F(BufferQueueTest, MultipleBindCalls) {
+TEST_F(BufferQueueTest, MultipleGetCurrentBufferCalls) {
+  // It is not valid to call GetCurrentBuffer without having set an initial
+  // size via Reshape.
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   // Check that multiple bind calls do not create or change surfaces.
-  output_surface_->BindFramebuffer();
+  gpu::SyncToken creation_sync_token;
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(1, CountBuffers());
-  unsigned int fb = current_surface();
-  output_surface_->BindFramebuffer();
+  gpu::Mailbox fb = current_surface();
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(1, CountBuffers());
   EXPECT_EQ(fb, current_surface());
 }
 
 TEST_F(BufferQueueTest, CheckDoubleBuffering) {
   // Check buffer flow through double buffering path.
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   EXPECT_EQ(0, CountBuffers());
-  output_surface_->BindFramebuffer();
+  gpu::SyncToken creation_sync_token;
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(1, CountBuffers());
-  EXPECT_NE(0U, current_surface());
+  EXPECT_FALSE(current_surface().IsZero());
   EXPECT_FALSE(displayed_frame());
   SwapBuffers();
   EXPECT_EQ(1U, in_flight_surfaces().size());
   output_surface_->PageFlipComplete();
   EXPECT_EQ(0U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
-  output_surface_->BindFramebuffer();
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(2, CountBuffers());
   CheckUnique();
-  EXPECT_NE(0U, current_surface());
+  EXPECT_FALSE(current_surface().IsZero());
   EXPECT_EQ(0U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
   SwapBuffers();
   CheckUnique();
   EXPECT_EQ(1U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
   output_surface_->PageFlipComplete();
   CheckUnique();
   EXPECT_EQ(0U, in_flight_surfaces().size());
   EXPECT_EQ(1U, available_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
-  output_surface_->BindFramebuffer();
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(2, CountBuffers());
   CheckUnique();
   EXPECT_TRUE(available_surfaces().empty());
@@ -454,50 +431,63 @@ TEST_F(BufferQueueTest, CheckDoubleBuffering) {
 
 TEST_F(BufferQueueTest, CheckTripleBuffering) {
   // Check buffer flow through triple buffering path.
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
 
   // This bit is the same sequence tested in the doublebuffering case.
-  output_surface_->BindFramebuffer();
+  gpu::SyncToken creation_sync_token;
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_FALSE(displayed_frame());
   SwapBuffers();
   output_surface_->PageFlipComplete();
-  output_surface_->BindFramebuffer();
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   SwapBuffers();
 
   EXPECT_EQ(2, CountBuffers());
   CheckUnique();
   EXPECT_EQ(1U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
-  output_surface_->BindFramebuffer();
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_EQ(3, CountBuffers());
   CheckUnique();
-  EXPECT_NE(0U, current_surface());
+  EXPECT_FALSE(current_surface().IsZero());
   EXPECT_EQ(1U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
   output_surface_->PageFlipComplete();
   EXPECT_EQ(3, CountBuffers());
   CheckUnique();
-  EXPECT_NE(0U, current_surface());
+  EXPECT_FALSE(current_surface().IsZero());
   EXPECT_EQ(0U, in_flight_surfaces().size());
-  EXPECT_TRUE(displayed_frame()->texture);
+  EXPECT_FALSE(displayed_frame()->mailbox.IsZero());
   EXPECT_EQ(1U, available_surfaces().size());
 }
 
 TEST_F(BufferQueueTest, CheckEmptySwap) {
+  // It is not valid to call GetCurrentBuffer without having set an initial
+  // size via Reshape.
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   // Check empty swap flow, in which the damage is empty and BindFramebuffer
   // might not be called.
   EXPECT_EQ(0, CountBuffers());
-  output_surface_->BindFramebuffer();
+  gpu::SyncToken creation_sync_token;
+  gpu::Mailbox mailbox =
+      output_surface_->GetCurrentBuffer(&creation_sync_token);
+  EXPECT_FALSE(mailbox.IsZero());
   EXPECT_EQ(1, CountBuffers());
-  EXPECT_NE(0U, current_surface());
+  EXPECT_FALSE(current_surface().IsZero());
   EXPECT_FALSE(displayed_frame());
 
-  // This is the texture to scanout.
-  uint32_t texture_id = output_surface_->GetCurrentTextureId();
   SwapBuffers();
-  // Make sure we won't be drawing to the texture we just sent for scanout.
-  output_surface_->BindFramebuffer();
-  EXPECT_NE(texture_id, output_surface_->GetCurrentTextureId());
+  // Make sure we won't be drawing to the buffer we just sent for scanout.
+  gpu::SyncToken new_creation_sync_token;
+  gpu::Mailbox new_mailbox =
+      output_surface_->GetCurrentBuffer(&new_creation_sync_token);
+  EXPECT_FALSE(new_mailbox.IsZero());
+  EXPECT_NE(mailbox, new_mailbox);
 
   EXPECT_EQ(1U, in_flight_surfaces().size());
   output_surface_->PageFlipComplete();
@@ -516,30 +506,37 @@ TEST_F(BufferQueueTest, CheckEmptySwap) {
 }
 
 TEST_F(BufferQueueTest, CheckCorrectBufferOrdering) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   const size_t kSwapCount = 3;
   for (size_t i = 0; i < kSwapCount; ++i) {
-    output_surface_->BindFramebuffer();
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
     SwapBuffers();
   }
 
   EXPECT_EQ(kSwapCount, in_flight_surfaces().size());
   for (size_t i = 0; i < kSwapCount; ++i) {
-    unsigned int next_texture_id = in_flight_surfaces().front()->texture;
+    gpu::Mailbox next_mailbox = in_flight_surfaces().front()->mailbox;
     output_surface_->PageFlipComplete();
-    EXPECT_EQ(displayed_frame()->texture, next_texture_id);
+    EXPECT_EQ(displayed_frame()->mailbox, next_mailbox);
   }
 }
 
 TEST_F(BufferQueueTest, ReshapeWithInFlightSurfaces) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   const size_t kSwapCount = 3;
   for (size_t i = 0; i < kSwapCount; ++i) {
-    output_surface_->BindFramebuffer();
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
     SwapBuffers();
   }
 
-  output_surface_->Reshape(gfx::Size(10, 20), 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(
+      gfx::Size(10, 20), kBufferQueueColorSpace, kBufferQueueFormat));
   EXPECT_EQ(3u, in_flight_surfaces().size());
 
   for (size_t i = 0; i < kSwapCount; ++i) {
@@ -552,24 +549,25 @@ TEST_F(BufferQueueTest, ReshapeWithInFlightSurfaces) {
 }
 
 TEST_F(BufferQueueTest, SwapAfterReshape) {
-  DCHECK_EQ(0u, gpu_memory_buffer_manager_->set_color_space_count());
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
   const size_t kSwapCount = 3;
   for (size_t i = 0; i < kSwapCount; ++i) {
-    output_surface_->BindFramebuffer();
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
     SwapBuffers();
   }
-  DCHECK_EQ(kSwapCount, gpu_memory_buffer_manager_->set_color_space_count());
 
-  output_surface_->Reshape(gfx::Size(10, 20), 1.0f, gfx::ColorSpace(), false);
-  DCHECK_EQ(kSwapCount, gpu_memory_buffer_manager_->set_color_space_count());
+  EXPECT_TRUE(output_surface_->Reshape(
+      gfx::Size(10, 20), kBufferQueueColorSpace, kBufferQueueFormat));
 
   for (size_t i = 0; i < kSwapCount; ++i) {
-    output_surface_->BindFramebuffer();
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
     SwapBuffers();
   }
-  DCHECK_EQ(2 * kSwapCount,
-            gpu_memory_buffer_manager_->set_color_space_count());
   EXPECT_EQ(2 * kSwapCount, in_flight_surfaces().size());
 
   for (size_t i = 0; i < kSwapCount; ++i) {
@@ -580,150 +578,66 @@ TEST_F(BufferQueueTest, SwapAfterReshape) {
   CheckUnique();
 
   for (size_t i = 0; i < kSwapCount; ++i) {
-    unsigned int next_texture_id = in_flight_surfaces().front()->texture;
+    gpu::Mailbox next_mailbox = in_flight_surfaces().front()->mailbox;
     output_surface_->PageFlipComplete();
-    EXPECT_EQ(displayed_frame()->texture, next_texture_id);
+    EXPECT_EQ(displayed_frame()->mailbox, next_mailbox);
     EXPECT_TRUE(displayed_frame());
   }
 
-  DCHECK_EQ(2 * kSwapCount,
-            gpu_memory_buffer_manager_->set_color_space_count());
   for (size_t i = 0; i < kSwapCount; ++i) {
-    output_surface_->BindFramebuffer();
+    gpu::SyncToken creation_sync_token;
+    EXPECT_FALSE(
+        output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
     SwapBuffers();
     output_surface_->PageFlipComplete();
   }
-  DCHECK_EQ(2 * kSwapCount,
-            gpu_memory_buffer_manager_->set_color_space_count());
 }
 
-TEST_F(BufferQueueMockedContextTest, RecreateBuffers) {
-  // This setup is to easily get one frame in each of:
-  // - currently bound for drawing.
-  // - in flight to GPU.
-  // - currently displayed.
-  // - free frame.
-  // This tests buffers in all states.
-  // Bind/swap pushes frames into the in flight list, then the PageFlipComplete
-  // calls pull one frame into displayed and another into the free list.
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
-  output_surface_->BindFramebuffer();
-  SwapBuffers();
-  output_surface_->BindFramebuffer();
-  SwapBuffers();
-  output_surface_->BindFramebuffer();
-  SwapBuffers();
-  output_surface_->BindFramebuffer();
-  output_surface_->PageFlipComplete();
-  output_surface_->PageFlipComplete();
-  // We should have one buffer in each possible state right now, including one
-  // being drawn to.
-  ASSERT_EQ(1U, in_flight_surfaces().size());
-  ASSERT_EQ(1U, available_surfaces().size());
-  EXPECT_TRUE(displayed_frame());
-  EXPECT_TRUE(current_frame());
+TEST_F(BufferQueueMockedSharedImageInterfaceTest, AllocateFails) {
+  const gpu::Mailbox expected_mailbox = gpu::Mailbox::GenerateForSharedImage();
+  EXPECT_TRUE(output_surface_->Reshape(screen_size, kBufferQueueColorSpace,
+                                       kBufferQueueFormat));
+  EXPECT_CALL(*sii_, CreateSharedImage(
+                         _, _, _,
+                         gpu::SHARED_IMAGE_USAGE_SCANOUT |
+                             gpu::SHARED_IMAGE_USAGE_GLES2_FRAMEBUFFER_HINT,
+                         _))
+      .WillOnce(Return(expected_mailbox))
+      .WillOnce(Return(gpu::Mailbox()))  // Fail the next surface allocation.
+      .WillRepeatedly(Return(expected_mailbox));
 
-  auto* current = current_frame();
-  auto* displayed = displayed_frame();
-  auto* in_flight = in_flight_surfaces().front().get();
-  auto* available = available_surfaces().front().get();
-
-  // Expect all 4 images to be destroyed, 3 of the existing textures to be
-  // copied from and 3 new images to be created.
-  EXPECT_CALL(*context_,
-              CreateImageCHROMIUM(_, screen_size.width(), screen_size.height(),
-                                  kBufferQueueInternalformat))
-      .Times(3);
-  Expectation copy1 = EXPECT_CALL(*mock_output_surface_,
-                                  CopyBufferDamage(_, displayed->texture, _, _))
-                          .Times(1);
-  Expectation copy2 = EXPECT_CALL(*mock_output_surface_,
-                                  CopyBufferDamage(_, current->texture, _, _))
-                          .Times(1);
-  Expectation copy3 = EXPECT_CALL(*mock_output_surface_,
-                                  CopyBufferDamage(_, in_flight->texture, _, _))
-                          .Times(1);
-
-  EXPECT_CALL(*context_, DestroyImageCHROMIUM(displayed->image))
-      .Times(1)
-      .After(copy1);
-  EXPECT_CALL(*context_, DestroyImageCHROMIUM(current->image))
-      .Times(1)
-      .After(copy2);
-  EXPECT_CALL(*context_, DestroyImageCHROMIUM(in_flight->image))
-      .Times(1)
-      .After(copy3);
-  EXPECT_CALL(*context_, DestroyImageCHROMIUM(available->image)).Times(1);
-  // After copying, we expect the framebuffer binding to be updated.
-  EXPECT_CALL(*context_, BindFramebuffer(_, _))
-      .After(copy1)
-      .After(copy2)
-      .After(copy3);
-  EXPECT_CALL(*context_, FramebufferTexture2D(_, _, _, _, _))
-      .After(copy1)
-      .After(copy2)
-      .After(copy3);
-
-  output_surface_->RecreateBuffers();
-  testing::Mock::VerifyAndClearExpectations(context_);
-  testing::Mock::VerifyAndClearExpectations(mock_output_surface_);
-
-  // All free buffers should be destroyed, the remaining buffers should all
-  // be replaced but still valid.
-  EXPECT_EQ(1U, in_flight_surfaces().size());
-  EXPECT_EQ(0U, available_surfaces().size());
-  EXPECT_TRUE(displayed_frame());
-  EXPECT_TRUE(current_frame());
-}
-
-TEST_F(BufferQueueTest, AllocateFails) {
-  output_surface_->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
+  EXPECT_CALL(*sii_, DestroySharedImage(_, expected_mailbox)).Times(3);
 
   // Succeed in the two swaps.
-  output_surface_->BindFramebuffer();
+  gpu::SyncToken creation_sync_token;
+  const gpu::Mailbox result_mailbox =
+      output_surface_->GetCurrentBuffer(&creation_sync_token);
+  EXPECT_FALSE(result_mailbox.IsZero());
+  EXPECT_EQ(result_mailbox, expected_mailbox);
   EXPECT_TRUE(current_frame());
-  output_surface_->SwapBuffers(screen_rect);
+  SwapBuffers(screen_rect);
 
-  // Fail the next surface allocation.
-  gpu_memory_buffer_manager_->set_allocate_succeeds(false);
-  output_surface_->BindFramebuffer();
+  EXPECT_TRUE(output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_FALSE(current_frame());
-  output_surface_->SwapBuffers(screen_rect);
+  SwapBuffers(screen_rect);
   EXPECT_FALSE(current_frame());
 
-  // Try another swap. It should copy the buffer damage from the back
-  // surface.
-  gpu_memory_buffer_manager_->set_allocate_succeeds(true);
-  output_surface_->BindFramebuffer();
-  unsigned int source_texture = in_flight_surfaces().front()->texture;
-  unsigned int target_texture = current_frame()->texture;
-  testing::Mock::VerifyAndClearExpectations(mock_output_surface_);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(target_texture, source_texture, small_damage, _))
-      .Times(1);
-  output_surface_->SwapBuffers(small_damage);
-  testing::Mock::VerifyAndClearExpectations(mock_output_surface_);
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
+  SwapBuffers(small_damage);
 
-  // Destroy the just-created buffer, and try another swap. The copy should
-  // come from the displayed surface (because both in-flight surfaces are
-  // gone now).
+  // Destroy the just-created buffer, and try another swap.
   output_surface_->PageFlipComplete();
-  in_flight_surfaces().back().reset();
+  output_surface_->FreeSurface(
+      std::move(output_surface_->in_flight_surfaces_.back()), gpu::SyncToken());
   EXPECT_EQ(2u, in_flight_surfaces().size());
   for (auto& surface : in_flight_surfaces())
     EXPECT_FALSE(surface);
-  output_surface_->BindFramebuffer();
-  source_texture = displayed_frame()->texture;
+  EXPECT_FALSE(
+      output_surface_->GetCurrentBuffer(&creation_sync_token).IsZero());
   EXPECT_TRUE(current_frame());
   EXPECT_TRUE(displayed_frame());
-  target_texture = current_frame()->texture;
-  testing::Mock::VerifyAndClearExpectations(mock_output_surface_);
-  EXPECT_CALL(*mock_output_surface_,
-              CopyBufferDamage(target_texture, source_texture, small_damage, _))
-      .Times(1);
-  output_surface_->SwapBuffers(small_damage);
-  testing::Mock::VerifyAndClearExpectations(mock_output_surface_);
+  SwapBuffers(small_damage);
 }
 
-}  // namespace
 }  // namespace viz

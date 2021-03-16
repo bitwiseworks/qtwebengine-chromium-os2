@@ -47,7 +47,7 @@ void StoreNoClientInfoBackup(const ClientInfo& /* client_info */) {
 }
 
 std::unique_ptr<ClientInfo> ReturnNoBackup() {
-  return std::unique_ptr<ClientInfo>();
+  return nullptr;
 }
 
 class TestMetricsService : public MetricsService {
@@ -62,7 +62,24 @@ class TestMetricsService : public MetricsService {
   using MetricsService::log_store;
   using MetricsService::RecordCurrentEnvironmentHelper;
 
+  // MetricsService:
+  void SetPersistentSystemProfile(const std::string& serialized_proto,
+                                  bool complete) override {
+    persistent_system_profile_provided_ = true;
+    persistent_system_profile_complete_ = complete;
+  }
+
+  bool persistent_system_profile_provided() const {
+    return persistent_system_profile_provided_;
+  }
+  bool persistent_system_profile_complete() const {
+    return persistent_system_profile_complete_;
+  }
+
  private:
+  bool persistent_system_profile_provided_ = false;
+  bool persistent_system_profile_complete_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(TestMetricsService);
 };
 
@@ -97,7 +114,8 @@ class MetricsServiceTest : public testing::Test {
     if (!metrics_state_manager_) {
       metrics_state_manager_ = MetricsStateManager::Create(
           GetLocalState(), enabled_state_provider_.get(), base::string16(),
-          base::Bind(&StoreNoClientInfoBackup), base::Bind(&ReturnNoBackup));
+          base::BindRepeating(&StoreNoClientInfoBackup),
+          base::BindRepeating(&ReturnNoBackup));
     }
     return metrics_state_manager_.get();
   }
@@ -345,7 +363,32 @@ TEST_F(MetricsServiceTest, MetricsProvidersInitialized) {
   EXPECT_TRUE(test_provider->init_called());
 }
 
+TEST_F(MetricsServiceTest, SystemProfileDataProvidedOnEnableRecording) {
+  EnableMetricsReporting();
+  TestMetricsServiceClient client;
+  TestMetricsService service(GetMetricsStateManager(), &client,
+                             GetLocalState());
+
+  TestMetricsProvider* test_provider = new TestMetricsProvider();
+  service.RegisterMetricsProvider(
+      std::unique_ptr<MetricsProvider>(test_provider));
+
+  service.InitializeMetricsRecordingState();
+
+  // ProvideSystemProfileMetrics() shouldn't be called initially.
+  EXPECT_FALSE(test_provider->provide_system_profile_metrics_called());
+  EXPECT_FALSE(service.persistent_system_profile_provided());
+
+  service.Start();
+
+  // Start should call ProvideSystemProfileMetrics().
+  EXPECT_TRUE(test_provider->provide_system_profile_metrics_called());
+  EXPECT_TRUE(service.persistent_system_profile_provided());
+  EXPECT_FALSE(service.persistent_system_profile_complete());
+}
+
 TEST_F(MetricsServiceTest, SplitRotation) {
+  EnableMetricsReporting();
   TestMetricsServiceClient client;
   TestMetricsService service(GetMetricsStateManager(), &client,
                              GetLocalState());
@@ -396,6 +439,7 @@ TEST_F(MetricsServiceTest, SplitRotation) {
 }
 
 TEST_F(MetricsServiceTest, LastLiveTimestamp) {
+  EnableMetricsReporting();
   TestMetricsServiceClient client;
   TestMetricsService service(GetMetricsStateManager(), &client,
                              GetLocalState());

@@ -42,6 +42,14 @@ enum WebAXExpanded {
   kWebAXExpandedExpanded
 };
 
+// Grabbed State.
+// These values must match blink::AccessibilityGrabbedState values.
+enum WebAXGrabbedState {
+  kWebAXGrabbedStateUndefined = 0,
+  kWebAXGrabbedStateFalse,
+  kWebAXGrabbedStateTrue
+};
+
 // Selected State.
 // These values must match blink::AccessibilitySelectedState values.
 enum WebAXSelectedState {
@@ -65,6 +73,13 @@ enum WebAXRestriction {
   kWebAXRestrictionDisabled,
 };
 
+// Autofill state.
+enum WebAXAutofillState {
+  kNoSuggestions = 0,
+  kAutofillAvailable,
+  kAutocompleteAvailable,
+};
+
 //
 // Sparse accessibility attributes
 //
@@ -84,6 +99,18 @@ enum class WebAXBoolAttribute {
   kAriaBusy,
 };
 
+enum class WebAXIntAttribute {
+  kAriaColumnCount,
+  kAriaRowCount,
+};
+
+enum class WebAXUIntAttribute {
+  kAriaColumnIndex,
+  kAriaColumnSpan,
+  kAriaRowIndex,
+  kAriaRowSpan,
+};
+
 // Sparse attributes of a WebAXObject whose value is a string.
 // In order for it to be a sparse attribute the default value
 // must be "".
@@ -97,7 +124,6 @@ enum class WebAXStringAttribute {
 // sparse attribute the default value must be the null WebAXObject.
 enum class WebAXObjectAttribute {
   kAriaActiveDescendant,
-  kAriaDetails,
   kAriaErrorMessage,
 };
 
@@ -107,6 +133,7 @@ enum class WebAXObjectAttribute {
 // empty vector.
 enum class WebAXObjectVectorAttribute {
   kAriaControls,
+  kAriaDetails,
   kAriaFlowTo,
 };
 

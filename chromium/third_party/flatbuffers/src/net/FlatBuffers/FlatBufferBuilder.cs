@@ -16,6 +16,7 @@
 
 
 using System;
+using System.Collections.Generic;
 using System.Text;
 
 /// @file
@@ -47,6 +48,9 @@ namespace FlatBuffers
         // For the current vector being built.
         private int _vectorNumElems = 0;
 
+        // For CreateSharedString
+        private Dictionary<string, StringOffset> _sharedStringMap = null;
+
         /// <summary>
         /// Create a FlatBufferBuilder with a given initial size.
         /// </summary>
@@ -60,6 +64,17 @@ namespace FlatBuffers
                     initialSize, "Must be greater than zero");
             _space = initialSize;
             _bb = new ByteBuffer(initialSize);
+        }
+
+        /// <summary>
+        /// Create a FlatBufferBuilder backed by the pased in ByteBuffer
+        /// </summary>
+        /// <param name="buffer">The ByteBuffer to write to</param>
+        public FlatBufferBuilder(ByteBuffer buffer)
+        {
+            _bb = buffer;
+            _space = buffer.Length;
+            buffer.Reset();
         }
 
         /// <summary>
@@ -180,7 +195,7 @@ namespace FlatBuffers
         }
 
         /// <summary>
-        /// Puts an array of type T into this builder at the 
+        /// Puts an array of type T into this builder at the
         /// current offset
         /// </summary>
         /// <typeparam name="T">The type of the input data </typeparam>
@@ -190,6 +205,20 @@ namespace FlatBuffers
         {
             _space = _bb.Put(_space, x);
         }
+
+#if ENABLE_SPAN_T
+        /// <summary>
+        /// Puts a span of type T into this builder at the
+        /// current offset
+        /// </summary>
+        /// <typeparam name="T">The type of the input data </typeparam>
+        /// <param name="x">The span to copy data from</param>
+        public void Put<T>(Span<T> x)
+            where T : struct
+        {
+            _space = _bb.Put(_space, x);
+        }
+#endif
 
         public void PutDouble(double x)
         {
@@ -288,6 +317,28 @@ namespace FlatBuffers
             Put(x);
         }
 
+#if ENABLE_SPAN_T
+        /// <summary>
+        /// Add a span of type T to the buffer (aligns the data and grows if necessary).
+        /// </summary>
+        /// <typeparam name="T">The type of the input data</typeparam>
+        /// <param name="x">The span to copy data from</param>
+        public void Add<T>(Span<T> x)
+            where T : struct
+        {
+            if (!ByteBuffer.IsSupportedType<T>())
+            {
+                throw new ArgumentException("Cannot add this Type array to the builder");
+            }
+
+            int size = ByteBuffer.SizeOf<T>();
+            // Need to prep on size (for data alignment) and then we pass the
+            // rest of the length (minus 1) as additional bytes
+            Prep(size, size * (x.Length - 1));
+            Put(x);
+        }
+#endif
+
         /// <summary>
         /// Add a `double` to the buffer (aligns the data and grows if necessary).
         /// </summary>
@@ -360,7 +411,7 @@ namespace FlatBuffers
                     "FlatBuffers: object serialization must not be nested.");
         }
 
-        public void StartObject(int numfields)
+        public void StartTable(int numfields)
         {
             if (numfields < 0)
                 throw new ArgumentOutOfRangeException("Flatbuffers: invalid numfields");
@@ -489,9 +540,9 @@ namespace FlatBuffers
         /// </summary>
         /// <param name="o">The index into the vtable</param>
         /// <param name="x">The value to put into the buffer. If the value is equal to the default
-        /// and <see cref="ForceDefaults"/> is false, the value will be skipped.</param>
+        /// the value will be skipped.</param>
         /// <param name="d">The default value to compare the value against</param>
-        public void AddOffset(int o, int x, int d) { if (ForceDefaults || x != d) { AddOffset(x); Slot(o); } }
+        public void AddOffset(int o, int x, int d) { if (x != d) { AddOffset(x); Slot(o); } }
         /// @endcond
 
         /// <summary>
@@ -511,6 +562,53 @@ namespace FlatBuffers
             return new StringOffset(EndVector().Value);
         }
 
+
+#if ENABLE_SPAN_T
+        /// <summary>
+        /// Creates a string in the buffer from a Span containing
+        /// a UTF8 string.
+        /// </summary>
+        /// <param name="chars">the UTF8 string to add to the buffer</param>
+        /// <returns>
+        /// The offset in the buffer where the encoded string starts.
+        /// </returns>
+        public StringOffset CreateUTF8String(Span<byte> chars)
+        {
+            NotNested();
+            AddByte(0);
+            var utf8StringLen = chars.Length;
+            StartVector(1, utf8StringLen, 1);
+            _space = _bb.Put(_space, chars);
+            return new StringOffset(EndVector().Value);
+        }
+#endif
+
+        /// <summary>
+        /// Store a string in the buffer, which can contain any binary data.
+        /// If a string with this exact contents has already been serialized before,
+        /// instead simply returns the offset of the existing string.
+        /// </summary>
+        /// <param name="s">The string to encode.</param>
+        /// <returns>
+        /// The offset in the buffer where the encoded string starts.
+        /// </returns>
+        public StringOffset CreateSharedString(string s)
+        {
+            if (_sharedStringMap == null)
+            {
+                _sharedStringMap = new Dictionary<string, StringOffset>();
+            }
+
+            if (_sharedStringMap.ContainsKey(s))
+            {
+                return _sharedStringMap[s];
+            }
+
+            var stringOffset = CreateString(s);
+            _sharedStringMap.Add(s, stringOffset);
+            return stringOffset;
+        }
+
         /// @cond FLATBUFFERS_INTERNAL
         // Structs are stored inline, so nothing additional is being added.
         // `d` is always 0.
@@ -523,11 +621,11 @@ namespace FlatBuffers
             }
         }
 
-        public int EndObject()
+        public int EndTable()
         {
             if (_vtableSize < 0)
                 throw new InvalidOperationException(
-                  "Flatbuffers: calling endObject without a startObject");
+                  "Flatbuffers: calling EndTable without a StartTable");
 
             AddInt((int)0);
             var vtableloc = Offset;
@@ -568,7 +666,7 @@ namespace FlatBuffers
                     break;
                 }
 
-            endLoop: { }
+                endLoop: { }
             }
 
             if (existingVtable != 0) {

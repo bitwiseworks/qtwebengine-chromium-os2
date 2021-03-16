@@ -42,7 +42,7 @@ static Error WinHttpErrorToNetError(DWORD win_http_error) {
     case ERROR_WINHTTP_OPERATION_CANCELLED:
     case ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT:
     case ERROR_WINHTTP_UNRECOGNIZED_SCHEME:
-      return ERR_PAC_STATUS_NOT_OK;
+      return ERR_HTTP_RESPONSE_CODE_FAILURE;
     case ERROR_NOT_ENOUGH_MEMORY:
       return ERR_INSUFFICIENT_RESOURCES;
     default:
@@ -57,6 +57,7 @@ class ProxyResolverWinHttp : public ProxyResolver {
 
   // ProxyResolver implementation:
   int GetProxyForURL(const GURL& url,
+                     const NetworkIsolationKey& network_isolation_key,
                      ProxyInfo* results,
                      CompletionOnceCallback /*callback*/,
                      std::unique_ptr<Request>* /*request*/,
@@ -76,7 +77,7 @@ class ProxyResolverWinHttp : public ProxyResolver {
 
 ProxyResolverWinHttp::ProxyResolverWinHttp(
     const scoped_refptr<PacFileData>& script_data)
-    : session_handle_(NULL),
+    : session_handle_(nullptr),
       pac_url_(script_data->type() == PacFileData::TYPE_AUTO_DETECT
                    ? GURL("http://wpad/wpad.dat")
                    : script_data->url()) {}
@@ -85,11 +86,13 @@ ProxyResolverWinHttp::~ProxyResolverWinHttp() {
   CloseWinHttpSession();
 }
 
-int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
-                                         ProxyInfo* results,
-                                         CompletionOnceCallback /*callback*/,
-                                         std::unique_ptr<Request>* /*request*/,
-                                         const NetLogWithSource& /*net_log*/) {
+int ProxyResolverWinHttp::GetProxyForURL(
+    const GURL& query_url,
+    const NetworkIsolationKey& network_isolation_key,
+    ProxyInfo* results,
+    CompletionOnceCallback /*callback*/,
+    std::unique_ptr<Request>* /*request*/,
+    const NetLogWithSource& /*net_log*/) {
   // If we don't have a WinHTTP session, then create a new one.
   if (!session_handle_ && !OpenWinHttpSession())
     return ERR_FAILED;
@@ -118,7 +121,7 @@ int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
   options.fAutoLogonIfChallenged = FALSE;
   options.dwFlags = WINHTTP_AUTOPROXY_CONFIG_URL;
   base::string16 pac_url16 = base::ASCIIToUTF16(pac_url_.spec());
-  options.lpszAutoConfigUrl = pac_url16.c_str();
+  options.lpszAutoConfigUrl = base::as_wcstr(pac_url16);
 
   WINHTTP_PROXY_INFO info = {0};
   DCHECK(session_handle_);
@@ -129,13 +132,15 @@ int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
   // get good performance in the case where WinHTTP uses an out-of-process
   // resolver.  This is important for Vista and Win2k3.
   BOOL ok = WinHttpGetProxyForUrl(
-      session_handle_, base::ASCIIToUTF16(mutable_query_url.spec()).c_str(),
-      &options, &info);
+      session_handle_,
+      base::as_wcstr(base::ASCIIToUTF16(mutable_query_url.spec())), &options,
+      &info);
   if (!ok) {
     if (ERROR_WINHTTP_LOGIN_FAILURE == GetLastError()) {
       options.fAutoLogonIfChallenged = TRUE;
       ok = WinHttpGetProxyForUrl(
-          session_handle_, base::ASCIIToUTF16(mutable_query_url.spec()).c_str(),
+          session_handle_,
+          base::as_wcstr(base::ASCIIToUTF16(mutable_query_url.spec())),
           &options, &info);
     }
     if (!ok) {
@@ -171,7 +176,7 @@ int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
       // things like "foopy1:80;foopy2:80". It strips out the non-HTTP
       // proxy types, and stops the list when PAC encounters a "DIRECT".
       // So UseNamedProxy() should work OK.
-      results->UseNamedProxy(base::UTF16ToASCII(info.lpszProxy));
+      results->UseNamedProxy(base::WideToUTF8(info.lpszProxy));
       break;
     default:
       NOTREACHED();
@@ -184,11 +189,9 @@ int ProxyResolverWinHttp::GetProxyForURL(const GURL& query_url,
 
 bool ProxyResolverWinHttp::OpenWinHttpSession() {
   DCHECK(!session_handle_);
-  session_handle_ = WinHttpOpen(NULL,
-                                WINHTTP_ACCESS_TYPE_NO_PROXY,
-                                WINHTTP_NO_PROXY_NAME,
-                                WINHTTP_NO_PROXY_BYPASS,
-                                0);
+  session_handle_ =
+      WinHttpOpen(nullptr, WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+                  WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session_handle_)
     return false;
 
@@ -205,7 +208,7 @@ bool ProxyResolverWinHttp::OpenWinHttpSession() {
 void ProxyResolverWinHttp::CloseWinHttpSession() {
   if (session_handle_) {
     WinHttpCloseHandle(session_handle_);
-    session_handle_ = NULL;
+    session_handle_ = nullptr;
   }
 }
 

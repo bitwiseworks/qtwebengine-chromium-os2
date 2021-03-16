@@ -32,12 +32,12 @@ Bluetooth* NavigatorBluetooth::bluetooth() {
   if (!GetSupplementable()->GetFrame())
     return nullptr;
 
-  bluetooth_ = Bluetooth::Create(
+  bluetooth_ = MakeGarbageCollected<Bluetooth>(
       GetSupplementable()->GetFrame()->GetDocument()->GetExecutionContext());
   return bluetooth_.Get();
 }
 
-void NavigatorBluetooth::Trace(blink::Visitor* visitor) {
+void NavigatorBluetooth::Trace(Visitor* visitor) {
   visitor->Trace(bluetooth_);
   Supplement<Navigator>::Trace(visitor);
 }

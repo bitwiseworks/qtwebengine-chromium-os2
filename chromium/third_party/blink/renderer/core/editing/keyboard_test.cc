@@ -34,13 +34,14 @@
 
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_input_event.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
 #include "third_party/blink/renderer/core/editing/editor.h"
 #include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/platform/keyboard_codes.h"
+#include "ui/events/keycodes/dom/keycode_converter.h"
 
 namespace blink {
 
@@ -52,7 +53,7 @@ class KeyboardTest : public testing::Test {
   const char* InterpretKeyEvent(const WebKeyboardEvent& web_keyboard_event) {
     KeyboardEvent* keyboard_event =
         KeyboardEvent::Create(web_keyboard_event, nullptr);
-    std::unique_ptr<Settings> settings = Settings::Create();
+    std::unique_ptr<Settings> settings = std::make_unique<Settings>();
     EditingBehavior behavior(settings->GetEditingBehaviorType());
     return behavior.InterpretKeyEvent(*keyboard_event);
   }
@@ -65,7 +66,7 @@ class KeyboardTest : public testing::Test {
                            WebInputEvent::GetStaticTimeStampForTests());
     event.text[0] = key_code;
     event.windows_key_code = key_code;
-    event.dom_key = Platform::Current()->DomKeyEnumFromString(key);
+    event.dom_key = ui::KeycodeConverter::KeyStringToDomKey(key.Utf8());
     return event;
   }
 

@@ -32,7 +32,6 @@
 #include "internal.h"
 #include "../crypto/internal.h"
 
-
 BSSL_NAMESPACE_BEGIN
 
 namespace {
@@ -234,7 +233,7 @@ class CECPQ2KeyShare : public SSLKeyShare {
     }
 
     return true;
-  };
+  }
 
   bool Accept(CBB *out_public_key, Array<uint8_t> *out_secret,
               uint8_t *out_alert, Span<const uint8_t> peer_key) override {
@@ -293,7 +292,7 @@ class CECPQ2KeyShare : public SSLKeyShare {
 
     *out_secret = std::move(secret);
     return true;
-  };
+  }
 
  private:
   uint8_t x25519_private_key_[32];

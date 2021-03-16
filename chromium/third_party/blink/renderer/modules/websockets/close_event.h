@@ -31,10 +31,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBSOCKETS_CLOSE_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBSOCKETS_CLOSE_EVENT_H_
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_close_event_init.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/modules/websockets/close_event_init.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -47,12 +47,6 @@ class CloseEvent final : public Event {
 
  public:
   static CloseEvent* Create() { return MakeGarbageCollected<CloseEvent>(); }
-
-  static CloseEvent* Create(bool was_clean,
-                            unsigned short code,
-                            const String& reason) {
-    return MakeGarbageCollected<CloseEvent>(was_clean, code, reason);
-  }
 
   static CloseEvent* Create(const AtomicString& type,
                             const CloseEventInit* initializer) {
@@ -68,7 +62,7 @@ class CloseEvent final : public Event {
   CloseEvent(const AtomicString& type, const CloseEventInit* initializer);
 
   bool wasClean() const { return was_clean_; }
-  unsigned short code() const { return code_; }
+  uint16_t code() const { return code_; }
   String reason() const { return reason_; }
 
   // Event function.
@@ -76,11 +70,11 @@ class CloseEvent final : public Event {
     return event_interface_names::kCloseEvent;
   }
 
-  void Trace(blink::Visitor* visitor) override { Event::Trace(visitor); }
+  void Trace(Visitor* visitor) override { Event::Trace(visitor); }
 
  private:
   bool was_clean_;
-  unsigned short code_;
+  uint16_t code_;
   String reason_;
 };
 

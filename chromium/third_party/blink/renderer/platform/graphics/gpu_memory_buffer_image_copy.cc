@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "third_party/blink/renderer/platform/graphics/gpu_memory_buffer_image_copy.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/renderer/platform/graphics/gpu_memory_buffer_image_copy.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types_3d.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
@@ -16,11 +17,9 @@ namespace blink {
 
 GpuMemoryBufferImageCopy::GpuMemoryBufferImageCopy(
     gpu::gles2::GLES2Interface* gl)
-    : gl_(gl) {
-}
+    : gl_(gl) {}
 
-GpuMemoryBufferImageCopy::~GpuMemoryBufferImageCopy() {
-}
+GpuMemoryBufferImageCopy::~GpuMemoryBufferImageCopy() {}
 
 bool GpuMemoryBufferImageCopy::EnsureMemoryBuffer(int width, int height) {
   // Create a new memorybuffer if the size has changed, or we don't have one.
@@ -73,13 +72,23 @@ gfx::GpuMemoryBuffer* GpuMemoryBufferImageCopy::CopyImage(Image* image) {
 
   // Bind the read framebuffer to our image.
   StaticBitmapImage* static_image = static_cast<StaticBitmapImage*>(image);
-  static_image->EnsureMailbox(kOrderingBarrier, GL_NEAREST);
-  auto mailbox = static_image->GetMailbox();
-  auto sync_token = static_image->GetSyncToken();
+  auto mailbox_holder = static_image->GetMailboxHolder();
+
   // Not strictly necessary since we are on the same context, but keeping
   // for cleanliness and in case we ever move off the same context.
-  gl_->WaitSyncTokenCHROMIUM(sync_token.GetData());
-  GLuint source_texture_id = gl_->CreateAndConsumeTextureCHROMIUM(mailbox.name);
+  gl_->WaitSyncTokenCHROMIUM(mailbox_holder.sync_token.GetData());
+
+  GLuint source_texture_id;
+  if (mailbox_holder.mailbox.IsSharedImage()) {
+    source_texture_id = gl_->CreateAndTexStorage2DSharedImageCHROMIUM(
+        mailbox_holder.mailbox.name);
+    gl_->BeginSharedImageAccessDirectCHROMIUM(
+        source_texture_id, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
+  } else {
+    source_texture_id =
+        gl_->CreateAndConsumeTextureCHROMIUM(mailbox_holder.mailbox.name);
+  }
+
   gl_->BindTexture(GL_TEXTURE_2D, 0);
 
   gl_->CopySubTextureCHROMIUM(source_texture_id, 0, GL_TEXTURE_2D,
@@ -88,7 +97,13 @@ gfx::GpuMemoryBuffer* GpuMemoryBufferImageCopy::CopyImage(Image* image) {
 
   // Cleanup the read framebuffer, associated image and texture.
   gl_->BindTexture(GL_TEXTURE_2D, 0);
+  if (mailbox_holder.mailbox.IsSharedImage())
+    gl_->EndSharedImageAccessDirectCHROMIUM(source_texture_id);
   gl_->DeleteTextures(1, &source_texture_id);
+
+  gpu::SyncToken copy_done_sync_token;
+  gl_->GenSyncTokenCHROMIUM(copy_done_sync_token.GetData());
+  static_image->UpdateSyncToken(copy_done_sync_token);
 
   // Cleanup the draw framebuffer, associated image and texture.
   gl_->BindTexture(target, dest_texture_id);

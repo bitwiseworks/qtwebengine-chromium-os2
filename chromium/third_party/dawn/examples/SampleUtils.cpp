@@ -15,25 +15,46 @@
 #include "SampleUtils.h"
 
 #include "common/Assert.h"
+#include "common/Log.h"
 #include "common/Platform.h"
 #include "utils/BackendBinding.h"
+#include "utils/GLFWUtils.h"
 #include "utils/TerribleCommandBuffer.h"
 
-#include <dawn/dawn.h>
-#include <dawn/dawncpp.h>
+#include <dawn/dawn_proc.h>
 #include <dawn/dawn_wsi.h>
 #include <dawn_native/DawnNative.h>
+#include <dawn_wire/WireClient.h>
+#include <dawn_wire/WireServer.h>
 #include "GLFW/glfw3.h"
 
+#include <algorithm>
 #include <cstring>
-#include <iostream>
 
-void PrintDeviceError(const char* message, dawn::CallbackUserdata) {
-    std::cout << "Device error: " << message << std::endl;
+void PrintDeviceError(WGPUErrorType errorType, const char* message, void*) {
+    const char* errorTypeName = "";
+    switch (errorType) {
+        case WGPUErrorType_Validation:
+            errorTypeName = "Validation";
+            break;
+        case WGPUErrorType_OutOfMemory:
+            errorTypeName = "Out of memory";
+            break;
+        case WGPUErrorType_Unknown:
+            errorTypeName = "Unknown";
+            break;
+        case WGPUErrorType_DeviceLost:
+            errorTypeName = "Device lost";
+            break;
+        default:
+            UNREACHABLE();
+            return;
+    }
+    dawn::ErrorLog() << errorTypeName << " error: " << message;
 }
 
 void PrintGLFWError(int code, const char* message) {
-    std::cout << "GLFW error: " << code << " - " << message << std::endl;
+    dawn::ErrorLog() << "GLFW error: " << code << " - " << message;
 }
 
 enum class CmdBufType {
@@ -45,51 +66,70 @@ enum class CmdBufType {
 // Default to D3D12, Metal, Vulkan, OpenGL in that order as D3D12 and Metal are the preferred on
 // their respective platforms, and Vulkan is preferred to OpenGL
 #if defined(DAWN_ENABLE_BACKEND_D3D12)
-    static utils::BackendType backendType = utils::BackendType::D3D12;
+static wgpu::BackendType backendType = wgpu::BackendType::D3D12;
 #elif defined(DAWN_ENABLE_BACKEND_METAL)
-    static utils::BackendType backendType = utils::BackendType::Metal;
-#elif defined(DAWN_ENABLE_BACKEND_OPENGL)
-    static utils::BackendType backendType = utils::BackendType::OpenGL;
+static wgpu::BackendType backendType = wgpu::BackendType::Metal;
 #elif defined(DAWN_ENABLE_BACKEND_VULKAN)
-    static utils::BackendType backendType = utils::BackendType::Vulkan;
+static wgpu::BackendType backendType = wgpu::BackendType::Vulkan;
+#elif defined(DAWN_ENABLE_BACKEND_OPENGL)
+static wgpu::BackendType backendType = wgpu::BackendType::OpenGL;
 #else
     #error
 #endif
 
 static CmdBufType cmdBufType = CmdBufType::Terrible;
+static std::unique_ptr<dawn_native::Instance> instance;
 static utils::BackendBinding* binding = nullptr;
 
 static GLFWwindow* window = nullptr;
 
-static dawn_wire::CommandHandler* wireServer = nullptr;
-static dawn_wire::CommandHandler* wireClient = nullptr;
+static dawn_wire::WireServer* wireServer = nullptr;
+static dawn_wire::WireClient* wireClient = nullptr;
 static utils::TerribleCommandBuffer* c2sBuf = nullptr;
 static utils::TerribleCommandBuffer* s2cBuf = nullptr;
 
-dawn::Device CreateCppDawnDevice() {
-    binding = utils::CreateBinding(backendType);
-    if (binding == nullptr) {
-        return dawn::Device();
-    }
-
+wgpu::Device CreateCppDawnDevice() {
     glfwSetErrorCallback(PrintGLFWError);
     if (!glfwInit()) {
-        return dawn::Device();
+        return wgpu::Device();
     }
 
-    binding->SetupGLFWWindowHints();
+    // Create the test window and discover adapters using it (esp. for OpenGL)
+    utils::SetupGLFWWindowHintsForBackend(backendType);
     window = glfwCreateWindow(640, 480, "Dawn window", nullptr, nullptr);
     if (!window) {
-        return dawn::Device();
+        return wgpu::Device();
     }
 
-    binding->SetWindow(window);
+    instance = std::make_unique<dawn_native::Instance>();
+    utils::DiscoverAdapter(instance.get(), window, backendType);
 
-    dawnDevice backendDevice = binding->CreateDevice();
-    dawnProcTable backendProcs = dawn_native::GetProcs();
+    // Get an adapter for the backend to use, and create the device.
+    dawn_native::Adapter backendAdapter;
+    {
+        std::vector<dawn_native::Adapter> adapters = instance->GetAdapters();
+        auto adapterIt = std::find_if(adapters.begin(), adapters.end(),
+                                      [](const dawn_native::Adapter adapter) -> bool {
+                                          wgpu::AdapterProperties properties;
+                                          adapter.GetProperties(&properties);
+                                          return properties.backendType == backendType;
+                                      });
+        ASSERT(adapterIt != adapters.end());
+        backendAdapter = *adapterIt;
+    }
 
-    dawnDevice cDevice = nullptr;
-    dawnProcTable procs;
+    WGPUDevice backendDevice = backendAdapter.CreateDevice();
+    DawnProcTable backendProcs = dawn_native::GetProcs();
+
+    binding = utils::CreateBinding(backendType, window, backendDevice);
+    if (binding == nullptr) {
+        return wgpu::Device();
+    }
+
+    // Choose whether to use the backend procs and devices directly, or set up the wire.
+    WGPUDevice cDevice = nullptr;
+    DawnProcTable procs;
+
     switch (cmdBufType) {
         case CmdBufType::None:
             procs = backendProcs;
@@ -101,12 +141,20 @@ dawn::Device CreateCppDawnDevice() {
                 c2sBuf = new utils::TerribleCommandBuffer();
                 s2cBuf = new utils::TerribleCommandBuffer();
 
-                wireServer = dawn_wire::NewServerCommandHandler(backendDevice, backendProcs, s2cBuf);
+                dawn_wire::WireServerDescriptor serverDesc = {};
+                serverDesc.device = backendDevice;
+                serverDesc.procs = &backendProcs;
+                serverDesc.serializer = s2cBuf;
+
+                wireServer = new dawn_wire::WireServer(serverDesc);
                 c2sBuf->SetHandler(wireServer);
 
-                dawnDevice clientDevice;
-                dawnProcTable clientProcs;
-                wireClient = dawn_wire::NewClientDevice(&clientProcs, &clientDevice, c2sBuf);
+                dawn_wire::WireClientDescriptor clientDesc = {};
+                clientDesc.serializer = c2sBuf;
+
+                wireClient = new dawn_wire::WireClient(clientDesc);
+                WGPUDevice clientDevice = wireClient->GetDevice();
+                DawnProcTable clientProcs = dawn_wire::WireClient::GetProcs();
                 s2cBuf->SetHandler(wireClient);
 
                 procs = clientProcs;
@@ -115,68 +163,39 @@ dawn::Device CreateCppDawnDevice() {
             break;
     }
 
-    dawnSetProcs(&procs);
-    procs.deviceSetErrorCallback(cDevice, PrintDeviceError, 0);
-    return dawn::Device::Acquire(cDevice);
+    dawnProcSetProcs(&procs);
+    procs.deviceSetUncapturedErrorCallback(cDevice, PrintDeviceError, nullptr);
+    return wgpu::Device::Acquire(cDevice);
 }
 
 uint64_t GetSwapChainImplementation() {
     return binding->GetSwapChainImplementation();
 }
 
-dawn::TextureFormat GetPreferredSwapChainTextureFormat() {
+wgpu::TextureFormat GetPreferredSwapChainTextureFormat() {
     DoFlush();
-    return static_cast<dawn::TextureFormat>(binding->GetPreferredSwapChainTextureFormat());
+    return static_cast<wgpu::TextureFormat>(binding->GetPreferredSwapChainTextureFormat());
 }
 
-dawn::SwapChain GetSwapChain(const dawn::Device &device) {
-    return device.CreateSwapChainBuilder()
-        .SetImplementation(GetSwapChainImplementation())
-        .GetResult();
+wgpu::SwapChain GetSwapChain(const wgpu::Device& device) {
+    wgpu::SwapChainDescriptor swapChainDesc;
+    swapChainDesc.implementation = GetSwapChainImplementation();
+    return device.CreateSwapChain(nullptr, &swapChainDesc);
 }
 
-dawn::TextureView CreateDefaultDepthStencilView(const dawn::Device& device) {
-    dawn::TextureDescriptor descriptor;
-    descriptor.dimension = dawn::TextureDimension::e2D;
+wgpu::TextureView CreateDefaultDepthStencilView(const wgpu::Device& device) {
+    wgpu::TextureDescriptor descriptor;
+    descriptor.dimension = wgpu::TextureDimension::e2D;
     descriptor.size.width = 640;
     descriptor.size.height = 480;
     descriptor.size.depth = 1;
-    descriptor.arraySize = 1;
+    descriptor.arrayLayerCount = 1;
     descriptor.sampleCount = 1;
-    descriptor.format = dawn::TextureFormat::D32FloatS8Uint;
-    descriptor.levelCount = 1;
-    descriptor.usage = dawn::TextureUsageBit::OutputAttachment;
+    descriptor.format = wgpu::TextureFormat::Depth24PlusStencil8;
+    descriptor.mipLevelCount = 1;
+    descriptor.usage = wgpu::TextureUsage::OutputAttachment;
     auto depthStencilTexture = device.CreateTexture(&descriptor);
-    return depthStencilTexture.CreateDefaultTextureView();
-}
-
-void GetNextRenderPassDescriptor(const dawn::Device& device,
-    const dawn::SwapChain& swapchain,
-    const dawn::TextureView& depthStencilView,
-    dawn::Texture* backbuffer,
-    dawn::RenderPassDescriptor* info) {
-    *backbuffer = swapchain.GetNextTexture();
-    auto backbufferView = backbuffer->CreateDefaultTextureView();
-    dawn::RenderPassColorAttachmentDescriptor colorAttachment;
-    colorAttachment.attachment = backbufferView;
-    colorAttachment.resolveTarget = nullptr;
-    colorAttachment.clearColor = { 0.0f, 0.0f, 0.0f, 0.0f };
-    colorAttachment.loadOp = dawn::LoadOp::Clear;
-    colorAttachment.storeOp = dawn::StoreOp::Store;
-
-    dawn::RenderPassDepthStencilAttachmentDescriptor depthStencilAttachment;
-    depthStencilAttachment.attachment = depthStencilView;
-    depthStencilAttachment.depthLoadOp = dawn::LoadOp::Clear;
-    depthStencilAttachment.stencilLoadOp = dawn::LoadOp::Clear;
-    depthStencilAttachment.clearDepth = 1.0f;
-    depthStencilAttachment.clearStencil = 0;
-    depthStencilAttachment.depthStoreOp = dawn::StoreOp::Store;
-    depthStencilAttachment.stencilStoreOp = dawn::StoreOp::Store;
-
-    *info = device.CreateRenderPassDescriptorBuilder()
-        .SetColorAttachments(1, &colorAttachment)
-        .SetDepthStencilAttachment(&depthStencilAttachment)
-        .GetResult();
+    return depthStencilTexture.CreateView();
 }
 
 bool InitSample(int argc, const char** argv) {
@@ -184,23 +203,23 @@ bool InitSample(int argc, const char** argv) {
         if (std::string("-b") == argv[i] || std::string("--backend") == argv[i]) {
             i++;
             if (i < argc && std::string("d3d12") == argv[i]) {
-                backendType = utils::BackendType::D3D12;
+                backendType = wgpu::BackendType::D3D12;
                 continue;
             }
             if (i < argc && std::string("metal") == argv[i]) {
-                backendType = utils::BackendType::Metal;
+                backendType = wgpu::BackendType::Metal;
                 continue;
             }
             if (i < argc && std::string("null") == argv[i]) {
-                backendType = utils::BackendType::Null;
+                backendType = wgpu::BackendType::Null;
                 continue;
             }
             if (i < argc && std::string("opengl") == argv[i]) {
-                backendType = utils::BackendType::OpenGL;
+                backendType = wgpu::BackendType::OpenGL;
                 continue;
             }
             if (i < argc && std::string("vulkan") == argv[i]) {
-                backendType = utils::BackendType::Vulkan;
+                backendType = wgpu::BackendType::Vulkan;
                 continue;
             }
             fprintf(stderr, "--backend expects a backend name (opengl, metal, d3d12, null, vulkan)\n");

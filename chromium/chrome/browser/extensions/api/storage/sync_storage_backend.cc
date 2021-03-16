@@ -140,8 +140,14 @@ std::set<std::string> SyncStorageBackend::GetKnownExtensionIDs(
   return result;
 }
 
-syncer::SyncDataList SyncStorageBackend::GetAllSyncData(syncer::ModelType type)
-    const {
+void SyncStorageBackend::WaitUntilReadyToSync(base::OnceClosure done) {
+  DCHECK(IsOnBackendSequence());
+  // This class is ready to sync immediately upon construction.
+  std::move(done).Run();
+}
+
+syncer::SyncDataList SyncStorageBackend::GetAllSyncDataForTesting(
+    syncer::ModelType type) const {
   DCHECK(IsOnBackendSequence());
   // For all extensions, get all their settings.  This has the effect
   // of bringing in the entire state of extension settings in memory; sad.

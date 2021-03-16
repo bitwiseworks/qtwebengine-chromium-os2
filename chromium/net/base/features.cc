@@ -3,30 +3,128 @@
 // found in the LICENSE file.
 
 #include "net/base/features.h"
+#include "build/build_config.h"
 
 namespace net {
 namespace features {
 
-// Uses a site isolated code cache that is keyed on the resource url and the
-// origin lock of the renderer that is requesting the resource. The requests
-// to site-isolated code cache are handled by the content/GeneratedCodeCache
-// When this flag is enabled, the metadata field of the HttpCache is unused.
-const base::Feature kIsolatedCodeCache = {"IsolatedCodeCache",
+const base::Feature kAcceptLanguageHeader{"AcceptLanguageHeader",
                                           base::FEATURE_ENABLED_BY_DEFAULT};
 
-// Enables the additional TLS 1.3 server-random-based downgrade protection
-// described in https://tools.ietf.org/html/rfc8446#section-4.1.3
-//
-// This is a MUST-level requirement of TLS 1.3, but has compatibility issues
-// with some buggy non-compliant TLS-terminating proxies.
-const base::Feature kEnforceTLS13Downgrade{"EnforceTLS13Downgrade",
-                                           base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kEnableTLS13EarlyData{"EnableTLS13EarlyData",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kSplitCacheByTopFrameOrigin{
-    "SplitCacheByTopFrameOrigin", base::FEATURE_DISABLED_BY_DEFAULT};
+const base::Feature kNetworkQualityEstimator{"NetworkQualityEstimator",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSplitCacheByNetworkIsolationKey{
+    "SplitCacheByNetworkIsolationKey", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSplitHostCacheByNetworkIsolationKey{
+    "SplitHostCacheByNetworkIsolationKey", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPartitionConnectionsByNetworkIsolationKey{
+    "PartitionConnectionsByNetworkIsolationKey",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPartitionHttpServerPropertiesByNetworkIsolationKey{
+    "PartitionHttpServerPropertiesByNetworkIsolationKey",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPartitionSSLSessionsByNetworkIsolationKey{
+    "PartitionSSLSessionsByNetworkIsolationKey",
+    base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kTLS13KeyUpdate{"TLS13KeyUpdate",
                                     base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kPostQuantumCECPQ2{"PostQuantumCECPQ2",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kNetUnusedIdleSocketTimeout{
+    "NetUnusedIdleSocketTimeout", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kRequestEsniDnsRecords{"RequestEsniDnsRecords",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
+base::TimeDelta EsniDnsMaxAbsoluteAdditionalWait() {
+  DCHECK(base::FeatureList::IsEnabled(kRequestEsniDnsRecords));
+  return base::TimeDelta::FromMilliseconds(
+      kEsniDnsMaxAbsoluteAdditionalWaitMilliseconds.Get());
+}
+const base::FeatureParam<int> kEsniDnsMaxAbsoluteAdditionalWaitMilliseconds{
+    &kRequestEsniDnsRecords, "EsniDnsMaxAbsoluteAdditionalWaitMilliseconds",
+    10};
+const base::FeatureParam<int> kEsniDnsMaxRelativeAdditionalWaitPercent{
+    &kRequestEsniDnsRecords, "EsniDnsMaxRelativeAdditionalWaitPercent", 5};
+
+const base::Feature kSameSiteByDefaultCookies{
+    "SameSiteByDefaultCookies", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kCookiesWithoutSameSiteMustBeSecure{
+    "CookiesWithoutSameSiteMustBeSecure", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kShortLaxAllowUnsafeThreshold{
+    "ShortLaxAllowUnsafeThreshold", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSameSiteDefaultChecksMethodRigorously{
+    "SameSiteDefaultChecksMethodRigorously", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kRecentHttpSameSiteAccessGrantsLegacyCookieSemantics{
+    "RecentHttpSameSiteAccessGrantsLegacyCookieSemantics",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+const base::FeatureParam<int>
+    kRecentHttpSameSiteAccessGrantsLegacyCookieSemanticsMilliseconds{
+        &kRecentHttpSameSiteAccessGrantsLegacyCookieSemantics,
+        "RecentHttpSameSiteAccessGrantsLegacyCookieSemanticsMilliseconds", 0};
+
+const base::Feature kRecentCreationTimeGrantsLegacyCookieSemantics{
+    "RecentCreationTimeGrantsLegacyCookieSemantics",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+const base::FeatureParam<int>
+    kRecentCreationTimeGrantsLegacyCookieSemanticsMilliseconds{
+        &kRecentCreationTimeGrantsLegacyCookieSemantics,
+        "RecentCreationTimeGrantsLegacyCookieSemanticsMilliseconds", 0};
+
+const base::Feature kBlockExternalRequestsFromNonSecureInitiators{
+    "BlockExternalRequestsFromNonSecureInitiators",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+#if BUILDFLAG(BUILTIN_CERT_VERIFIER_FEATURE_SUPPORTED)
+const base::Feature kCertVerifierBuiltinFeature {
+  "CertVerifierBuiltin",
+#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
+#endif
+
+const base::Feature kAppendFrameOriginToNetworkIsolationKey{
+    "AppendFrameOriginToNetworkIsolationKey", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kUseRegistrableDomainInNetworkIsolationKey{
+    "UseRegistrableDomainInNetworkIsolationKey",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kTurnOffStreamingMediaCaching{
+    "TurnOffStreamingMediaCaching", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kLegacyTLSEnforced{"LegacyTLSEnforced",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSchemefulSameSite{"SchemefulSameSite",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kTLSLegacyCryptoFallbackForMetrics{
+    "TLSLegacyCryptoFallbackForMetrics", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kLimitOpenUDPSockets{"LimitOpenUDPSockets",
+                                         base::FEATURE_ENABLED_BY_DEFAULT};
+extern const base::FeatureParam<int> kLimitOpenUDPSocketsMax(
+    &kLimitOpenUDPSockets,
+    "LimitOpenUDPSocketsMax",
+    6000);
 
 }  // namespace features
 }  // namespace net

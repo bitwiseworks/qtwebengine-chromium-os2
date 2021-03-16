@@ -38,14 +38,16 @@
 #include "third_party/blink/public/platform/web_scroll_anchor_data.h"
 #include "third_party/blink/public/platform/web_string.h"
 
+namespace gfx {
+class PointF;
+}  // namespace gfx
+
 namespace blink {
 
 class HistoryItem;
 class WebHTTPBody;
 class WebString;
 class WebSerializedScriptValue;
-struct WebFloatPoint;
-struct WebPoint;
 template <typename T>
 class WebVector;
 
@@ -82,11 +84,11 @@ class WebHistoryItem {
   BLINK_EXPORT const WebString& Target() const;
   BLINK_EXPORT void SetTarget(const WebString&);
 
-  BLINK_EXPORT WebFloatPoint VisualViewportScrollOffset() const;
-  BLINK_EXPORT void SetVisualViewportScrollOffset(const WebFloatPoint&);
+  BLINK_EXPORT gfx::PointF VisualViewportScrollOffset() const;
+  BLINK_EXPORT void SetVisualViewportScrollOffset(const gfx::PointF&);
 
-  BLINK_EXPORT WebPoint GetScrollOffset() const;
-  BLINK_EXPORT void SetScrollOffset(const WebPoint&);
+  BLINK_EXPORT gfx::Point GetScrollOffset() const;
+  BLINK_EXPORT void SetScrollOffset(const gfx::Point&);
 
   BLINK_EXPORT float PageScaleFactor() const;
   BLINK_EXPORT void SetPageScaleFactor(float);
@@ -94,11 +96,11 @@ class WebHistoryItem {
   BLINK_EXPORT WebVector<WebString> GetDocumentState() const;
   BLINK_EXPORT void SetDocumentState(const WebVector<WebString>&);
 
-  BLINK_EXPORT long long ItemSequenceNumber() const;
-  BLINK_EXPORT void SetItemSequenceNumber(long long);
+  BLINK_EXPORT int64_t ItemSequenceNumber() const;
+  BLINK_EXPORT void SetItemSequenceNumber(int64_t);
 
-  BLINK_EXPORT long long DocumentSequenceNumber() const;
-  BLINK_EXPORT void SetDocumentSequenceNumber(long long);
+  BLINK_EXPORT int64_t DocumentSequenceNumber() const;
+  BLINK_EXPORT void SetDocumentSequenceNumber(int64_t);
 
   BLINK_EXPORT WebHistoryScrollRestorationType ScrollRestorationType() const;
   BLINK_EXPORT void SetScrollRestorationType(WebHistoryScrollRestorationType);
@@ -110,7 +112,7 @@ class WebHistoryItem {
   BLINK_EXPORT void SetHTTPContentType(const WebString&);
 
   BLINK_EXPORT WebHTTPBody HttpBody() const;
-  BLINK_EXPORT void SetHTTPBody(const WebHTTPBody&);
+  BLINK_EXPORT void SetHttpBody(const WebHTTPBody&);
 
   BLINK_EXPORT WebVector<WebString> GetReferencedFilePaths() const;
 

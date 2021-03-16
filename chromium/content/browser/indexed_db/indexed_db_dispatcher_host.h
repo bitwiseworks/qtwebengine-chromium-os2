@@ -14,89 +14,108 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
-#include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "base/sequence_checker.h"
+#include "base/strings/string16.h"
+#include "components/services/storage/public/mojom/native_file_system_context.mojom-forward.h"
+#include "content/browser/indexed_db/indexed_db_external_object.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/render_process_host_observer.h"
-#include "mojo/public/cpp/bindings/associated_binding_set.h"
-#include "mojo/public/cpp/bindings/strong_associated_binding_set.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
+#include "mojo/public/cpp/bindings/unique_associated_receiver_set.h"
+#include "storage/browser/blob/mojom/blob_storage_context.mojom-forward.h"
 #include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom.h"
+#include "url/origin.h"
 
 namespace base {
 class SequencedTaskRunner;
 }
 
-namespace url {
-class Origin;
-}
-
 namespace content {
 class IndexedDBContextImpl;
+class IndexedDBCursor;
+class IndexedDBDataItemReader;
+class IndexedDBTransaction;
 
-// Handles all IndexedDB related messages from a particular renderer process.
-// Constructed on UI thread, expects all other calls (including destruction) on
-// IO thread.
-class CONTENT_EXPORT IndexedDBDispatcherHost
-    : public blink::mojom::IDBFactory,
-      public RenderProcessHostObserver {
+// All calls but the constructor (including destruction) must
+// happen on the IDB sequenced task runner.
+class CONTENT_EXPORT IndexedDBDispatcherHost : public blink::mojom::IDBFactory {
  public:
-  // Only call the constructor from the UI thread.
-  IndexedDBDispatcherHost(
-      int ipc_process_id,
-      scoped_refptr<IndexedDBContextImpl> indexed_db_context,
-      scoped_refptr<ChromeBlobStorageContext> blob_storage_context);
+  explicit IndexedDBDispatcherHost(IndexedDBContextImpl* indexed_db_context);
+  ~IndexedDBDispatcherHost() override;
 
-  void AddBinding(blink::mojom::IDBFactoryRequest request,
-                  const url::Origin& origin);
+  void AddReceiver(
+      const url::Origin& origin,
+      mojo::PendingReceiver<blink::mojom::IDBFactory> pending_receiver);
 
-  void AddDatabaseBinding(std::unique_ptr<blink::mojom::IDBDatabase> database,
-                          blink::mojom::IDBDatabaseAssociatedRequest request);
+  void AddDatabaseBinding(
+      std::unique_ptr<blink::mojom::IDBDatabase> database,
+      mojo::PendingAssociatedReceiver<blink::mojom::IDBDatabase>
+          pending_receiver);
 
-  void AddCursorBinding(std::unique_ptr<blink::mojom::IDBCursor> cursor,
-                        blink::mojom::IDBCursorAssociatedRequest request);
+  mojo::PendingAssociatedRemote<blink::mojom::IDBCursor> CreateCursorBinding(
+      const url::Origin& origin,
+      std::unique_ptr<IndexedDBCursor> cursor);
+  void RemoveCursorBinding(mojo::ReceiverId receiver_id);
+
+  void AddTransactionBinding(
+      std::unique_ptr<blink::mojom::IDBTransaction> transaction,
+      mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction> receiver);
 
   // A shortcut for accessing our context.
-  IndexedDBContextImpl* context() const { return indexed_db_context_.get(); }
-  storage::BlobStorageContext* blob_storage_context() const {
-    return blob_storage_context_->context();
-  }
-  int ipc_process_id() const { return ipc_process_id_; }
+  IndexedDBContextImpl* context() const { return indexed_db_context_; }
+  storage::mojom::BlobStorageContext* mojo_blob_storage_context();
+  storage::mojom::NativeFileSystemContext* native_file_system_context();
 
-  // Must be called on the IO thread.
+  // Must be called on the IDB sequence.
   base::WeakPtr<IndexedDBDispatcherHost> AsWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
 
-  // Called by UI thread. Used to kill outstanding bindings and weak pointers
-  // in callbacks.
-  void RenderProcessExited(RenderProcessHost* host,
-                           const ChildProcessTerminationInfo& info) override;
+  void CreateAndBindTransactionImpl(
+      mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction>
+          transaction_receiver,
+      const url::Origin& origin,
+      base::WeakPtr<IndexedDBTransaction> transaction);
+
+  // Bind this receiver to read from this given file.
+  void BindFileReader(
+      const base::FilePath& path,
+      base::Time expected_modification_time,
+      base::RepeatingClosure release_callback,
+      mojo::PendingReceiver<storage::mojom::BlobDataItemReader> receiver);
+  // Removes all readers for this file path.
+  void RemoveBoundReaders(const base::FilePath& path);
+
+  // Create external objects from |objects| and store the results in
+  // |mojo_objects|.  |mojo_objects| must be the same length as |objects|.
+  void CreateAllExternalObjects(
+      const url::Origin& origin,
+      const std::vector<IndexedDBExternalObject>& objects,
+      std::vector<blink::mojom::IDBExternalObjectPtr>* mojo_objects);
 
  private:
-  class IDBSequenceHelper;
-  // Friends to enable OnDestruct() delegation.
-  friend class BrowserThread;
   friend class IndexedDBDispatcherHostTest;
-  friend class base::DeleteHelper<IndexedDBDispatcherHost>;
-
-  ~IndexedDBDispatcherHost() override;
 
   // blink::mojom::IDBFactory implementation:
-  void GetDatabaseInfo(
-      blink::mojom::IDBCallbacksAssociatedPtrInfo callbacks_info) override;
+  void GetDatabaseInfo(mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
+                           pending_callbacks) override;
   void GetDatabaseNames(
-      blink::mojom::IDBCallbacksAssociatedPtrInfo callbacks_info) override;
-  void Open(blink::mojom::IDBCallbacksAssociatedPtrInfo callbacks_info,
-            blink::mojom::IDBDatabaseCallbacksAssociatedPtrInfo
-                database_callbacks_info,
+      mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
+          pending_callbacks) override;
+  void Open(mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
+                pending_callbacks,
+            mojo::PendingAssociatedRemote<blink::mojom::IDBDatabaseCallbacks>
+                database_callbacks_remote,
             const base::string16& name,
             int64_t version,
+            mojo::PendingAssociatedReceiver<blink::mojom::IDBTransaction>
+                transaction_receiver,
             int64_t transaction_id) override;
-  void DeleteDatabase(
-      blink::mojom::IDBCallbacksAssociatedPtrInfo callbacks_info,
-      const base::string16& name,
-      bool force_close) override;
+  void DeleteDatabase(mojo::PendingAssociatedRemote<blink::mojom::IDBCallbacks>
+                          pending_callbacks,
+                      const base::string16& name,
+                      bool force_close) override;
   void AbortTransactionsAndCompactDatabase(
       AbortTransactionsAndCompactDatabaseCallback callback) override;
   void AbortTransactionsForDatabase(
@@ -106,27 +125,25 @@ class CONTENT_EXPORT IndexedDBDispatcherHost
 
   base::SequencedTaskRunner* IDBTaskRunner() const;
 
-  scoped_refptr<IndexedDBContextImpl> indexed_db_context_;
-  scoped_refptr<ChromeBlobStorageContext> blob_storage_context_;
+  // IndexedDBDispatcherHost is owned by IndexedDBContextImpl.
+  IndexedDBContextImpl* indexed_db_context_;
 
-  // Used to set file permissions for blob storage.
-  const int ipc_process_id_;
+  // Shared task runner used to read blob files on.
+  scoped_refptr<base::TaskRunner> file_task_runner_;
 
-  // State for each client held in |bindings_|.
-  struct BindingState {
-    url::Origin origin;
-  };
+  mojo::ReceiverSet<blink::mojom::IDBFactory, url::Origin> receivers_;
+  mojo::UniqueAssociatedReceiverSet<blink::mojom::IDBDatabase>
+      database_receivers_;
+  mojo::UniqueAssociatedReceiverSet<blink::mojom::IDBCursor> cursor_receivers_;
+  mojo::UniqueAssociatedReceiverSet<blink::mojom::IDBTransaction>
+      transaction_receivers_;
 
-  mojo::BindingSet<blink::mojom::IDBFactory, BindingState> bindings_;
+  std::map<base::FilePath, std::unique_ptr<IndexedDBDataItemReader>>
+      file_reader_map_;
 
-  mojo::StrongAssociatedBindingSet<blink::mojom::IDBDatabase>
-      database_bindings_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
-  mojo::StrongAssociatedBindingSet<blink::mojom::IDBCursor> cursor_bindings_;
-
-  IDBSequenceHelper* idb_helper_;
-
-  base::WeakPtrFactory<IndexedDBDispatcherHost> weak_factory_;
+  base::WeakPtrFactory<IndexedDBDispatcherHost> weak_factory_{this};
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(IndexedDBDispatcherHost);
 };

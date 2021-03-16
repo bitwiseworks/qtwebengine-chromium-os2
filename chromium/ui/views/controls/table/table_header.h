@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_CONTROLS_TABLE_TABLE_HEADER_H_
 #define UI_VIEWS_CONTROLS_TABLE_TABLE_HEADER_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "ui/gfx/font_list.h"
 #include "ui/views/controls/table/table_view.h"
@@ -34,31 +36,33 @@ class VIEWS_EXPORT TableHeader : public views::View {
                                TableView::AdvanceDirection direction);
 
   // views::View overrides.
-  void Layout() override;
   void OnPaint(gfx::Canvas* canvas) override;
   const char* GetClassName() const override;
   gfx::Size CalculatePreferredSize() const override;
+  bool GetNeedsNotificationWhenVisibleBoundsChange() const override;
+  void OnVisibleBoundsChanged() override;
+  void AddedToWidget() override;
   gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
   void OnGestureEvent(ui::GestureEvent* event) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
  private:
   // Used to track the column being resized.
   struct ColumnResizeDetails {
-    ColumnResizeDetails() : column_index(0), initial_x(0), initial_width(0) {}
+    ColumnResizeDetails() = default;
 
     // Index into table_->visible_columns() that is being resized.
-    int column_index;
+    int column_index = 0;
 
     // X-coordinate of the mouse at the time the resize started.
-    int initial_x;
+    int initial_x = 0;
 
     // Width of the column when the drag started.
-    int initial_width;
+    int initial_width = 0;
   };
 
   // If not already resizing and |event| is over a resizable column starts
@@ -76,7 +80,7 @@ class VIEWS_EXPORT TableHeader : public views::View {
   // is not in the resize range of any columns.
   int GetResizeColumn(int x) const;
 
-  bool is_resizing() const { return resize_details_.get() != NULL; }
+  bool is_resizing() const { return resize_details_.get() != nullptr; }
 
   const gfx::FontList font_list_;
 

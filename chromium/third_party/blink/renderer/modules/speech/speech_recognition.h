@@ -26,18 +26,20 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_SPEECH_SPEECH_RECOGNITION_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SPEECH_SPEECH_RECOGNITION_H_
 
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/speech/speech_recognizer.mojom-blink.h"
 #include "third_party/blink/public/platform/web_private_ptr.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/page/page_visibility_observer.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/speech/speech_grammar_list.h"
 #include "third_party/blink/renderer/modules/speech/speech_recognition_result.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/mojo/revocable_binding.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -50,7 +52,7 @@ class SpeechRecognitionController;
 class MODULES_EXPORT SpeechRecognition final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<SpeechRecognition>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public mojom::blink::SpeechRecognitionSessionClient,
       public PageVisibilityObserver {
   USING_GARBAGE_COLLECTED_MIXIN(SpeechRecognition);
@@ -102,25 +104,25 @@ class MODULES_EXPORT SpeechRecognition final
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
   // PageVisibilityObserver
   void PageVisibilityChanged() override;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(audiostart, kAudiostart);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundstart, kSoundstart);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechstart, kSpeechstart);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechend, kSpeechend);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundend, kSoundend);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(audioend, kAudioend);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(result, kResult);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(nomatch, kNomatch);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(start, kStart);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(end, kEnd);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(audiostart, kAudiostart)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundstart, kSoundstart)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechstart, kSpeechstart)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechend, kSpeechend)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundend, kSoundend)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(audioend, kAudioend)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(result, kResult)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(nomatch, kNomatch)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(start, kStart)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(end, kEnd)
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void OnConnectionError();
@@ -135,8 +137,8 @@ class MODULES_EXPORT SpeechRecognition final
   bool started_;
   bool stopping_;
   HeapVector<Member<SpeechRecognitionResult>> final_results_;
-  RevocableBinding<mojom::blink::SpeechRecognitionSessionClient> binding_;
-  mojom::blink::RevocableSpeechRecognitionSessionPtr session_;
+  HeapMojoReceiver<mojom::blink::SpeechRecognitionSessionClient> receiver_;
+  HeapMojoRemote<mojom::blink::SpeechRecognitionSession> session_;
 };
 
 }  // namespace blink

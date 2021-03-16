@@ -9,6 +9,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/unloaded_extension_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/value_builder.h"
@@ -20,7 +21,8 @@ namespace {
 // Creates a very simple extension with a background page.
 scoped_refptr<const Extension> CreateExtensionWithBackgroundPage() {
   return ExtensionBuilder("test")
-      .SetBackgroundPage(ExtensionBuilder::BackgroundPage::PERSISTENT)
+      .SetBackgroundContext(
+          ExtensionBuilder::BackgroundContext::BACKGROUND_PAGE)
       .SetID("id2")
       .Build();
 }

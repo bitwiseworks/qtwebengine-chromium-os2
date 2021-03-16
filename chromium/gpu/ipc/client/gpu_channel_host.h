@@ -17,7 +17,6 @@
 #include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
@@ -39,6 +38,7 @@ class ChannelMojo;
 struct GpuDeferredMessage;
 
 namespace gpu {
+class ClientSharedImageInterface;
 struct SyncToken;
 class GpuChannelHost;
 class GpuMemoryBufferManager;
@@ -101,7 +101,7 @@ class GPU_EXPORT GpuChannelHost
   // Ensure that the all deferred messages prior upto |deferred_message_id| have
   // been flushed. Pass UINT32_MAX to force all pending deferred messages to be
   // flushed.
-  void EnsureFlush(uint32_t deferred_message_id);
+  virtual void EnsureFlush(uint32_t deferred_message_id);
 
   // Verify that the all deferred messages prior upto |deferred_message_id| have
   // reached the service. Pass UINT32_MAX to force all pending deferred messages
@@ -124,15 +124,6 @@ class GPU_EXPORT GpuChannelHost
   // Remove the message route associated with |route_id|.
   void RemoveRoute(int route_id);
 
-  // Returns a handle to the shared memory that can be sent via IPC to the
-  // GPU process. The caller is responsible for ensuring it is closed. Returns
-  // an invalid handle on failure.
-  base::SharedMemoryHandle ShareToGpuProcess(
-      const base::SharedMemoryHandle& source_handle);
-
-  base::UnsafeSharedMemoryRegion ShareToGpuProcess(
-      const base::UnsafeSharedMemoryRegion& source_region);
-
   // Reserve one unused image ID.
   int32_t ReserveImageId();
 
@@ -145,9 +136,8 @@ class GPU_EXPORT GpuChannelHost
   // otherwise ignored.
   void CrashGpuProcessForTesting();
 
-  SharedImageInterface* shared_image_interface() {
-    return &shared_image_interface_;
-  }
+  std::unique_ptr<ClientSharedImageInterface>
+  CreateClientSharedImageInterface();
 
   ImageDecodeAcceleratorProxy* image_decode_accelerator_proxy() {
     return &image_decode_accelerator_proxy_;

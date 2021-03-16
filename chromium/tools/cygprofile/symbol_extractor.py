@@ -13,6 +13,8 @@ import sys
 
 import cygprofile_utils
 
+START_OF_TEXT_SYMBOL = 'linker_script_start_of_text'
+
 _SRC_PATH = os.path.abspath(os.path.join(
     os.path.dirname(__file__), os.pardir, os.pardir))
 
@@ -97,7 +99,9 @@ def _FromObjdumpLine(line):
   if not m:
     return None
 
-  assert m.group('assert_scope') in set(['g', 'l']), line
+  # A symbol can be (g)lobal, (l)ocal, or neither (a space). Per objdump's
+  # manpage, "A symbol can be neither local or global for a variety of reasons".
+  assert m.group('assert_scope') in set(['g', 'l', ' ']), line
   assert m.group('assert_weak_or_strong') in set(['w', ' ']), line
   assert m.group('assert_tab') == '\t', line
   assert m.group('assert_4spaces') == ' ' * 4, line
@@ -107,7 +111,7 @@ def _FromObjdumpLine(line):
 
   # Output the label that contains the earliest offset. It is needed later for
   # translating offsets from the profile dumps.
-  if name == cygprofile_utils.START_OF_TEXT_SYMBOL:
+  if name == START_OF_TEXT_SYMBOL:
     return SymbolInfo(name=name, offset=offset, section='.text', size=0)
 
   # Check symbol type for validity and ignore some types.
@@ -168,8 +172,11 @@ def _SymbolInfosFromStream(objdump_lines):
         name_to_offsets[symbol_info.name].append(symbol_info.offset)
       symbol_infos.append(symbol_info)
 
+  # Outlined functions are known to be repeated often, so ignore them in the
+  # repeated symbol count.
   repeated_symbols = filter(lambda s: len(name_to_offsets[s]) > 1,
-                            name_to_offsets.iterkeys())
+                            (k for k in name_to_offsets.keys()
+                             if not k.startswith('OUTLINED_FUNCTION_')))
   if repeated_symbols:
     # Log the first 5 repeated offsets of the first 10 repeated symbols.
     logging.warning('%d symbols repeated with multiple offsets:\n %s',
@@ -231,8 +238,8 @@ _NM_PATH = os.path.join(_SRC_PATH, 'third_party', 'llvm-build',
 
 def CheckLlvmNmExists():
   assert os.path.exists(_NM_PATH), (
-      'llvm-nm not found. Please run //tools/clang/scripts/download_objdump.py'
-      ' to install it.')
+      'llvm-nm not found. Please run '
+      '//tools/clang/scripts/update.py --package=objdump to install it.')
 
 
 def SymbolNamesFromLlvmBitcodeFile(filename):

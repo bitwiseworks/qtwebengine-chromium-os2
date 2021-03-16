@@ -54,7 +54,7 @@ void CSSVariableAnimator::ApplyAll() {
   while (!pending_properties_.IsEmpty()) {
     PropertyHandle property = *pending_properties_.begin();
     Apply(property);
-    DCHECK_EQ(pending_properties_.find(property), pending_properties_.end());
+    DCHECK(!pending_properties_.Contains(property));
   }
 }
 
@@ -70,13 +70,13 @@ void CSSVariableAnimator::Apply(const PropertyHandle& property) {
   const ActiveInterpolations& interpolations =
       ActiveInterpolationsForCustomProperty(update_, property);
   const Interpolation& interpolation = *interpolations.front();
-  if (interpolation.IsInvalidatableInterpolation()) {
+  if (IsA<InvalidatableInterpolation>(interpolation)) {
     CSSInterpolationTypesMap map(state_.GetDocument().GetPropertyRegistry(),
                                  state_.GetDocument());
     CSSInterpolationEnvironment environment(map, state_, this);
     InvalidatableInterpolation::ApplyStack(interpolations, environment);
   } else {
-    ToTransitionInterpolation(interpolation).Apply(state_);
+    To<TransitionInterpolation>(interpolation).Apply(state_);
   }
   pending_properties_.erase(property);
 }

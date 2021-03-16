@@ -34,7 +34,7 @@ class Time;
 
 namespace network {
 class NetworkConnectionTracker;
-class SharedURLLoaderFactoryInfo;
+class PendingSharedURLLoaderFactory;
 }  // namespace network
 
 namespace password_manager {
@@ -70,8 +70,8 @@ class AffiliationBackend : public FacetManagerHost,
 
   // Performs the I/O-heavy part of initialization. The database used to cache
   // affiliation information locally will be opened/created at |db_path|.
-  void Initialize(std::unique_ptr<network::SharedURLLoaderFactoryInfo>
-                      url_loader_factory_info,
+  void Initialize(std::unique_ptr<network::PendingSharedURLLoaderFactory>
+                      pending_url_loader_factory,
                   network::NetworkConnectionTracker* network_connection_tracker,
                   const base::FilePath& db_path);
 
@@ -80,7 +80,7 @@ class AffiliationBackend : public FacetManagerHost,
   void GetAffiliationsAndBranding(
       const FacetURI& facet_uri,
       StrategyOnCacheMiss cache_miss_strategy,
-      const AffiliationService::ResultCallback& callback,
+      AffiliationService::ResultCallback callback,
       const scoped_refptr<base::TaskRunner>& callback_task_runner);
   void Prefetch(const FacetURI& facet_uri, const base::Time& keep_fresh_until);
   void CancelPrefetch(const FacetURI& facet_uri,
@@ -160,7 +160,7 @@ class AffiliationBackend : public FacetManagerHost,
   std::unordered_map<FacetURI, std::unique_ptr<FacetManager>, FacetURIHash>
       facet_managers_;
 
-  base::WeakPtrFactory<AffiliationBackend> weak_ptr_factory_;
+  base::WeakPtrFactory<AffiliationBackend> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AffiliationBackend);
 };

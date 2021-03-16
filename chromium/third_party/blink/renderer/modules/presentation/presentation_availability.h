@@ -9,7 +9,7 @@
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
-#include "third_party/blink/renderer/core/execution_context/pausable_object.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_state_observer.h"
 #include "third_party/blink/renderer/core/page/page_visibility_observer.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/modules/presentation/presentation_availability_observer.h"
@@ -28,7 +28,7 @@ class ExecutionContext;
 class MODULES_EXPORT PresentationAvailability final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<PresentationAvailability>,
-      public PausableObject,
+      public ExecutionContextLifecycleStateObserver,
       public PageVisibilityObserver,
       public PresentationAvailabilityObserver {
   USING_GARBAGE_COLLECTED_MIXIN(PresentationAvailability);
@@ -53,19 +53,18 @@ class MODULES_EXPORT PresentationAvailability final
   // ScriptWrappable implementation.
   bool HasPendingActivity() const final;
 
-  // PausableObject implementation.
-  void ContextPaused(PauseState) override;
-  void ContextUnpaused() override;
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleStateObserver implementation.
+  void ContextLifecycleStateChanged(mojom::FrameLifecycleState) override;
+  void ContextDestroyed() override;
 
   // PageVisibilityObserver implementation.
   void PageVisibilityChanged() override;
 
   bool value() const;
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange)
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   // EventTarget implementation.
@@ -73,10 +72,10 @@ class MODULES_EXPORT PresentationAvailability final
                           RegisteredEventListener&) override;
 
  private:
-  // Current state of the PausableObject. It is Active when created. It
-  // becomes Suspended when suspend() is called and moves back to Active if
-  // resume() is called. It becomes Inactive when stop() is called or at
-  // destruction time.
+  // Current state of the ExecutionContextLifecycleStateObserver. It is Active
+  // when created. It becomes Suspended when suspend() is called and moves back
+  // to Active if resume() is called. It becomes Inactive when stop() is called
+  // or at destruction time.
   enum class State : char {
     kActive,
     kSuspended,

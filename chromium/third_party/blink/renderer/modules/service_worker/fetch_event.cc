@@ -7,6 +7,8 @@
 #include "third_party/blink/renderer/modules/service_worker/fetch_event.h"
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/mojom/timing/performance_mark_or_measure.mojom-blink.h"
+#include "third_party/blink/public/mojom/timing/worker_timing_container.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_error.h"
 #include "third_party/blink/public/platform/web_url_response.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_for_core.h"
@@ -14,12 +16,15 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
 #include "third_party/blink/renderer/core/fetch/response.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/timing/performance_mark.h"
+#include "third_party/blink/renderer/core/timing/performance_measure.h"
 #include "third_party/blink/renderer/core/timing/worker_global_scope_performance.h"
 #include "third_party/blink/renderer/modules/service_worker/fetch_respond_with_observer.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_error.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_load_timing.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_timing_info.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
 
@@ -29,18 +34,8 @@ FetchEvent* FetchEvent::Create(ScriptState* script_state,
                                const AtomicString& type,
                                const FetchEventInit* initializer) {
   return MakeGarbageCollected<FetchEvent>(script_state, type, initializer,
-                                          nullptr, nullptr, false);
-}
-
-FetchEvent* FetchEvent::Create(ScriptState* script_state,
-                               const AtomicString& type,
-                               const FetchEventInit* initializer,
-                               FetchRespondWithObserver* respond_with_observer,
-                               WaitUntilObserver* wait_until_observer,
-                               bool navigation_preload_sent) {
-  return MakeGarbageCollected<FetchEvent>(
-      script_state, type, initializer, respond_with_observer,
-      wait_until_observer, navigation_preload_sent);
+                                          nullptr, nullptr, mojo::NullRemote(),
+                                          false);
 }
 
 Request* FetchEvent::request() const {
@@ -92,14 +87,15 @@ FetchEvent::FetchEvent(ScriptState* script_state,
                        const FetchEventInit* initializer,
                        FetchRespondWithObserver* respond_with_observer,
                        WaitUntilObserver* wait_until_observer,
+                       mojo::PendingRemote<mojom::blink::WorkerTimingContainer>
+                           worker_timing_remote,
                        bool navigation_preload_sent)
     : ExtendableEvent(type, initializer, wait_until_observer),
-      ContextClient(ExecutionContext::From(script_state)),
+      ExecutionContextClient(ExecutionContext::From(script_state)),
       observer_(respond_with_observer),
       preload_response_property_(MakeGarbageCollected<PreloadResponseProperty>(
-          ExecutionContext::From(script_state),
-          this,
-          PreloadResponseProperty::kPreloadResponse)) {
+          ExecutionContext::From(script_state))),
+      worker_timing_remote_(std::move(worker_timing_remote)) {
   if (!navigation_preload_sent)
     preload_response_property_->ResolveWithUndefined();
 
@@ -125,18 +121,19 @@ void FetchEvent::OnNavigationPreloadResponse(
   if (data_pipe.is_valid()) {
     DataPipeBytesConsumer::CompletionNotifier* completion_notifier = nullptr;
     bytes_consumer = MakeGarbageCollected<DataPipeBytesConsumer>(
-        ExecutionContext::From(script_state), std::move(data_pipe),
-        &completion_notifier);
+        ExecutionContext::From(script_state)
+            ->GetTaskRunner(TaskType::kNetworking),
+        std::move(data_pipe), &completion_notifier);
     body_completion_notifier_ = completion_notifier;
   }
   // TODO(ricea): Verify that this response can't be aborted from JS.
   FetchResponseData* response_data =
-      bytes_consumer ? FetchResponseData::CreateWithBuffer(
-                           MakeGarbageCollected<BodyStreamBuffer>(
-                               script_state, bytes_consumer,
-                               MakeGarbageCollected<AbortSignal>(
-                                   ExecutionContext::From(script_state))))
-                     : FetchResponseData::Create();
+      bytes_consumer
+          ? FetchResponseData::CreateWithBuffer(BodyStreamBuffer::Create(
+                script_state, bytes_consumer,
+                MakeGarbageCollected<AbortSignal>(
+                    ExecutionContext::From(script_state))))
+          : FetchResponseData::Create();
   Vector<KURL> url_list(1);
   url_list[0] = preload_response_->CurrentRequestUrl();
   response_data->SetURLList(url_list);
@@ -177,7 +174,7 @@ void FetchEvent::OnNavigationPreloadError(
 
 void FetchEvent::OnNavigationPreloadComplete(
     WorkerGlobalScope* worker_global_scope,
-    TimeTicks completion_time,
+    base::TimeTicks completion_time,
     int64_t encoded_data_length,
     int64_t encoded_body_length,
     int64_t decoded_body_length) {
@@ -191,27 +188,51 @@ void FetchEvent::OnNavigationPreloadComplete(
   resource_response.SetEncodedDataLength(encoded_data_length);
   resource_response.SetEncodedBodyLength(encoded_body_length);
   resource_response.SetDecodedBodyLength(decoded_body_length);
+
+  ResourceLoadTiming* timing = resource_response.GetResourceLoadTiming();
+  // |timing| can be null, see https://crbug.com/817691.
+  base::TimeTicks request_time =
+      timing ? timing->RequestTime() : base::TimeTicks();
   // According to the Resource Timing spec, the initiator type of
   // navigation preload request is "navigation".
   scoped_refptr<ResourceTimingInfo> info = ResourceTimingInfo::Create(
-      "navigation", resource_response.GetResourceLoadTiming()->RequestTime(),
-      false /* is_main_resource */);
+      "navigation", request_time, request_->GetRequestContextType(),
+      request_->GetRequestDestination());
   info->SetNegativeAllowed(true);
-  info->SetLoadFinishTime(completion_time);
+  info->SetLoadResponseEnd(completion_time);
   info->SetInitialURL(request_->url());
   info->SetFinalResponse(resource_response);
-  info->AddFinalTransferSize(encoded_data_length);
+  info->AddFinalTransferSize(encoded_data_length == -1 ? 0
+                                                       : encoded_data_length);
   WorkerGlobalScopePerformance::performance(*worker_global_scope)
       ->GenerateAndAddResourceTiming(*info);
 }
 
-void FetchEvent::Trace(blink::Visitor* visitor) {
+void FetchEvent::addPerformanceEntry(PerformanceMark* performance_mark) {
+  if (worker_timing_remote_) {
+    auto mojo_performance_mark =
+        performance_mark->ToMojoPerformanceMarkOrMeasure();
+    worker_timing_remote_->AddPerformanceEntry(
+        std::move(mojo_performance_mark));
+  }
+}
+
+void FetchEvent::addPerformanceEntry(PerformanceMeasure* performance_measure) {
+  if (worker_timing_remote_) {
+    auto mojo_performance_measure =
+        performance_measure->ToMojoPerformanceMarkOrMeasure();
+    worker_timing_remote_->AddPerformanceEntry(
+        std::move(mojo_performance_measure));
+  }
+}
+
+void FetchEvent::Trace(Visitor* visitor) {
   visitor->Trace(observer_);
   visitor->Trace(request_);
   visitor->Trace(preload_response_property_);
   visitor->Trace(body_completion_notifier_);
   ExtendableEvent::Trace(visitor);
-  ContextClient::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

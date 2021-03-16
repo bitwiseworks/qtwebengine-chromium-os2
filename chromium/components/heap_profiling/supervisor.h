@@ -9,14 +9,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "components/services/heap_profiling/public/mojom/heap_profiling_client.mojom.h"
-
-namespace content {
-class ServiceManagerConnection;
-}  // namespace content
-
-namespace service_manager {
-class Connector;
-}  // namespace service_manager
+#include "services/resource_coordinator/public/mojom/memory_instrumentation/memory_instrumentation.mojom.h"
 
 namespace heap_profiling {
 
@@ -67,10 +60,8 @@ class Supervisor {
   //   * Relying on the assumption that in all other cases, the object is either
   //     fully initialized or not initialized. There are DCHECKs to enforce this
   //     assumption.
-  void Start(content::ServiceManagerConnection* connection,
-             base::OnceClosure callback);
-  void Start(content::ServiceManagerConnection* connection,
-             Mode mode,
+  void Start(base::OnceClosure callback);
+  void Start(Mode mode,
              mojom::StackMode stack_mode,
              uint32_t sampling_rate,
              base::OnceClosure callback);
@@ -79,10 +70,6 @@ class Supervisor {
 
   // Starts profiling the process with the given id.
   void StartManualProfiling(base::ProcessId pid);
-
-  // Public for testing. Controls whether the profiling service keeps small
-  // allocations in heap dumps.
-  void SetKeepSmallAllocations(bool keep_small_allocations);
 
   // Returns the pids of all profiled processes. The callback is posted on the
   // UI thread.
@@ -113,7 +100,10 @@ class Supervisor {
 
   // Initialization stage 1: Start the Service on the IO thread.
   void StartServiceOnIOThread(
-      std::unique_ptr<service_manager::Connector> connector,
+      mojo::PendingReceiver<memory_instrumentation::mojom::HeapProfiler>
+          receiver,
+      mojo::PendingRemote<memory_instrumentation::mojom::HeapProfilerHelper>
+          remote_helper,
       Mode mode,
       mojom::StackMode stack_mode,
       uint32_t sampling_rate,
@@ -127,7 +117,10 @@ class Supervisor {
 
   void GetProfiledPidsOnIOThread(GetProfiledPidsCallback callback);
 
-  void SetKeepSmallAllocationsOnIOThread(bool keep_small_allocations);
+  void StartProfilingOnMemoryInfraThread(Mode mode,
+                                         mojom::StackMode stack_mode,
+                                         uint32_t sampling_rate,
+                                         base::OnceClosure closure);
 
   // Bound to the IO thread.
   std::unique_ptr<Controller> controller_;

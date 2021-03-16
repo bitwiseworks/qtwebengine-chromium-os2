@@ -334,6 +334,18 @@ static void write_quant_tables(RangeCoder *c,
         write_quant_table(c, quant_table[i]);
 }
 
+static int contains_non_128(uint8_t (*initial_state)[CONTEXT_SIZE],
+                            int nb_contexts)
+{
+    if (!initial_state)
+        return 0;
+    for (int i = 0; i < nb_contexts; i++)
+        for (int j = 0; j < CONTEXT_SIZE; j++)
+            if (initial_state[i][j] != 128)
+                return 1;
+    return 0;
+}
+
 static void write_header(FFV1Context *f)
 {
     uint8_t state[CONTEXT_SIZE];
@@ -428,10 +440,7 @@ static int write_extradata(FFV1Context *f)
         write_quant_tables(c, f->quant_tables[i]);
 
     for (i = 0; i < f->quant_table_count; i++) {
-        for (j = 0; j < f->context_count[i] * CONTEXT_SIZE; j++)
-            if (f->initial_states[i] && f->initial_states[i][0][j] != 128)
-                break;
-        if (j < f->context_count[i] * CONTEXT_SIZE) {
+        if (contains_non_128(f->initial_states[i], f->context_count[i])) {
             put_rac(c, state, 1);
             for (j = 0; j < f->context_count[i]; j++)
                 for (k = 0; k < CONTEXT_SIZE; k++) {
@@ -449,7 +458,7 @@ static int write_extradata(FFV1Context *f)
         put_symbol(c, state, f->intra = (f->avctx->gop_size < 2), 0);
     }
 
-    f->avctx->extradata_size = ff_rac_terminate(c);
+    f->avctx->extradata_size = ff_rac_terminate(c, 0);
     v = av_crc(av_crc_get_table(AV_CRC_32_IEEE), 0, f->avctx->extradata, f->avctx->extradata_size);
     AV_WL32(f->avctx->extradata + f->avctx->extradata_size, v);
     f->avctx->extradata_size += 4;
@@ -1065,9 +1074,7 @@ retry:
         encode_slice_header(f, fs);
     }
     if (fs->ac == AC_GOLOMB_RICE) {
-        if (f->version > 2)
-            put_rac(&fs->c, (uint8_t[]) { 129 }, 0);
-        fs->ac_byte_count = f->version > 2 || (!x && !y) ? ff_rac_terminate(&fs->c) : 0;
+        fs->ac_byte_count = f->version > 2 || (!x && !y) ? ff_rac_terminate(&fs->c, f->version > 2) : 0;
         init_put_bits(&fs->pb,
                       fs->c.bytestream_start + fs->ac_byte_count,
                       fs->c.bytestream_end - fs->c.bytestream_start - fs->ac_byte_count);
@@ -1232,9 +1239,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         int bytes;
 
         if (fs->ac != AC_GOLOMB_RICE) {
-            uint8_t state = 129;
-            put_rac(&fs->c, &state, 0);
-            bytes = ff_rac_terminate(&fs->c);
+            bytes = ff_rac_terminate(&fs->c, 1);
         } else {
             flush_put_bits(&fs->pb); // FIXME: nicer padding
             bytes = fs->ac_byte_count + (put_bits_count(&fs->pb) + 7) / 8;

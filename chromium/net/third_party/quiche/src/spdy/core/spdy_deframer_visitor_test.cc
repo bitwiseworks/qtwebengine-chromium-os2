@@ -9,9 +9,8 @@
 #include <algorithm>
 #include <limits>
 
-#include "base/logging.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "net/third_party/quiche/src/http2/test_tools/http2_random.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_test.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_constants.h"
 #include "net/third_party/quiche/src/spdy/core/mock_spdy_framer_visitor.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_frame_builder.h"
@@ -20,18 +19,18 @@
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol_test_utils.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_test_utils.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_ptr_util.h"
+#include "net/third_party/quiche/src/spdy/platform/api/spdy_logging.h"
 
 namespace spdy {
 namespace test {
 namespace {
 
-class SpdyDeframerVisitorTest : public ::testing::Test {
+class SpdyDeframerVisitorTest : public QuicheTest {
  protected:
   SpdyDeframerVisitorTest() : encoder_(SpdyFramer::ENABLE_COMPRESSION) {
     decoder_.set_process_single_input_frame(true);
     auto collector =
-        SpdyMakeUnique<DeframerCallbackCollector>(&collected_frames_);
+        std::make_unique<DeframerCallbackCollector>(&collected_frames_);
     auto log_and_collect =
         SpdyDeframerVisitorInterface::LogBeforeVisiting(std::move(collector));
     deframer_ = SpdyTestDeframer::CreateConverter(std::move(log_and_collect));

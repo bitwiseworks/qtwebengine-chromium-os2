@@ -12,20 +12,20 @@
 #include "components/exo/sub_surface.h"
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/exo_test_helper.h"
-#include "components/exo/wm_helper.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
-#include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
 #include "components/viz/service/surfaces/surface.h"
+#include "components/viz/service/surfaces/surface_manager.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/khronos/GLES2/gl2.h"
-#include "ui/aura/env.h"
 #include "ui/compositor/layer_tree_owner.h"
 #include "ui/display/display.h"
 #include "ui/display/display_switches.h"
 #include "ui/gfx/geometry/dip_util.h"
+#include "ui/gfx/gpu_fence.h"
+#include "ui/gfx/gpu_fence_handle.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/wm/core/window_util.h"
 
@@ -41,6 +41,24 @@ std::unique_ptr<std::vector<gfx::Rect>> GetHitTestShapeRects(Surface* surface) {
     rects->push_back(rect);
   return rects;
 }
+
+class SurfaceObserverForTest : public SurfaceObserver {
+ public:
+  SurfaceObserverForTest() = default;
+
+  void OnSurfaceDestroying(Surface* surface) override {}
+
+  void OnWindowOcclusionChanged(Surface* surface) override {
+    num_occlusion_changes_++;
+  }
+
+  int num_occlusion_changes() const { return num_occlusion_changes_; }
+
+ private:
+  int num_occlusion_changes_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(SurfaceObserverForTest);
+};
 
 class SurfaceTest : public test::ExoTestBase,
                     public ::testing::WithParamInterface<float> {
@@ -67,6 +85,13 @@ class SurfaceTest : public test::ExoTestBase,
     return gfx::ConvertRectToPixel(device_scale_factor(), rect);
   }
 
+  const viz::CompositorFrame& GetFrameFromSurface(ShellSurface* shell_surface) {
+    viz::SurfaceId surface_id = shell_surface->host_window()->GetSurfaceId();
+    const viz::CompositorFrame& frame =
+        GetSurfaceManager()->GetSurfaceForId(surface_id)->GetActiveFrame();
+    return frame;
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(SurfaceTest);
 };
@@ -77,7 +102,7 @@ void ReleaseBuffer(int* release_buffer_call_count) {
 
 // Instantiate the Boolean which is used to toggle mouse and touch events in
 // the parameterized tests.
-INSTANTIATE_TEST_CASE_P(, SurfaceTest, testing::Values(1.0f, 1.25f, 2.0f));
+INSTANTIATE_TEST_SUITE_P(All, SurfaceTest, testing::Values(1.0f, 1.25f, 2.0f));
 
 TEST_P(SurfaceTest, Attach) {
   gfx::Size buffer_size(256, 256);
@@ -86,13 +111,14 @@ TEST_P(SurfaceTest, Attach) {
 
   // Set the release callback that will be run when buffer is no longer in use.
   int release_buffer_call_count = 0;
-  buffer->set_release_callback(
-      base::Bind(&ReleaseBuffer, base::Unretained(&release_buffer_call_count)));
+  buffer->set_release_callback(base::BindRepeating(
+      &ReleaseBuffer, base::Unretained(&release_buffer_call_count)));
 
   std::unique_ptr<Surface> surface(new Surface);
 
   // Attach the buffer to surface1.
   surface->Attach(buffer.get());
+  EXPECT_TRUE(surface->HasPendingAttachedBuffer());
   surface->Commit();
 
   // Commit without calling Attach() should have no effect.
@@ -102,6 +128,7 @@ TEST_P(SurfaceTest, Attach) {
   // Attach a null buffer to surface, this should release the previously
   // attached buffer.
   surface->Attach(nullptr);
+  EXPECT_FALSE(surface->HasPendingAttachedBuffer());
   surface->Commit();
   // LayerTreeFrameSinkHolder::ReclaimResources() gets called via
   // CompositorFrameSinkClient interface. We need to wait here for the mojo
@@ -109,18 +136,6 @@ TEST_P(SurfaceTest, Attach) {
   // the assertion below.
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1, release_buffer_call_count);
-}
-
-const viz::CompositorFrame& GetFrameFromSurface(ShellSurface* shell_surface) {
-  viz::SurfaceId surface_id = shell_surface->host_window()->GetSurfaceId();
-  viz::SurfaceManager* surface_manager = WMHelper::GetInstance()
-                                             ->env()
-                                             ->context_factory_private()
-                                             ->GetFrameSinkManager()
-                                             ->surface_manager();
-  const viz::CompositorFrame& frame =
-      surface_manager->GetSurfaceForId(surface_id)->GetActiveFrame();
-  return frame;
 }
 
 TEST_P(SurfaceTest, Damage) {
@@ -187,7 +202,7 @@ TEST_P(SurfaceTest, RequestFrameCallback) {
   std::unique_ptr<Surface> surface(new Surface);
 
   surface->RequestFrameCallback(
-      base::Bind(&SetFrameTime, base::Unretained(&frame_time)));
+      base::BindRepeating(&SetFrameTime, base::Unretained(&frame_time)));
   surface->Commit();
 
   // Callback should not run synchronously.
@@ -221,9 +236,11 @@ TEST_P(SurfaceTest, MAYBE_SetOpaqueRegion) {
         GetFrameFromSurface(shell_surface.get());
     ASSERT_EQ(1u, frame.render_pass_list.size());
     ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
-    EXPECT_FALSE(frame.render_pass_list.back()
-                     ->quad_list.back()
-                     ->ShouldDrawWithBlending());
+    auto* texture_draw_quad = viz::TextureDrawQuad::MaterialCast(
+        frame.render_pass_list.back()->quad_list.back());
+
+    EXPECT_FALSE(texture_draw_quad->ShouldDrawWithBlending());
+    EXPECT_EQ(SK_ColorBLACK, texture_draw_quad->background_color);
     EXPECT_EQ(ToPixel(gfx::Rect(0, 0, 1, 1)),
               frame.render_pass_list.back()->damage_rect);
   }
@@ -238,9 +255,10 @@ TEST_P(SurfaceTest, MAYBE_SetOpaqueRegion) {
         GetFrameFromSurface(shell_surface.get());
     ASSERT_EQ(1u, frame.render_pass_list.size());
     ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
-    EXPECT_TRUE(frame.render_pass_list.back()
-                    ->quad_list.back()
-                    ->ShouldDrawWithBlending());
+    auto* texture_draw_quad = viz::TextureDrawQuad::MaterialCast(
+        frame.render_pass_list.back()->quad_list.back());
+    EXPECT_TRUE(texture_draw_quad->ShouldDrawWithBlending());
+    EXPECT_EQ(SK_ColorTRANSPARENT, texture_draw_quad->background_color);
     EXPECT_EQ(ToPixel(gfx::Rect(0, 0, 1, 1)),
               frame.render_pass_list.back()->damage_rect);
   }
@@ -781,7 +799,7 @@ TEST_P(SurfaceTest, OverlayCandidate) {
   ASSERT_EQ(1u, frame.render_pass_list.size());
   ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
   viz::DrawQuad* draw_quad = frame.render_pass_list.back()->quad_list.back();
-  ASSERT_EQ(viz::DrawQuad::TEXTURE_CONTENT, draw_quad->material);
+  ASSERT_EQ(viz::DrawQuad::Material::kTextureContent, draw_quad->material);
 
   const viz::TextureDrawQuad* texture_quad =
       viz::TextureDrawQuad::MaterialCast(draw_quad);
@@ -844,6 +862,129 @@ TEST_P(SurfaceTest, SetAlpha) {
   }
 }
 
+TEST_P(SurfaceTest, SurfaceQuad) {
+  gfx::Size buffer_size(1, 1);
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size), GL_TEXTURE_2D, 0,
+      true, true, false);
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
+  surface->Attach(buffer.get());
+  surface->SetAlpha(1.0f);
+
+  surface->SetEmbeddedSurfaceSize(gfx::Size(1, 1));
+  surface->SetEmbeddedSurfaceId(base::BindRepeating([]() -> viz::SurfaceId {
+    return viz::SurfaceId(
+        viz::FrameSinkId(1, 1),
+        viz::LocalSurfaceId(1, 1, base::UnguessableToken::Create()));
+  }));
+
+  {
+    surface->Commit();
+    base::RunLoop().RunUntilIdle();
+
+    const viz::CompositorFrame& frame =
+        GetFrameFromSurface(shell_surface.get());
+    EXPECT_EQ(1u, frame.render_pass_list.size());
+    EXPECT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+    EXPECT_EQ(1u, frame.resource_list.size());
+    // Ensure that the quad is correct and the resource is included.
+    EXPECT_EQ(1u, frame.resource_list.back().id);
+    EXPECT_EQ(viz::DrawQuad::Material::kSurfaceContent,
+              frame.render_pass_list.back()->quad_list.back()->material);
+  }
+}
+
+TEST_P(SurfaceTest, EmptySurfaceQuad) {
+  gfx::Size buffer_size(1, 1);
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size), GL_TEXTURE_2D, 0,
+      true, true, false);
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
+  surface->Attach(buffer.get());
+  surface->SetAlpha(1.0f);
+
+  // Explicitly zero the size, no quad should be produced.
+  surface->SetEmbeddedSurfaceSize(gfx::Size(0, 0));
+  surface->SetEmbeddedSurfaceId(base::BindRepeating([]() -> viz::SurfaceId {
+    return viz::SurfaceId(
+        viz::FrameSinkId(1, 1),
+        viz::LocalSurfaceId(1, 1, base::UnguessableToken::Create()));
+  }));
+
+  {
+    surface->Commit();
+    base::RunLoop().RunUntilIdle();
+
+    const viz::CompositorFrame& frame =
+        GetFrameFromSurface(shell_surface.get());
+    EXPECT_EQ(1u, frame.render_pass_list.size());
+    EXPECT_EQ(0u, frame.render_pass_list.back()->quad_list.size());
+    // No quad but still has a resource though.
+    EXPECT_EQ(1u, frame.resource_list.size());
+    EXPECT_EQ(1u, frame.resource_list.back().id);
+  }
+}
+
+TEST_P(SurfaceTest, ScaledSurfaceQuad) {
+  gfx::Size buffer_size(1, 1);
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size), GL_TEXTURE_2D, 0,
+      true, true, false);
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
+  surface->Attach(buffer.get());
+  surface->SetAlpha(1.0f);
+
+  surface->SetEmbeddedSurfaceId(base::BindRepeating([]() -> viz::SurfaceId {
+    return viz::SurfaceId(
+        viz::FrameSinkId(1, 1),
+        viz::LocalSurfaceId(1, 1, base::UnguessableToken::Create()));
+  }));
+
+  // A 256x256 surface, of which as 128x128 chunk is selected, drawn into a
+  // 128x64 rect.
+  surface->SetEmbeddedSurfaceSize(gfx::Size(256, 256));
+
+  surface->SetViewport(gfx::Size(128, 64));
+  surface->SetCrop(
+      gfx::RectF(gfx::PointF(32.0f, 32.0f), gfx::SizeF(128.0f, 128.0f)));
+
+  {
+    surface->Commit();
+    base::RunLoop().RunUntilIdle();
+
+    const viz::CompositorFrame& frame =
+        GetFrameFromSurface(shell_surface.get());
+    EXPECT_EQ(1u, frame.render_pass_list.size());
+    EXPECT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+    EXPECT_EQ(1u, frame.resource_list.size());
+    // Ensure that the quad is correct and the resource is included.
+    EXPECT_EQ(1u, frame.resource_list.back().id);
+    EXPECT_EQ(viz::DrawQuad::Material::kSurfaceContent,
+              frame.render_pass_list.back()->quad_list.back()->material);
+    // We are outputting to 0,0 -> 128,64.
+    EXPECT_EQ(gfx::Rect(gfx::Point(), gfx::Size(128, 64)),
+              frame.render_pass_list.back()
+                  ->quad_list.back()
+                  ->shared_quad_state->clip_rect);
+    // Rect should be the unmodified surface size.
+    EXPECT_EQ(gfx::Rect(gfx::Point(0, 0), gfx::Size(256, 256)),
+              frame.render_pass_list.back()->quad_list.back()->rect);
+    // To get 32,32 -> 160,160 into the correct position it must be translated
+    // backwards and scaled 0.5x in Y, then everything is scaled by the scale
+    // factor.
+    EXPECT_EQ(gfx::Transform(1.0f * device_scale_factor(), 0.0f, 0.0f,
+                             0.5f * device_scale_factor(),
+                             -32.0f * device_scale_factor(),
+                             -16.0f * device_scale_factor()),
+              frame.render_pass_list.back()
+                  ->quad_list.back()
+                  ->shared_quad_state->quad_to_target_transform);
+  }
+}
+
 TEST_P(SurfaceTest, Commit) {
   std::unique_ptr<Surface> surface(new Surface);
 
@@ -902,6 +1043,78 @@ TEST_P(SurfaceTest, SetClientSurfaceId) {
 
   surface->SetClientSurfaceId(kTestId);
   EXPECT_EQ(kTestId, surface->GetClientSurfaceId());
+}
+
+TEST_P(SurfaceTest, DestroyWithAttachedBufferReleasesBuffer) {
+  gfx::Size buffer_size(1, 1);
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
+
+  int release_buffer_call_count = 0;
+  buffer->set_release_callback(base::BindRepeating(
+      &ReleaseBuffer, base::Unretained(&release_buffer_call_count)));
+
+  surface->Attach(buffer.get());
+  surface->Commit();
+  base::RunLoop().RunUntilIdle();
+  // Buffer is still attached at this point.
+  EXPECT_EQ(0, release_buffer_call_count);
+
+  // After the surface is destroyed, we should get a release event for the
+  // attached buffer.
+  shell_surface.reset();
+  surface.reset();
+  base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(1, release_buffer_call_count);
+}
+
+TEST_P(SurfaceTest, AcquireFence) {
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(gfx::Size(1, 1)));
+  auto surface = std::make_unique<Surface>();
+
+  // We can only commit an acquire fence if a buffer is attached.
+  surface->Attach(buffer.get());
+
+  EXPECT_FALSE(surface->HasPendingAcquireFence());
+  surface->SetAcquireFence(
+      std::make_unique<gfx::GpuFence>(gfx::GpuFenceHandle()));
+  EXPECT_TRUE(surface->HasPendingAcquireFence());
+  surface->Commit();
+  EXPECT_FALSE(surface->HasPendingAcquireFence());
+}
+
+TEST_P(SurfaceTest, UpdatesOcclusionOnDestroyingSubsurface) {
+  gfx::Size buffer_size(256, 512);
+  auto buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
+  auto surface = std::make_unique<Surface>();
+  auto shell_surface = std::make_unique<ShellSurface>(surface.get());
+  surface->Attach(buffer.get());
+  surface->Commit();
+
+  gfx::Size child_buffer_size(64, 128);
+  auto child_buffer = std::make_unique<Buffer>(
+      exo_test_helper()->CreateGpuMemoryBuffer(child_buffer_size));
+  auto child_surface = std::make_unique<Surface>();
+  auto sub_surface =
+      std::make_unique<SubSurface>(child_surface.get(), surface.get());
+  child_surface->Attach(child_buffer.get());
+  child_surface->Commit();
+  surface->Commit();
+
+  // Turn on occlusion tracking.
+  child_surface->SetOcclusionTracking(true);
+  SurfaceObserverForTest observer;
+  ScopedSurface scoped_child_surface(child_surface.get(), &observer);
+
+  // Destroy the subsurface and expect to get an occlusion update.
+  sub_surface.reset();
+  EXPECT_EQ(1, observer.num_occlusion_changes());
+  EXPECT_EQ(aura::Window::OcclusionState::HIDDEN,
+            child_surface->window()->occlusion_state());
 }
 
 }  // namespace

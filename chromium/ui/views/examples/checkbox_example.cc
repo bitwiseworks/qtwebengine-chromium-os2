@@ -4,20 +4,21 @@
 
 #include "ui/views/examples/checkbox_example.h"
 
+#include <memory>
+
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/radio_button.h"
+#include "ui/views/examples/examples_window.h"
 #include "ui/views/layout/fill_layout.h"
 
 namespace views {
 namespace examples {
 
-CheckboxExample::CheckboxExample() : ExampleBase("Checkbox"), count_(0) {
-}
+CheckboxExample::CheckboxExample() : ExampleBase("Checkbox") {}
 
-CheckboxExample::~CheckboxExample() {
-}
+CheckboxExample::~CheckboxExample() = default;
 
 void CheckboxExample::CreateExampleView(View* container) {
   button_ = new Checkbox(base::ASCIIToUTF16("Checkbox"), this);

@@ -26,6 +26,7 @@ namespace bluez {
 // Style Note: Clients are sorted by names.
 class BluetoothAdapterClient;
 class BluetoothAgentManagerClient;
+class BluetoothDebugManagerClient;
 class BluetoothDeviceClient;
 class BluetoothGattCharacteristicClient;
 class BluetoothGattDescriptorClient;
@@ -69,13 +70,17 @@ class BluezDBusManagerSetter;
 
 class DEVICE_BLUETOOTH_EXPORT BluezDBusManager {
  public:
-  // Sets the global instance. Must be called before any calls to Get().
-  // We explicitly initialize and shut down the global object, rather than
-  // making it a Singleton, to ensure clean startup and shutdown.
-  // This will initialize real, stub, or fake DBusClients depending on
-  // command-line arguments, whether Object Manager is supported and
-  // whether this process runs in a real or test environment.
-  static void Initialize();
+  // Initializes the global instance with a real client. Must be called before
+  // any calls to Get(). We explicitly initialize and shutdown the global object
+  // rather than making it a Singleton to ensure clean startup and shutdown.
+  // * On Chrome OS, |system_bus| must not be null. It will be used as the
+  //   primary bus and a secondary bus will be created.
+  // * On Linux, |system_bus| is ignored and a primary bus only will be created
+  //   and used.
+  static void Initialize(dbus::Bus* system_bus);
+
+  // Initializes the global instance with a fake client.
+  static void InitializeFake();
 
   // Returns a BluezDBusManagerSetter instance that allows tests to
   // replace individual D-Bus clients with their own implementations.
@@ -114,6 +119,7 @@ class DEVICE_BLUETOOTH_EXPORT BluezDBusManager {
   BluetoothAdapterClient* GetBluetoothAdapterClient();
   BluetoothLEAdvertisingManagerClient* GetBluetoothLEAdvertisingManagerClient();
   BluetoothAgentManagerClient* GetBluetoothAgentManagerClient();
+  BluetoothDebugManagerClient* GetBluetoothDebugManagerClient();
   BluetoothDeviceClient* GetBluetoothDeviceClient();
   BluetoothGattCharacteristicClient* GetBluetoothGattCharacteristicClient();
   BluetoothGattDescriptorClient* GetBluetoothGattDescriptorClient();
@@ -152,9 +158,6 @@ class DEVICE_BLUETOOTH_EXPORT BluezDBusManager {
   // performs additional setup.
   void InitializeClients();
 
-  // Returns either BlueZ or newblue dispatcher depending on feature.
-  std::string GetBluetoothServiceName();
-
   dbus::Bus* bus_;
   // Separate D-Bus connection used by the "Alternate" set of D-Bus clients. See
   // "Alternate D-Bus Client" note above.
@@ -169,7 +172,7 @@ class DEVICE_BLUETOOTH_EXPORT BluezDBusManager {
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<BluezDBusManager> weak_ptr_factory_;
+  base::WeakPtrFactory<BluezDBusManager> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluezDBusManager);
 };
@@ -184,6 +187,8 @@ class DEVICE_BLUETOOTH_EXPORT BluezDBusManagerSetter {
       std::unique_ptr<BluetoothLEAdvertisingManagerClient> client);
   void SetBluetoothAgentManagerClient(
       std::unique_ptr<BluetoothAgentManagerClient> client);
+  void SetBluetoothDebugManagerClient(
+      std::unique_ptr<BluetoothDebugManagerClient> client);
   void SetBluetoothDeviceClient(std::unique_ptr<BluetoothDeviceClient> client);
   void SetBluetoothGattCharacteristicClient(
       std::unique_ptr<BluetoothGattCharacteristicClient> client);

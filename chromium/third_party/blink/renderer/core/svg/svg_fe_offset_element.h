@@ -31,19 +31,18 @@ class SVGFEOffsetElement final : public SVGFilterPrimitiveStandardAttributes {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGFEOffsetElement);
-
   explicit SVGFEOffsetElement(Document&);
 
   SVGAnimatedNumber* dx() { return dx_.Get(); }
   SVGAnimatedNumber* dy() { return dy_.Get(); }
   SVGAnimatedString* in1() { return in1_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void SvgAttributeChanged(const QualifiedName&) override;
   FilterEffect* Build(SVGFilterBuilder*, Filter*) override;
+  bool TaintsOrigin() const override { return false; }
 
   Member<SVGAnimatedNumber> dx_;
   Member<SVGAnimatedNumber> dy_;

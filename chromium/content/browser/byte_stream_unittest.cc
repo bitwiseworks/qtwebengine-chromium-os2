@@ -13,7 +13,7 @@
 #include "base/containers/circular_deque.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
@@ -91,7 +91,7 @@ class ByteStreamTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
  private:
   int producing_seed_key_;
@@ -441,7 +441,6 @@ TEST_F(ByteStreamTest, ByteStream_SinkInterrupt) {
 
   scoped_refptr<net::IOBuffer> output_io_buffer;
   size_t output_length;
-  base::Closure intermediate_callback;
 
   // Record initial state.
   int num_callbacks = 0;
@@ -487,7 +486,6 @@ TEST_F(ByteStreamTest, ByteStream_SourceInterrupt) {
 
   scoped_refptr<net::IOBuffer> output_io_buffer;
   size_t output_length;
-  base::Closure intermediate_callback;
 
   // Setup state for test.
   int num_callbacks = 0;
@@ -535,8 +533,6 @@ TEST_F(ByteStreamTest, ByteStream_ZeroCallback) {
   std::unique_ptr<ByteStreamReader> byte_stream_output;
   CreateByteStream(base::ThreadTaskRunnerHandle::Get(), task_runner, 10000,
                    &byte_stream_input, &byte_stream_output);
-
-  base::Closure intermediate_callback;
 
   // Record initial state.
   int num_callbacks = 0;

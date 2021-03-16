@@ -22,6 +22,7 @@
 class CFXJSE_Class;
 class CFXJSE_Context;
 class CFXJSE_FormCalcContext;
+class CFXJSE_HostObject;
 class CFXJSE_ResolveProcessor;
 class CJS_Runtime;
 class CXFA_List;
@@ -42,7 +43,9 @@ class CXFA_List;
 class CFXJSE_Engine final : public CFX_V8 {
  public:
   static CXFA_Object* ToObject(const v8::FunctionCallbackInfo<v8::Value>& info);
+  static CXFA_Object* ToObject(v8::Local<v8::Value> value);
   static CXFA_Object* ToObject(CFXJSE_Value* pValue);
+  static CXFA_Object* ToObject(CFXJSE_HostObject* pHostObj);
   static void GlobalPropertyGetter(CFXJSE_Value* pObject,
                                    ByteStringView szPropName,
                                    CFXJSE_Value* pValue);
@@ -80,13 +83,12 @@ class CFXJSE_Engine final : public CFX_V8 {
                       XFA_RESOLVENODE_RS* resolveNodeRS,
                       uint32_t dwStyles,
                       CXFA_Node* bindNode);
-  CFXJSE_Value* GetJSValueFromMap(CXFA_Object* pObject);
+
+  CFXJSE_Value* GetOrCreateJSBindingFromMap(CXFA_Object* pObject);
+  void RemoveJSBindingFromMap(CXFA_Object* pObject);
+
   void AddToCacheList(std::unique_ptr<CXFA_List> pList);
   CXFA_Object* GetThisObject() const { return m_pThisObject.Get(); }
-
-  int32_t GetIndexByName(CXFA_Node* refNode);
-  int32_t GetIndexByClassName(CXFA_Node* refNode);
-  WideString GetSomExpression(CXFA_Node* refNode);
 
   void SetNodesOfRunScript(std::vector<CXFA_Node*>* pArray);
   void AddNodesOfRunScript(CXFA_Node* pNode);

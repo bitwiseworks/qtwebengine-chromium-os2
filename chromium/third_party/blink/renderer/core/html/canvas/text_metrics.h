@@ -26,8 +26,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_CANVAS_TEXT_METRICS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_CANVAS_TEXT_METRICS_H_
 
+#include "third_party/blink/renderer/bindings/core/v8/v8_baselines.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/html/canvas/baselines.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
@@ -39,19 +39,12 @@ class CORE_EXPORT TextMetrics final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static TextMetrics* Create() { return MakeGarbageCollected<TextMetrics>(); }
-
-  static TextMetrics* Create(const Font& font,
-                             const TextDirection& direction,
-                             const TextBaseline& baseline,
-                             const TextAlign& align,
-                             const String& text) {
-    TextMetrics* metric = MakeGarbageCollected<TextMetrics>();
-    metric->Update(font, direction, baseline, align, text);
-    return metric;
-  }
-
   TextMetrics();
+  TextMetrics(const Font& font,
+              const TextDirection& direction,
+              const TextBaseline& baseline,
+              const TextAlign& align,
+              const String& text);
 
   double width() const { return width_; }
   const Vector<double>& advances() const { return advances_; }

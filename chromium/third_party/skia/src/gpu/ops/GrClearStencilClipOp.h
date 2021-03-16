@@ -8,17 +8,18 @@
 #ifndef GrClearStencilClipOp_DEFINED
 #define GrClearStencilClipOp_DEFINED
 
-#include "GrFixedClip.h"
-#include "GrOp.h"
-#include "GrRenderTargetProxy.h"
+#include "src/gpu/GrFixedClip.h"
+#include "src/gpu/GrRenderTargetProxy.h"
+#include "src/gpu/ops/GrOp.h"
 
 class GrOpFlushState;
+class GrRecordingContext;
 
 class GrClearStencilClipOp final : public GrOp {
 public:
     DEFINE_OP_CLASS_ID
 
-    static std::unique_ptr<GrOp> Make(GrContext* context,
+    static std::unique_ptr<GrOp> Make(GrRecordingContext* context,
                                       const GrFixedClip& clip,
                                       bool insideStencilMask,
                                       GrRenderTargetProxy* proxy);
@@ -48,11 +49,15 @@ private:
             : INHERITED(ClassID())
             , fClip(clip)
             , fInsideStencilMask(insideStencilMask) {
-        const SkRect& bounds = fClip.scissorEnabled()
-                                            ? SkRect::Make(fClip.scissorRect())
-                                            : SkRect::MakeIWH(proxy->width(), proxy->height());
-        this->setBounds(bounds, HasAABloat::kNo, IsZeroArea::kNo);
+        const SkRect& bounds =
+                fClip.scissorEnabled() ? SkRect::Make(fClip.scissorRect()) : proxy->getBoundsRect();
+        this->setBounds(bounds, HasAABloat::kNo, IsHairline::kNo);
     }
+
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) override {}
 
     void onPrepare(GrOpFlushState*) override {}
 

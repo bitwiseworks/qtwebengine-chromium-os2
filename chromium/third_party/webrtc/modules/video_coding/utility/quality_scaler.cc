@@ -13,12 +13,11 @@
 #include <memory>
 #include <utility>
 
-#include "absl/types/optional.h"
 #include "rtc_base/checks.h"
+#include "rtc_base/experiments/quality_scaler_settings.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/numerics/exp_filter.h"
 #include "rtc_base/task_queue.h"
-#include "rtc_base/time_utils.h"
 
 // TODO(kthelgason): Some versions of Android have issues with log2.
 // See https://code.google.com/p/android/issues/detail?id=212634 for details
@@ -34,14 +33,18 @@ namespace {
 static const int kMeasureMs = 2000;
 static const float kSamplePeriodScaleFactor = 2.5;
 static const int kFramedropPercentThreshold = 60;
-static const int kMinFramesNeededToScale = 2 * 30;
+static const size_t kMinFramesNeededToScale = 2 * 30;
 
 }  // namespace
 
 class QualityScaler::QpSmoother {
  public:
   explicit QpSmoother(float alpha)
-      : alpha_(alpha), last_sample_ms_(rtc::TimeMillis()), smoother_(alpha) {}
+      : alpha_(alpha),
+        // The initial value of last_sample_ms doesn't matter since the smoother
+        // will ignore the time delta for the first update.
+        last_sample_ms_(0),
+        smoother_(alpha) {}
 
   absl::optional<int> GetAvg() const {
     float value = smoother_.filtered();
@@ -51,8 +54,8 @@ class QualityScaler::QpSmoother {
     return static_cast<int>(value);
   }
 
-  void Add(float sample) {
-    int64_t now_ms = rtc::TimeMillis();
+  void Add(float sample, int64_t time_sent_us) {
+    int64_t now_ms = time_sent_us / 1000;
     smoother_.Apply(static_cast<float>(now_ms - last_sample_ms_), sample);
     last_sample_ms_ = now_ms;
   }
@@ -64,7 +67,6 @@ class QualityScaler::QpSmoother {
   int64_t last_sample_ms_;
   rtc::ExpFilter smoother_;
 };
-
 
 QualityScaler::QualityScaler(AdaptationObserverInterface* observer,
                              VideoEncoder::QpThresholds thresholds)
@@ -83,8 +85,18 @@ QualityScaler::QualityScaler(AdaptationObserverInterface* observer,
       framedrop_percent_media_opt_(5 * 30),
       framedrop_percent_all_(5 * 30),
       experiment_enabled_(QualityScalingExperiment::Enabled()),
-      observed_enough_frames_(false) {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+      observed_enough_frames_(false),
+      min_frames_needed_(
+          QualityScalerSettings::ParseFromFieldTrials().MinFrames().value_or(
+              kMinFramesNeededToScale)),
+      initial_scale_factor_(QualityScalerSettings::ParseFromFieldTrials()
+                                .InitialScaleFactor()
+                                .value_or(kSamplePeriodScaleFactor)),
+      scale_factor_(
+          QualityScalerSettings::ParseFromFieldTrials().ScaleFactor()),
+      adapt_called_(false),
+      adapt_failed_(false) {
+  RTC_DCHECK_RUN_ON(&task_checker_);
   if (experiment_enabled_) {
     config_ = QualityScalingExperiment::GetConfig();
     qp_smoother_high_.reset(new QpSmoother(config_.alpha_high));
@@ -92,21 +104,22 @@ QualityScaler::QualityScaler(AdaptationObserverInterface* observer,
   }
   RTC_DCHECK(observer_ != nullptr);
   check_qp_task_ = RepeatingTaskHandle::DelayedStart(
-      TimeDelta::ms(GetSamplingPeriodMs()), [this]() {
+      TaskQueueBase::Current(), TimeDelta::Millis(GetSamplingPeriodMs()),
+      [this]() {
         CheckQp();
-        return TimeDelta::ms(GetSamplingPeriodMs());
+        return TimeDelta::Millis(GetSamplingPeriodMs());
       });
   RTC_LOG(LS_INFO) << "QP thresholds: low: " << thresholds_.low
                    << ", high: " << thresholds_.high;
 }
 
 QualityScaler::~QualityScaler() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   check_qp_task_.Stop();
 }
 
 int64_t QualityScaler::GetSamplingPeriodMs() const {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   if (fast_rampup_) {
     return sampling_period_ms_;
   }
@@ -114,42 +127,72 @@ int64_t QualityScaler::GetSamplingPeriodMs() const {
     // Use half the interval while waiting for enough frames.
     return sampling_period_ms_ / 2;
   }
-  return sampling_period_ms_ * kSamplePeriodScaleFactor;
+  if (adapt_failed_) {
+    // Check shortly again.
+    return sampling_period_ms_ / 8;
+  }
+  if (scale_factor_ && !adapt_called_) {
+    // Last CheckQp did not call AdaptDown/Up, possibly reduce interval.
+    return sampling_period_ms_ * scale_factor_.value();
+  }
+  return sampling_period_ms_ * initial_scale_factor_;
+}
+
+void QualityScaler::SetQpThresholds(VideoEncoder::QpThresholds thresholds) {
+  RTC_DCHECK_RUN_ON(&task_checker_);
+  thresholds_ = thresholds;
 }
 
 void QualityScaler::ReportDroppedFrameByMediaOpt() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   framedrop_percent_media_opt_.AddSample(100);
   framedrop_percent_all_.AddSample(100);
 }
 
 void QualityScaler::ReportDroppedFrameByEncoder() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   framedrop_percent_all_.AddSample(100);
 }
 
-void QualityScaler::ReportQp(int qp) {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+void QualityScaler::ReportQp(int qp, int64_t time_sent_us) {
+  RTC_DCHECK_RUN_ON(&task_checker_);
   framedrop_percent_media_opt_.AddSample(0);
   framedrop_percent_all_.AddSample(0);
   average_qp_.AddSample(qp);
   if (qp_smoother_high_)
-    qp_smoother_high_->Add(qp);
+    qp_smoother_high_->Add(qp, time_sent_us);
   if (qp_smoother_low_)
-    qp_smoother_low_->Add(qp);
+    qp_smoother_low_->Add(qp, time_sent_us);
+}
+
+bool QualityScaler::QpFastFilterLow() const {
+  RTC_DCHECK_RUN_ON(&task_checker_);
+  size_t num_frames = config_.use_all_drop_reasons
+                          ? framedrop_percent_all_.Size()
+                          : framedrop_percent_media_opt_.Size();
+  const size_t kMinNumFrames = 10;
+  if (num_frames < kMinNumFrames) {
+    return false;  // Wait for more frames before making a decision.
+  }
+  absl::optional<int> avg_qp_high = qp_smoother_high_
+                                        ? qp_smoother_high_->GetAvg()
+                                        : average_qp_.GetAverageRoundedDown();
+  return (avg_qp_high) ? (avg_qp_high.value() <= thresholds_.low) : false;
 }
 
 void QualityScaler::CheckQp() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   // Should be set through InitEncode -> Should be set by now.
   RTC_DCHECK_GE(thresholds_.low, 0);
+  adapt_failed_ = false;
+  adapt_called_ = false;
 
   // If we have not observed at least this many frames we can't make a good
   // scaling decision.
   const size_t frames = config_.use_all_drop_reasons
                             ? framedrop_percent_all_.Size()
                             : framedrop_percent_media_opt_.Size();
-  if (frames < kMinFramesNeededToScale) {
+  if (frames < min_frames_needed_) {
     observed_enough_frames_ = false;
     return;
   }
@@ -189,23 +232,31 @@ void QualityScaler::CheckQp() {
 }
 
 void QualityScaler::ReportQpLow() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   ClearSamples();
   observer_->AdaptUp(AdaptationObserverInterface::AdaptReason::kQuality);
+  adapt_called_ = true;
 }
 
 void QualityScaler::ReportQpHigh() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
-  ClearSamples();
-  observer_->AdaptDown(AdaptationObserverInterface::AdaptReason::kQuality);
+  RTC_DCHECK_RUN_ON(&task_checker_);
+
+  if (observer_->AdaptDown(
+          AdaptationObserverInterface::AdaptReason::kQuality)) {
+    ClearSamples();
+  } else {
+    adapt_failed_ = true;
+  }
+
   // If we've scaled down, wait longer before scaling up again.
   if (fast_rampup_) {
     fast_rampup_ = false;
   }
+  adapt_called_ = true;
 }
 
 void QualityScaler::ClearSamples() {
-  RTC_DCHECK_CALLED_SEQUENTIALLY(&task_checker_);
+  RTC_DCHECK_RUN_ON(&task_checker_);
   framedrop_percent_media_opt_.Reset();
   framedrop_percent_all_.Reset();
   average_qp_.Reset();

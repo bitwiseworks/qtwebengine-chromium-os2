@@ -12,11 +12,17 @@ set(SHADERC_SOURCES
 
 add_library(shaderc STATIC ${SHADERC_SOURCES})
 shaderc_default_compile_options(shaderc)
-target_include_directories(shaderc PUBLIC include PRIVATE ${glslang_SOURCE_DIR})
+target_include_directories(shaderc
+    PUBLIC include
+    PRIVATE ${glslang_SOURCE_DIR}
+            ${SPIRV-Headers_SOURCE_DIR}/include)
 
 add_library(shaderc_shared SHARED ${SHADERC_SOURCES})
 shaderc_default_compile_options(shaderc_shared)
-target_include_directories(shaderc_shared PUBLIC include PRIVATE ${glslang_SOURCE_DIR})
+target_include_directories(shaderc_shared
+    PUBLIC include
+    PRIVATE ${glslang_SOURCE_DIR}
+            ${SPIRV-Headers_SOURCE_DIR}/include)
 target_compile_definitions(shaderc_shared
     PRIVATE SHADERC_IMPLEMENTATION
     PUBLIC SHADERC_SHAREDLIB
@@ -26,6 +32,9 @@ set_target_properties(shaderc_shared PROPERTIES SOVERSION 1)
 if(SHADERC_ENABLE_INSTALL)
   install(
     FILES
+      include/shaderc/env.h
+      include/shaderc/status.h
+      include/shaderc/visibility.h
       include/shaderc/shaderc.h
       include/shaderc/shaderc.hpp
     DESTINATION
@@ -53,6 +62,7 @@ shaderc_add_tests(
   LINK_LIBS shaderc
   INCLUDE_DIRS include ${shaderc_SOURCE_DIR}/libshaderc_util/include ${glslang_SOURCE_DIR}
                ${spirv-tools_SOURCE_DIR}/include
+               ${SPIRV-Headers_SOURCE_DIR}/include
   TEST_NAMES
     shaderc
     shaderc_cpp
@@ -63,6 +73,7 @@ shaderc_add_tests(
   LINK_LIBS shaderc_shared SPIRV-Tools
   INCLUDE_DIRS include ${shaderc_SOURCE_DIR}/libshaderc_util/include ${glslang_SOURCE_DIR}
                ${spirv-tools_SOURCE_DIR}/include
+               ${SPIRV-Headers_SOURCE_DIR}/include
   TEST_NAMES
     shaderc
     shaderc_cpp
@@ -81,7 +92,7 @@ if(SHADERC_ENABLE_INSTALL)
     # around this problem by manually substitution.
     string(REPLACE "$(Configuration)" "\${CMAKE_INSTALL_CONFIG_NAME}"
       install_location "${generated_location}")
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${install_location} DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    install(FILES ${install_location} DESTINATION ${CMAKE_INSTALL_LIBDIR})
   else()
     install(FILES ${generated_location} DESTINATION ${CMAKE_INSTALL_LIBDIR})
   endif()
@@ -92,6 +103,7 @@ shaderc_add_tests(
   LINK_LIBS shaderc_combined ${CMAKE_THREAD_LIBS_INIT}
   INCLUDE_DIRS include ${shaderc_SOURCE_DIR}/libshaderc_util/include ${glslang_SOURCE_DIR}
                ${spirv-tools_SOURCE_DIR}/include
+               ${SPIRV-Headers_SOURCE_DIR}/include
   TEST_NAMES
     shaderc
     shaderc_cpp)

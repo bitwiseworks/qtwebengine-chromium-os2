@@ -7,22 +7,26 @@
 
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/timer/timer.h"
+#import "components/remote_cocoa/app_shim/views_scrollbar_bridge.h"
 #include "ui/compositor/layer_animation_observer.h"
 #include "ui/gfx/animation/slide_animation.h"
-#include "ui/views/controls/scrollbar/base_scroll_bar.h"
+#include "ui/gfx/mac/cocoa_scrollbar_painter.h"
+#include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/views_export.h"
-#import "ui/views_bridge_mac/views_scrollbar_bridge.h"
 
 namespace views {
 
 class CocoaScrollBarThumb;
 
 // The transparent scrollbar for Mac which overlays its contents.
-class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
+class VIEWS_EXPORT CocoaScrollBar : public ScrollBar,
                                     public ViewsScrollbarBridgeDelegate,
                                     public ui::ImplicitAnimationObserver,
                                     public gfx::AnimationDelegate {
  public:
+  METADATA_HEADER(CocoaScrollBar);
+
   explicit CocoaScrollBar(bool horizontal);
   ~CocoaScrollBar() override;
 
@@ -36,6 +40,7 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   void OnScrollerStyleChanged() override;
 
   // View:
+  bool CanProcessEventsWithinSubtree() const override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
@@ -57,8 +62,11 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   // Returns true if the opacity is 0.0.
   bool IsScrollbarFullyHidden() const;
 
+  // Get the parameters for painting.
+  gfx::CocoaScrollbarPainter::Params GetPainterParams() const;
+
  protected:
-  // BaseScrollBar:
+  // ScrollBar:
   gfx::Rect GetTrackBounds() const override;
 
   // ScrollBar:
@@ -71,7 +79,7 @@ class VIEWS_EXPORT CocoaScrollBar : public BaseScrollBar,
   void OnPaint(gfx::Canvas* canvas) override;
 
  private:
-  friend class BaseScrollBar;  // For BaseScrollBar::GetHideTimerForTest().
+  friend class ScrollBar;  // For ScrollBar::GetHideTimerForTesting().
 
   // Methods to change the visibility of the scrollbar.
   void ShowScrollbar();

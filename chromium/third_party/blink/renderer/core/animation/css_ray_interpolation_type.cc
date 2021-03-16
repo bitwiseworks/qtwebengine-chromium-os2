@@ -57,7 +57,15 @@ class CSSRayNonInterpolableValue : public NonInterpolableValue {
 };
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSRayNonInterpolableValue);
-DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSRayNonInterpolableValue);
+template <>
+struct DowncastTraits<CSSRayNonInterpolableValue> {
+  static bool AllowFrom(const NonInterpolableValue* value) {
+    return value && AllowFrom(*value);
+  }
+  static bool AllowFrom(const NonInterpolableValue& value) {
+    return value.GetType() == CSSRayNonInterpolableValue::static_type_;
+  }
+};
 
 namespace {
 
@@ -67,42 +75,33 @@ StyleRay* GetRay(const ComputedStyle& style) {
   BasicShape* offset_path = style.OffsetPath();
   if (!offset_path || offset_path->GetType() != BasicShape::kStyleRayType)
     return nullptr;
-  return ToStyleRay(style.OffsetPath());
+  return To<StyleRay>(style.OffsetPath());
 }
 
 class UnderlyingRayModeChecker
     : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<UnderlyingRayModeChecker> Create(const RayMode& mode) {
-    return base::WrapUnique(new UnderlyingRayModeChecker(mode));
-  }
+  explicit UnderlyingRayModeChecker(const RayMode& mode) : mode_(mode) {}
 
   bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     return mode_ ==
-           ToCSSRayNonInterpolableValue(*underlying.non_interpolable_value)
+           To<CSSRayNonInterpolableValue>(*underlying.non_interpolable_value)
                .Mode();
   }
 
  private:
-  UnderlyingRayModeChecker(const RayMode& mode) : mode_(mode) {}
-
   const RayMode mode_;
 };
 
 class InheritedRayChecker : public CSSInterpolationType::CSSConversionChecker {
  public:
-  static std::unique_ptr<InheritedRayChecker> Create(
-      scoped_refptr<StyleRay> style_ray) {
-    return base::WrapUnique(new InheritedRayChecker(std::move(style_ray)));
-  }
-
- private:
   InheritedRayChecker(scoped_refptr<StyleRay> style_ray)
       : style_ray_(std::move(style_ray)) {
     DCHECK(style_ray_);
   }
 
+ private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
     return GetRay(*state.ParentStyle()) == style_ray_.get();
@@ -112,7 +111,7 @@ class InheritedRayChecker : public CSSInterpolationType::CSSConversionChecker {
 };
 
 InterpolationValue CreateValue(float angle, const RayMode& mode) {
-  return InterpolationValue(InterpolableNumber::Create(angle),
+  return InterpolationValue(std::make_unique<InterpolableNumber>(angle),
                             CSSRayNonInterpolableValue::Create(mode));
 }
 
@@ -122,10 +121,10 @@ void CSSRayInterpolationType::ApplyStandardPropertyValue(
     const InterpolableValue& interpolable_value,
     const NonInterpolableValue* non_interpolable_value,
     StyleResolverState& state) const {
-  const CSSRayNonInterpolableValue& ray_non_interpolable_value =
-      ToCSSRayNonInterpolableValue(*non_interpolable_value);
+  const auto& ray_non_interpolable_value =
+      To<CSSRayNonInterpolableValue>(*non_interpolable_value);
   state.Style()->SetOffsetPath(
-      StyleRay::Create(ToInterpolableNumber(interpolable_value).Value(),
+      StyleRay::Create(To<InterpolableNumber>(interpolable_value).Value(),
                        ray_non_interpolable_value.Mode().Size(),
                        ray_non_interpolable_value.Mode().Contain()));
 }
@@ -136,11 +135,11 @@ void CSSRayInterpolationType::Composite(
     const InterpolationValue& value,
     double interpolation_fraction) const {
   const RayMode& underlying_mode =
-      ToCSSRayNonInterpolableValue(
+      To<CSSRayNonInterpolableValue>(
           *underlying_value_owner.Value().non_interpolable_value)
           .Mode();
   const RayMode& ray_mode =
-      ToCSSRayNonInterpolableValue(*value.non_interpolable_value).Mode();
+      To<CSSRayNonInterpolableValue>(*value.non_interpolable_value).Mode();
   if (underlying_mode == ray_mode) {
     underlying_value_owner.MutableValue().interpolable_value->ScaleAndAdd(
         underlying_fraction, *value.interpolable_value);
@@ -153,9 +152,9 @@ InterpolationValue CSSRayInterpolationType::MaybeConvertNeutral(
     const InterpolationValue& underlying,
     ConversionCheckers& conversion_checkers) const {
   const RayMode& underlying_mode =
-      ToCSSRayNonInterpolableValue(*underlying.non_interpolable_value).Mode();
+      To<CSSRayNonInterpolableValue>(*underlying.non_interpolable_value).Mode();
   conversion_checkers.push_back(
-      UnderlyingRayModeChecker::Create(underlying_mode));
+      std::make_unique<UnderlyingRayModeChecker>(underlying_mode));
   return CreateValue(0, underlying_mode);
 }
 
@@ -176,7 +175,8 @@ InterpolationValue CSSRayInterpolationType::MaybeConvertInherit(
   if (!inherited_ray)
     return nullptr;
 
-  conversion_checkers.push_back(InheritedRayChecker::Create(inherited_ray));
+  conversion_checkers.push_back(
+      std::make_unique<InheritedRayChecker>(inherited_ray));
   return CreateValue(inherited_ray->Angle(), RayMode(*inherited_ray));
 }
 
@@ -184,9 +184,9 @@ PairwiseInterpolationValue CSSRayInterpolationType::MaybeMergeSingles(
     InterpolationValue&& start,
     InterpolationValue&& end) const {
   const RayMode& start_mode =
-      ToCSSRayNonInterpolableValue(*start.non_interpolable_value).Mode();
+      To<CSSRayNonInterpolableValue>(*start.non_interpolable_value).Mode();
   const RayMode& end_mode =
-      ToCSSRayNonInterpolableValue(*end.non_interpolable_value).Mode();
+      To<CSSRayNonInterpolableValue>(*end.non_interpolable_value).Mode();
   if (start_mode != end_mode)
     return nullptr;
   return PairwiseInterpolationValue(std::move(start.interpolable_value),
@@ -213,7 +213,8 @@ InterpolationValue CSSRayInterpolationType::MaybeConvertValue(
     return nullptr;
 
   scoped_refptr<BasicShape> shape = BasicShapeForValue(*state, value);
-  return CreateValue(ToStyleRay(*shape).Angle(), RayMode(ToStyleRay(*shape)));
+  return CreateValue(To<StyleRay>(*shape).Angle(),
+                     RayMode(To<StyleRay>(*shape)));
 }
 
 }  // namespace blink

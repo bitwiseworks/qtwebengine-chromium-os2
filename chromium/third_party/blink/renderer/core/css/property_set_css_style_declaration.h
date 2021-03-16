@@ -27,29 +27,27 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_PROPERTY_SET_CSS_STYLE_DECLARATION_H_
 
 #include "third_party/blink/renderer/core/css/abstract_property_set_css_style_declaration.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
 
 class MutableCSSPropertyValueSet;
-class PropertyRegistry;
 
 class PropertySetCSSStyleDeclaration
     : public AbstractPropertySetCSSStyleDeclaration {
  public:
-  PropertySetCSSStyleDeclaration(MutableCSSPropertyValueSet& property_set)
-      : property_set_(&property_set) {}
+  PropertySetCSSStyleDeclaration(ExecutionContext* execution_context,
+                                 MutableCSSPropertyValueSet& property_set)
+      : AbstractPropertySetCSSStyleDeclaration(execution_context),
+        property_set_(&property_set) {}
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   MutableCSSPropertyValueSet& PropertySet() const final {
     DCHECK(property_set_);
     return *property_set_;
   }
-
-  PropertyRegistry* GetPropertyRegistry() const override { return nullptr; }
 
   Member<MutableCSSPropertyValueSet> property_set_;  // Cannot be null
 };

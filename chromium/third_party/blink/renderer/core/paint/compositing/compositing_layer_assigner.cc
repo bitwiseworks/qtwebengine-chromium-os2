@@ -28,24 +28,23 @@
 
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 #include "third_party/blink/renderer/core/animation/worklet_animation_controller.h"
-#include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
+#include "third_party/blink/renderer/core/layout/layout_video.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/scrolling/scrolling_coordinator.h"
 #include "third_party/blink/renderer/core/paint/compositing/composited_layer_mapping.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_paint_order_iterator.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 
 namespace blink {
 
 // We will only allow squashing if the bbox-area:squashed-area doesn't exceed
-// the ratio |gSquashingSparsityTolerance|:1.
-static uint64_t g_squashing_sparsity_tolerance = 6;
+// the ratio |kSquashingSparsityTolerance|:1.
+constexpr uint64_t kSquashingSparsityTolerance = 6;
 
 CompositingLayerAssigner::CompositingLayerAssigner(
     PaintLayerCompositor* compositor)
     : compositor_(compositor), layers_changed_(false) {}
-
-CompositingLayerAssigner::~CompositingLayerAssigner() = default;
 
 void CompositingLayerAssigner::Assign(
     PaintLayer* update_root,
@@ -90,7 +89,7 @@ bool CompositingLayerAssigner::SquashingWouldExceedSparsityTolerance(
   const uint64_t new_squashed_area =
       squashing_state.total_area_of_squashed_rects + bounds.Size().Area();
   return new_bounding_rect_area >
-         g_squashing_sparsity_tolerance * new_squashed_area;
+         kSquashingSparsityTolerance * new_squashed_area;
 }
 
 bool CompositingLayerAssigner::NeedsOwnBacking(const PaintLayer* layer) const {
@@ -135,10 +134,8 @@ CompositingLayerAssigner::GetReasonsPreventingSquashing(
   const PaintLayer& squashing_layer =
       squashing_state.most_recent_mapping->OwningLayer();
 
-  // Don't squash into or out of any thing underneath a video, including the
-  // user-agent shadow DOM for controls. This is is to work around a
-  // bug involving overflow clip of videos. See crbug.com/900602.
-  if (layer->IsUnderVideo() || squashing_layer.IsUnderVideo())
+  if (IsA<LayoutVideo>(layer->GetLayoutObject()) ||
+      IsA<LayoutVideo>(squashing_layer.GetLayoutObject()))
     return SquashingDisallowedReason::kSquashingVideoIsDisallowed;
 
   // Don't squash iframes, frames or plugins.
@@ -163,26 +160,14 @@ CompositingLayerAssigner::GetReasonsPreventingSquashing(
           squashing_state.next_squashed_layer_index))
     return SquashingDisallowedReason::kClippingContainerMismatch;
 
-  // Composited descendants need to be clipped by a child containment graphics
-  // layer, which would not be available if the layer is squashed (and therefore
-  // has no CLM nor a child containment graphics layer).
-  if (compositor_->ClipsCompositingDescendants(layer))
-    return SquashingDisallowedReason::kSquashedLayerClipsCompositingDescendants;
-
   if (layer->ScrollsWithRespectTo(&squashing_layer))
     return SquashingDisallowedReason::kScrollsWithRespectToSquashingLayer;
-
-  if (layer->ScrollParent() && layer->HasCompositingDescendant())
-    return SquashingDisallowedReason::kScrollChildWithCompositedDescendants;
 
   if (layer->OpacityAncestor() != squashing_layer.OpacityAncestor())
     return SquashingDisallowedReason::kOpacityAncestorMismatch;
 
   if (layer->TransformAncestor() != squashing_layer.TransformAncestor())
     return SquashingDisallowedReason::kTransformAncestorMismatch;
-
-  if (layer->RenderingContextRoot() != squashing_layer.RenderingContextRoot())
-    return SquashingDisallowedReason::kRenderingContextMismatch;
 
   if (layer->HasFilterInducingProperty() ||
       layer->FilterAncestor() != squashing_layer.FilterAncestor())
@@ -215,6 +200,10 @@ CompositingLayerAssigner::GetReasonsPreventingSquashing(
   if (layer->GetLayoutObject().HasMask() ||
       layer->MaskAncestor() != squashing_layer.MaskAncestor())
     return SquashingDisallowedReason::kMaskMismatch;
+
+  if (layer->NearestContainedLayoutLayer() !=
+      squashing_layer.NearestContainedLayoutLayer())
+    return SquashingDisallowedReason::kCrossesLayoutContainmentBoundary;
 
   return SquashingDisallowedReason::kNone;
 }
@@ -252,9 +241,6 @@ void CompositingLayerAssigner::UpdateSquashingAssignment(
 
     // Issue a paint invalidation, since |layer| may have been added to an
     // already-existing squashing layer.
-    TRACE_LAYER_INVALIDATION(
-        layer,
-        inspector_layer_invalidation_tracking_event::kAddedToSquashingLayer);
     layers_needing_paint_invalidation.push_back(layer);
     layers_changed_ = true;
   } else if (composited_layer_update == kRemoveFromSquashingLayer) {
@@ -270,9 +256,6 @@ void CompositingLayerAssigner::UpdateSquashingAssignment(
 
     // If we need to issue paint invalidations, do so now that we've removed it
     // from a squashed layer.
-    TRACE_LAYER_INVALIDATION(layer,
-                             inspector_layer_invalidation_tracking_event::
-                                 kRemovedFromSquashingLayer);
     layers_needing_paint_invalidation.push_back(layer);
     layers_changed_ = true;
 
@@ -303,20 +286,8 @@ void CompositingLayerAssigner::AssignLayersToBackingsInternal(
 
     if (compositor_->AllocateOrClearCompositedLayerMapping(
             layer, composited_layer_update)) {
-      TRACE_LAYER_INVALIDATION(
-          layer,
-          inspector_layer_invalidation_tracking_event::kNewCompositedLayer);
       layers_needing_paint_invalidation.push_back(layer);
       layers_changed_ = true;
-      if (ScrollingCoordinator* scrolling_coordinator =
-              layer->GetScrollingCoordinator()) {
-        if (layer->GetLayoutObject()
-                .StyleRef()
-                .HasViewportConstrainedPosition()) {
-          scrolling_coordinator->FrameViewFixedObjectsDidChange(
-              layer->GetLayoutObject().View()->GetFrameView());
-        }
-      }
     }
 
     if (composited_layer_update != kNoCompositingStateChange) {
@@ -349,10 +320,8 @@ void CompositingLayerAssigner::AssignLayersToBackingsInternal(
     }
   }
 
-  if (layer->StackingDescendantNeedsCompositingLayerAssignment() &&
-      layer->GetLayoutObject().StyleRef().IsStackingContext()) {
-    PaintLayerStackingNodeIterator iterator(*layer->StackingNode(),
-                                            kNegativeZOrderChildren);
+  if (layer->StackingDescendantNeedsCompositingLayerAssignment()) {
+    PaintLayerPaintOrderIterator iterator(*layer, kNegativeZOrderChildren);
     while (PaintLayer* child_node = iterator.Next()) {
       AssignLayersToBackingsInternal(child_node, squashing_state,
                                      layers_needing_paint_invalidation);
@@ -369,10 +338,9 @@ void CompositingLayerAssigner::AssignLayersToBackingsInternal(
         layers_needing_paint_invalidation);
   }
 
-  if (layer->StackingNode() &&
-      layer->StackingDescendantNeedsCompositingLayerAssignment()) {
-    PaintLayerStackingNodeIterator iterator(
-        *layer->StackingNode(), kNormalFlowChildren | kPositiveZOrderChildren);
+  if (layer->StackingDescendantNeedsCompositingLayerAssignment()) {
+    PaintLayerPaintOrderIterator iterator(*layer,
+                                          kNormalFlowAndPositiveZOrderChildren);
     while (PaintLayer* curr_layer = iterator.Next()) {
       AssignLayersToBackingsInternal(curr_layer, squashing_state,
                                      layers_needing_paint_invalidation);

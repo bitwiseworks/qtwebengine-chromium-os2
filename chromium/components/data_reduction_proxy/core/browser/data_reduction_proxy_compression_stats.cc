@@ -4,6 +4,7 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_compression_stats.h"
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -46,9 +47,6 @@ namespace {
     UMA_HISTOGRAM_COUNTS_1M(uma, UNIQUE_VARNAME >> 10); \
   }
 
-const double kSecondsPerWeek =
-    base::Time::kMicrosecondsPerWeek / base::Time::kMicrosecondsPerSecond;
-
 // Returns the value at |index| of |list_value| as an int64_t.
 int64_t GetInt64PrefValue(const base::ListValue& list_value, size_t index) {
   int64_t val = 0;
@@ -71,7 +69,7 @@ void MaintainContentLengthPrefsWindow(base::ListValue* list, size_t length) {
   // Newly added lists are empty. Add entries to back to fill the window,
   // each initialized to zero.
   while (list->GetSize() < length)
-    list->AppendString(base::Int64ToString(0));
+    list->AppendString(base::NumberToString(0));
   DCHECK_EQ(length, list->GetSize());
 }
 
@@ -83,126 +81,7 @@ void AddInt64ToListPref(size_t index,
                         base::ListValue* list_update) {
   int64_t value = GetInt64PrefValue(*list_update, index) + length;
   list_update->Set(index,
-                   std::make_unique<base::Value>(base::Int64ToString(value)));
-}
-
-// DailyContentLengthUpdate maintains a data saving pref. The pref is a list
-// of |kNumDaysInHistory| elements of daily total content lengths for the past
-// |kNumDaysInHistory| days.
-void RecordDailyContentLengthHistograms(
-    int64_t original_length,
-    int64_t received_length,
-    int64_t original_length_with_data_reduction_enabled,
-    int64_t received_length_with_data_reduction_enabled,
-    int64_t original_length_via_data_reduction_proxy,
-    int64_t received_length_via_data_reduction_proxy,
-    int64_t https_length_with_data_reduction_enabled,
-    int64_t short_bypass_length_with_data_reduction_enabled,
-    int64_t long_bypass_length_with_data_reduction_enabled,
-    int64_t unknown_length_with_data_reduction_enabled) {
-  // Report daily UMA only for days having received content.
-  if (original_length <= 0 || received_length <= 0)
-    return;
-
-  // Record metrics in KB.
-  UMA_HISTOGRAM_COUNTS_1M("Net.DailyOriginalContentLength",
-                          original_length >> 10);
-  UMA_HISTOGRAM_COUNTS_1M("Net.DailyContentLength", received_length >> 10);
-
-  int percent = 0;
-  // UMA percentage cannot be negative.
-  if (original_length > received_length) {
-    percent = (100 * (original_length - received_length)) / original_length;
-  }
-  UMA_HISTOGRAM_PERCENTAGE("Net.DailyContentSavingPercent", percent);
-
-  if (original_length_with_data_reduction_enabled <= 0 ||
-      received_length_with_data_reduction_enabled <= 0) {
-    return;
-  }
-
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyOriginalContentLength_DataReductionProxyEnabled",
-      original_length_with_data_reduction_enabled >> 10);
-  UMA_HISTOGRAM_COUNTS_1M("Net.DailyContentLength_DataReductionProxyEnabled",
-                          received_length_with_data_reduction_enabled >> 10);
-
-  int percent_data_reduction_proxy_enabled = 0;
-  // UMA percentage cannot be negative.
-  if (original_length_with_data_reduction_enabled >
-      received_length_with_data_reduction_enabled) {
-    percent_data_reduction_proxy_enabled =
-        100 * (original_length_with_data_reduction_enabled -
-               received_length_with_data_reduction_enabled) /
-        original_length_with_data_reduction_enabled;
-  }
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentSavingPercent_DataReductionProxyEnabled",
-      percent_data_reduction_proxy_enabled);
-
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_DataReductionProxyEnabled",
-      (100 * received_length_with_data_reduction_enabled) / received_length);
-
-  DCHECK_GE(https_length_with_data_reduction_enabled, 0);
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyContentLength_DataReductionProxyEnabled_Https",
-      https_length_with_data_reduction_enabled >> 10);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_DataReductionProxyEnabled_Https",
-      (100 * https_length_with_data_reduction_enabled) / received_length);
-
-  DCHECK_GE(short_bypass_length_with_data_reduction_enabled, 0);
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyContentLength_DataReductionProxyEnabled_ShortBypass",
-      short_bypass_length_with_data_reduction_enabled >> 10);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_DataReductionProxyEnabled_ShortBypass",
-      ((100 * short_bypass_length_with_data_reduction_enabled) /
-       received_length));
-
-  DCHECK_GE(long_bypass_length_with_data_reduction_enabled, 0);
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyContentLength_DataReductionProxyEnabled_LongBypass",
-      long_bypass_length_with_data_reduction_enabled >> 10);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_DataReductionProxyEnabled_LongBypass",
-      ((100 * long_bypass_length_with_data_reduction_enabled) /
-       received_length));
-
-  DCHECK_GE(unknown_length_with_data_reduction_enabled, 0);
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyContentLength_DataReductionProxyEnabled_UnknownBypass",
-      unknown_length_with_data_reduction_enabled >> 10);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_DataReductionProxyEnabled_Unknown",
-      ((100 * unknown_length_with_data_reduction_enabled) /
-       received_length));
-
-  DCHECK_GE(original_length_via_data_reduction_proxy, 0);
-  UMA_HISTOGRAM_COUNTS_1M(
-      "Net.DailyOriginalContentLength_ViaDataReductionProxy",
-      original_length_via_data_reduction_proxy >> 10);
-  DCHECK_GE(received_length_via_data_reduction_proxy, 0);
-  UMA_HISTOGRAM_COUNTS_1M("Net.DailyContentLength_ViaDataReductionProxy",
-                          received_length_via_data_reduction_proxy >> 10);
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentPercent_ViaDataReductionProxy",
-      (100 * received_length_via_data_reduction_proxy) / received_length);
-
-  if (original_length_via_data_reduction_proxy <= 0)
-    return;
-  int percent_savings_via_data_reduction_proxy = 0;
-  if (original_length_via_data_reduction_proxy >
-      received_length_via_data_reduction_proxy) {
-    percent_savings_via_data_reduction_proxy =
-        100 * (original_length_via_data_reduction_proxy -
-               received_length_via_data_reduction_proxy) /
-        original_length_via_data_reduction_proxy;
-  }
-  UMA_HISTOGRAM_PERCENTAGE(
-      "Net.DailyContentSavingPercent_ViaDataReductionProxy",
-      percent_savings_via_data_reduction_proxy);
+                   std::make_unique<base::Value>(base::NumberToString(value)));
 }
 
 void RecordSavingsClearedMetric(DataReductionProxySavingsClearedReason reason) {
@@ -211,6 +90,12 @@ void RecordSavingsClearedMetric(DataReductionProxySavingsClearedReason reason) {
       "DataReductionProxy.SavingsCleared.Reason", reason,
       DataReductionProxySavingsClearedReason::REASON_COUNT);
 }
+
+// TODO(rajendrant): Enable aggregate metrics recording in x86 Android.
+// http://crbug.com/865373
+#if !defined(OS_ANDROID) || !defined(ARCH_CPU_X86)
+const double kSecondsPerWeek =
+    base::Time::kMicrosecondsPerWeek / base::Time::kMicrosecondsPerSecond;
 
 // Returns the week number for the current time. The epoch time is treated as
 // week=0.
@@ -227,7 +112,7 @@ void AddToDictionaryPref(PrefService* pref_service,
                          int value) {
   DictionaryPrefUpdate pref_update(pref_service, pref);
   base::DictionaryValue* pref_dict = pref_update.Get();
-  const std::string key_str = base::IntToString(key);
+  const std::string key_str = base::NumberToString(key);
   base::Value* dict_value = pref_dict->FindKey(key_str);
   if (dict_value)
     value += dict_value->GetInt();
@@ -296,6 +181,7 @@ void RecordDictionaryToHistogram(const std::string& histogram_name,
     }
   }
 }
+#endif
 
 }  // namespace
 
@@ -325,7 +211,8 @@ class DataReductionProxyCompressionStats::DailyContentLengthUpdate {
 
   int64_t GetListPrefValue(size_t index) {
     MaybeInitialize();
-    return GetInt64PrefValue(*update_, index);
+    return std::max(GetInt64PrefValue(*update_, index),
+                    static_cast<int64_t>(0));
   }
 
  private:
@@ -365,7 +252,7 @@ class DataReductionProxyCompressionStats::DailyContentLengthUpdate {
     for (int i = 0;
          i < days_since_last_update && i < static_cast<int>(kNumDaysInHistory);
          ++i) {
-      update_->AppendString(base::Int64ToString(0));
+      update_->AppendString(base::NumberToString(0));
     }
 
     // Entries for new days may have been appended. Maintain the invariant that
@@ -429,8 +316,7 @@ DataReductionProxyCompressionStats::DataReductionProxyCompressionStats(
       pref_service_(prefs),
       delay_(delay),
       data_usage_map_is_dirty_(false),
-      current_data_usage_load_status_(NOT_LOADED),
-      weak_factory_(this) {
+      current_data_usage_load_status_(NOT_LOADED) {
   DCHECK(service);
   DCHECK(prefs);
   DCHECK_GE(delay.InMilliseconds(), 0);
@@ -451,13 +337,13 @@ void DataReductionProxyCompressionStats::Init() {
 
   data_usage_reporting_enabled_.Init(
       prefs::kDataUsageReportingEnabled, pref_service_,
-      base::Bind(
+      base::BindRepeating(
           &DataReductionProxyCompressionStats::OnDataUsageReportingPrefChanged,
           weak_factory_.GetWeakPtr()));
 
   if (data_usage_reporting_enabled_.GetValue()) {
     current_data_usage_load_status_ = LOADING;
-    service_->LoadCurrentDataUsageBucket(base::Bind(
+    service_->LoadCurrentDataUsageBucket(base::BindRepeating(
         &DataReductionProxyCompressionStats::OnCurrentDataUsageLoaded,
         weak_factory_.GetWeakPtr()));
   }
@@ -472,46 +358,9 @@ void DataReductionProxyCompressionStats::Init() {
   InitInt64Pref(prefs::kHttpReceivedContentLength);
   InitInt64Pref(prefs::kHttpOriginalContentLength);
 
-  InitInt64Pref(prefs::kDailyHttpOriginalContentLengthApplication);
-  InitInt64Pref(prefs::kDailyHttpOriginalContentLengthVideo);
-  InitInt64Pref(prefs::kDailyHttpOriginalContentLengthUnknown);
-  InitInt64Pref(prefs::kDailyHttpReceivedContentLengthApplication);
-  InitInt64Pref(prefs::kDailyHttpReceivedContentLengthVideo);
-  InitInt64Pref(prefs::kDailyHttpReceivedContentLengthUnknown);
-
-  InitInt64Pref(
-      prefs::kDailyOriginalContentLengthViaDataReductionProxyApplication);
-  InitInt64Pref(prefs::kDailyOriginalContentLengthViaDataReductionProxyVideo);
-  InitInt64Pref(prefs::kDailyOriginalContentLengthViaDataReductionProxyUnknown);
-  InitInt64Pref(prefs::kDailyContentLengthViaDataReductionProxyApplication);
-  InitInt64Pref(prefs::kDailyContentLengthViaDataReductionProxyVideo);
-  InitInt64Pref(prefs::kDailyContentLengthViaDataReductionProxyUnknown);
-
-  InitInt64Pref(
-      prefs::
-          kDailyOriginalContentLengthWithDataReductionProxyEnabledApplication);
-  InitInt64Pref(
-      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo);
-  InitInt64Pref(
-      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown);
-  InitInt64Pref(
-      prefs::kDailyContentLengthWithDataReductionProxyEnabledApplication);
-  InitInt64Pref(prefs::kDailyContentLengthWithDataReductionProxyEnabledVideo);
-  InitInt64Pref(prefs::kDailyContentLengthWithDataReductionProxyEnabledUnknown);
-
   // Init all list prefs.
-  InitListPref(prefs::kDailyContentLengthHttpsWithDataReductionProxyEnabled);
-  InitListPref(
-      prefs::kDailyContentLengthLongBypassWithDataReductionProxyEnabled);
-  InitListPref(
-      prefs::kDailyContentLengthShortBypassWithDataReductionProxyEnabled);
-  InitListPref(prefs::kDailyContentLengthUnknownWithDataReductionProxyEnabled);
-  InitListPref(prefs::kDailyContentLengthViaDataReductionProxy);
-  InitListPref(prefs::kDailyContentLengthWithDataReductionProxyEnabled);
   InitListPref(prefs::kDailyHttpOriginalContentLength);
   InitListPref(prefs::kDailyHttpReceivedContentLength);
-  InitListPref(prefs::kDailyOriginalContentLengthViaDataReductionProxy);
-  InitListPref(prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabled);
 }
 
 void DataReductionProxyCompressionStats::RecordDataUseWithMimeType(
@@ -524,7 +373,7 @@ void DataReductionProxyCompressionStats::RecordDataUseWithMimeType(
     data_use_measurement::DataUseUserData::DataUseContentType content_type,
     int32_t service_hash_code) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  TRACE_EVENT0("loader",
+  TRACE_EVENT0("loading",
                "DataReductionProxyCompressionStats::RecordDataUseWithMimeType")
 
   IncreaseInt64Pref(data_reduction_proxy::prefs::kHttpReceivedContentLength,
@@ -619,8 +468,8 @@ void DataReductionProxyCompressionStats::ResetStatistics() {
   original_update->Clear();
   received_update->Clear();
   for (size_t i = 0; i < kNumDaysInHistory; ++i) {
-    original_update->AppendString(base::Int64ToString(0));
-    received_update->AppendString(base::Int64ToString(0));
+    original_update->AppendString(base::NumberToString(0));
+    received_update->AppendString(base::NumberToString(0));
   }
 }
 
@@ -677,8 +526,9 @@ void DataReductionProxyCompressionStats::GetContentLengths(
 }
 
 void DataReductionProxyCompressionStats::GetHistoricalDataUsage(
-    const HistoricalDataUsageCallback& get_data_usage_callback) {
-  GetHistoricalDataUsageImpl(get_data_usage_callback, base::Time::Now());
+    HistoricalDataUsageCallback get_data_usage_callback) {
+  GetHistoricalDataUsageImpl(std::move(get_data_usage_callback),
+                             base::Time::Now());
 }
 
 void DataReductionProxyCompressionStats::DeleteBrowsingHistory(
@@ -756,57 +606,8 @@ void DataReductionProxyCompressionStats::ClearDataSavingStatistics(
   pref_service_->ClearPref(prefs::kHttpReceivedContentLength);
   pref_service_->ClearPref(prefs::kHttpOriginalContentLength);
 
-  pref_service_->ClearPref(prefs::kDailyHttpOriginalContentLengthApplication);
-  pref_service_->ClearPref(prefs::kDailyHttpOriginalContentLengthVideo);
-  pref_service_->ClearPref(prefs::kDailyHttpOriginalContentLengthUnknown);
-  pref_service_->ClearPref(prefs::kDailyHttpReceivedContentLengthApplication);
-  pref_service_->ClearPref(prefs::kDailyHttpReceivedContentLengthVideo);
-  pref_service_->ClearPref(prefs::kDailyHttpReceivedContentLengthUnknown);
-
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthViaDataReductionProxyApplication);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthViaDataReductionProxyVideo);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthViaDataReductionProxyUnknown);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthViaDataReductionProxyApplication);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthViaDataReductionProxyVideo);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthViaDataReductionProxyUnknown);
-
-  pref_service_->ClearPref(
-      prefs::
-          kDailyOriginalContentLengthWithDataReductionProxyEnabledApplication);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthWithDataReductionProxyEnabledApplication);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthWithDataReductionProxyEnabledVideo);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthWithDataReductionProxyEnabledUnknown);
-
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthHttpsWithDataReductionProxyEnabled);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthLongBypassWithDataReductionProxyEnabled);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthShortBypassWithDataReductionProxyEnabled);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthUnknownWithDataReductionProxyEnabled);
-  pref_service_->ClearPref(prefs::kDailyContentLengthViaDataReductionProxy);
-  pref_service_->ClearPref(
-      prefs::kDailyContentLengthWithDataReductionProxyEnabled);
   pref_service_->ClearPref(prefs::kDailyHttpOriginalContentLength);
   pref_service_->ClearPref(prefs::kDailyHttpReceivedContentLength);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthViaDataReductionProxy);
-  pref_service_->ClearPref(
-      prefs::kDailyOriginalContentLengthWithDataReductionProxyEnabled);
 
   for (auto iter = list_pref_map_.begin(); iter != list_pref_map_.end();
        ++iter) {
@@ -865,27 +666,6 @@ void DataReductionProxyCompressionStats::RecordRequestSizePrefs(
   DailyDataSavingUpdate total(
       this, data_reduction_proxy::prefs::kDailyHttpOriginalContentLength,
       data_reduction_proxy::prefs::kDailyHttpReceivedContentLength);
-  DailyDataSavingUpdate proxy_enabled(
-      this, data_reduction_proxy::prefs::
-                kDailyOriginalContentLengthWithDataReductionProxyEnabled,
-      data_reduction_proxy::prefs::
-          kDailyContentLengthWithDataReductionProxyEnabled);
-  DailyDataSavingUpdate via_proxy(
-      this, data_reduction_proxy::prefs::
-                kDailyOriginalContentLengthViaDataReductionProxy,
-      data_reduction_proxy::prefs::kDailyContentLengthViaDataReductionProxy);
-  DailyContentLengthUpdate https(
-      this, data_reduction_proxy::prefs::
-                kDailyContentLengthHttpsWithDataReductionProxyEnabled);
-  DailyContentLengthUpdate short_bypass(
-      this, data_reduction_proxy::prefs::
-                kDailyContentLengthShortBypassWithDataReductionProxyEnabled);
-  DailyContentLengthUpdate long_bypass(
-      this, data_reduction_proxy::prefs::
-                kDailyContentLengthLongBypassWithDataReductionProxyEnabled);
-  DailyContentLengthUpdate unknown(
-      this, data_reduction_proxy::prefs::
-                kDailyContentLengthUnknownWithDataReductionProxyEnabled);
 
   int days_since_last_update = (midnight - then_midnight).InDays();
   if (days_since_last_update) {
@@ -893,349 +673,19 @@ void DataReductionProxyCompressionStats::RecordRequestSizePrefs(
     SetInt64(data_reduction_proxy::prefs::kDailyHttpContentLengthLastUpdateDate,
              midnight.ToInternalValue());
 
-    // A new day. Report the previous day's data if exists. We'll lose usage
-    // data if the last time Chrome was run was more than a day ago.
-    // Here, we prefer collecting less data but the collected data is
-    // associated with an accurate date.
-    if (days_since_last_update == 1) {
-      RecordDailyContentLengthHistograms(
-          total.GetOriginalListPrefValue(kNumDaysInHistory - 1),
-          total.GetReceivedListPrefValue(kNumDaysInHistory - 1),
-          proxy_enabled.GetOriginalListPrefValue(kNumDaysInHistory - 1),
-          proxy_enabled.GetReceivedListPrefValue(kNumDaysInHistory - 1),
-          via_proxy.GetOriginalListPrefValue(kNumDaysInHistory - 1),
-          via_proxy.GetReceivedListPrefValue(kNumDaysInHistory - 1),
-          https.GetListPrefValue(kNumDaysInHistory - 1),
-          short_bypass.GetListPrefValue(kNumDaysInHistory - 1),
-          long_bypass.GetListPrefValue(kNumDaysInHistory - 1),
-          unknown.GetListPrefValue(kNumDaysInHistory - 1));
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyHttpOriginalContentLengthApplication,
-          "Net.DailyOriginalContentLength_Application");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyHttpReceivedContentLengthApplication,
-          "Net.DailyReceivedContentLength_Application");
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthVideo,
-          "Net.DailyOriginalContentLength_Video");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthVideo,
-          "Net.DailyContentLength_Video");
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthUnknown,
-          "Net.DailyOriginalContentLength_UnknownMime");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthUnknown,
-          "Net.DailyContentLength_UnknownMime");
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledApplication,
-          "Net.DailyOriginalContentLength_DataReductionProxyEnabled_"
-          "Application");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthWithDataReductionProxyEnabledApplication,
-          "Net.DailyContentLength_DataReductionProxyEnabled_Application");
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo,
-          "Net.DailyOriginalContentLength_DataReductionProxyEnabled_Video");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthWithDataReductionProxyEnabledVideo,
-          "Net.DailyContentLength_DataReductionProxyEnabled_Video");
-      int64_t original_length_with_data_reduction_enabled_video = GetInt64(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo);
-      if (original_length_with_data_reduction_enabled_video > 0) {
-        int64_t received_length_with_data_reduction_enabled_video =
-            GetInt64(data_reduction_proxy::prefs::
-                         kDailyContentLengthWithDataReductionProxyEnabledVideo);
-        int percent_data_reduction_proxy_enabled_video = 0;
-        // UMA percentage cannot be negative.
-        // The DataReductionProxy server will only serve optimized video content
-        // if the optimized content is smaller than the original content.
-        // TODO(ryansturm): Track daily data inflation percents here and
-        // elsewhere. http://crbug.com/595818
-        if (original_length_with_data_reduction_enabled_video >
-            received_length_with_data_reduction_enabled_video) {
-          percent_data_reduction_proxy_enabled_video =
-              100 * (original_length_with_data_reduction_enabled_video -
-                     received_length_with_data_reduction_enabled_video) /
-              original_length_with_data_reduction_enabled_video;
-        }
-        UMA_HISTOGRAM_PERCENTAGE(
-            "Net.DailyContentSavingPercent_DataReductionProxyEnabled_Video",
-            percent_data_reduction_proxy_enabled_video);
-      }
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown,
-          "Net.DailyOriginalContentLength_DataReductionProxyEnabled_"
-          "UnknownMime");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthWithDataReductionProxyEnabledUnknown,
-          "Net.DailyContentLength_DataReductionProxyEnabled_UnknownMime")
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthViaDataReductionProxyApplication,
-          "Net.DailyOriginalContentLength_ViaDataReductionProxy_Application");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthViaDataReductionProxyApplication,
-          "Net.DailyContentLength_ViaDataReductionProxy_Application");
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthViaDataReductionProxyVideo,
-          "Net.DailyOriginalContentLength_ViaDataReductionProxy_Video");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthViaDataReductionProxyVideo,
-          "Net.DailyContentLength_ViaDataReductionProxy_Video");
-      int64_t original_length_via_data_reduction_proxy_video =
-          GetInt64(data_reduction_proxy::prefs::
-                       kDailyOriginalContentLengthViaDataReductionProxyVideo);
-      if (original_length_via_data_reduction_proxy_video > 0) {
-        int64_t received_length_via_data_reduction_proxy_video =
-            GetInt64(data_reduction_proxy::prefs::
-                         kDailyContentLengthViaDataReductionProxyVideo);
-        int percent_via_data_reduction_proxy_video = 0;
-        // UMA percentage cannot be negative.
-        // The DataReductionProxy server will only serve optimized video content
-        // if the optimized content is smaller than the original content.
-        // TODO(ryansturm): Track daily data inflation percents here and
-        // elsewhere. http://crbug.com/595818
-        if (original_length_via_data_reduction_proxy_video >
-            received_length_via_data_reduction_proxy_video) {
-          percent_via_data_reduction_proxy_video =
-              100 * (original_length_via_data_reduction_proxy_video -
-                     received_length_via_data_reduction_proxy_video) /
-              original_length_via_data_reduction_proxy_video;
-        }
-        UMA_HISTOGRAM_PERCENTAGE(
-            "Net.DailyContentSavingPercent_ViaDataReductionProxy_Video",
-            percent_via_data_reduction_proxy_video);
-      }
-
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthViaDataReductionProxyUnknown,
-          "Net.DailyOriginalContentLength_ViaDataReductionProxy_UnknownMime");
-      RECORD_INT64PREF_TO_HISTOGRAM(
-          data_reduction_proxy::prefs::
-              kDailyContentLengthViaDataReductionProxyUnknown,
-          "Net.DailyContentLength_ViaDataReductionProxy_UnknownMime");
-    }
-
+    // The system may go backwards in time by up to a day for legitimate
+    // reasons, such as with changes to the time zone. In such cases, we
+    // keep adding to the current day.
+    // (Actually resetting the numbers when we're more than a day off
+    // happens elsewhere.)
     if (days_since_last_update < -1) {
       RecordSavingsClearedMetric(
           DataReductionProxySavingsClearedReason::SYSTEM_CLOCK_MOVED_BACK);
     }
-
-    // The system may go backwards in time by up to a day for legitimate
-    // reasons, such as with changes to the time zone. In such cases, we
-    // keep adding to the current day which is why we check for
-    // |days_since_last_update != -1|.
-    // Note: we accept the fact that some reported data is shifted to
-    // the adjacent day if users travel back and forth across time zones.
-    if (days_since_last_update && (days_since_last_update != -1)) {
-      if (days_since_last_update < -1) {
-        pref_service_->SetInt64(
-            prefs::kDataReductionProxySavingsClearedNegativeSystemClock,
-            now.ToInternalValue());
-      }
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyHttpOriginalContentLengthApplication,
-               0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyHttpReceivedContentLengthApplication,
-               0);
-
-      SetInt64(
-          data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthVideo, 0);
-      SetInt64(
-          data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthVideo, 0);
-
-      SetInt64(
-          data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthUnknown,
-          0);
-      SetInt64(
-          data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthUnknown,
-          0);
-
-      SetInt64(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledApplication,
-          0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthWithDataReductionProxyEnabledApplication,
-               0);
-
-      SetInt64(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo,
-          0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthWithDataReductionProxyEnabledVideo,
-               0);
-
-      SetInt64(
-          data_reduction_proxy::prefs::
-              kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown,
-          0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthWithDataReductionProxyEnabledUnknown,
-               0);
-
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyOriginalContentLengthViaDataReductionProxyApplication,
-               0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthViaDataReductionProxyApplication,
-               0);
-
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyOriginalContentLengthViaDataReductionProxyVideo,
-               0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthViaDataReductionProxyVideo,
-               0);
-
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyOriginalContentLengthViaDataReductionProxyUnknown,
-               0);
-      SetInt64(data_reduction_proxy::prefs::
-                   kDailyContentLengthViaDataReductionProxyUnknown,
-               0);
-    }
   }
 
   total.UpdateForDateChange(days_since_last_update);
-  proxy_enabled.UpdateForDateChange(days_since_last_update);
-  via_proxy.UpdateForDateChange(days_since_last_update);
-  https.UpdateForDateChange(days_since_last_update);
-  short_bypass.UpdateForDateChange(days_since_last_update);
-  long_bypass.UpdateForDateChange(days_since_last_update);
-  unknown.UpdateForDateChange(days_since_last_update);
-
   total.Add(original_size, data_used);
-  if (with_data_saver_enabled) {
-    proxy_enabled.Add(original_size, data_used);
-    // Ignore data source cases, if exist, when
-    // "with_data_saver_enabled == false"
-    switch (request_type) {
-      case VIA_DATA_REDUCTION_PROXY:
-        via_proxy.Add(original_size, data_used);
-        break;
-      case HTTPS:
-        https.Add(data_used);
-        break;
-      case SHORT_BYPASS:
-        short_bypass.Add(data_used);
-        break;
-      case LONG_BYPASS:
-        long_bypass.Add(data_used);
-        break;
-      case UPDATE:
-      case DIRECT_HTTP:
-        // Don't record any request level prefs. If this is an update, this data
-        // was already recorded at the URLRequest level. Updates are generally
-        // page load level optimizations and don't correspond to request types.
-        return;
-      case UNKNOWN_TYPE:
-        unknown.Add(data_used);
-        break;
-      default:
-        NOTREACHED();
-    }
-  }
-
-  bool via_data_reduction_proxy = request_type == VIA_DATA_REDUCTION_PROXY;
-  bool is_application = net::MatchesMimeType("application/*", mime_type);
-  bool is_video = net::MatchesMimeType("video/*", mime_type);
-  bool is_mime_type_empty = mime_type.empty();
-  if (is_application) {
-    IncrementDailyUmaPrefs(
-        original_size, data_used,
-        data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthApplication,
-        data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthApplication,
-        with_data_saver_enabled,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthWithDataReductionProxyEnabledApplication,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthWithDataReductionProxyEnabledApplication,
-        via_data_reduction_proxy,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthViaDataReductionProxyApplication,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthViaDataReductionProxyApplication);
-  } else if (is_video) {
-    IncrementDailyUmaPrefs(
-        original_size, data_used,
-        data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthVideo,
-        data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthVideo,
-        with_data_saver_enabled,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthWithDataReductionProxyEnabledVideo,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthWithDataReductionProxyEnabledVideo,
-        via_data_reduction_proxy,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthViaDataReductionProxyVideo,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthViaDataReductionProxyVideo);
-  } else if (is_mime_type_empty) {
-    IncrementDailyUmaPrefs(
-        original_size, data_used,
-        data_reduction_proxy::prefs::kDailyHttpOriginalContentLengthUnknown,
-        data_reduction_proxy::prefs::kDailyHttpReceivedContentLengthUnknown,
-        with_data_saver_enabled,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthWithDataReductionProxyEnabledUnknown,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthWithDataReductionProxyEnabledUnknown,
-        via_data_reduction_proxy,
-        data_reduction_proxy::prefs::
-            kDailyOriginalContentLengthViaDataReductionProxyUnknown,
-        data_reduction_proxy::prefs::
-            kDailyContentLengthViaDataReductionProxyUnknown);
-  }
-}
-
-void DataReductionProxyCompressionStats::IncrementDailyUmaPrefs(
-    int64_t original_size,
-    int64_t received_size,
-    const char* original_size_pref,
-    const char* received_size_pref,
-    bool data_reduction_proxy_enabled,
-    const char* original_size_with_proxy_enabled_pref,
-    const char* recevied_size_with_proxy_enabled_pref,
-    bool via_data_reduction_proxy,
-    const char* original_size_via_proxy_pref,
-    const char* received_size_via_proxy_pref) {
-  IncreaseInt64Pref(original_size_pref, original_size);
-  IncreaseInt64Pref(received_size_pref, received_size);
-
-  if (data_reduction_proxy_enabled) {
-    IncreaseInt64Pref(original_size_with_proxy_enabled_pref, original_size);
-    IncreaseInt64Pref(recevied_size_with_proxy_enabled_pref, received_size);
-  }
-
-  if (via_data_reduction_proxy) {
-    IncreaseInt64Pref(original_size_via_proxy_pref, original_size);
-    IncreaseInt64Pref(received_size_via_proxy_pref, received_size);
-  }
 }
 
 void DataReductionProxyCompressionStats::RecordDataUseByHost(
@@ -1306,7 +756,7 @@ void DataReductionProxyCompressionStats::DeleteHistoricalDataUsage() {
 }
 
 void DataReductionProxyCompressionStats::GetHistoricalDataUsageImpl(
-    const HistoricalDataUsageCallback& get_data_usage_callback,
+    HistoricalDataUsageCallback get_data_usage_callback,
     const base::Time& now) {
 #if !defined(OS_ANDROID)
   if (current_data_usage_load_status_ != LOADED) {
@@ -1314,8 +764,8 @@ void DataReductionProxyCompressionStats::GetHistoricalDataUsageImpl(
     // extension can retry after a slight delay.
     // This use case is unlikely to occur in practice since current data usage
     // should have sufficient time to load before user tries to view data usage.
-    get_data_usage_callback.Run(
-        std::make_unique<std::vector<DataUsageBucket>>());
+    std::move(get_data_usage_callback)
+        .Run(std::make_unique<std::vector<DataUsageBucket>>());
     return;
   }
 #endif
@@ -1334,14 +784,14 @@ void DataReductionProxyCompressionStats::GetHistoricalDataUsageImpl(
     service_->StoreCurrentDataUsageBucket(std::move(data_usage_bucket));
   }
 
-  service_->LoadHistoricalDataUsage(get_data_usage_callback);
+  service_->LoadHistoricalDataUsage(std::move(get_data_usage_callback));
 }
 
 void DataReductionProxyCompressionStats::OnDataUsageReportingPrefChanged() {
   if (data_usage_reporting_enabled_.GetValue()) {
     if (current_data_usage_load_status_ == NOT_LOADED) {
       current_data_usage_load_status_ = LOADING;
-      service_->LoadCurrentDataUsageBucket(base::Bind(
+      service_->LoadCurrentDataUsageBucket(base::BindOnce(
           &DataReductionProxyCompressionStats::OnCurrentDataUsageLoaded,
           weak_factory_.GetWeakPtr()));
     }
@@ -1363,12 +813,9 @@ void DataReductionProxyCompressionStats::OnDataUsageReportingPrefChanged() {
 
 void DataReductionProxyCompressionStats::InitializeWeeklyAggregateDataUse(
     const base::Time& now) {
-#if defined(OS_ANDROID) && defined(ARCH_CPU_X86)
   // TODO(rajendrant): Enable aggregate metrics recording in x86 Android.
   // http://crbug.com/865373
-  return;
-#endif
-
+#if !defined(OS_ANDROID) || !defined(ARCH_CPU_X86)
   MaybeInitWeeklyAggregateDataUsePrefs(now, pref_service_);
   // Record the histograms that will show up in the user feedback.
   RecordDictionaryToHistogram(
@@ -1397,6 +844,7 @@ void DataReductionProxyCompressionStats::InitializeWeeklyAggregateDataUse(
       "ContentType",
       pref_service_->GetDictionary(
           prefs::kLastWeekUserTrafficContentTypeDownstreamKB));
+#endif
 }
 
 void DataReductionProxyCompressionStats::RecordWeeklyAggregateDataUse(
@@ -1405,11 +853,9 @@ void DataReductionProxyCompressionStats::RecordWeeklyAggregateDataUse(
     bool is_user_request,
     data_use_measurement::DataUseUserData::DataUseContentType content_type,
     int32_t service_hash_code) {
-#if defined(OS_ANDROID) && defined(ARCH_CPU_X86)
   // TODO(rajendrant): Enable aggregate metrics recording in x86 Android.
   // http://crbug.com/865373
-  return;
-#endif
+#if !defined(OS_ANDROID) || !defined(ARCH_CPU_X86)
   // Update the prefs if this is a new week. This can happen when chrome is open
   // for weeks without being closed.
   MaybeInitWeeklyAggregateDataUsePrefs(now, pref_service_);
@@ -1429,6 +875,7 @@ void DataReductionProxyCompressionStats::RecordWeeklyAggregateDataUse(
                           service_hash_code, data_used_kb);
     }
   }
+#endif
 }
 
 // static

@@ -28,7 +28,7 @@ class ResourcePoolTest : public testing::Test {
     context_provider_ =
         viz::TestContextProvider::Create(std::move(context_support));
     context_provider_->BindToCurrentThread();
-    resource_provider_ = std::make_unique<viz::ClientResourceProvider>(true);
+    resource_provider_ = std::make_unique<viz::ClientResourceProvider>();
     test_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
     resource_pool_ = std::make_unique<ResourcePool>(
         resource_provider_.get(), context_provider_.get(), test_task_runner_,
@@ -244,8 +244,9 @@ TEST_F(ResourcePoolTest, LostResource) {
 
   std::vector<viz::ResourceId> export_ids = {resource.resource_id_for_export()};
   std::vector<viz::TransferableResource> transferable_resources;
-  resource_provider_->PrepareSendToParent(export_ids, &transferable_resources,
-                                          context_provider_.get());
+  resource_provider_->PrepareSendToParent(
+      export_ids, &transferable_resources,
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
   auto returned_resources =
       viz::TransferableResource::ReturnResources(transferable_resources);
   ASSERT_EQ(1u, returned_resources.size());
@@ -276,8 +277,9 @@ TEST_F(ResourcePoolTest, BusyResourcesNotFreed) {
   EXPECT_TRUE(resource_pool_->PrepareForExport(resource));
 
   std::vector<viz::TransferableResource> transfers;
-  resource_provider_->PrepareSendToParent({resource.resource_id_for_export()},
-                                          &transfers, context_provider_.get());
+  resource_provider_->PrepareSendToParent(
+      {resource.resource_id_for_export()}, &transfers,
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
 
   resource_pool_->ReleaseResource(std::move(resource));
   EXPECT_EQ(40000u, resource_pool_->GetTotalMemoryUsageForTesting());
@@ -316,8 +318,9 @@ TEST_F(ResourcePoolTest, UnusedResourcesEventuallyFreed) {
   SetBackingOnResource(resource);
   EXPECT_TRUE(resource_pool_->PrepareForExport(resource));
   std::vector<viz::TransferableResource> transfers;
-  resource_provider_->PrepareSendToParent({resource.resource_id_for_export()},
-                                          &transfers, context_provider_.get());
+  resource_provider_->PrepareSendToParent(
+      {resource.resource_id_for_export()}, &transfers,
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
 
   resource_pool_->ReleaseResource(std::move(resource));
   EXPECT_EQ(40000u, resource_pool_->GetTotalMemoryUsageForTesting());
@@ -358,7 +361,8 @@ TEST_F(ResourcePoolTest, UpdateContentId) {
   gfx::Rect invalidated_rect;
   ResourcePool::InUsePoolResource reacquired_resource =
       resource_pool_->TryAcquireResourceForPartialRaster(
-          new_content_id, new_invalidated_rect, content_id, &invalidated_rect);
+          new_content_id, new_invalidated_rect, content_id, &invalidated_rect,
+          color_space);
   EXPECT_EQ(original_id, reacquired_resource.unique_id_for_testing());
   EXPECT_EQ(new_invalidated_rect, invalidated_rect);
   resource_pool_->ReleaseResource(std::move(reacquired_resource));
@@ -385,7 +389,7 @@ TEST_F(ResourcePoolTest, UpdateContentIdAndInvalidatedRect) {
   ResourcePool::InUsePoolResource reacquired_resource =
       resource_pool_->TryAcquireResourceForPartialRaster(
           content_ids[1], invalidated_rect, content_ids[0],
-          &new_invalidated_rect);
+          &new_invalidated_rect, color_space);
   EXPECT_FALSE(!!reacquired_resource);
   EXPECT_EQ(gfx::Rect(), new_invalidated_rect);
 
@@ -394,7 +398,8 @@ TEST_F(ResourcePoolTest, UpdateContentIdAndInvalidatedRect) {
 
   // Ensure that we cannot retrieve a resource based on the original content id.
   reacquired_resource = resource_pool_->TryAcquireResourceForPartialRaster(
-      content_ids[1], invalidated_rect, content_ids[0], &new_invalidated_rect);
+      content_ids[1], invalidated_rect, content_ids[0], &new_invalidated_rect,
+      color_space);
   EXPECT_FALSE(!!reacquired_resource);
   EXPECT_EQ(gfx::Rect(), new_invalidated_rect);
 
@@ -403,7 +408,7 @@ TEST_F(ResourcePoolTest, UpdateContentIdAndInvalidatedRect) {
   gfx::Rect total_invalidated_rect;
   reacquired_resource = resource_pool_->TryAcquireResourceForPartialRaster(
       content_ids[2], second_invalidated_rect, content_ids[1],
-      &total_invalidated_rect);
+      &total_invalidated_rect, color_space);
   EXPECT_EQ(original_id, reacquired_resource.unique_id_for_testing());
   EXPECT_EQ(expected_total_invalidated_rect, total_invalidated_rect);
   resource_pool_->ReleaseResource(std::move(reacquired_resource));
@@ -428,7 +433,7 @@ TEST_F(ResourcePoolTest, LargeInvalidatedRect) {
   ResourcePool::InUsePoolResource reacquired_resource =
       resource_pool_->TryAcquireResourceForPartialRaster(
           content_ids[1], large_invalidated_rect, content_ids[0],
-          &new_invalidated_rect);
+          &new_invalidated_rect, color_space);
   EXPECT_FALSE(!!reacquired_resource);
 
   // Release the original resource, returning it to the unused pool.
@@ -438,7 +443,7 @@ TEST_F(ResourcePoolTest, LargeInvalidatedRect) {
   // too large to compute the area for.
   resource = resource_pool_->TryAcquireResourceForPartialRaster(
       content_ids[2], large_invalidated_rect, content_ids[1],
-      &new_invalidated_rect);
+      &new_invalidated_rect, color_space);
   EXPECT_TRUE(!!resource);
   resource_pool_->ReleaseResource(std::move(resource));
 }
@@ -534,8 +539,9 @@ TEST_F(ResourcePoolTest, PurgedMemory) {
   // Export the resource to the display compositor, so it will be busy once
   // released.
   std::vector<viz::TransferableResource> transfers;
-  resource_provider_->PrepareSendToParent({resource.resource_id_for_export()},
-                                          &transfers, context_provider_.get());
+  resource_provider_->PrepareSendToParent(
+      {resource.resource_id_for_export()}, &transfers,
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
 
   // Release the resource making it busy.
   resource_pool_->ReleaseResource(std::move(resource));
@@ -603,7 +609,7 @@ TEST_F(ResourcePoolTest, InvalidateResources) {
   std::vector<viz::TransferableResource> transfers;
   resource_provider_->PrepareSendToParent(
       {busy_resource.resource_id_for_export()}, &transfers,
-      context_provider_.get());
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
 
   // Release the resource making it busy.
   resource_pool_->ReleaseResource(std::move(busy_resource));
@@ -695,8 +701,9 @@ TEST_F(ResourcePoolTest, MetadataSentToDisplayCompositor) {
   EXPECT_TRUE(resource_pool_->PrepareForExport(resource));
 
   std::vector<viz::TransferableResource> transfer;
-  resource_provider_->PrepareSendToParent({resource.resource_id_for_export()},
-                                          &transfer, context_provider_.get());
+  resource_provider_->PrepareSendToParent(
+      {resource.resource_id_for_export()}, &transfer,
+      static_cast<viz::RasterContextProvider*>(context_provider_.get()));
 
   // The verified_flush flag will be set by the ResourceProvider when it exports
   // the resource.

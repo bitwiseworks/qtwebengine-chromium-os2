@@ -23,17 +23,29 @@
 # directory's "git describe" output enclosed in double quotes and appropriately
 # escaped.
 
-from __future__ import print_function
-
 import datetime
+import errno
 import os.path
 import re
 import subprocess
 import sys
 import time
 
-OUTFILE = 'build-version.inc'
+def mkdir_p(directory):
+    """Make the directory, and all its ancestors as required.  Any of the
+    directories are allowed to already exist."""
 
+    if directory == "":
+        # We're being asked to make the current directory.
+        return
+
+    try:
+        os.makedirs(directory)
+    except OSError as e:
+        if e.errno == errno.EEXIST and os.path.isdir(directory):
+            pass
+        else:
+            raise
 
 def command_output(cmd, directory):
     """Runs a command in a directory and returns its standard output stream.
@@ -53,8 +65,8 @@ def command_output(cmd, directory):
 
 
 def deduce_software_version(directory):
-    """Returns a software version number parsed from the CHANGES file
-    in the given directory.
+    """Returns a software version number parsed from the CHANGES file in the
+    given directory.
 
     The CHANGES file describes most recent versions first.
     """
@@ -65,7 +77,7 @@ def deduce_software_version(directory):
     # Linux.
     pattern = re.compile(r'^(v\d+\.\d+(-dev)?) \d\d\d\d-\d\d-\d\d\s*$')
     changes_file = os.path.join(directory, 'CHANGES')
-    with open(changes_file) as f:
+    with open(changes_file, errors='replace') as f:
         for line in f.readlines():
             match = pattern.match(line)
             if match:
@@ -74,11 +86,13 @@ def deduce_software_version(directory):
 
 
 def describe(directory):
-    """Returns a string describing the current Git HEAD version as descriptively
-    as possible.
+    """Returns a string describing the current Git HEAD version as
+    descriptively as possible.
 
-    Runs 'git describe', or alternately 'git rev-parse HEAD', in directory.  If
-    successful, returns the output; otherwise returns 'unknown hash, <date>'."""
+    Runs 'git describe', or alternately 'git rev-parse HEAD', in
+    directory.  If successful, returns the output; otherwise returns
+    'unknown hash, <date>'.
+    """
     try:
         # decode() is needed here for Python3 compatibility. In Python2,
         # str and bytes are the same type, but not in Python3.
@@ -103,8 +117,9 @@ def describe(directory):
 
 
 def get_version_string(project, directory):
-    """Returns a detailed version string for a given project with its directory,
-    which consists of software version string and git description string."""
+    """Returns a detailed version string for a given project with its
+    directory, which consists of software version string and git description
+    string."""
     detailed_version_string_lst = [project]
     if project != 'glslang':
         detailed_version_string_lst.append(deduce_software_version(directory))
@@ -113,9 +128,9 @@ def get_version_string(project, directory):
 
 
 def main():
-    if len(sys.argv) != 4:
-        print('usage: {} <shaderc-dir> <spirv-tools-dir> <glslang-dir>'.format(
-            sys.argv[0]))
+    if len(sys.argv) != 5:
+        print(('usage: {} <shaderc-dir> <spirv-tools-dir> <glslang-dir> <output-file>'.format(
+            sys.argv[0])))
         sys.exit(1)
 
     projects = ['shaderc', 'spirv-tools', 'glslang']
@@ -124,11 +139,14 @@ def main():
         for (p, d) in zip(projects, sys.argv[1:])
     ])
 
-    if os.path.isfile(OUTFILE):
-        with open(OUTFILE, 'r') as f:
+    output_file = sys.argv[4]
+    mkdir_p(os.path.dirname(output_file))
+
+    if os.path.isfile(output_file):
+        with open(output_file, 'r') as f:
             if new_content == f.read():
                 return
-    with open(OUTFILE, 'w') as f:
+    with open(output_file, 'w') as f:
         f.write(new_content)
 
 

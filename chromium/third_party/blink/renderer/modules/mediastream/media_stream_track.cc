@@ -27,27 +27,34 @@
 
 #include <memory>
 
+#include "base/strings/stringprintf.h"
+#include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_capabilities.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_constraints.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/modules/imagecapture/image_capture.h"
 #include "third_party/blink/renderer/modules/mediastream/apply_constraints_request.h"
 #include "third_party/blink/renderer/modules/mediastream/media_constraints_impl.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream.h"
-#include "third_party/blink/renderer/modules/mediastream/media_track_capabilities.h"
-#include "third_party/blink/renderer/modules/mediastream/media_track_constraints.h"
-#include "third_party/blink/renderer/modules/mediastream/media_track_settings.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_utils.h"
 #include "third_party/blink/renderer/modules/mediastream/overconstrained_error.h"
 #include "third_party/blink/renderer/modules/mediastream/user_media_controller.h"
+#include "third_party/blink/renderer/modules/mediastream/webaudio_media_stream_audio_sink.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
-#include "third_party/blink/renderer/platform/mediastream/media_stream_center.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
+#include "third_party/blink/renderer/platform/mediastream/media_stream_web_audio_source.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -61,6 +68,10 @@ static const char kContentHintStringAudioMusic[] = "music";
 static const char kContentHintStringVideoMotion[] = "motion";
 static const char kContentHintStringVideoDetail[] = "detail";
 static const char kContentHintStringVideoText[] = "text";
+
+void SendLogMessage(const std::string& message) {
+  blink::WebRtcLogMessage("MST::" + message);
+}
 
 // The set of constrainable properties for image capture is available at
 // https://w3c.github.io/mediacapture-image/#constrainable-properties
@@ -77,25 +88,26 @@ bool ConstraintSetHasImageCapture(
          constraint_set->hasColorTemperature() || constraint_set->hasIso() ||
          constraint_set->hasBrightness() || constraint_set->hasContrast() ||
          constraint_set->hasSaturation() || constraint_set->hasSharpness() ||
-         constraint_set->hasFocusDistance() || constraint_set->hasZoom() ||
-         constraint_set->hasTorch();
+         constraint_set->hasFocusDistance() ||
+         (RuntimeEnabledFeatures::MediaCapturePanTiltEnabled() &&
+          constraint_set->hasPan()) ||
+         (RuntimeEnabledFeatures::MediaCapturePanTiltEnabled() &&
+          constraint_set->hasTilt()) ||
+         constraint_set->hasZoom() || constraint_set->hasTorch();
 }
 
 bool ConstraintSetHasNonImageCapture(
     const MediaTrackConstraintSet* constraint_set) {
   return constraint_set->hasAspectRatio() ||
-         constraint_set->hasChannelCount() || constraint_set->hasDepthFar() ||
-         constraint_set->hasDepthNear() || constraint_set->hasDeviceId() ||
+         constraint_set->hasChannelCount() || constraint_set->hasDeviceId() ||
          constraint_set->hasEchoCancellation() ||
          constraint_set->hasNoiseSuppression() ||
          constraint_set->hasAutoGainControl() ||
          constraint_set->hasFacingMode() || constraint_set->hasResizeMode() ||
-         constraint_set->hasFocalLengthX() ||
-         constraint_set->hasFocalLengthY() || constraint_set->hasFrameRate() ||
-         constraint_set->hasGroupId() || constraint_set->hasHeight() ||
-         constraint_set->hasLatency() || constraint_set->hasSampleRate() ||
-         constraint_set->hasSampleSize() || constraint_set->hasVideoKind() ||
-         constraint_set->hasVolume() || constraint_set->hasWidth();
+         constraint_set->hasFrameRate() || constraint_set->hasGroupId() ||
+         constraint_set->hasHeight() || constraint_set->hasLatency() ||
+         constraint_set->hasSampleRate() || constraint_set->hasSampleSize() ||
+         constraint_set->hasVideoKind() || constraint_set->hasWidth();
 }
 
 bool ConstraintSetHasImageAndNonImageCapture(
@@ -140,28 +152,82 @@ bool ConstraintsHaveImageCapture(const MediaTrackConstraints* constraints) {
   return ConstraintsSatisfyCondition(ConstraintSetHasImageCapture, constraints);
 }
 
-}  // namespace
+// Caller must take the ownership of the returned |WebAudioSourceProvider|
+// object.
+std::unique_ptr<WebAudioSourceProvider>
+CreateWebAudioSourceFromMediaStreamTrack(const WebMediaStreamTrack& track,
+                                         int context_sample_rate) {
+  WebPlatformMediaStreamTrack* media_stream_track = track.GetPlatformTrack();
+  if (!media_stream_track) {
+    DLOG(ERROR) << "Native track missing for webaudio source.";
+    return nullptr;
+  }
 
-MediaStreamTrack* MediaStreamTrack::Create(ExecutionContext* context,
-                                           MediaStreamComponent* component) {
-  return MakeGarbageCollected<MediaStreamTrack>(context, component);
+  WebMediaStreamSource source = track.Source();
+  DCHECK_EQ(source.GetType(), WebMediaStreamSource::kTypeAudio);
+
+  return std::make_unique<WebAudioMediaStreamAudioSink>(track,
+                                                        context_sample_rate);
 }
+
+void CloneNativeVideoMediaStreamTrack(const WebMediaStreamTrack& original,
+                                      WebMediaStreamTrack clone) {
+  DCHECK(!clone.GetPlatformTrack());
+  WebMediaStreamSource source = clone.Source();
+  DCHECK_EQ(source.GetType(), WebMediaStreamSource::kTypeVideo);
+  MediaStreamVideoSource* native_source =
+      MediaStreamVideoSource::GetVideoSource(source);
+  DCHECK(native_source);
+  MediaStreamVideoTrack* original_track =
+      MediaStreamVideoTrack::GetVideoTrack(original);
+  DCHECK(original_track);
+  clone.SetPlatformTrack(std::make_unique<MediaStreamVideoTrack>(
+      native_source, original_track->adapter_settings(),
+      original_track->noise_reduction(), original_track->is_screencast(),
+      original_track->min_frame_rate(),
+      MediaStreamVideoSource::ConstraintsOnceCallback(), clone.IsEnabled()));
+}
+
+void DidSetMediaStreamTrackEnabled(MediaStreamComponent* component) {
+  const WebMediaStreamTrack track(component);
+  auto* native_track = WebPlatformMediaStreamTrack::GetTrack(track);
+  if (native_track)
+    native_track->SetEnabled(component->Enabled());
+}
+
+void DidCloneMediaStreamTrack(const WebMediaStreamTrack& original,
+                              const WebMediaStreamTrack& clone) {
+  DCHECK(!clone.IsNull());
+  DCHECK(!clone.GetPlatformTrack());
+  DCHECK(!clone.Source().IsNull());
+
+  switch (clone.Source().GetType()) {
+    case WebMediaStreamSource::kTypeAudio:
+      // TODO(crbug.com/704136): Use per thread task runner.
+      MediaStreamUtils::CreateNativeAudioMediaStreamTrack(
+          clone, Thread::MainThread()->GetTaskRunner());
+      break;
+    case WebMediaStreamSource::kTypeVideo:
+      CloneNativeVideoMediaStreamTrack(original, clone);
+      break;
+  }
+}
+
+}  // namespace
 
 MediaStreamTrack::MediaStreamTrack(ExecutionContext* context,
                                    MediaStreamComponent* component)
     : MediaStreamTrack(context,
                        component,
-                       component->Source()->GetReadyState(),
-                       false /* stopped */) {}
+                       component->Source()->GetReadyState()) {}
 
 MediaStreamTrack::MediaStreamTrack(ExecutionContext* context,
                                    MediaStreamComponent* component,
-                                   MediaStreamSource::ReadyState ready_state,
-                                   bool stopped)
-    : ContextLifecycleObserver(context),
-      ready_state_(ready_state),
-      stopped_(stopped),
-      component_(component) {
+                                   MediaStreamSource::ReadyState ready_state)
+    : ready_state_(ready_state),
+      component_(component),
+      execution_context_(context) {
+  SendLogMessage(GetTrackLogString());
   component_->Source()->AddObserver(this);
 
   // If the source is already non-live at this point, the observer won't have
@@ -177,6 +243,16 @@ MediaStreamTrack::MediaStreamTrack(ExecutionContext* context,
 }
 
 MediaStreamTrack::~MediaStreamTrack() = default;
+
+std::string MediaStreamTrack::GetTrackLogString() const {
+  String str = String::Format(
+      "MediaStreamTrack([kind: %s, id: %s, label: %s, enabled: %s, muted: %s, "
+      "readyState: %s])",
+      kind().Utf8().c_str(), id().Utf8().c_str(), label().Utf8().c_str(),
+      enabled() ? "true" : "false", muted() ? "true" : "false",
+      readyState().Utf8().c_str());
+  return str.Utf8();
+}
 
 String MediaStreamTrack::kind() const {
   DEFINE_STATIC_LOCAL(String, audio_kind, ("audio"));
@@ -206,14 +282,16 @@ bool MediaStreamTrack::enabled() const {
 }
 
 void MediaStreamTrack::setEnabled(bool enabled) {
+  SendLogMessage(base::StringPrintf("setEnabled([id=%s] {enabled=%s})",
+                                    id().Utf8().c_str(),
+                                    enabled ? "true" : "false"));
   if (enabled == component_->Enabled())
     return;
 
   component_->SetEnabled(enabled);
 
   if (!Ended())
-    MediaStreamCenter::Instance().DidSetMediaStreamTrackEnabled(
-        component_.Get());
+    DidSetMediaStreamTrackEnabled(component_.Get());
 }
 
 bool MediaStreamTrack::muted() const {
@@ -242,6 +320,8 @@ String MediaStreamTrack::ContentHint() const {
 }
 
 void MediaStreamTrack::SetContentHint(const String& hint) {
+  SendLogMessage(base::StringPrintf("SetContentHint([id=%s] {hint=%s})",
+                                    id().Utf8().c_str(), hint.Utf8().c_str()));
   WebMediaStreamTrack::ContentHintType translated_hint =
       WebMediaStreamTrack::ContentHintType::kNone;
   switch (component_->Source()->GetType()) {
@@ -298,11 +378,12 @@ String MediaStreamTrack::readyState() const {
 }
 
 void MediaStreamTrack::stopTrack(ExecutionContext* execution_context) {
+  SendLogMessage(base::StringPrintf("stopTrack([id=%s])", id().Utf8().c_str()));
   if (Ended())
     return;
 
   ready_state_ = MediaStreamSource::kReadyStateEnded;
-  Document* document = To<Document>(execution_context);
+  Document* document = Document::From(execution_context);
   UserMediaController* user_media =
       UserMediaController::From(document->GetFrame());
   if (user_media)
@@ -314,14 +395,12 @@ void MediaStreamTrack::stopTrack(ExecutionContext* execution_context) {
 MediaStreamTrack* MediaStreamTrack::clone(ScriptState* script_state) {
   MediaStreamComponent* cloned_component = Component()->Clone();
   MediaStreamTrack* cloned_track = MakeGarbageCollected<MediaStreamTrack>(
-      ExecutionContext::From(script_state), cloned_component, ready_state_,
-      stopped_);
-  MediaStreamCenter::Instance().DidCloneMediaStreamTrack(Component(),
-                                                         cloned_component);
+      ExecutionContext::From(script_state), cloned_component, ready_state_);
+  DidCloneMediaStreamTrack(Component(), cloned_component);
   return cloned_track;
 }
 
-void MediaStreamTrack::SetConstraints(const WebMediaConstraints& constraints) {
+void MediaStreamTrack::SetConstraints(const MediaConstraints& constraints) {
   component_->SetConstraints(constraints);
 }
 
@@ -349,13 +428,33 @@ MediaTrackCapabilities* MediaStreamTrack::getCapabilities() const {
     Vector<String> echo_cancellation_type;
     for (String value : platform_capabilities.echo_cancellation_type)
       echo_cancellation_type.push_back(value);
-    capabilities->setEchoCancellationType(echo_cancellation_type);
     // Sample size.
     if (platform_capabilities.sample_size.size() == 2) {
       LongRange* sample_size = LongRange::Create();
       sample_size->setMin(platform_capabilities.sample_size[0]);
       sample_size->setMax(platform_capabilities.sample_size[1]);
       capabilities->setSampleSize(sample_size);
+    }
+    // Channel count.
+    if (platform_capabilities.channel_count.size() == 2) {
+      LongRange* channel_count = LongRange::Create();
+      channel_count->setMin(platform_capabilities.channel_count[0]);
+      channel_count->setMax(platform_capabilities.channel_count[1]);
+      capabilities->setChannelCount(channel_count);
+    }
+    // Sample rate.
+    if (platform_capabilities.sample_rate.size() == 2) {
+      LongRange* sample_rate = LongRange::Create();
+      sample_rate->setMin(platform_capabilities.sample_rate[0]);
+      sample_rate->setMax(platform_capabilities.sample_rate[1]);
+      capabilities->setSampleRate(sample_rate);
+    }
+    // Latency.
+    if (platform_capabilities.latency.size() == 2) {
+      DoubleRange* latency = DoubleRange::Create();
+      latency->setMin(platform_capabilities.latency[0]);
+      latency->setMax(platform_capabilities.latency[1]);
+      capabilities->setLatency(latency);
     }
   }
 
@@ -434,6 +533,10 @@ MediaTrackConstraints* MediaStreamTrack::getConstraints() const {
       image_capture_constraints->hasSaturation() ||
       image_capture_constraints->hasSharpness() ||
       image_capture_constraints->hasFocusDistance() ||
+      (RuntimeEnabledFeatures::MediaCapturePanTiltEnabled() &&
+       image_capture_constraints->hasPan()) ||
+      (RuntimeEnabledFeatures::MediaCapturePanTiltEnabled() &&
+       image_capture_constraints->hasTilt()) ||
       image_capture_constraints->hasZoom()) {
     // Add image capture constraints, if any, as another entry to advanced().
     vector.push_back(image_capture_constraints);
@@ -458,17 +561,6 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
       component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
     if (platform_settings.HasVideoKind())
       settings->setVideoKind(platform_settings.video_kind);
-  }
-  if (RuntimeEnabledFeatures::MediaCaptureDepthEnabled() &&
-      component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
-    if (platform_settings.HasDepthNear())
-      settings->setDepthNear(platform_settings.depth_near);
-    if (platform_settings.HasDepthFar())
-      settings->setDepthFar(platform_settings.depth_far);
-    if (platform_settings.HasFocalLengthX())
-      settings->setFocalLengthX(platform_settings.focal_length_x);
-    if (platform_settings.HasFocalLengthY())
-      settings->setFocalLengthY(platform_settings.focal_length_y);
   }
   settings->setDeviceId(platform_settings.device_id);
   if (!platform_settings.group_id.IsNull())
@@ -501,11 +593,6 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
     settings->setAutoGainControl(*platform_settings.auto_gain_control);
   if (platform_settings.noise_supression)
     settings->setNoiseSuppression(*platform_settings.noise_supression);
-  if (origin_trials::ExperimentalHardwareEchoCancellationEnabled(
-          GetExecutionContext()) &&
-      !platform_settings.echo_cancellation_type.IsNull()) {
-    settings->setEchoCancellationType(platform_settings.echo_cancellation_type);
-  }
 
   if (platform_settings.HasSampleRate())
     settings->setSampleRate(platform_settings.sample_rate);
@@ -515,8 +602,6 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
     settings->setChannelCount(platform_settings.channel_count);
   if (platform_settings.HasLatency())
     settings->setLatency(platform_settings.latency);
-  if (platform_settings.HasVolume())
-    settings->setVolume(platform_settings.volume);
 
   if (image_capture_)
     image_capture_->GetMediaTrackSettings(settings);
@@ -524,16 +609,16 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
   if (platform_settings.display_surface) {
     WTF::String value;
     switch (platform_settings.display_surface.value()) {
-      case WebMediaStreamTrack::DisplayCaptureSurfaceType::kMonitor:
+      case media::mojom::DisplayCaptureSurfaceType::MONITOR:
         value = "monitor";
         break;
-      case WebMediaStreamTrack::DisplayCaptureSurfaceType::kWindow:
+      case media::mojom::DisplayCaptureSurfaceType::WINDOW:
         value = "window";
         break;
-      case WebMediaStreamTrack::DisplayCaptureSurfaceType::kApplication:
+      case media::mojom::DisplayCaptureSurfaceType::APPLICATION:
         value = "application";
         break;
-      case WebMediaStreamTrack::DisplayCaptureSurfaceType::kBrowser:
+      case media::mojom::DisplayCaptureSurfaceType::BROWSER:
         value = "browser";
         break;
     }
@@ -544,13 +629,13 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
   if (platform_settings.cursor) {
     WTF::String value;
     switch (platform_settings.cursor.value()) {
-      case WebMediaStreamTrack::CursorCaptureType::kNever:
+      case media::mojom::CursorCaptureType::NEVER:
         value = "never";
         break;
-      case WebMediaStreamTrack::CursorCaptureType::kAlways:
+      case media::mojom::CursorCaptureType::ALWAYS:
         value = "always";
         break;
-      case WebMediaStreamTrack::CursorCaptureType::kMotion:
+      case media::mojom::CursorCaptureType::MOTION:
         value = "motion";
         break;
     }
@@ -562,12 +647,12 @@ MediaTrackSettings* MediaStreamTrack::getSettings() const {
 ScriptPromise MediaStreamTrack::applyConstraints(
     ScriptState* script_state,
     const MediaTrackConstraints* constraints) {
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   MediaErrorState error_state;
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
-  WebMediaConstraints web_constraints = media_constraints_impl::Create(
+  MediaConstraints web_constraints = media_constraints_impl::Create(
       execution_context, constraints, error_state);
   if (error_state.HadException()) {
     resolver->Reject(
@@ -607,7 +692,7 @@ ScriptPromise MediaStreamTrack::applyConstraints(
     return promise;
   }
 
-  Document* document = To<Document>(execution_context);
+  Document* document = Document::From(execution_context);
   UserMediaController* user_media =
       UserMediaController::From(document->GetFrame());
   if (!user_media) {
@@ -616,8 +701,8 @@ ScriptPromise MediaStreamTrack::applyConstraints(
     return promise;
   }
 
-  user_media->ApplyConstraints(
-      ApplyConstraintsRequest::Create(Component(), web_constraints, resolver));
+  user_media->ApplyConstraints(MakeGarbageCollected<ApplyConstraintsRequest>(
+      Component(), web_constraints, resolver));
   return promise;
 }
 
@@ -634,7 +719,8 @@ void MediaStreamTrack::applyConstraintsImageCapture(
 }
 
 bool MediaStreamTrack::Ended() const {
-  return stopped_ || (ready_state_ == MediaStreamSource::kReadyStateEnded);
+  return (execution_context_ && execution_context_->IsContextDestroyed()) ||
+         (ready_state_ == MediaStreamSource::kReadyStateEnded);
 }
 
 void MediaStreamTrack::SourceChangedState() {
@@ -656,6 +742,9 @@ void MediaStreamTrack::SourceChangedState() {
       PropagateTrackEnded();
       break;
   }
+  SendLogMessage(
+      base::StringPrintf("SourceChangedState([id=%s] {readyState=%s})",
+                         id().Utf8().c_str(), readyState().Utf8().c_str()));
 }
 
 void MediaStreamTrack::PropagateTrackEnded() {
@@ -666,10 +755,6 @@ void MediaStreamTrack::PropagateTrackEnded() {
        iter != registered_media_streams_.end(); ++iter)
     (*iter)->TrackEnded();
   is_iterating_registered_media_streams_ = false;
-}
-
-void MediaStreamTrack::ContextDestroyed(ExecutionContext*) {
-  stopped_ = true;
 }
 
 bool MediaStreamTrack::HasPendingActivity() const {
@@ -688,9 +773,11 @@ bool MediaStreamTrack::HasPendingActivity() const {
   return !Ended() && HasEventListeners(event_type_names::kEnded);
 }
 
-std::unique_ptr<AudioSourceProvider> MediaStreamTrack::CreateWebAudioSource() {
-  return MediaStreamCenter::Instance().CreateWebAudioSourceFromMediaStreamTrack(
-      Component());
+std::unique_ptr<AudioSourceProvider> MediaStreamTrack::CreateWebAudioSource(
+    int context_sample_rate) {
+  return std::make_unique<MediaStreamWebAudioSource>(
+      CreateWebAudioSourceFromMediaStreamTrack(Component(),
+                                               context_sample_rate));
 }
 
 void MediaStreamTrack::RegisterMediaStream(MediaStream* media_stream) {
@@ -712,15 +799,15 @@ const AtomicString& MediaStreamTrack::InterfaceName() const {
 }
 
 ExecutionContext* MediaStreamTrack::GetExecutionContext() const {
-  return ContextLifecycleObserver::GetExecutionContext();
+  return execution_context_.Get();
 }
 
-void MediaStreamTrack::Trace(blink::Visitor* visitor) {
+void MediaStreamTrack::Trace(Visitor* visitor) {
   visitor->Trace(registered_media_streams_);
   visitor->Trace(component_);
   visitor->Trace(image_capture_);
+  visitor->Trace(execution_context_);
   EventTargetWithInlineData::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

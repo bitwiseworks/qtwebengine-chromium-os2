@@ -9,7 +9,7 @@
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/common/input_event_ack_source.h"
 #include "content/public/common/input_event_ack_state.h"
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 
 namespace content {
 
@@ -28,13 +28,6 @@ class CONTENT_EXPORT InputDispositionHandler {
   virtual void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
                                  InputEventAckSource ack_source,
                                  InputEventAckState ack_result) = 0;
-
-  enum UnexpectedEventAckType {
-    UNEXPECTED_ACK,
-    UNEXPECTED_EVENT_TYPE,
-    BAD_ACK_MESSAGE
-  };
-  virtual void OnUnexpectedEventAck(UnexpectedEventAckType type) = 0;
 };
 
 }  // namespace content

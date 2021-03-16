@@ -8,26 +8,27 @@
 #include <memory>
 #include "base/optional.h"
 #include "third_party/blink/public/platform/pointer_properties.h"
-#include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/public/platform/web_viewport_style.h"
 #include "third_party/blink/public/web/web_device_emulation_params.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/transforms/transformation_matrix.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+
+namespace gfx {
+class PointF;
+}  // namespace gfx
 
 namespace blink {
 
 class IntRect;
-class TransformationMatrix;
 class WebViewImpl;
 
 class CORE_EXPORT DevToolsEmulator final
-    : public GarbageCollectedFinalized<DevToolsEmulator> {
+    : public GarbageCollected<DevToolsEmulator> {
  public:
   explicit DevToolsEmulator(WebViewImpl*);
-  ~DevToolsEmulator();
-  static DevToolsEmulator* Create(WebViewImpl*);
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   // Settings overrides.
   void SetTextAutosizingEnabled(bool);
@@ -46,40 +47,60 @@ class CORE_EXPORT DevToolsEmulator final
   void SetPrimaryHoverType(HoverType);
   void SetMainFrameResizesAreOrientationChanges(bool);
 
-  // Emulation.
-  void EnableDeviceEmulation(const WebDeviceEmulationParams&);
+  // Enables and/or sets the parameters for emulation. Returns the emulation
+  // transform to be used as a result.
+  TransformationMatrix EnableDeviceEmulation(const WebDeviceEmulationParams&);
+  // Disables emulation.
   void DisableDeviceEmulation();
-  // Position is given in CSS pixels, scale relative to a page scale of 1.0.
-  void ForceViewport(const WebFloatPoint& position, float scale);
-  void ResetViewport();
+
   bool ResizeIsDeviceSizeChange();
   void SetTouchEventEmulationEnabled(bool, int max_touch_points);
   void SetScriptExecutionDisabled(bool);
   void SetScrollbarsHidden(bool);
   void SetDocumentCookieDisabled(bool);
 
-  // Notify the DevToolsEmulator about a scroll or scale change of the main
-  // frame. Updates the transform for a viewport override.
-  void MainFrameScrollOrScaleChanged();
+  bool HasViewportOverride() const { return !!viewport_override_; }
 
-  // Returns a custom visible content rect if a viewport override is active.
-  // This ensures that all content inside the forced viewport is painted.
-  base::Optional<IntRect> VisibleContentRectForPainting() const;
+  // Notify the DevToolsEmulator about a scroll or scale change of the main
+  // frame. Returns an updated emulation transform for a viewport override, and
+  // should only be called when HasViewportOverride() is true.
+  TransformationMatrix MainFrameScrollOrScaleChanged();
+
+  // Rewrites the |visible_rect| to the area of the devtools custom viewport if
+  // it is enabled. Otherwise, leaves |visible_rect| unchanged. Takes as input
+  // the size of the viewport, which gives an upper bound on the size of the
+  // area that is visible. The |viewport_size| is physical pixels if
+  // UseZoomForDSF() is enabled, or DIP otherwise.
+  void OverrideVisibleRect(const IntSize& viewport_size,
+                           IntRect* visible_rect) const;
 
   // Returns the scale used to convert incoming input events while emulating
   // device metics.
   float InputEventsScaleForEmulation();
 
+  TransformationMatrix ForceViewportForTesting(const gfx::PointF& position,
+                                               float scale) {
+    return ForceViewport(position, scale);
+  }
+  TransformationMatrix ResetViewportForTesting() { return ResetViewport(); }
+
  private:
   void EnableMobileEmulation();
   void DisableMobileEmulation();
+
+  // Enables viewport override and returns the emulation transform to be used.
+  // The |position| is in CSS pixels, and |scale| is relative to a page scale of
+  // 1.0.
+  TransformationMatrix ForceViewport(const gfx::PointF& position, float scale);
+  // Disables viewport override and returns the emulation transform to be used.
+  TransformationMatrix ResetViewport();
 
   // Returns the original device scale factor when overridden by DevTools, or
   // deviceScaleFactor() otherwise.
   float CompositorDeviceScaleFactor() const;
 
   void ApplyViewportOverride(TransformationMatrix*);
-  void UpdateRootLayerTransform();
+  TransformationMatrix ComputeRootLayerTransform();
 
   WebViewImpl* web_view_;
 
@@ -88,9 +109,8 @@ class CORE_EXPORT DevToolsEmulator final
   WebDeviceEmulationParams emulation_params_;
 
   struct ViewportOverride {
-    WebFloatPoint position;
+    FloatPoint position;
     double scale;
-    bool original_visual_viewport_masking;
   };
   base::Optional<ViewportOverride> viewport_override_;
 
@@ -99,7 +119,6 @@ class CORE_EXPORT DevToolsEmulator final
   bool is_mobile_layout_theme_enabled_;
   float original_default_minimum_page_scale_factor_;
   float original_default_maximum_page_scale_factor_;
-  bool use_solid_color_scrollbar_;
   bool embedder_text_autosizing_enabled_;
   float embedder_device_scale_adjustment_;
   bool embedder_prefer_compositing_to_lcd_text_enabled_;
@@ -113,7 +132,6 @@ class CORE_EXPORT DevToolsEmulator final
 
   bool touch_event_emulation_enabled_;
   bool double_tap_to_zoom_enabled_;
-  bool original_device_supports_touch_;
   int original_max_touch_points_;
 
   bool embedder_script_enabled_;

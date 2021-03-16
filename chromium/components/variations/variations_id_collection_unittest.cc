@@ -7,9 +7,9 @@
 #include <memory>
 #include <vector>
 
-#include "base/metrics/field_trial.h"
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/variations/variations_associated_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -56,7 +56,7 @@ void SetupAndFinalizeTrial(const std::string& trial_name,
 
 class VariationsIdCollectionTest : public ::testing::Test {
  public:
-  VariationsIdCollectionTest() : field_trial_list_(nullptr) {}
+  VariationsIdCollectionTest() {}
 
   ~VariationsIdCollectionTest() override { testing::ClearAllVariationIDs(); }
 
@@ -73,8 +73,7 @@ class VariationsIdCollectionTest : public ::testing::Test {
   VariationsIdCollection* collection() { return collection_.get(); }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
-  base::FieldTrialList field_trial_list_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<VariationsIdCollection> collection_;
   std::vector<VariationID> new_ids_;
 };

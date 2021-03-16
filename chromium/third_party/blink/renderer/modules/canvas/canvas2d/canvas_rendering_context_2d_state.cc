@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/css/resolver/filter_operation_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
+#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
 #include "third_party/blink/renderer/core/paint/filter_effect_builder.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -24,6 +25,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_flags.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/skia/include/effects/SkDashPathEffect.h"
 #include "third_party/skia/include/effects/SkDropShadowImageFilter.h"
 
@@ -34,8 +36,8 @@ namespace blink {
 
 CanvasRenderingContext2DState::CanvasRenderingContext2DState()
     : unrealized_save_count_(0),
-      stroke_style_(CanvasStyle::CreateFromRGBA(SK_ColorBLACK)),
-      fill_style_(CanvasStyle::CreateFromRGBA(SK_ColorBLACK)),
+      stroke_style_(MakeGarbageCollected<CanvasStyle>(SK_ColorBLACK)),
+      fill_style_(MakeGarbageCollected<CanvasStyle>(SK_ColorBLACK)),
       shadow_blur_(0),
       shadow_color_(Color::kTransparent),
       global_alpha_(1),
@@ -123,13 +125,13 @@ void CanvasRenderingContext2DState::FontsNeedUpdate(
   DCHECK_EQ(font_selector, font_.GetFontSelector());
   DCHECK(realized_font_);
 
-  font_.Update(font_selector);
+  font_ = Font(font_.GetFontDescription(), font_selector);
   // FIXME: We only really need to invalidate the resolved filter if the font
   // update above changed anything and the filter uses font-dependent units.
   resolved_filter_.reset();
 }
 
-void CanvasRenderingContext2DState::Trace(blink::Visitor* visitor) {
+void CanvasRenderingContext2DState::Trace(Visitor* visitor) {
   visitor->Trace(stroke_style_);
   visitor->Trace(fill_style_);
   visitor->Trace(filter_value_);
@@ -251,18 +253,26 @@ void CanvasRenderingContext2DState::ClipPath(
     has_complex_clip_ = true;
 }
 
-void CanvasRenderingContext2DState::SetFont(const Font& font,
-                                            FontSelector* selector) {
-  font_ = font;
-  font_.Update(selector);
+void CanvasRenderingContext2DState::SetFont(
+    const FontDescription& font_description,
+    FontSelector* selector) {
+  font_ = Font(font_description, selector);
   realized_font_ = true;
   if (selector)
     selector->RegisterForInvalidationCallbacks(this);
 }
 
-const Font& CanvasRenderingContext2DState::GetFont() const {
+const Font& CanvasRenderingContext2DState::GetFont() {
   DCHECK(realized_font_);
+  if (!font_.IsFallbackValid())
+    FontsNeedUpdate(font_.GetFontSelector());
   return font_;
+}
+
+const FontDescription& CanvasRenderingContext2DState::GetFontDescription()
+    const {
+  DCHECK(realized_font_);
+  return font_.GetFontDescription();
 }
 
 void CanvasRenderingContext2DState::SetTransform(
@@ -328,17 +338,28 @@ sk_sp<PaintFilter> CanvasRenderingContext2DState::GetFilter(
   if (!resolved_filter_) {
     // Update the filter value to the proper base URL if needed.
     if (filter_value_->MayContainUrl()) {
-      style_resolution_host->GetDocument().UpdateStyleAndLayout();
+      style_resolution_host->GetDocument().UpdateStyleAndLayout(
+          DocumentUpdateReason::kCanvas);
       filter_value_->ReResolveUrl(style_resolution_host->GetDocument());
     }
 
     scoped_refptr<ComputedStyle> filter_style = ComputedStyle::Create();
     // Must set font in case the filter uses any font-relative units (em, ex)
-    filter_style->SetFont(font_for_filter_);
-
+    // If font_for_filter_ was never set (ie frame-less documents) use base font
+    if (LIKELY(font_for_filter_.GetFontSelector())) {
+      filter_style->SetFont(font_for_filter_);
+    } else {
+      const ComputedStyle* computed_style =
+          style_resolution_host->GetDocument().GetComputedStyle();
+      if (computed_style) {
+        filter_style->SetFont(computed_style->GetFont());
+      } else {
+        return nullptr;
+      }
+    }
     StyleResolverState resolver_state(style_resolution_host->GetDocument(),
-                                      style_resolution_host, filter_style.get(),
-                                      filter_style.get());
+                                      *style_resolution_host,
+                                      filter_style.get(), filter_style.get());
     resolver_state.SetStyle(filter_style);
 
     StyleBuilder::ApplyProperty(GetCSSPropertyFilter(), resolver_state,
@@ -610,6 +631,17 @@ const PaintFlags* CanvasRenderingContext2DState::GetFlags(
   flags->setLooper(sk_ref_sp(ShadowAndForegroundDrawLooper()));
   flags->setImageFilter(nullptr);
   return flags;
+}
+
+bool CanvasRenderingContext2DState::HasPattern() const {
+  return FillStyle() && FillStyle()->GetCanvasPattern() &&
+         FillStyle()->GetCanvasPattern()->GetPattern();
+}
+
+// Only to be used if the CanvasRenderingContext2DState has Pattern
+bool CanvasRenderingContext2DState::PatternIsAccelerated() const {
+  DCHECK(HasPattern());
+  return FillStyle()->GetCanvasPattern()->GetPattern()->IsTextureBacked();
 }
 
 }  // namespace blink

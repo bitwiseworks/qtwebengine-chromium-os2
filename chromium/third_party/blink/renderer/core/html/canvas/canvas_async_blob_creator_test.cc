@@ -7,10 +7,13 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/html/canvas/image_data.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/graphics/color_correction_test_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -30,8 +33,8 @@ class MockCanvasAsyncBlobCreator : public CanvasAsyncBlobCreator {
             CanvasAsyncBlobCreator::GetImageEncodeOptionsForMimeType(mime_type),
             kHTMLCanvasToBlobCallback,
             nullptr,
-            TimeTicks(),
-            document,
+            base::TimeTicks(),
+            document->GetExecutionContext(),
             nullptr) {
     if (fail_encoder_initialization)
       fail_encoder_initialization_for_test_ = true;
@@ -101,10 +104,10 @@ class MockCanvasAsyncBlobCreatorWithoutComplete
     Thread::Current()->GetTaskRunner()->PostTask(
         FROM_HERE,
         WTF::Bind(&MockCanvasAsyncBlobCreatorWithoutComplete::InitiateEncoding,
-                  WrapPersistent(this), quality, TimeTicks::Max()));
+                  WrapPersistent(this), quality, base::TimeTicks::Max()));
   }
 
-  void IdleEncodeRows(TimeTicks deadline) override {
+  void IdleEncodeRows(base::TimeTicks deadline) override {
     // Deliberately make idleEncodeRows do nothing so that idle task never
     // completes
   }
@@ -136,7 +139,7 @@ scoped_refptr<StaticBitmapImage> CreateTransparentImage(int width, int height) {
   sk_sp<SkSurface> surface = SkSurface::MakeRasterN32Premul(width, height);
   if (!surface)
     return nullptr;
-  return StaticBitmapImage::Create(surface->makeImageSnapshot());
+  return UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
 }
 
 void CanvasAsyncBlobCreatorTest::
@@ -276,7 +279,7 @@ TEST_F(CanvasAsyncBlobCreatorTest, ColorManagedConvertToBlob) {
           // Create the StaticBitmapImage in canvas_color_space
           sk_sp<SkImage> source_image = DrawAndReturnImage(color_space_param);
           scoped_refptr<StaticBitmapImage> source_bitmap_image =
-              StaticBitmapImage::Create(source_image);
+              UnacceleratedStaticBitmapImage::Create(source_image);
 
           // Prepare encoding options
           ImageEncodeOptions* options = ImageEncodeOptions::Create();
@@ -286,12 +289,12 @@ TEST_F(CanvasAsyncBlobCreatorTest, ColorManagedConvertToBlob) {
           options->setPixelFormat(blob_pixel_format);
 
           // Encode the image using CanvasAsyncBlobCreator
-          CanvasAsyncBlobCreator* async_blob_creator =
-              CanvasAsyncBlobCreator::Create(
+          auto* async_blob_creator =
+              MakeGarbageCollected<CanvasAsyncBlobCreator>(
                   source_bitmap_image, options,
                   CanvasAsyncBlobCreator::ToBlobFunctionType::
                       kHTMLCanvasConvertToBlobPromise,
-                  TimeTicks(), &GetDocument(), nullptr);
+                  base::TimeTicks(), GetFrame().DomWindow(), nullptr);
           ASSERT_TRUE(async_blob_creator->EncodeImageForConvertToBlobTest());
 
           sk_sp<SkData> sk_data = SkData::MakeWithCopy(

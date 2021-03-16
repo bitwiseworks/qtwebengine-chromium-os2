@@ -54,6 +54,14 @@ gfx::Image InfoBarDelegate::GetIcon() const {
                    icon_id);
 }
 
+base::string16 InfoBarDelegate::GetLinkText() const {
+  return base::string16();
+}
+
+GURL InfoBarDelegate::GetLinkURL() const {
+  return GURL();
+}
+
 bool InfoBarDelegate::EqualsDelegate(InfoBarDelegate* delegate) const {
   return false;
 }
@@ -69,7 +77,20 @@ bool InfoBarDelegate::ShouldExpire(const NavigationDetails& details) const {
       ((nav_entry_id_ != details.entry_id) || details.is_reload);
 }
 
+bool InfoBarDelegate::LinkClicked(WindowOpenDisposition disposition) {
+  infobar()->owner()->OpenURL(GetLinkURL(), disposition);
+  return false;
+}
+
 void InfoBarDelegate::InfoBarDismissed() {
+}
+
+bool InfoBarDelegate::IsCloseable() const {
+  return true;
+}
+
+bool InfoBarDelegate::ShouldAnimate() const {
+  return true;
 }
 
 ConfirmInfoBarDelegate* InfoBarDelegate::AsConfirmInfoBarDelegate() {
@@ -80,35 +101,12 @@ HungRendererInfoBarDelegate* InfoBarDelegate::AsHungRendererInfoBarDelegate() {
   return nullptr;
 }
 
-InsecureContentInfoBarDelegate*
-    InfoBarDelegate::AsInsecureContentInfoBarDelegate() {
-  return nullptr;
-}
-
-NativeAppInfoBarDelegate* InfoBarDelegate::AsNativeAppInfoBarDelegate() {
-  return nullptr;
-}
-
 PopupBlockedInfoBarDelegate* InfoBarDelegate::AsPopupBlockedInfoBarDelegate() {
-  return nullptr;
-}
-
-RegisterProtocolHandlerInfoBarDelegate*
-    InfoBarDelegate::AsRegisterProtocolHandlerInfoBarDelegate() {
-  return nullptr;
-}
-
-ScreenCaptureInfoBarDelegate*
-    InfoBarDelegate::AsScreenCaptureInfoBarDelegate() {
   return nullptr;
 }
 
 ThemeInstalledInfoBarDelegate*
     InfoBarDelegate::AsThemePreviewInfobarDelegate() {
-  return nullptr;
-}
-
-ThreeDAPIInfoBarDelegate* InfoBarDelegate::AsThreeDAPIInfoBarDelegate() {
   return nullptr;
 }
 

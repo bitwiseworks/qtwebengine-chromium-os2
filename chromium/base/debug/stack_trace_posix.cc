@@ -63,7 +63,9 @@ namespace {
 
 volatile sig_atomic_t in_signal_handler = 0;
 
-bool (*try_handle_signal)(int, void*, void*) = nullptr;
+#if !defined(OS_NACL)
+bool (*try_handle_signal)(int, siginfo_t*, void*) = nullptr;
+#endif
 
 #if !defined(USE_SYMBOLIZE)
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
@@ -228,6 +230,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
   // NOTE: This code MUST be async-signal safe.
   // NO malloc or stdio is allowed here.
 
+#if !defined(OS_NACL)
   // Give a registered callback a chance to recover from this signal
   //
   // V8 uses guard regions to guarantee memory safety in WebAssembly. This means
@@ -248,6 +251,7 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
     sigaction(signal, &action, nullptr);
     return;
   }
+#endif
 
 // Do not take the "in signal handler" code path on Mac in a DCHECK-enabled
 // build, as this prevents seeing a useful (symbolized) stack trace on a crash
@@ -527,7 +531,7 @@ class SandboxSymbolizeHelper {
   int GetFileDescriptor(const char* file_path) {
     int fd = -1;
 
-#if !defined(OFFICIAL_BUILD)
+#if !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
     if (file_path) {
       // The assumption here is that iterating over std::map<std::string, int>
       // using a const_iterator does not allocate dynamic memory, hense it is
@@ -548,7 +552,7 @@ class SandboxSymbolizeHelper {
         fd = -1;
       }
     }
-#endif  // !defined(OFFICIAL_BUILD)
+#endif  // !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
 
     return fd;
   }
@@ -577,10 +581,10 @@ class SandboxSymbolizeHelper {
     //   it cannot be called before the singleton is created.
     SandboxSymbolizeHelper* instance = GetInstance();
 
-    // The assumption here is that iterating over
-    // std::vector<MappedMemoryRegion> using a const_iterator does not allocate
-    // dynamic memory, hence it is async-signal-safe.
-    for (const MappedMemoryRegion& region : instance->regions_) {
+    // Cannot use STL iterators here, since debug iterators use locks.
+    // NOLINTNEXTLINE(modernize-loop-convert)
+    for (size_t i = 0; i < instance->regions_.size(); ++i) {
+      const MappedMemoryRegion& region = instance->regions_[i];
       if (region.start <= pc && pc < region.end) {
         start_address = region.start;
         base_address = region.base;
@@ -677,7 +681,7 @@ class SandboxSymbolizeHelper {
     // Pre-opening and caching the file descriptors of all loaded modules is
     // not safe for production builds.  Hence it is only done in non-official
     // builds.  For more details, take a look at: http://crbug.com/341966.
-#if !defined(OFFICIAL_BUILD)
+#if !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
     // Open the object files for all read-only executable regions and cache
     // their file descriptors.
     std::vector<MappedMemoryRegion>::const_iterator it;
@@ -714,7 +718,7 @@ class SandboxSymbolizeHelper {
         }
       }
     }
-#endif  // !defined(OFFICIAL_BUILD)
+#endif  // !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
   }
 
   // Initializes and installs the symbolization callback.
@@ -736,7 +740,7 @@ class SandboxSymbolizeHelper {
 
   // Closes all file descriptors owned by this instance.
   void CloseObjectFiles() {
-#if !defined(OFFICIAL_BUILD)
+#if !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
     std::map<std::string, int>::iterator it;
     for (it = modules_.begin(); it != modules_.end(); ++it) {
       int ret = IGNORE_EINTR(close(it->second));
@@ -744,18 +748,18 @@ class SandboxSymbolizeHelper {
       it->second = -1;
     }
     modules_.clear();
-#endif  // !defined(OFFICIAL_BUILD)
+#endif  // !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
   }
 
   // Set to true upon successful initialization.
   bool is_initialized_;
 
-#if !defined(OFFICIAL_BUILD)
+#if !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
   // Mapping from file name to file descriptor.  Includes file descriptors
   // for all successfully opened object files and the file descriptor for
   // /proc/self/maps.  This code is not safe for production builds.
   std::map<std::string, int> modules_;
-#endif  // !defined(OFFICIAL_BUILD)
+#endif  // !defined(OFFICIAL_BUILD) || !defined(NO_UNWIND_TABLES)
 
   // Cache for the process memory regions.  Produced by parsing the contents
   // of /proc/self/maps cache.
@@ -803,10 +807,28 @@ bool EnableInProcessStackDumping() {
   return success;
 }
 
-void SetStackDumpFirstChanceCallback(bool (*handler)(int, void*, void*)) {
+#if !defined(OS_NACL)
+bool SetStackDumpFirstChanceCallback(bool (*handler)(int, siginfo_t*, void*)) {
   DCHECK(try_handle_signal == nullptr || handler == nullptr);
   try_handle_signal = handler;
+
+#if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
+    defined(THREAD_SANITIZER) || defined(LEAK_SANITIZER) ||    \
+    defined(UNDEFINED_SANITIZER)
+  struct sigaction installed_handler;
+  CHECK_EQ(sigaction(SIGSEGV, NULL, &installed_handler), 0);
+  // If the installed handler does not point to StackDumpSignalHandler, then
+  // allow_user_segv_handler is 0.
+  if (installed_handler.sa_sigaction != StackDumpSignalHandler) {
+    LOG(WARNING)
+        << "WARNING: sanitizers are preventing signal handler installation. "
+        << "WebAssembly trap handlers are disabled.\n";
+    return false;
+  }
+#endif
+  return true;
 }
+#endif
 
 size_t CollectStackTrace(void** trace, size_t count) {
   // NOTE: This code MUST be async-signal safe (it's used by in-process

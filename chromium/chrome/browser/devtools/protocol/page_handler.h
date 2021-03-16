@@ -10,8 +10,11 @@
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
+struct InstallabilityError;
 class WebContents;
 }
+
+class SkBitmap;
 
 class PageHandler : public protocol::Page::Backend,
                     public content::WebContentsObserver {
@@ -26,8 +29,21 @@ class PageHandler : public protocol::Page::Backend,
   protocol::Response Enable() override;
   protocol::Response Disable() override;
   protocol::Response SetAdBlockingEnabled(bool enabled) override;
+  void GetInstallabilityErrors(
+      std::unique_ptr<GetInstallabilityErrorsCallback> callback) override;
+
+  void GetManifestIcons(
+      std::unique_ptr<GetManifestIconsCallback> callback) override;
 
  private:
+  static void GotInstallabilityErrors(
+      std::unique_ptr<GetInstallabilityErrorsCallback> callback,
+      std::vector<content::InstallabilityError> installability_errors);
+
+  static void GotManifestIcons(
+      std::unique_ptr<GetManifestIconsCallback> callback,
+      const SkBitmap* primary_icon);
+
   bool enabled_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(PageHandler);

@@ -18,7 +18,7 @@
     void transform(unrestricted double a, unrestricted double b, unrestricted double c, unrestricted double d, unrestricted double e, unrestricted double f);
     void setTransform(unrestricted double a, unrestricted double b, unrestricted double c, unrestricted double d, unrestricted double e, unrestricted double f);
     void resetTransform();
-    [RaisesException] void setTransform(optional DOMMatrix2DInit transform);
+    [RaisesException] void setTransform(optional DOMMatrix2DInit transform = {});
     DOMMatrix getTransform();
 
 
@@ -80,4 +80,4 @@
     sequence<unrestricted double> getLineDash();
     attribute unrestricted double lineDashOffset;
 };
-PaintRenderingContext2D implements CanvasPath;
+PaintRenderingContext2D includes CanvasPath;

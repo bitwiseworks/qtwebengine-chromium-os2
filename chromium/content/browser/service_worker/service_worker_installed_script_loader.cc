@@ -9,13 +9,12 @@
 #include <utility>
 #include "content/browser/service_worker/service_worker_cache_writer.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
-#include "content/browser/service_worker/service_worker_storage.h"
 #include "content/browser/service_worker/service_worker_version.h"
-#include "content/browser/service_worker/service_worker_write_to_cache_job.h"
 #include "content/browser/url_loader_factory_getter.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "net/base/ip_endpoint.h"
 #include "net/cert/cert_status_flags.h"
-#include "services/network/public/cpp/resource_response.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 
 namespace content {
@@ -24,11 +23,27 @@ using FinishedReason = ServiceWorkerInstalledScriptReader::FinishedReason;
 
 ServiceWorkerInstalledScriptLoader::ServiceWorkerInstalledScriptLoader(
     uint32_t options,
-    network::mojom::URLLoaderClientPtr client,
-    std::unique_ptr<ServiceWorkerResponseReader> response_reader)
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+    std::unique_ptr<ServiceWorkerResponseReader> response_reader,
+    scoped_refptr<ServiceWorkerVersion>
+        version_for_main_script_http_response_info,
+    const GURL& request_url)
     : options_(options),
       client_(std::move(client)),
       request_start_(base::TimeTicks::Now()) {
+  // Normally, the main script info is set by ServiceWorkerNewScriptLoader for
+  // new service workers and ServiceWorkerInstalledScriptsSender for installed
+  // service workes. But some embedders might preinstall scripts to the
+  // ServiceWorkerScriptCacheMap while not setting the ServiceWorkerVersion
+  // status to INSTALLED, so we can come to here instead of using
+  // SeviceWorkerInstalledScriptsSender.
+  // In this case, the main script info would not yet have been set, so set it
+  // here.
+  if (request_url == version_for_main_script_http_response_info->script_url() &&
+      !version_for_main_script_http_response_info->GetMainScriptResponse()) {
+    version_for_main_script_http_response_info_ =
+        std::move(version_for_main_script_http_response_info);
+  }
   reader_ = std::make_unique<ServiceWorkerInstalledScriptReader>(
       std::move(response_reader), this);
   reader_->Start();
@@ -39,15 +54,15 @@ ServiceWorkerInstalledScriptLoader::~ServiceWorkerInstalledScriptLoader() =
     default;
 
 void ServiceWorkerInstalledScriptLoader::OnStarted(
-    std::string encoding,
-    base::flat_map<std::string, std::string> headers,
+    scoped_refptr<HttpResponseInfoIOBuffer> http_info,
     mojo::ScopedDataPipeConsumerHandle body_handle,
-    uint64_t body_size,
-    mojo::ScopedDataPipeConsumerHandle metadata_handle,
-    uint64_t metadata_size) {
-  encoding_ = encoding;
+    mojo::ScopedDataPipeConsumerHandle metadata_handle) {
+  DCHECK(http_info);
+  DCHECK(http_info->http_info->headers);
+  DCHECK(encoding_.empty());
+  http_info->http_info->headers->GetCharset(&encoding_);
   body_handle_ = std::move(body_handle);
-  body_size_ = body_size;
+  body_size_ = http_info->response_data_size;
 
   // Just drain the metadata (V8 code cache): this entire class is just to
   // handle a corner case for non-installed service workers and high performance
@@ -55,41 +70,20 @@ void ServiceWorkerInstalledScriptLoader::OnStarted(
   metadata_drainer_ =
       std::make_unique<mojo::DataPipeDrainer>(this, std::move(metadata_handle));
 
-  // We continue in OnHttpInfoRead().
-}
-
-void ServiceWorkerInstalledScriptLoader::OnHttpInfoRead(
-    scoped_refptr<HttpResponseInfoIOBuffer> http_info) {
   net::HttpResponseInfo* info = http_info->http_info.get();
+  DCHECK(info);
 
-  network::ResourceResponseHead head;
-  head.request_start = request_start_;
-  head.response_start = base::TimeTicks::Now();
-  head.request_time = info->request_time;
-  head.response_time = info->response_time;
-  head.headers = info->headers;
-  head.headers->GetMimeType(&head.mime_type);
-  head.charset = encoding_;
-  head.content_length = body_size_;
-  head.was_fetched_via_spdy = info->was_fetched_via_spdy;
-  head.was_alpn_negotiated = info->was_alpn_negotiated;
-  head.connection_info = info->connection_info;
-  head.alpn_negotiated_protocol = info->alpn_negotiated_protocol;
-  head.socket_address = info->socket_address;
-  head.cert_status = info->ssl_info.cert_status;
-
-  if (options_ & network::mojom::kURLLoadOptionSendSSLInfoWithResponse)
-    head.ssl_info = info->ssl_info;
-
-  client_->OnReceiveResponse(head);
-
-  if (info->metadata) {
-    const uint8_t* data =
-        reinterpret_cast<const uint8_t*>(info->metadata->data());
-    client_->OnReceiveCachedMetadata(
-        std::vector<uint8_t>(data, data + info->metadata->size()));
+  if (version_for_main_script_http_response_info_) {
+    version_for_main_script_http_response_info_->SetMainScriptResponse(
+        std::make_unique<ServiceWorkerVersion::MainScriptResponse>(*info));
   }
 
+  auto response = ServiceWorkerUtils::CreateResourceResponseHeadAndMetadata(
+      info, options_, request_start_, base::TimeTicks::Now(),
+      http_info->response_data_size);
+  client_->OnReceiveResponse(std::move(response.head));
+  if (!response.metadata.empty())
+    client_->OnReceiveCachedMetadata(std::move(response.metadata));
   client_->OnStartLoadingResponseBody(std::move(body_handle_));
   // We continue in OnFinished().
 }
@@ -109,6 +103,7 @@ void ServiceWorkerInstalledScriptLoader::OnFinished(FinishedReason reason) {
       break;
     case FinishedReason::kConnectionError:
     case FinishedReason::kMetaDataSenderError:
+    case FinishedReason::kNoContextError:
       net_error = net::ERR_FAILED;
       break;
     case FinishedReason::kNotFinished:
@@ -124,11 +119,6 @@ void ServiceWorkerInstalledScriptLoader::FollowRedirect(
     const base::Optional<GURL>& new_url) {
   // This class never returns a redirect response to its client, so should never
   // be asked to follow one.
-  NOTREACHED();
-}
-
-void ServiceWorkerInstalledScriptLoader::ProceedWithResponse() {
-  // This function should only be called for navigations.
   NOTREACHED();
 }
 

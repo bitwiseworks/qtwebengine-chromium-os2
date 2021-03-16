@@ -48,7 +48,7 @@
 **
 **     $ lsmtest io testfile.db 4KB 2M@6M 1492K@4M S 4096@4K S
 **     3544K written in 129 ms
-**     $ echo "2M@6M 1492K@4M S 4096@4K S" | lsmtest io testfile.db 4096
+**     $ echo "2M@6M 1492K@4M S 4096@4K S" | lsmtest io testfile.db 4096 
 **     3544K written in 127 ms
 **
 */

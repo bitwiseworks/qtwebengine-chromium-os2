@@ -1,4 +1,5 @@
 // Copyright 2017 The Chromium Authors. All rights reserved.
+
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +10,9 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom-shared.h"
+#include "base/unguessable_token.h"
+#include "third_party/blink/public/mojom/service_worker/controller_service_worker_mode.mojom-shared.h"
 #include "third_party/blink/public/platform/code_cache_loader.h"
-#include "third_party/blink/public/platform/web_application_cache_host.h"
 #include "third_party/blink/public/platform/web_document_subresource_filter.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -22,6 +23,10 @@
 namespace base {
 class WaitableEvent;
 }  // namespace base
+
+namespace net {
+class SiteForCookies;
+}  // namespace net
 
 namespace blink {
 
@@ -55,11 +60,6 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
 
   virtual ~WebWorkerFetchContext() = default;
 
-  // Used to copy a worker fetch context between worker threads.
-  virtual scoped_refptr<WebWorkerFetchContext> CloneForNestedWorker() {
-    return nullptr;
-  }
-
   // Set a raw pointer of a WaitableEvent which will be signaled from the main
   // thread when the worker's GlobalScope is terminated, which will terminate
   // sync loading requests on the worker thread. It is guaranteed that the
@@ -82,7 +82,7 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
   // cache.
   virtual std::unique_ptr<CodeCacheLoader> CreateCodeCacheLoader() {
     return nullptr;
-  };
+  }
 
   // Returns a WebURLLoaderFactory for loading scripts in this worker context.
   // Unlike GetURLLoaderFactory(), this may return nullptr.
@@ -94,19 +94,25 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
   // worker)
   virtual void WillSendRequest(WebURLRequest&) = 0;
 
-  // Whether the fetch context is controlled by a service worker.
+  // Returns whether a controller service worker exists and if it has fetch
+  // handler.
   virtual blink::mojom::ControllerServiceWorkerMode
-  IsControlledByServiceWorker() const = 0;
+  GetControllerServiceWorkerMode() const = 0;
 
   // This flag is used to block all mixed content in subframes.
   virtual void SetIsOnSubframe(bool) {}
   virtual bool IsOnSubframe() const { return false; }
 
-  // The URL that should be consulted for the third-party cookie blocking
-  // policy, as defined in Section 2.1.1 and 2.1.2 of
+  // Will be consulted for the third-party cookie blocking policy, as defined in
+  // Section 2.1.1 and 2.1.2 of
   // https://tools.ietf.org/html/draft-ietf-httpbis-cookie-same-site.
   // See content::URLRequest::site_for_cookies() for details.
-  virtual WebURL SiteForCookies() const = 0;
+  virtual net::SiteForCookies SiteForCookies() const = 0;
+
+  // The top-frame-origin for the worker. For a dedicated worker this is the
+  // top-frame origin of the page that created the worker. For a shared worker
+  // or a service worker this is unset.
+  virtual base::Optional<WebSecurityOrigin> TopFrameOrigin() const = 0;
 
   // Reports the certificate error to the browser process.
   virtual void DidRunContentWithCertificateErrors() {}
@@ -116,8 +122,6 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
   // source.
   virtual void DidRunInsecureContent(const WebSecurityOrigin&,
                                      const WebURL& insecure_url) {}
-
-  virtual void SetApplicationCacheHostID(int id) {}
 
   // Sets the builder object of WebDocumentSubresourceFilter on the main thread
   // which will be used in TakeSubresourceFilter() to create a
@@ -133,14 +137,27 @@ class WebWorkerFetchContext : public base::RefCounted<WebWorkerFetchContext> {
     return nullptr;
   }
 
-  // Creates a WebSocketHandshakeThrottle on the worker thread.
+  // Creates a WebSocketHandshakeThrottle on the worker thread. |task_runner| is
+  // used for internal IPC handling of the throttle, and must be bound to the
+  // same sequence to the current one (which is the worker thread).
   virtual std::unique_ptr<blink::WebSocketHandshakeThrottle>
-  CreateWebSocketHandshakeThrottle() {
+  CreateWebSocketHandshakeThrottle(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
     return nullptr;
   }
 
   // Returns the current list of user prefered languages.
   virtual blink::WebString GetAcceptLanguages() const = 0;
+
+  // Returns mojo::PendingReceiver<blink::mojom::blink::WorkerTimingContainer>
+  // for the blink::ResourceResponse with the given |request_id|. Null if the
+  // request has not been intercepted by a service worker.
+  virtual mojo::ScopedMessagePipeHandle TakePendingWorkerTimingReceiver(
+      int request_id) = 0;
+
+  // This flag is set to disallow all network accesses in the context. Used for
+  // offline capability detection in service workers.
+  virtual void SetIsOfflineMode(bool is_offline_mode) = 0;
 };
 
 }  // namespace blink

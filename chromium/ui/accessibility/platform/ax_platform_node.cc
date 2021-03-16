@@ -4,6 +4,7 @@
 
 #include "ui/accessibility/platform/ax_platform_node.h"
 
+#include "base/debug/crash_logging.h"
 #include "base/lazy_instance.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -22,9 +23,6 @@ base::LazyInstance<AXPlatformNode::NativeWindowHandlerCallback>::Leaky
 
 // static
 AXMode AXPlatformNode::ax_mode_;
-
-// static
-bool AXPlatformNode::has_input_suggestions_ = false;
 
 // static
 gfx::NativeViewAccessible AXPlatformNode::popup_focus_override_ = nullptr;
@@ -64,6 +62,18 @@ int32_t AXPlatformNode::GetUniqueId() const {
   return GetDelegate() ? GetDelegate()->GetUniqueId().Get() : -1;
 }
 
+std::string AXPlatformNode::ToString() {
+  return GetDelegate() ? GetDelegate()->ToString() : "No delegate";
+}
+
+std::string AXPlatformNode::SubtreeToString() {
+  return GetDelegate() ? GetDelegate()->SubtreeToString() : "No delegate";
+}
+
+std::ostream& operator<<(std::ostream& stream, AXPlatformNode& node) {
+  return stream << node.ToString();
+}
+
 // static
 void AXPlatformNode::AddAXModeObserver(AXModeObserver* observer) {
   ax_mode_observers_.Get().AddObserver(observer);
@@ -76,25 +86,16 @@ void AXPlatformNode::RemoveAXModeObserver(AXModeObserver* observer) {
 
 // static
 void AXPlatformNode::NotifyAddAXModeFlags(AXMode mode_flags) {
-  ax_mode_ |= mode_flags;
+  // Note: this is only called on Windows.
+  AXMode new_ax_mode(ax_mode_);
+  new_ax_mode |= mode_flags;
+
+  if (new_ax_mode == ax_mode_)
+    return;  // No change.
+
+  ax_mode_ = new_ax_mode;
   for (auto& observer : ax_mode_observers_.Get())
     observer.OnAXModeAdded(mode_flags);
-}
-
-// static
-void AXPlatformNode::OnInputSuggestionsAvailable() {
-  has_input_suggestions_ = true;
-}
-
-// static
-void AXPlatformNode::OnInputSuggestionsUnavailable() {
-  has_input_suggestions_ = false;
-}
-
-// static
-// TODO(crbug.com/865101) Remove this once the autofill state works.
-bool AXPlatformNode::HasInputSuggestions() {
-  return has_input_suggestions_;
 }
 
 // static

@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBUSB_USB_ALTERNATE_INTERFACE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBUSB_USB_ALTERNATE_INTERFACE_H_
 
-#include "device/usb/public/mojom/device.mojom-blink.h"
+#include "services/device/public/mojom/usb_device.mojom-blink.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/heap.h"
 
@@ -36,7 +36,7 @@ class USBAlternateInterface : public ScriptWrappable {
   String interfaceName() const { return Info().interface_name; }
   HeapVector<Member<USBEndpoint>> endpoints() const;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<const USBInterface> interface_;

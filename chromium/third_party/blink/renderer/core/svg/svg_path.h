@@ -35,17 +35,13 @@
 #include "third_party/blink/renderer/core/svg/properties/svg_property.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/core/svg/svg_path_byte_stream.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
 class SVGPath final : public SVGPropertyBase {
  public:
   typedef void TearOffType;
-
-  static SVGPath* Create() { return MakeGarbageCollected<SVGPath>(); }
-  static SVGPath* Create(cssvalue::CSSPathValue* path_value) {
-    return MakeGarbageCollected<SVGPath>(path_value);
-  }
 
   SVGPath();
   explicit SVGPath(cssvalue::CSSPathValue*);
@@ -64,7 +60,7 @@ class SVGPath final : public SVGPropertyBase {
   SVGParsingError SetValueAsString(const String&);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from_value,
@@ -76,13 +72,18 @@ class SVGPath final : public SVGPropertyBase {
   static AnimatedPropertyType ClassType() { return kAnimatedPath; }
   AnimatedPropertyType GetType() const override { return ClassType(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<cssvalue::CSSPathValue> path_value_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGPath);
+template <>
+struct DowncastTraits<SVGPath> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGPath::ClassType();
+  }
+};
 
 }  // namespace blink
 

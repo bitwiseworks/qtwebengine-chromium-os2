@@ -6,10 +6,14 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "base/numerics/safe_math.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/device_event_log/device_event_log.h"
 #include "device/fido/ble/fido_ble_connection.h"
 #include "device/fido/ble/fido_ble_frames.h"
+#include "device/fido/cable/v2_handshake.h"
 #include "device/fido/fido_constants.h"
 #include "device/fido/fido_parsing_utils.h"
 
@@ -20,9 +24,9 @@ namespace {
 // Maximum size of EncryptionData::read_sequence_num or
 // EncryptionData::write_sequence_num allowed. If we encounter
 // counter larger than |kMaxCounter| FidoCableDevice should error out.
-constexpr size_t kMaxCounter = (1 << 24) - 1;
+constexpr uint32_t kMaxCounter = (1 << 24) - 1;
 
-base::Optional<std::vector<uint8_t>> ConstructEncryptionNonce(
+base::Optional<std::vector<uint8_t>> ConstructV1Nonce(
     base::span<const uint8_t> nonce,
     bool is_sender_client,
     uint32_t counter) {
@@ -37,103 +41,34 @@ base::Optional<std::vector<uint8_t>> ConstructEncryptionNonce(
   return constructed_nonce;
 }
 
-bool EncryptOutgoingMessage(
-    const base::Optional<FidoCableDevice::EncryptionData>& encryption_data,
-    std::vector<uint8_t>* message_to_encrypt) {
-  if (!encryption_data)
-    return false;
-
-  const auto nonce = ConstructEncryptionNonce(
-      encryption_data->nonce, true /* is_sender_client */,
-      encryption_data->write_sequence_num);
-  if (!nonce)
-    return false;
-
-  DCHECK_EQ(nonce->size(), encryption_data->aes_key.NonceLength());
-  std::string ciphertext;
-  bool encryption_success = encryption_data->aes_key.Seal(
-      fido_parsing_utils::ConvertToStringPiece(*message_to_encrypt),
-      fido_parsing_utils::ConvertToStringPiece(*nonce),
-      std::string(1, base::strict_cast<uint8_t>(FidoBleDeviceCommand::kMsg)),
-      &ciphertext);
-  if (!encryption_success)
-    return false;
-
-  message_to_encrypt->assign(ciphertext.begin(), ciphertext.end());
-  return true;
-}
-
-bool DecryptIncomingMessage(
-    const base::Optional<FidoCableDevice::EncryptionData>& encryption_data,
-    FidoBleFrame* incoming_frame) {
-  if (!encryption_data)
-    return false;
-
-  const auto nonce = ConstructEncryptionNonce(
-      encryption_data->nonce, false /* is_sender_client */,
-      encryption_data->read_sequence_num);
-  if (!nonce)
-    return false;
-
-  DCHECK_EQ(nonce->size(), encryption_data->aes_key.NonceLength());
-  std::string plaintext;
-
-  bool decryption_success = encryption_data->aes_key.Open(
-      fido_parsing_utils::ConvertToStringPiece(incoming_frame->data()),
-      fido_parsing_utils::ConvertToStringPiece(*nonce),
-      std::string(1, base::strict_cast<uint8_t>(incoming_frame->command())),
-      &plaintext);
-  if (!decryption_success)
-    return false;
-
-  incoming_frame->data().assign(plaintext.begin(), plaintext.end());
-  return true;
-}
-
 }  // namespace
 
-// FidoCableDevice::EncryptionData ----------------------------------------
-
-FidoCableDevice::EncryptionData::EncryptionData(
-    std::string encryption_key,
-    base::span<const uint8_t, 8> nonce)
-    : session_key(std::move(encryption_key)),
-      nonce(fido_parsing_utils::Materialize(nonce)) {
-  DCHECK_EQ(session_key.size(), aes_key.KeyLength());
-  aes_key.Init(&session_key);
-}
-
-FidoCableDevice::EncryptionData::EncryptionData(EncryptionData&& data) =
-    default;
-
-FidoCableDevice::EncryptionData& FidoCableDevice::EncryptionData::operator=(
-    EncryptionData&& other) = default;
-
+FidoCableDevice::EncryptionData::EncryptionData() = default;
 FidoCableDevice::EncryptionData::~EncryptionData() = default;
 
-// FidoCableDevice::EncryptionData ----------------------------------------
-
 FidoCableDevice::FidoCableDevice(BluetoothAdapter* adapter, std::string address)
-    : FidoBleDevice(adapter, std::move(address)), weak_factory_(this) {}
+    : FidoBleDevice(adapter, std::move(address), FidoBleDevice::Type::kCaBLE) {}
 
 FidoCableDevice::FidoCableDevice(std::unique_ptr<FidoBleConnection> connection)
-    : FidoBleDevice(std::move(connection)), weak_factory_(this) {}
+    : FidoBleDevice(std::move(connection)) {}
 
 FidoCableDevice::~FidoCableDevice() = default;
 
-void FidoCableDevice::DeviceTransact(std::vector<uint8_t> command,
-                                     DeviceCallback callback) {
-  if (!EncryptOutgoingMessage(encryption_data_, &command)) {
+FidoDevice::CancelToken FidoCableDevice::DeviceTransact(
+    std::vector<uint8_t> command,
+    DeviceCallback callback) {
+  if ((!encryption_data_ && !v2_crypter_) ||
+      !EncryptOutgoingMessage(&command)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback), base::nullopt));
     state_ = State::kDeviceError;
-    return;
+    FIDO_LOG(ERROR) << "Failed to encrypt outgoing caBLE message.";
+    return 0;
   }
 
-  ++encryption_data_->write_sequence_num;
-
-  AddToPendingFrames(FidoBleDeviceCommand::kMsg, std::move(command),
-                     std::move(callback));
+  FIDO_LOG(DEBUG) << "Sending encrypted message to caBLE client";
+  return AddToPendingFrames(FidoBleDeviceCommand::kMsg, std::move(command),
+                            std::move(callback));
 }
 
 void FidoCableDevice::OnResponseFrame(FrameCallback callback,
@@ -143,12 +78,11 @@ void FidoCableDevice::OnResponseFrame(FrameCallback callback,
   state_ = frame ? State::kReady : State::kDeviceError;
 
   if (frame && frame->command() != FidoBleDeviceCommand::kControl) {
-    if (!DecryptIncomingMessage(encryption_data_, &frame.value())) {
+    if ((!encryption_data_ && !v2_crypter_) ||
+        !DecryptIncomingMessage(&frame.value())) {
       state_ = State::kDeviceError;
       frame = base::nullopt;
     }
-
-    ++encryption_data_->read_sequence_num;
   }
 
   auto self = GetWeakPtr();
@@ -170,15 +104,106 @@ void FidoCableDevice::SendHandshakeMessage(
                      std::move(handshake_message), std::move(callback));
 }
 
-void FidoCableDevice::SetEncryptionData(std::string session_key,
-                                        base::span<const uint8_t, 8> nonce) {
+void FidoCableDevice::SetV1EncryptionData(
+    base::span<const uint8_t, 32> session_key,
+    base::span<const uint8_t, 8> nonce) {
   // Encryption data must be set at most once during Cable handshake protocol.
   DCHECK(!encryption_data_);
-  encryption_data_.emplace(std::move(session_key), nonce);
+  DCHECK(!v2_crypter_);
+  encryption_data_.emplace();
+  encryption_data_->read_key = fido_parsing_utils::Materialize(session_key);
+  encryption_data_->write_key = fido_parsing_utils::Materialize(session_key);
+  encryption_data_->nonce = fido_parsing_utils::Materialize(nonce);
+}
+
+void FidoCableDevice::SetV2EncryptionData(
+    std::unique_ptr<cablev2::Crypter> crypter) {
+  DCHECK(!encryption_data_);
+  DCHECK(!v2_crypter_);
+  v2_crypter_.emplace(std::move(crypter));
 }
 
 FidoTransportProtocol FidoCableDevice::DeviceTransport() const {
   return FidoTransportProtocol::kCloudAssistedBluetoothLowEnergy;
+}
+
+void FidoCableDevice::SetSequenceNumbersForTesting(uint32_t read_seq,
+                                                   uint32_t write_seq) {
+  encryption_data_->write_sequence_num = write_seq;
+  encryption_data_->read_sequence_num = read_seq;
+}
+
+bool FidoCableDevice::EncryptOutgoingMessage(
+    std::vector<uint8_t>* message_to_encrypt) {
+  if (v2_crypter_) {
+    return v2_crypter_.value()->Encrypt(message_to_encrypt);
+  }
+
+  return EncryptV1OutgoingMessage(&encryption_data_.value(),
+                                  message_to_encrypt);
+}
+
+bool FidoCableDevice::DecryptIncomingMessage(FidoBleFrame* incoming_frame) {
+  if (v2_crypter_) {
+    std::vector<uint8_t> plaintext;
+    if (!v2_crypter_.value()->Decrypt(incoming_frame->command(),
+                                      incoming_frame->data(), &plaintext)) {
+      return false;
+    }
+    incoming_frame->data().swap(plaintext);
+    return true;
+  }
+
+  return DecryptV1IncomingMessage(&encryption_data_.value(), incoming_frame);
+}
+
+// static
+bool FidoCableDevice::EncryptV1OutgoingMessage(
+    EncryptionData* encryption_data,
+    std::vector<uint8_t>* message_to_encrypt) {
+  const auto nonce =
+      ConstructV1Nonce(encryption_data->nonce, /*is_sender_client=*/true,
+                       encryption_data->write_sequence_num++);
+  if (!nonce)
+    return false;
+
+  crypto::Aead aes_key(crypto::Aead::AES_256_GCM);
+  aes_key.Init(encryption_data->write_key);
+  DCHECK_EQ(nonce->size(), aes_key.NonceLength());
+
+  const uint8_t additional_data[1] = {
+      base::strict_cast<uint8_t>(FidoBleDeviceCommand::kMsg)};
+  std::vector<uint8_t> ciphertext =
+      aes_key.Seal(*message_to_encrypt, *nonce, additional_data);
+  message_to_encrypt->swap(ciphertext);
+  return true;
+}
+
+// static
+bool FidoCableDevice::DecryptV1IncomingMessage(EncryptionData* encryption_data,
+                                               FidoBleFrame* incoming_frame) {
+  const auto nonce =
+      ConstructV1Nonce(encryption_data->nonce, /*is_sender_client=*/false,
+                       encryption_data->read_sequence_num);
+  if (!nonce)
+    return false;
+
+  crypto::Aead aes_key(crypto::Aead::AES_256_GCM);
+  aes_key.Init(encryption_data->read_key);
+  DCHECK_EQ(nonce->size(), aes_key.NonceLength());
+
+  const uint8_t additional_data[1] = {
+      base::strict_cast<uint8_t>(incoming_frame->command())};
+  base::Optional<std::vector<uint8_t>> plaintext =
+      aes_key.Open(incoming_frame->data(), *nonce, additional_data);
+  if (!plaintext) {
+    FIDO_LOG(ERROR) << "Failed to decrypt caBLE message.";
+    return false;
+  }
+
+  encryption_data->read_sequence_num++;
+  incoming_frame->data().swap(*plaintext);
+  return true;
 }
 
 }  // namespace device

@@ -4,7 +4,11 @@
 
 #include "ui/ozone/platform/scenic/scenic_window_manager.h"
 
-#include "base/fuchsia/component_context.h"
+#include <lib/sys/cpp/component_context.h>
+#include <memory>
+
+#include "base/fuchsia/default_context.h"
+#include "base/fuchsia/fuchsia_logging.h"
 #include "ui/ozone/platform/scenic/ozone_platform_scenic.h"
 
 namespace ui {
@@ -19,27 +23,13 @@ std::unique_ptr<PlatformScreen> ScenicWindowManager::CreateScreen() {
   return screen;
 }
 
-fuchsia::ui::viewsv1::ViewManager* ScenicWindowManager::GetViewManager() {
-  if (!view_manager_) {
-    view_manager_ = base::fuchsia::ComponentContext::GetDefault()
-                        ->ConnectToService<fuchsia::ui::viewsv1::ViewManager>();
-    view_manager_.set_error_handler([](zx_status_t status) {
-      LOG(ERROR)
-          << "The ViewManager channel was unexpectedly terminated with status "
-          << status << ".";
-    });
-  }
-
-  return view_manager_.get();
-}
-
 fuchsia::ui::scenic::Scenic* ScenicWindowManager::GetScenic() {
   if (!scenic_) {
-    scenic_ = base::fuchsia::ComponentContext::GetDefault()
-                  ->ConnectToService<fuchsia::ui::scenic::Scenic>();
-    scenic_.set_error_handler([](zx_status_t status) {
-      LOG(ERROR) << "The Scenic channel was unexpectedly terminated.";
-    });
+    scenic_ = base::fuchsia::ComponentContextForCurrentProcess()
+                  ->svc()
+                  ->Connect<fuchsia::ui::scenic::Scenic>();
+    scenic_.set_error_handler(
+        [](zx_status_t status) { ZX_LOG(FATAL, status) << " Scenic lost."; });
   }
   return scenic_.get();
 }

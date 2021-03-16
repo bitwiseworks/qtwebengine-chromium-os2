@@ -8,21 +8,16 @@
 
 #include <algorithm>
 #include <ostream>
+#include <utility>
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "url/url_canon_stdstring.h"
 #include "url/url_util.h"
 #include "url/url_util_qt.h"
-
-namespace {
-
-static base::LazyInstance<GURL>::Leaky empty_gurl = LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
 
 GURL::GURL() : is_valid_(false) {
 }
@@ -344,16 +339,11 @@ bool GURL::IsCustom() const {
 }
 
 bool GURL::IsAboutBlank() const {
-  if (!SchemeIs(url::kAboutScheme))
-    return false;
+  return IsAboutUrl(url::kAboutBlankPath);
+}
 
-  if (has_host() || has_username() || has_password() || has_port())
-    return false;
-
-  if (path() != url::kAboutBlankPath && path() != url::kAboutBlankWithHashPath)
-    return false;
-
-  return true;
+bool GURL::IsAboutSrcdoc() const {
+  return IsAboutUrl(url::kAboutSrcdocPath);
 }
 
 bool GURL::SchemeIs(base::StringPiece lower_ascii_scheme) const {
@@ -377,6 +367,20 @@ bool GURL::SchemeIsWSOrWSS() const {
   return SchemeIs(url::kWsScheme) || SchemeIs(url::kWssScheme);
 }
 
+bool GURL::SchemeIsCryptographic() const {
+  if (parsed_.scheme.len <= 0)
+    return false;
+  return SchemeIsCryptographic(scheme_piece());
+}
+
+bool GURL::SchemeIsCryptographic(base::StringPiece lower_ascii_scheme) {
+  DCHECK(base::IsStringASCII(lower_ascii_scheme));
+  DCHECK(base::ToLowerASCII(lower_ascii_scheme) == lower_ascii_scheme);
+
+  return lower_ascii_scheme == url::kHttpsScheme ||
+         lower_ascii_scheme == url::kWssScheme;
+}
+
 int GURL::IntPort() const {
   if (parsed_.port.is_nonempty())
     return url::ParsePort(spec_.data(), parsed_.port);
@@ -397,14 +401,14 @@ std::string GURL::ExtractFileName() const {
   return ComponentString(file_component);
 }
 
-std::string GURL::PathForRequest() const {
+base::StringPiece GURL::PathForRequestPiece() const {
   DCHECK(parsed_.path.len > 0)
       << "Canonical path for requests should be non-empty";
   if (parsed_.ref.len >= 0) {
     // Clip off the reference when it exists. The reference starts after the
     // #-sign, so we have to subtract one to also remove it.
-    return std::string(spec_, parsed_.path.begin,
-                       parsed_.ref.begin - parsed_.path.begin - 1);
+    return base::StringPiece(&spec_[parsed_.path.begin],
+                             parsed_.ref.begin - parsed_.path.begin - 1);
   }
   // Compute the actual path length, rather than depending on the spec's
   // terminator. If we're an inner_url, our spec continues on into our outer
@@ -413,7 +417,11 @@ std::string GURL::PathForRequest() const {
   if (parsed_.query.is_valid())
     path_len = parsed_.query.end() - parsed_.path.begin;
 
-  return std::string(spec_, parsed_.path.begin, path_len);
+  return base::StringPiece(&spec_[parsed_.path.begin], path_len);
+}
+
+std::string GURL::PathForRequest() const {
+  return PathForRequestPiece().as_string();
 }
 
 std::string GURL::HostNoBrackets() const {
@@ -444,7 +452,8 @@ bool GURL::HostIsIPAddress() const {
 }
 
 const GURL& GURL::EmptyGURL() {
-  return empty_gurl.Get();
+  static base::NoDestructor<GURL> empty_gurl;
+  return *empty_gurl;
 }
 
 bool GURL::DomainIs(base::StringPiece canonical_domain) const {
@@ -476,6 +485,30 @@ size_t GURL::EstimateMemoryUsage() const {
   return base::trace_event::EstimateMemoryUsage(spec_) +
          base::trace_event::EstimateMemoryUsage(inner_url_) +
          (parsed_.inner_parsed() ? sizeof(url::Parsed) : 0);
+}
+
+bool GURL::IsAboutUrl(base::StringPiece allowed_path) const {
+  if (!SchemeIs(url::kAboutScheme))
+    return false;
+
+  if (has_host() || has_username() || has_password() || has_port())
+    return false;
+
+  if (!path_piece().starts_with(allowed_path))
+    return false;
+
+  if (path_piece().size() == allowed_path.size()) {
+    DCHECK_EQ(path_piece(), allowed_path);
+    return true;
+  }
+
+  if ((path_piece().size() == allowed_path.size() + 1) &&
+      path_piece().back() == '/') {
+    DCHECK_EQ(path_piece(), allowed_path.as_string() + '/');
+    return true;
+  }
+
+  return false;
 }
 
 std::ostream& operator<<(std::ostream& out, const GURL& url) {

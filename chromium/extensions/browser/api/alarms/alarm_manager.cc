@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
 #include "base/time/time.h"
@@ -18,7 +19,6 @@
 #include "base/values.h"
 #include "extensions/browser/api/alarms/alarms_api_constants.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/state_store.h"
@@ -50,8 +50,9 @@ class DefaultAlarmDelegate : public AlarmManager::Delegate {
   void OnAlarm(const std::string& extension_id, const Alarm& alarm) override {
     std::unique_ptr<base::ListValue> args(new base::ListValue());
     args->Append(alarm.js_alarm->ToValue());
-    std::unique_ptr<Event> event(new Event(
-        events::ALARMS_ON_ALARM, alarms::OnAlarm::kEventName, std::move(args)));
+    std::unique_ptr<Event> event(new Event(events::ALARMS_ON_ALARM,
+                                           alarms::OnAlarm::kEventName,
+                                           std::move(args), browser_context_));
     EventRouter::Get(browser_context_)
         ->DispatchEventToExtension(extension_id, std::move(event));
   }
@@ -76,8 +77,11 @@ AlarmManager::AlarmList AlarmsFromValue(const std::string extension_id,
     if (list->GetDictionary(i, &alarm_dict) &&
         alarms::Alarm::Populate(*alarm_dict, alarm->js_alarm.get())) {
       const base::Value* time_value = nullptr;
-      if (alarm_dict->Get(kAlarmGranularity, &time_value))
-        base::GetValueAsTimeDelta(*time_value, &alarm->granularity);
+      if (alarm_dict->Get(kAlarmGranularity, &time_value)) {
+        // It's okay to ignore the failure since we have minimum granularity.
+        ignore_result(
+            base::GetValueAsTimeDelta(*time_value, &alarm->granularity));
+      }
       alarm->minimum_granularity = base::TimeDelta::FromSecondsD(
           (is_unpacked ? alarms_api_constants::kDevDelayMinimum
                        : alarms_api_constants::kReleaseDelayMinimum) *
@@ -110,8 +114,7 @@ std::unique_ptr<base::ListValue> AlarmsToValue(
 AlarmManager::AlarmManager(content::BrowserContext* context)
     : browser_context_(context),
       clock_(base::DefaultClock::GetInstance()),
-      delegate_(new DefaultAlarmDelegate(context)),
-      extension_registry_observer_(this) {
+      delegate_(new DefaultAlarmDelegate(context)) {
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context_));
 
   StateStore* storage = ExtensionSystem::Get(browser_context_)->state_store();
@@ -125,10 +128,9 @@ AlarmManager::~AlarmManager() {
 void AlarmManager::AddAlarm(const std::string& extension_id,
                             std::unique_ptr<Alarm> alarm,
                             AddAlarmCallback callback) {
-  RunWhenReady(
-      extension_id,
-      base::BindOnce(&AlarmManager::AddAlarmWhenReady, AsWeakPtr(),
-                     base::Passed(std::move(alarm)), std::move(callback)));
+  RunWhenReady(extension_id,
+               base::BindOnce(&AlarmManager::AddAlarmWhenReady, AsWeakPtr(),
+                              std::move(alarm), std::move(callback)));
 }
 
 void AlarmManager::GetAlarm(const std::string& extension_id,
@@ -439,8 +441,8 @@ void AlarmManager::OnExtensionLoaded(content::BrowserContext* browser_context,
     ready_actions_.insert(ReadyMap::value_type(extension->id(), ReadyQueue()));
     storage->GetExtensionValue(
         extension->id(), kRegisteredAlarms,
-        base::Bind(&AlarmManager::ReadFromStorage, AsWeakPtr(), extension->id(),
-                   is_unpacked));
+        base::BindOnce(&AlarmManager::ReadFromStorage, AsWeakPtr(),
+                       extension->id(), is_unpacked));
   }
 }
 
@@ -448,7 +450,8 @@ void AlarmManager::OnExtensionUninstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
     extensions::UninstallReason reason) {
-  RemoveAllAlarms(extension->id(), base::Bind(RemoveAllOnUninstallCallback));
+  RemoveAllAlarms(extension->id(),
+                  base::BindOnce(RemoveAllOnUninstallCallback));
 }
 
 // AlarmManager::Alarm

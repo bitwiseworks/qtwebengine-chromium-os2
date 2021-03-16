@@ -32,24 +32,24 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 }
 
 - (void)enableTracking {
-  if (trackingArea_.get())
+  if (_trackingArea.get())
     return;
 
   NSTrackingAreaOptions trackingOptions = NSTrackingMouseEnteredAndExited |
                                           NSTrackingMouseMoved |
                                           NSTrackingActiveAlways |
                                           NSTrackingInVisibleRect;
-  trackingArea_.reset([[CrTrackingArea alloc] initWithRect:NSZeroRect
+  _trackingArea.reset([[CrTrackingArea alloc] initWithRect:NSZeroRect
                                                    options:trackingOptions
                                                      owner:self
                                                   userInfo:nil]);
-  [self addTrackingArea:trackingArea_.get()];
+  [self addTrackingArea:_trackingArea.get()];
 }
 
 - (void)disableTracking {
-  if (trackingArea_.get()) {
-    [self removeTrackingArea:trackingArea_.get()];
-    trackingArea_.reset();
+  if (_trackingArea.get()) {
+    [self removeTrackingArea:_trackingArea.get()];
+    _trackingArea.reset();
   }
 }
 
@@ -69,6 +69,26 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
     [self disableTracking];
     [self enableTracking];
   }
+}
+
+- (void)handleLeftMouseUp:(NSEvent*)theEvent {
+  DCHECK_EQ([theEvent type], NSLeftMouseUp);
+  _dragging = NO;
+  if (!_pendingExitEvent)
+    return;
+
+  NSEvent* exitEvent =
+      [NSEvent enterExitEventWithType:NSMouseExited
+                             location:[theEvent locationInWindow]
+                        modifierFlags:[theEvent modifierFlags]
+                            timestamp:[theEvent timestamp]
+                         windowNumber:[theEvent windowNumber]
+                              context:[theEvent context]
+                          eventNumber:[_pendingExitEvent eventNumber]
+                       trackingNumber:[_pendingExitEvent trackingNumber]
+                             userData:[_pendingExitEvent userData]];
+  [self mouseEvent:exitEvent];
+  _pendingExitEvent.reset();
 }
 
 - (void)mouseEvent:(NSEvent*)theEvent {
@@ -91,7 +111,7 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 }
 
 - (void)mouseDown:(NSEvent*)theEvent {
-  dragging_ = YES;
+  _dragging = YES;
   [self mouseEvent:theEvent];
 }
 
@@ -105,22 +125,7 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 
 - (void)mouseUp:(NSEvent*)theEvent {
   [self mouseEvent:theEvent];
-
-  dragging_ = NO;
-  if (pendingExitEvent_.get()) {
-    NSEvent* exitEvent =
-        [NSEvent enterExitEventWithType:NSMouseExited
-                               location:[theEvent locationInWindow]
-                          modifierFlags:[theEvent modifierFlags]
-                              timestamp:[theEvent timestamp]
-                           windowNumber:[theEvent windowNumber]
-                                context:[theEvent context]
-                            eventNumber:[pendingExitEvent_.get() eventNumber]
-                         trackingNumber:[pendingExitEvent_.get() trackingNumber]
-                               userData:[pendingExitEvent_.get() userData]];
-    [self mouseEvent:exitEvent];
-    pendingExitEvent_.reset();
-  }
+  [self handleLeftMouseUp:theEvent];
 }
 
 - (void)rightMouseUp:(NSEvent*)theEvent {
@@ -148,8 +153,8 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 }
 
 - (void)mouseEntered:(NSEvent*)theEvent {
-  if (pendingExitEvent_.get()) {
-    pendingExitEvent_.reset();
+  if (_pendingExitEvent) {
+    _pendingExitEvent.reset();
     return;
   }
 
@@ -160,8 +165,8 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
   // The tracking area will send an exit event even during a drag, which isn't
   // how the event flow for drags should work. This stores the exit event, and
   // sends it when the drag completes instead.
-  if (dragging_) {
-    pendingExitEvent_.reset([theEvent retain]);
+  if (_dragging) {
+    _pendingExitEvent.reset([theEvent retain]);
     return;
   }
 
@@ -180,7 +185,7 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 
 - (void)pressureChangeWithEvent:(NSEvent*)theEvent {
   NSInteger newStage = [theEvent stage];
-  if (pressureEventStage_ == newStage)
+  if (_pressureEventStage == newStage)
     return;
 
   // Call the force touch event when the stage reaches 2, which is the value
@@ -188,7 +193,7 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
   if (newStage == 2) {
     [self forceTouchEvent:theEvent];
   }
-  pressureEventStage_ = newStage;
+  _pressureEventStage = newStage;
 }
 
 - (void)flagsChanged:(NSEvent*)theEvent {

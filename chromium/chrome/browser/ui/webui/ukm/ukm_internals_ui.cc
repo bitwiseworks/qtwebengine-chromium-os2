@@ -10,9 +10,10 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/browser_resources.h"
+#include "chrome/grit/dev_ui_browser_resources.h"
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/ukm/debug/ukm_debug_data_extractor.h"
 #include "components/ukm/ukm_service.h"
@@ -31,7 +32,6 @@ content::WebUIDataSource* CreateUkmHTMLSource() {
   source->AddResourcePath("ukm_internals.js", IDR_UKM_INTERNALS_JS);
   source->AddResourcePath("ukm_internals.css", IDR_UKM_INTERNALS_CSS);
   source->SetDefaultResource(IDR_UKM_INTERNALS_HTML);
-  source->UseGzip();
   return source;
 }
 

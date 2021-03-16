@@ -108,8 +108,8 @@ static void percentStep(sqlite3_context *pCtx, int argc, sqlite3_value **argv){
   /* Requirement 3:  P must be a number between 0 and 100 */
   eType = sqlite3_value_numeric_type(argv[1]);
   rPct = sqlite3_value_double(argv[1]);
-  if( (eType!=SQLITE_INTEGER && eType!=SQLITE_FLOAT) ||
-      ((rPct = sqlite3_value_double(argv[1]))<0.0 || rPct>100.0) ){
+  if( (eType!=SQLITE_INTEGER && eType!=SQLITE_FLOAT)
+   || rPct<0.0 || rPct>100.0 ){
     sqlite3_result_error(pCtx, "2nd argument to percentile() is not "
                          "a number between 0.0 and 100.0", -1);
     return;
@@ -206,14 +206,15 @@ static void percentFinal(sqlite3_context *pCtx){
 __declspec(dllexport)
 #endif
 int sqlite3_percentile_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;
   SQLITE_EXTENSION_INIT2(pApi);
   (void)pzErrMsg;  /* Unused parameter */
-  rc = sqlite3_create_function(db, "percentile", 2, SQLITE_UTF8, 0,
+  rc = sqlite3_create_function(db, "percentile", 2, 
+                               SQLITE_UTF8|SQLITE_INNOCUOUS, 0,
                                0, percentStep, percentFinal);
   return rc;
 }

@@ -54,14 +54,14 @@ cr.define('cr.ui.overlay', function() {
         }
 
         // Close the overlay on escape.
-        if (e.key == 'Escape') {
+        if (e.key === 'Escape') {
           cr.dispatchSimpleEvent(overlay, 'cancelOverlay');
         }
 
         // Execute the overlay's default button on enter, unless focus is on an
         // element that has standard behavior for the enter key.
         const forbiddenTagNames = /^(A|BUTTON|SELECT|TEXTAREA)$/;
-        if (e.key == 'Enter' &&
+        if (e.key === 'Enter' &&
             !forbiddenTagNames.test(document.activeElement.tagName)) {
           const button = getDefaultButton(overlay);
           if (button) {
@@ -98,6 +98,10 @@ cr.define('cr.ui.overlay', function() {
   /**
    * Adds behavioral hooks for the given overlay.
    * @param {HTMLElement} overlay The .overlay.
+   *
+   * TODO(crbug.com/425829): This function makes use of deprecated getter or
+   * setter functions.
+   * @suppress {deprecated}
    */
   function setupOverlay(overlay) {
     // Close the overlay on clicking any of the pages' close buttons.
@@ -111,7 +115,10 @@ cr.define('cr.ui.overlay', function() {
       });
     }
 
+    // TODO(crbug.com/425829): Remove above suppression once we no longer use
+    // deprecated functions defineSetter, and defineGetter.
     // Remove the 'pulse' animation any time the overlay is hidden or shown.
+    // eslint-disable-next-line no-restricted-properties
     overlay.__defineSetter__('hidden', function(value) {
       this.classList.remove('pulse');
       if (value) {
@@ -120,6 +127,7 @@ cr.define('cr.ui.overlay', function() {
         this.removeAttribute('hidden');
       }
     });
+    // eslint-disable-next-line no-restricted-properties
     overlay.__defineGetter__('hidden', function() {
       return this.hasAttribute('hidden');
     });
@@ -127,7 +135,7 @@ cr.define('cr.ui.overlay', function() {
     // Shake when the user clicks away.
     overlay.addEventListener('click', function(e) {
       // Only pulse if the overlay was the target of the click.
-      if (this != e.target) {
+      if (this !== e.target) {
         return;
       }
 

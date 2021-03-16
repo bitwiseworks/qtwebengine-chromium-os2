@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/html/track/track_base.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -16,16 +17,6 @@ class CORE_EXPORT AudioTrack final : public ScriptWrappable, public TrackBase {
   USING_GARBAGE_COLLECTED_MIXIN(AudioTrack);
 
  public:
-  static AudioTrack* Create(const String& id,
-                            const AtomicString& kind,
-                            const AtomicString& label,
-                            const AtomicString& language,
-                            bool enabled) {
-    return MakeGarbageCollected<AudioTrack>(
-        id, IsValidKindKeyword(kind) ? kind : g_empty_atom, label, language,
-        enabled);
-  }
-
   AudioTrack(const String& id,
              const AtomicString& kind,
              const AtomicString& label,
@@ -51,7 +42,12 @@ class CORE_EXPORT AudioTrack final : public ScriptWrappable, public TrackBase {
   bool enabled_;
 };
 
-DEFINE_TRACK_TYPE_CASTS(AudioTrack, WebMediaPlayer::kAudioTrack);
+template <>
+struct DowncastTraits<AudioTrack> {
+  static bool AllowFrom(const TrackBase& track) {
+    return track.GetType() == WebMediaPlayer::kAudioTrack;
+  }
+};
 
 }  // namespace blink
 

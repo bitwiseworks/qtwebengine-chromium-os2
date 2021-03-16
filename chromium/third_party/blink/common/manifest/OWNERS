@@ -1,6 +1,6 @@
-mlamouri@chromium.org
+file://third_party/blink/renderer/modules/manifest/OWNERS
 
 per-file *_mojom_traits*.*=set noparent
 per-file *_mojom_traits*.*=file://ipc/SECURITY_OWNERS
 
-# COMPONENT: Manifest
+# Component: Blink>AppManifest

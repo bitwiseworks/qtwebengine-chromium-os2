@@ -22,27 +22,32 @@
 
 #include "third_party/blink/renderer/core/loader/resource/document_resource.h"
 
-#include "services/network/public/mojom/request_context_frame_type.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
+#include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/document_init.h"
 #include "third_party/blink/renderer/core/dom/xml_document.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
 
-DocumentResource* DocumentResource::FetchSVGDocument(FetchParameters& params,
-                                                     ResourceFetcher* fetcher,
-                                                     ResourceClient* client) {
-  DCHECK_EQ(params.GetResourceRequest().GetFrameType(),
-            network::mojom::RequestContextFrameType::kNone);
-  DCHECK_EQ(params.GetResourceRequest().GetFetchRequestMode(),
-            network::mojom::FetchRequestMode::kSameOrigin);
+DocumentResource* DocumentResource::FetchSVGDocument(
+    FetchParameters& params,
+    const Document& context_document,
+    ResourceClient* client) {
+  DCHECK_EQ(params.GetResourceRequest().GetMode(),
+            network::mojom::RequestMode::kSameOrigin);
   params.SetRequestContext(mojom::RequestContextType::IMAGE);
-  return ToDocumentResource(
-      fetcher->RequestResource(params, SVGDocumentResourceFactory(), client));
+  params.SetRequestDestination(network::mojom::RequestDestination::kImage);
+  auto* resource =
+      To<DocumentResource>(context_document.Fetcher()->RequestResource(
+          params, SVGDocumentResourceFactory(), client));
+  if (!resource->document_ && !resource->context_document_)
+    resource->context_document_ = const_cast<Document*>(&context_document);
+  return resource;
 }
 
 DocumentResource::DocumentResource(
@@ -57,8 +62,9 @@ DocumentResource::DocumentResource(
 
 DocumentResource::~DocumentResource() = default;
 
-void DocumentResource::Trace(blink::Visitor* visitor) {
+void DocumentResource::Trace(Visitor* visitor) {
   visitor->Trace(document_);
+  visitor->Trace(context_document_);
   Resource::Trace(visitor);
 }
 
@@ -84,7 +90,9 @@ bool DocumentResource::MimeTypeAllowed() const {
 Document* DocumentResource::CreateDocument(const KURL& url) {
   switch (GetType()) {
     case ResourceType::kSVGDocument:
-      return XMLDocument::CreateSVG(DocumentInit::Create().WithURL(url));
+      return XMLDocument::CreateSVG(
+          DocumentInit::Create().WithURL(url).WithContextDocument(
+              context_document_));
     default:
       // FIXME: We'll add more types to support HTMLImports.
       NOTREACHED();

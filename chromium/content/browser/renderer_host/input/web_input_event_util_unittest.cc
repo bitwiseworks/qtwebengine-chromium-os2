@@ -13,6 +13,7 @@
 #include "ui/events/gesture_detection/gesture_event_data.h"
 #include "ui/events/gesture_detection/motion_event_generic.h"
 #include "ui/events/gesture_event_details.h"
+#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 
 using blink::WebInputEvent;
@@ -93,7 +94,6 @@ TEST(WebInputEventUtilTest, ScrollUpdateConversion) {
                                   delta.x(),
                                   delta.y());
   details.set_device_type(ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
-  details.mark_previous_scroll_update_in_sequence_prevented();
   ui::GestureEventData event(details,
                              motion_event_id,
                              tool_type,
@@ -112,15 +112,11 @@ TEST(WebInputEventUtilTest, ScrollUpdateConversion) {
   EXPECT_EQ(WebInputEvent::kGestureScrollUpdate, web_event.GetType());
   EXPECT_EQ(0, web_event.GetModifiers());
   EXPECT_EQ(timestamp, web_event.TimeStamp());
-  EXPECT_EQ(pos.x(), web_event.PositionInWidget().x);
-  EXPECT_EQ(pos.y(), web_event.PositionInWidget().y);
-  EXPECT_EQ(raw_pos.x(), web_event.PositionInScreen().x);
-  EXPECT_EQ(raw_pos.y(), web_event.PositionInScreen().y);
-  EXPECT_EQ(blink::kWebGestureDeviceTouchscreen, web_event.SourceDevice());
+  EXPECT_EQ(pos, web_event.PositionInWidget());
+  EXPECT_EQ(raw_pos, web_event.PositionInScreen());
+  EXPECT_EQ(blink::WebGestureDevice::kTouchscreen, web_event.SourceDevice());
   EXPECT_EQ(delta.x(), web_event.data.scroll_update.delta_x);
   EXPECT_EQ(delta.y(), web_event.data.scroll_update.delta_y);
-  EXPECT_TRUE(
-      web_event.data.scroll_update.previous_update_in_sequence_prevented);
 }
 
 }  // namespace content

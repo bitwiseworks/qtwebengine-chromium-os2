@@ -9,16 +9,18 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/gmock_callback_support.h"
 #include "components/autofill_assistant/browser/batch_element_checker.h"
-#include "components/autofill_assistant/browser/mock_run_once_callback.h"
-#include "components/autofill_assistant/browser/mock_web_controller.h"
 #include "components/autofill_assistant/browser/service.pb.h"
+#include "components/autofill_assistant/browser/trigger_context.h"
+#include "components/autofill_assistant/browser/web/mock_web_controller.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/re2/src/re2/re2.h"
 
 namespace autofill_assistant {
 namespace {
 
+using ::base::test::RunOnceCallback;
 using ::testing::_;
 using ::testing::Eq;
 using ::testing::Invoke;
@@ -55,20 +57,15 @@ class DirectCallback {
 class ScriptPreconditionTest : public testing::Test {
  public:
   void SetUp() override {
+    ON_CALL(mock_web_controller_, OnElementCheck(Eq(Selector({"exists"})), _))
+        .WillByDefault(RunOnceCallback<1>(OkClientStatus()));
     ON_CALL(mock_web_controller_,
-            OnElementCheck(kExistenceCheck, Eq(Selector({"exists"})), _))
-        .WillByDefault(RunOnceCallback<2>(true));
-    ON_CALL(
-        mock_web_controller_,
-        OnElementCheck(kExistenceCheck, Eq(Selector({"does_not_exist"})), _))
-        .WillByDefault(RunOnceCallback<2>(false));
+            OnElementCheck(Eq(Selector({"does_not_exist"})), _))
+        .WillByDefault(RunOnceCallback<1>(ClientStatus()));
 
     SetUrl("http://www.example.com/path");
-    ON_CALL(mock_web_controller_, OnGetFieldValue(Eq(Selector({"exists"})), _))
-        .WillByDefault(RunOnceCallback<1>(true, "foo"));
-    ON_CALL(mock_web_controller_,
-            OnGetFieldValue(Eq(Selector({"does_not_exist"})), _))
-        .WillByDefault(RunOnceCallback<1>(false, ""));
+
+    trigger_context_ = TriggerContext::CreateEmpty();
   }
 
  protected:
@@ -81,18 +78,16 @@ class ScriptPreconditionTest : public testing::Test {
       return false;
 
     DirectCallback callback;
-    BatchElementChecker batch_checks(&mock_web_controller_);
-    precondition->Check(url_, &batch_checks, parameters_, executed_scripts_,
-                        callback.Get());
-    batch_checks.Run(base::TimeDelta::FromSeconds(0),
-                     /* try_done=*/base::DoNothing(),
-                     /* all_done=*/base::DoNothing());
+    BatchElementChecker batch_checks;
+    precondition->Check(url_, &batch_checks, *trigger_context_,
+                        executed_scripts_, callback.Get());
+    batch_checks.Run(&mock_web_controller_);
     return callback.GetResultOrDie();
   }
 
   GURL url_;
   MockWebController mock_web_controller_;
-  std::map<std::string, std::string> parameters_;
+  std::unique_ptr<TriggerContext> trigger_context_;
   std::map<std::string, ScriptStatusProto> executed_scripts_;
 };
 
@@ -180,18 +175,6 @@ TEST_F(ScriptPreconditionTest, BadPathPattern) {
   EXPECT_EQ(nullptr, ScriptPrecondition::FromProto("unused", proto));
 }
 
-TEST_F(ScriptPreconditionTest, IgnoreEmptyElementsExist) {
-  EXPECT_CALL(mock_web_controller_,
-              OnElementCheck(kExistenceCheck, Eq(Selector({"exists"})), _))
-      .WillOnce(RunOnceCallback<2>(true));
-
-  ScriptPreconditionProto proto;
-  proto.add_elements_exist()->add_selectors("exists");
-  proto.add_elements_exist();
-
-  EXPECT_TRUE(Check(proto));
-}
-
 TEST_F(ScriptPreconditionTest, WrongScriptStatusEqualComparator) {
   ScriptPreconditionProto proto;
 
@@ -266,7 +249,9 @@ TEST_F(ScriptPreconditionTest, ParameterMustExist) {
 
   EXPECT_FALSE(Check(proto));
 
-  parameters_["param"] = "exists";
+  std::map<std::string, std::string> parameters;
+  parameters["param"] = "exists";
+  trigger_context_ = TriggerContext::Create(parameters, "");
 
   EXPECT_TRUE(Check(proto));
 }
@@ -279,7 +264,9 @@ TEST_F(ScriptPreconditionTest, ParameterMustNotExist) {
 
   EXPECT_TRUE(Check(proto));
 
-  parameters_["param"] = "exists";
+  std::map<std::string, std::string> parameters;
+  parameters["param"] = "exists";
+  trigger_context_ = TriggerContext::Create(parameters, "");
 
   EXPECT_FALSE(Check(proto));
 }
@@ -292,11 +279,15 @@ TEST_F(ScriptPreconditionTest, ParameterMustHaveValue) {
 
   EXPECT_FALSE(Check(proto));
 
-  parameters_["param"] = "another value";
+  std::map<std::string, std::string> parameters;
+  parameters["param"] = "another value";
+  trigger_context_ = TriggerContext::Create(parameters, "");
 
   EXPECT_FALSE(Check(proto));
 
-  parameters_["param"] = "value";
+  parameters["param"] = "value";
+  trigger_context_ = TriggerContext::Create(parameters, "");
+
   EXPECT_TRUE(Check(proto));
 }
 
@@ -304,7 +295,7 @@ TEST_F(ScriptPreconditionTest, MultipleConditions) {
   ScriptPreconditionProto proto;
   proto.add_domain("http://match.example.com");
   proto.add_path_pattern("/path");
-  proto.add_elements_exist()->add_selectors("exists");
+  proto.mutable_element_condition()->mutable_match()->add_selectors("exists");
 
   // Domain and path don't match.
   EXPECT_FALSE(Check(proto));
@@ -312,25 +303,9 @@ TEST_F(ScriptPreconditionTest, MultipleConditions) {
   SetUrl("http://match.example.com/path");
   EXPECT_TRUE(Check(proto)) << "Domain, path and selector must match.";
 
-  proto.mutable_elements_exist(0)->set_selectors(0, "does_not_exist");
+  proto.mutable_element_condition()->mutable_match()->set_selectors(
+      0, "does_not_exist");
   EXPECT_FALSE(Check(proto)) << "Element can not match.";
-}
-
-TEST_F(ScriptPreconditionTest, FormValueMatch) {
-  ScriptPreconditionProto proto;
-  FormValueMatchProto* match = proto.add_form_value_match();
-  match->mutable_element()->add_selectors("exists");
-  EXPECT_TRUE(Check(proto));
-
-  match->set_value("bar");
-  EXPECT_FALSE(Check(proto));
-
-  match->set_value("foo");
-  EXPECT_TRUE(Check(proto));
-
-  match->clear_value();
-  match->mutable_element()->set_selectors(0, "does_not_exist");
-  EXPECT_FALSE(Check(proto));
 }
 
 }  // namespace

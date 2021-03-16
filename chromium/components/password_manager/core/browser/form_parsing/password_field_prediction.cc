@@ -9,6 +9,7 @@
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/signatures_util.h"
 
+using autofill::AutofillField;
 using autofill::FieldSignature;
 using autofill::FormData;
 using autofill::FormStructure;
@@ -18,11 +19,27 @@ namespace password_manager {
 
 namespace {
 
-// Returns true if the field is password or username prediction.
-bool IsCredentialRelatedPrediction(ServerFieldType type) {
-  return DeriveFromServerFieldType(type) != CredentialFieldType::kNone;
-}
+ServerFieldType GetServerType(const AutofillField& field) {
+  // The main server predictions is in |field.server_type()| but the server can
+  // send additional predictions in |field.server_predictions()|. This function
+  // chooses relevant for Password Manager predictions.
 
+  // 1. If there is cvc prediction returns it.
+  for (const auto& predictions : field.server_predictions()) {
+    if (predictions.type() == autofill::CREDIT_CARD_VERIFICATION_CODE)
+      return ServerFieldType(predictions.type());
+  }
+
+  // 2. If there is password related prediction returns it.
+  for (const auto& predictions : field.server_predictions()) {
+    ServerFieldType type = ServerFieldType(predictions.type());
+    if (DeriveFromServerFieldType(type) != CredentialFieldType::kNone)
+      return type;
+  }
+
+  // 3. Returns the main prediction.
+  return field.server_type();
+}
 }  // namespace
 
 CredentialFieldType DeriveFromServerFieldType(ServerFieldType type) {
@@ -30,6 +47,8 @@ CredentialFieldType DeriveFromServerFieldType(ServerFieldType type) {
     case autofill::USERNAME:
     case autofill::USERNAME_AND_EMAIL_ADDRESS:
       return CredentialFieldType::kUsername;
+    case autofill::SINGLE_USERNAME:
+      return CredentialFieldType::kSingleUsername;
     case autofill::PASSWORD:
       return CredentialFieldType::kCurrentPassword;
     case autofill::ACCOUNT_CREATION_PASSWORD:
@@ -42,7 +61,15 @@ CredentialFieldType DeriveFromServerFieldType(ServerFieldType type) {
   }
 }
 
-FormPredictions ConvertToFormPredictions(const FormStructure& form_structure) {
+FormPredictions::FormPredictions() = default;
+FormPredictions::FormPredictions(const FormPredictions&) = default;
+FormPredictions& FormPredictions::operator=(const FormPredictions&) = default;
+FormPredictions::FormPredictions(FormPredictions&&) = default;
+FormPredictions& FormPredictions::operator=(FormPredictions&&) = default;
+FormPredictions::~FormPredictions() = default;
+
+FormPredictions ConvertToFormPredictions(int driver_id,
+                                         const FormStructure& form_structure) {
   // This is a mostly mechanical transformation, except for the following case:
   // If there is no explicit CONFIRMATION_PASSWORD field, and there are two
   // fields with the same signature and one of the "new password" types, then
@@ -64,9 +91,9 @@ FormPredictions ConvertToFormPredictions(const FormStructure& form_structure) {
     }
   }
 
-  FormPredictions result;
+  std::vector<PasswordFieldPrediction> field_predictions;
   for (const auto& field : form_structure) {
-    ServerFieldType server_type = field->server_type();
+    ServerFieldType server_type = GetServerType(*field);
 
     if (!explicit_confirmation_hint_present &&
         (server_type == autofill::ACCOUNT_CREATION_PASSWORD ||
@@ -79,20 +106,28 @@ FormPredictions ConvertToFormPredictions(const FormStructure& form_structure) {
       }
     }
 
-    if (IsCredentialRelatedPrediction(server_type)) {
-      bool may_use_prefilled_placeholder = false;
-      for (const auto& predictions : field->server_predictions()) {
-        may_use_prefilled_placeholder |=
-            predictions.may_use_prefilled_placeholder();
-      }
-
-      result[field->unique_renderer_id] = PasswordFieldPrediction{
-          .type = server_type,
-          .may_use_prefilled_placeholder = may_use_prefilled_placeholder};
+    bool may_use_prefilled_placeholder = false;
+    for (const auto& predictions : field->server_predictions()) {
+      may_use_prefilled_placeholder |=
+          predictions.may_use_prefilled_placeholder();
     }
+
+    field_predictions.emplace_back();
+    field_predictions.back().renderer_id = field->unique_renderer_id;
+    field_predictions.back().signature = field->GetFieldSignature();
+    field_predictions.back().type = server_type;
+    field_predictions.back().may_use_prefilled_placeholder =
+        may_use_prefilled_placeholder;
+#if defined(OS_IOS)
+    field_predictions.back().unique_id = field->unique_id;
+#endif
   }
 
-  return result;
+  FormPredictions predictions;
+  predictions.driver_id = driver_id;
+  predictions.form_signature = form_structure.form_signature();
+  predictions.fields = std::move(field_predictions);
+  return predictions;
 }
 
 }  // namespace password_manager

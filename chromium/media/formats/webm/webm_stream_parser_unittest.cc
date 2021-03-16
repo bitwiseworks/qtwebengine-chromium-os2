@@ -32,8 +32,8 @@ class WebMStreamParserTest : public testing::Test {
     scoped_refptr<DecoderBuffer> buffer = ReadTestDataFile(filename);
     parser_.reset(new WebMStreamParser());
     Demuxer::EncryptedMediaInitDataCB encrypted_media_init_data_cb =
-        base::Bind(&WebMStreamParserTest::OnEncryptedMediaInitData,
-                   base::Unretained(this));
+        base::BindRepeating(&WebMStreamParserTest::OnEncryptedMediaInitData,
+                            base::Unretained(this));
 
     EXPECT_CALL(*this, InitCB(_));
     EXPECT_CALL(*this, NewMediaSegmentCB()).Times(testing::AnyNumber());
@@ -107,16 +107,16 @@ TEST_F(WebMStreamParserTest, VerifyMediaTrackMetadata) {
   const MediaTrack& video_track = *(media_tracks_->tracks()[0]);
   EXPECT_EQ(video_track.type(), MediaTrack::Video);
   EXPECT_EQ(video_track.bytestream_track_id(), 1);
-  EXPECT_EQ(video_track.kind(), "main");
-  EXPECT_EQ(video_track.label(), "");
-  EXPECT_EQ(video_track.language(), "und");
+  EXPECT_EQ(video_track.kind().value(), "main");
+  EXPECT_EQ(video_track.label().value(), "");
+  EXPECT_EQ(video_track.language().value(), "und");
 
   const MediaTrack& audio_track = *(media_tracks_->tracks()[1]);
   EXPECT_EQ(audio_track.type(), MediaTrack::Audio);
   EXPECT_EQ(audio_track.bytestream_track_id(), 2);
-  EXPECT_EQ(audio_track.kind(), "main");
-  EXPECT_EQ(audio_track.label(), "");
-  EXPECT_EQ(audio_track.language(), "und");
+  EXPECT_EQ(audio_track.kind().value(), "main");
+  EXPECT_EQ(audio_track.label().value(), "");
+  EXPECT_EQ(audio_track.language().value(), "und");
 }
 
 TEST_F(WebMStreamParserTest, VerifyDetectedTrack_AudioOnly) {

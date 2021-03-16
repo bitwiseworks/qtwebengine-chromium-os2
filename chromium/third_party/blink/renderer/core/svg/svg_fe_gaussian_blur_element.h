@@ -32,8 +32,6 @@ class SVGFEGaussianBlurElement final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGFEGaussianBlurElement);
-
   explicit SVGFEGaussianBlurElement(Document&);
 
   void setStdDeviation(float std_deviation_x, float std_deviation_y);
@@ -42,11 +40,12 @@ class SVGFEGaussianBlurElement final
   SVGAnimatedNumber* stdDeviationY() { return std_deviation_->SecondNumber(); }
   SVGAnimatedString* in1() { return in1_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void SvgAttributeChanged(const QualifiedName&) override;
   FilterEffect* Build(SVGFilterBuilder*, Filter*) override;
+  bool TaintsOrigin() const override { return false; }
 
   Member<SVGAnimatedNumberOptionalNumber> std_deviation_;
   Member<SVGAnimatedString> in1_;

@@ -232,7 +232,7 @@ AUAudioInputStream::AUAudioInputStream(
       glitches_detected_(0),
       log_callback_(log_callback) {
   DCHECK(manager_);
-  CHECK(!log_callback_.Equals(AudioManager::LogCallback()));
+  CHECK(log_callback_ != AudioManager::LogCallback());
   if (use_voice_processing_) {
     DCHECK(input_params.channels() == 1 || input_params.channels() == 2);
     const bool got_default_device =
@@ -681,8 +681,8 @@ void AUAudioInputStream::Start(AudioInputCallback* callback) {
     LOG(WARNING) << "Start of input audio is deferred";
     // Use a cancellable closure so that if Stop() is called before Start()
     // actually runs, we can cancel the pending start.
-    deferred_start_cb_.Reset(base::Bind(&AUAudioInputStream::Start,
-                                        base::Unretained(this), callback));
+    deferred_start_cb_.Reset(base::BindOnce(&AUAudioInputStream::Start,
+                                            base::Unretained(this), callback));
     manager_->GetTaskRunner()->PostDelayedTask(
         FROM_HERE, deferred_start_cb_.callback(),
         base::TimeDelta::FromSeconds(

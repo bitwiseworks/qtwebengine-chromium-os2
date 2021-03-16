@@ -2,33 +2,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//tools/grit/grit_rule.gni")
-import("//third_party/brotli/brotli.gni")
 import("//third_party/inspector_protocol/inspector_protocol.gni")
+import("//third_party/protobuf/proto_library.gni")
+import("//tools/grit/grit_rule.gni")
 
 group("resources") {
   if (!is_android) {
-    public_deps = [
-      ":devtools_resources",
-    ]
+    public_deps = [ ":devtools_resources" ]
   }
-}
-
-compressed_protocol_file =
-    "$root_gen_dir/third_party/blink/renderer/core/inspector/protocol.json.bro"
-
-compress_file_brotli("compressed_protocol_json") {
-  input_file =
-      "$root_gen_dir/third_party/blink/renderer/core/inspector/protocol.json"
-  output_file = compressed_protocol_file
-  deps = [
-    "//third_party/blink/renderer/core/inspector:protocol_version",
-  ]
 }
 
 grit("devtools_resources") {
   source = "$root_gen_dir/devtools/devtools_resources.grd"
-  source_is_generated = true
+
+  # Required because the .grd is generated.
+  enable_input_discovery_for_gn_analyze = false
+  use_brotli = true
 
   outputs = [
     "grit/devtools_resources.h",
@@ -39,15 +28,16 @@ grit("devtools_resources") {
 
   grit_flags = [
     "-E",
-    "compressed_protocol_file=" +
-        rebase_path(compressed_protocol_file, root_build_dir),
+    "protocol_file=" + rebase_path(
+            "$root_gen_dir/third_party/blink/public/devtools_protocol/protocol.json",
+            root_build_dir),
   ]
 
   defines =
       [ "SHARED_INTERMEDIATE_DIR=" + rebase_path(root_gen_dir, root_build_dir) ]
 
   deps = [
-    ":compressed_protocol_json",
+    "//third_party/blink/public/devtools_protocol:protocol_version",
 
     # This is the action that generates out .grd input file.
     "//third_party/blink/public:blink_generate_devtools_grd",
@@ -56,11 +46,9 @@ grit("devtools_resources") {
 
 inspector_protocol_generate("protocol_sources") {
   visibility = [ "//content/browser" ]
-  deps = [
-    "//third_party/blink/renderer/core/inspector:protocol_version",
-  ]
+  deps = [ "//third_party/blink/public/devtools_protocol:protocol_version" ]
   _blink_protocol_path = rebase_path(
-          "$root_gen_dir/third_party/blink/renderer/core/inspector/protocol.json",
+          "$root_gen_dir/third_party/blink/public/devtools_protocol/protocol.json",
           root_build_dir)
 
   inspector_protocol_dir = "//third_party/inspector_protocol"
@@ -69,12 +57,16 @@ inspector_protocol_generate("protocol_sources") {
   config_values = [ "protocol.path=$_blink_protocol_path" ]
 
   inputs = [
-    "$root_gen_dir/third_party/blink/renderer/core/inspector/protocol.json",
+    "$root_gen_dir/third_party/blink/public/devtools_protocol/protocol.json",
     config_file,
   ]
 
   # These are relative to $target_gen_dir.
   outputs = [
+    "protocol/background_service.cc",
+    "protocol/background_service.h",
+    "protocol/base_string_adapter.cc",
+    "protocol/base_string_adapter.h",
     "protocol/browser.cc",
     "protocol/browser.h",
     "protocol/dom.cc",
@@ -94,6 +86,8 @@ inspector_protocol_generate("protocol_sources") {
     "protocol/memory.h",
     "protocol/network.cc",
     "protocol/network.h",
+    "protocol/overlay.cc",
+    "protocol/overlay.h",
     "protocol/page.cc",
     "protocol/page.h",
     "protocol/protocol.cc",
@@ -116,5 +110,11 @@ inspector_protocol_generate("protocol_sources") {
     "protocol/tethering.h",
     "protocol/tracing.cc",
     "protocol/tracing.h",
+    "protocol/web_authn.cc",
+    "protocol/web_authn.h",
   ]
+}
+
+proto_library("devtools_background_services_proto") {
+  sources = [ "devtools_background_services.proto" ]
 }

@@ -10,8 +10,9 @@
 #include <vector>
 
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_profile.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card_cloud_token_data.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 
@@ -112,9 +113,6 @@ AutofillProfile GetIncompleteProfile2();
 // Returns a verified profile full of dummy info.
 AutofillProfile GetVerifiedProfile();
 
-// Returns a verified profile full of dummy info, different to the above.
-AutofillProfile GetVerifiedProfile2();
-
 // Returns a server profile full of dummy info.
 AutofillProfile GetServerProfile();
 
@@ -127,15 +125,17 @@ CreditCard GetCreditCard();
 // Returns a credit card full of dummy info, different to the above.
 CreditCard GetCreditCard2();
 
-// Returns a verified credit card full of dummy info.
-CreditCard GetVerifiedCreditCard();
+// Returns an expired credit card full of fake info.
+CreditCard GetExpiredCreditCard();
 
-// Returns a verified credit card full of dummy info, different to the above.
-CreditCard GetVerifiedCreditCard2();
+// Returns an incomplete credit card full of fake info with card holder's name
+// missing.
+CreditCard GetIncompleteCreditCard();
 
 // Returns a masked server card full of dummy info.
 CreditCard GetMaskedServerCard();
 CreditCard GetMaskedServerCardAmex();
+CreditCard GetMaskedServerCardWithNickname();
 
 // Returns a full server card full of dummy info.
 CreditCard GetFullServerCard();
@@ -143,6 +143,13 @@ CreditCard GetFullServerCard();
 // Returns a randomly generated credit card of |record_type|. Note that the
 // card is not guaranteed to be valid/sane from a card validation standpoint.
 CreditCard GetRandomCreditCard(CreditCard::RecordType record_Type);
+
+// Returns a credit card cloud token data full of dummy info.
+CreditCardCloudTokenData GetCreditCardCloudTokenData1();
+
+// Returns a credit card cloud token data full of dummy info, different from the
+// one above.
+CreditCardCloudTokenData GetCreditCardCloudTokenData2();
 
 // A unit testing utility that is common to a number of the Autofill unit
 // tests.  |SetProfileInfo| provides a quick way to populate a profile with
@@ -178,11 +185,19 @@ void SetProfileInfo(AutofillProfile* profile,
                     const char* phone);
 
 void SetProfileInfoWithGuid(AutofillProfile* profile,
-    const char* guid, const char* first_name, const char* middle_name,
-    const char* last_name, const char* email, const char* company,
-    const char* address1, const char* address2, const char* city,
-    const char* state, const char* zipcode, const char* country,
-    const char* phone);
+                            const char* guid,
+                            const char* first_name,
+                            const char* middle_name,
+                            const char* last_name,
+                            const char* email,
+                            const char* company,
+                            const char* address1,
+                            const char* address2,
+                            const char* city,
+                            const char* state,
+                            const char* zipcode,
+                            const char* country,
+                            const char* phone);
 
 // A unit testing utility that is common to a number of the Autofill unit
 // tests.  |SetCreditCardInfo| provides a quick way to populate a credit card
@@ -216,7 +231,7 @@ void InitializePossibleTypesAndValidities(
     std::vector<ServerFieldTypeValidityStatesMap>&
         possible_field_types_validities,
     const std::vector<ServerFieldType>& possible_type,
-    const std::vector<AutofillProfile::ValidityState>& validity_state = {});
+    const std::vector<AutofillDataModel::ValidityState>& validity_state = {});
 
 // Fills the upload |field| with the information passed by parameter. If the
 // value of a const char* parameter is NULL, the corresponding attribute won't
@@ -260,6 +275,8 @@ void GenerateTestAutofillPopup(
 
 std::string ObfuscatedCardDigitsAsUTF8(const std::string& str);
 
+// Returns 2-digit month string, like "02", "10".
+std::string NextMonth();
 std::string LastYear();
 std::string NextYear();
 std::string TenYearsFromNow();

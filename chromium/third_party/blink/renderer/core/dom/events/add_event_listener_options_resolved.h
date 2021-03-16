@@ -5,7 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_DOM_EVENTS_ADD_EVENT_LISTENER_OPTIONS_RESOLVED_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_EVENTS_ADD_EVENT_LISTENER_OPTIONS_RESOLVED_H_
 
-#include "third_party/blink/renderer/core/dom/events/add_event_listener_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_add_event_listener_options.h"
 
 namespace blink {
 
@@ -16,14 +16,6 @@ namespace blink {
 class CORE_EXPORT AddEventListenerOptionsResolved
     : public AddEventListenerOptions {
  public:
-  static AddEventListenerOptionsResolved* Create() {
-    return MakeGarbageCollected<AddEventListenerOptionsResolved>();
-  }
-  static AddEventListenerOptionsResolved* Create(
-      const AddEventListenerOptions* options) {
-    return MakeGarbageCollected<AddEventListenerOptionsResolved>(options);
-  }
-
   AddEventListenerOptionsResolved();
   AddEventListenerOptionsResolved(const AddEventListenerOptions*);
   ~AddEventListenerOptionsResolved() override;

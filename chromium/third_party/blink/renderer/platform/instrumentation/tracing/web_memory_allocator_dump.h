@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace base {
@@ -24,10 +25,11 @@ typedef uint64_t WebMemoryAllocatorDumpGuid;
 // A container which holds all the attributes of a particular dump for a given
 // allocator.
 class PLATFORM_EXPORT WebMemoryAllocatorDump final {
+  USING_FAST_MALLOC(WebMemoryAllocatorDump);
+
  public:
   explicit WebMemoryAllocatorDump(
       base::trace_event::MemoryAllocatorDump* memory_allocator_dump);
-  ~WebMemoryAllocatorDump();
 
   // Adds a scalar attribute to the dump.
   // Arguments:

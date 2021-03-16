@@ -15,38 +15,36 @@
 #ifndef DAWNNATIVE_D3D12_BINDGROUPD3D12_H_
 #define DAWNNATIVE_D3D12_BINDGROUPD3D12_H_
 
+#include "common/PlacementAllocated.h"
+#include "common/Serial.h"
 #include "dawn_native/BindGroup.h"
-
 #include "dawn_native/d3d12/d3d12_platform.h"
-
-#include "dawn_native/d3d12/DescriptorHeapAllocator.h"
 
 namespace dawn_native { namespace d3d12 {
 
     class Device;
+    class ShaderVisibleDescriptorAllocator;
 
-    class BindGroup : public BindGroupBase {
+    class BindGroup : public BindGroupBase, public PlacementAllocated {
       public:
-        BindGroup(Device* device, const BindGroupDescriptor* descriptor);
+        static BindGroup* Create(Device* device, const BindGroupDescriptor* descriptor);
 
-        void RecordDescriptors(const DescriptorHeapHandle& cbvSrvUavHeapStart,
-                               uint32_t* cbvUavSrvHeapOffset,
-                               const DescriptorHeapHandle& samplerHeapStart,
-                               uint32_t* samplerHeapOffset,
-                               uint64_t serial,
-                               uint32_t indexInSubmit);
-        uint32_t GetCbvUavSrvHeapOffset() const;
-        uint32_t GetSamplerHeapOffset() const;
-        uint64_t GetHeapSerial() const;
-        uint32_t GetIndexInSubmit() const;
+        BindGroup(Device* device, const BindGroupDescriptor* descriptor);
+        ~BindGroup() override;
+
+        // Returns true if the BindGroup was successfully populated.
+        ResultOrError<bool> Populate(ShaderVisibleDescriptorAllocator* allocator);
+
+        D3D12_GPU_DESCRIPTOR_HANDLE GetBaseCbvUavSrvDescriptor() const;
+        D3D12_GPU_DESCRIPTOR_HANDLE GetBaseSamplerDescriptor() const;
 
       private:
-        uint32_t mCbvUavSrvHeapOffset;
-        uint32_t mSamplerHeapOffset;
-        uint64_t mHeapSerial = 0;
-        uint32_t mIndexInSubmit;
-    };
+        Serial mLastUsageSerial = 0;
+        Serial mHeapSerial = 0;
 
+        D3D12_GPU_DESCRIPTOR_HANDLE mBaseCbvSrvUavDescriptor = {0};
+        D3D12_GPU_DESCRIPTOR_HANDLE mBaseSamplerDescriptor = {0};
+    };
 }}  // namespace dawn_native::d3d12
 
 #endif  // DAWNNATIVE_D3D12_BINDGROUPD3D12_H_

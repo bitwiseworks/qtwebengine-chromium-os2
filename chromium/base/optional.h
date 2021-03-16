@@ -5,12 +5,12 @@
 #ifndef BASE_OPTIONAL_H_
 #define BASE_OPTIONAL_H_
 
+#include <functional>
 #include <type_traits>
 #include <utility>
 
 #include "base/logging.h"
 #include "base/template_util.h"
-#include "base/thread_annotations.h"
 
 namespace base {
 
@@ -30,11 +30,13 @@ class Optional;
 
 namespace internal {
 
+struct DummyUnionMember {};
+
 template <typename T, bool = std::is_trivially_destructible<T>::value>
 struct OptionalStorageBase {
-  // Initializing |empty_| here instead of using default member initializing
-  // to avoid errors in g++ 4.8.
-  constexpr OptionalStorageBase() : empty_('\0') {}
+  // Provide non-defaulted default ctor to make sure it's not deleted by
+  // non-trivial T::T() in the union.
+  constexpr OptionalStorageBase() : dummy_() {}
 
   template <class... Args>
   constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
@@ -65,19 +67,28 @@ struct OptionalStorageBase {
 
   bool is_populated_ = false;
   union {
-    // |empty_| exists so that the union will always be initialized, even when
+    // |dummy_| exists so that the union will always be initialized, even when
     // it doesn't contain a value. Union members must be initialized for the
-    // constructor to be 'constexpr'.
-    char empty_;
+    // constructor to be 'constexpr'. Having a special trivial class for it is
+    // better than e.g. using char, because the latter will have to be
+    // zero-initialized, and the compiler can't optimize this write away, since
+    // it assumes this might be a programmer's invariant. This can also cause
+    // problems for conservative GC in Oilpan. Compiler is free to split shared
+    // and non-shared parts of the union in separate memory locations (or
+    // registers). If conservative GC is triggered at this moment, the stack
+    // scanning routine won't find the correct object pointed from
+    // Optional<HeapObject*>. This dummy valueless struct lets the compiler know
+    // that we don't care about the value of this union member.
+    DummyUnionMember dummy_;
     T value_;
   };
 };
 
 template <typename T>
 struct OptionalStorageBase<T, true /* trivially destructible */> {
-  // Initializing |empty_| here instead of using default member initializing
-  // to avoid errors in g++ 4.8.
-  constexpr OptionalStorageBase() : empty_('\0') {}
+  // Provide non-defaulted default ctor to make sure it's not deleted by
+  // non-trivial T::T() in the union.
+  constexpr OptionalStorageBase() : dummy_() {}
 
   template <class... Args>
   constexpr explicit OptionalStorageBase(in_place_t, Args&&... args)
@@ -106,10 +117,19 @@ struct OptionalStorageBase<T, true /* trivially destructible */> {
 
   bool is_populated_ = false;
   union {
-    // |empty_| exists so that the union will always be initialized, even when
+    // |dummy_| exists so that the union will always be initialized, even when
     // it doesn't contain a value. Union members must be initialized for the
-    // constructor to be 'constexpr'.
-    char empty_;
+    // constructor to be 'constexpr'. Having a special trivial class for it is
+    // better than e.g. using char, because the latter will have to be
+    // zero-initialized, and the compiler can't optimize this write away, since
+    // it assumes this might be a programmer's invariant. This can also cause
+    // problems for conservative GC in Oilpan. Compiler is free to split shared
+    // and non-shared parts of the union in separate memory locations (or
+    // registers). If conservative GC is triggered at this moment, the stack
+    // scanning routine won't find the correct object pointed from
+    // Optional<HeapObject*>. This dummy valueless struct lets the compiler know
+    // that we don't care about the value of this union member.
+    DummyUnionMember dummy_;
     T value_;
   };
 };
@@ -270,9 +290,7 @@ class OptionalBase {
       storage_.Init(std::forward<U>(value));
   }
 
-  // TODO(lukasza): Figure out how to remove the NO_THREAD_SAFETY_ANALYSIS
-  // annotation below.  See https://crbug.com/881875#c1 for details.
-  void FreeIfNeeded() NO_THREAD_SAFETY_ANALYSIS {
+  void FreeIfNeeded() {
     if (!storage_.is_populated_)
       return;
     storage_.value_.~T();
@@ -341,27 +359,23 @@ struct MoveAssignable<false> {
 
 // Helper to conditionally enable converting constructors and assign operators.
 template <typename T, typename U>
-struct IsConvertibleFromOptional
-    : std::integral_constant<
-          bool,
-          std::is_constructible<T, Optional<U>&>::value ||
-              std::is_constructible<T, const Optional<U>&>::value ||
-              std::is_constructible<T, Optional<U>&&>::value ||
-              std::is_constructible<T, const Optional<U>&&>::value ||
-              std::is_convertible<Optional<U>&, T>::value ||
-              std::is_convertible<const Optional<U>&, T>::value ||
-              std::is_convertible<Optional<U>&&, T>::value ||
-              std::is_convertible<const Optional<U>&&, T>::value> {};
+using IsConvertibleFromOptional =
+    disjunction<std::is_constructible<T, Optional<U>&>,
+                std::is_constructible<T, const Optional<U>&>,
+                std::is_constructible<T, Optional<U>&&>,
+                std::is_constructible<T, const Optional<U>&&>,
+                std::is_convertible<Optional<U>&, T>,
+                std::is_convertible<const Optional<U>&, T>,
+                std::is_convertible<Optional<U>&&, T>,
+                std::is_convertible<const Optional<U>&&, T>>;
 
 template <typename T, typename U>
-struct IsAssignableFromOptional
-    : std::integral_constant<
-          bool,
-          IsConvertibleFromOptional<T, U>::value ||
-              std::is_assignable<T&, Optional<U>&>::value ||
-              std::is_assignable<T&, const Optional<U>&>::value ||
-              std::is_assignable<T&, Optional<U>&&>::value ||
-              std::is_assignable<T&, const Optional<U>&&>::value> {};
+using IsAssignableFromOptional =
+    disjunction<IsConvertibleFromOptional<T, U>,
+                std::is_assignable<T&, Optional<U>&>,
+                std::is_assignable<T&, const Optional<U>&>,
+                std::is_assignable<T&, Optional<U>&&>,
+                std::is_assignable<T&, const Optional<U>&&>>;
 
 // Forward compatibility for C++17.
 // Introduce one more deeper nested namespace to avoid leaking using std::swap.
@@ -429,6 +443,28 @@ class OPTIONAL_DECLSPEC_EMPTY_BASES Optional
                                       std::is_copy_assignable<T>::value>,
       public internal::MoveAssignable<std::is_move_constructible<T>::value &&
                                       std::is_move_assignable<T>::value> {
+ private:
+  // Disable some versions of T that are ill-formed.
+  // See: https://timsong-cpp.github.io/cppwp/n4659/optional#syn-1
+  static_assert(
+      !std::is_same<internal::RemoveCvRefT<T>, in_place_t>::value,
+      "instantiation of base::Optional with in_place_t is ill-formed");
+  static_assert(!std::is_same<internal::RemoveCvRefT<T>, nullopt_t>::value,
+                "instantiation of base::Optional with nullopt_t is ill-formed");
+  static_assert(
+      !std::is_reference<T>::value,
+      "instantiation of base::Optional with a reference type is ill-formed");
+  // See: https://timsong-cpp.github.io/cppwp/n4659/optional#optional-3
+  static_assert(std::is_destructible<T>::value,
+                "instantiation of base::Optional with a non-destructible type "
+                "is ill-formed");
+  // Arrays are explicitly disallowed because for arrays of known bound
+  // is_destructible is of undefined value.
+  // See: https://en.cppreference.com/w/cpp/types/is_destructible
+  static_assert(
+      !std::is_array<T>::value,
+      "instantiation of base::Optional with an array type is ill-formed");
+
  public:
 #undef OPTIONAL_DECLSPEC_EMPTY_BASES
   using value_type = T;
@@ -570,32 +606,32 @@ class OPTIONAL_DECLSPEC_EMPTY_BASES Optional
   }
 
   constexpr const T* operator->() const {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return &storage_.value_;
   }
 
   constexpr T* operator->() {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return &storage_.value_;
   }
 
   constexpr const T& operator*() const & {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return storage_.value_;
   }
 
   constexpr T& operator*() & {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return storage_.value_;
   }
 
   constexpr const T&& operator*() const && {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return std::move(storage_.value_);
   }
 
   constexpr T&& operator*() && {
-    DCHECK(storage_.is_populated_);
+    CHECK(storage_.is_populated_);
     return std::move(storage_.value_);
   }
 
@@ -888,6 +924,11 @@ template <class T, class U, class... Args>
 constexpr Optional<T> make_optional(std::initializer_list<U> il,
                                     Args&&... args) {
   return Optional<T>(in_place, il, std::forward<Args>(args)...);
+}
+
+template<typename T>
+constexpr Optional<T> pass_optional(const Optional<T> &opt) {
+  return opt ? make_optional(*opt) : nullopt;
 }
 
 // Partial specialization for a function template is not allowed. Also, it is

@@ -36,9 +36,7 @@ config("zlib_config") {
 if (zlib_source == "external") {
   group("zlib") {
     public_configs = [ ":zlib_config" ]
-    public_deps = [
-      "//third_party/zlib",
-    ]
+    public_deps = [ "//third_party/zlib" ]
   }
 } else if (zlib_source == "system") {
   source_set("zlib") {
@@ -103,6 +101,10 @@ if (zlib_source == "external") {
         "HAVE_UNISTD_H",
       ]
     }
+
+    configs -= [
+      "//third_party/mini_chromium/mini_chromium/build:Wimplicit_fallthrough",
+    ]
 
     if (current_cpu == "x86" || current_cpu == "x64") {
       sources += [

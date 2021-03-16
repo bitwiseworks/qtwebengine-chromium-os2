@@ -42,8 +42,7 @@ PropertySet::PropertySet(
     const PropertyChangedCallback& property_changed_callback)
     : object_proxy_(object_proxy),
       interface_(interface),
-      property_changed_callback_(property_changed_callback),
-      weak_ptr_factory_(this) {}
+      property_changed_callback_(property_changed_callback) {}
 
 PropertySet::~PropertySet() = default;
 
@@ -56,12 +55,11 @@ void PropertySet::RegisterProperty(const std::string& name,
 void PropertySet::ConnectSignals() {
   DCHECK(object_proxy_);
   object_proxy_->ConnectToSignal(
-      kPropertiesInterface,
-      kPropertiesChanged,
-      base::Bind(&PropertySet::ChangedReceived,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&PropertySet::ChangedConnected,
-                 weak_ptr_factory_.GetWeakPtr()));
+      kPropertiesInterface, kPropertiesChanged,
+      base::BindRepeating(&PropertySet::ChangedReceived,
+                          weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&PropertySet::ChangedConnected,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 
@@ -105,12 +103,9 @@ void PropertySet::Get(PropertyBase* property, GetCallback callback) {
   writer.AppendString(property->name());
 
   DCHECK(object_proxy_);
-  object_proxy_->CallMethod(&method_call,
-                            ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&PropertySet::OnGet,
-                                       GetWeakPtr(),
-                                       property,
-                                       callback));
+  object_proxy_->CallMethod(&method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
+                            base::BindOnce(&PropertySet::OnGet, GetWeakPtr(),
+                                           property, std::move(callback)));
 }
 
 void PropertySet::OnGet(PropertyBase* property, GetCallback callback,
@@ -132,7 +127,7 @@ void PropertySet::OnGet(PropertyBase* property, GetCallback callback,
   }
 
   if (!callback.is_null())
-    callback.Run(response);
+    std::move(callback).Run(response);
 }
 
 bool PropertySet::GetAndBlock(PropertyBase* property) {
@@ -169,10 +164,9 @@ void PropertySet::GetAll() {
   writer.AppendString(interface());
 
   DCHECK(object_proxy_);
-  object_proxy_->CallMethod(&method_call,
-                            ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&PropertySet::OnGetAll,
-                                       weak_ptr_factory_.GetWeakPtr()));
+  object_proxy_->CallMethod(
+      &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
+      base::BindOnce(&PropertySet::OnGetAll, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PropertySet::OnGetAll(Response* response) {
@@ -196,12 +190,9 @@ void PropertySet::Set(PropertyBase* property, SetCallback callback) {
   property->AppendSetValueToWriter(&writer);
 
   DCHECK(object_proxy_);
-  object_proxy_->CallMethod(&method_call,
-                            ObjectProxy::TIMEOUT_USE_DEFAULT,
-                            base::Bind(&PropertySet::OnSet,
-                                       GetWeakPtr(),
-                                       property,
-                                       callback));
+  object_proxy_->CallMethod(&method_call, ObjectProxy::TIMEOUT_USE_DEFAULT,
+                            base::BindOnce(&PropertySet::OnSet, GetWeakPtr(),
+                                           property, std::move(callback)));
 }
 
 bool PropertySet::SetAndBlock(PropertyBase* property) {
@@ -224,7 +215,7 @@ void PropertySet::OnSet(PropertyBase* property,
                         Response* response) {
   LOG_IF(WARNING, !response) << property->name() << ": Set: failed.";
   if (!callback.is_null())
-    callback.Run(response);
+    std::move(callback).Run(response);
 }
 
 bool PropertySet::UpdatePropertiesFromReader(MessageReader* reader) {
@@ -681,15 +672,23 @@ bool Property<std::map<std::string, std::vector<uint8_t>>>::PopValueFromReader(
       return false;
 
     std::string key;
-    MessageReader value_varient_reader(nullptr);
-    if (!entry_reader.PopString(&key) ||
-        !entry_reader.PopVariant(&value_varient_reader))
+    if (!entry_reader.PopString(&key))
       return false;
 
     const uint8_t* bytes = nullptr;
     size_t length = 0;
-    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
-      return false;
+
+    if (entry_reader.GetDataType() == Message::VARIANT) {
+      // Make BlueZ happy since it wraps the array of bytes with a variant.
+      MessageReader value_variant_reader(nullptr);
+      if (!entry_reader.PopVariant(&value_variant_reader))
+        return false;
+      if (!value_variant_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    } else {
+      if (!entry_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    }
 
     value_[key].assign(bytes, bytes + length);
   }
@@ -745,15 +744,23 @@ bool Property<std::map<uint16_t, std::vector<uint8_t>>>::PopValueFromReader(
       return false;
 
     uint16_t key;
-    MessageReader value_varient_reader(nullptr);
-    if (!entry_reader.PopUint16(&key) ||
-        !entry_reader.PopVariant(&value_varient_reader))
+    if (!entry_reader.PopUint16(&key))
       return false;
 
     const uint8_t* bytes = nullptr;
     size_t length = 0;
-    if (!value_varient_reader.PopArrayOfBytes(&bytes, &length))
-      return false;
+
+    if (entry_reader.GetDataType() == Message::VARIANT) {
+      // Make BlueZ happy since it wraps the array of bytes with a variant.
+      MessageReader value_variant_reader(nullptr);
+      if (!entry_reader.PopVariant(&value_variant_reader))
+        return false;
+      if (!value_variant_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    } else {
+      if (!entry_reader.PopArrayOfBytes(&bytes, &length))
+        return false;
+    }
 
     value_[key].assign(bytes, bytes + length);
   }

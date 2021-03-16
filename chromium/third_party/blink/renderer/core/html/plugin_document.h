@@ -36,12 +36,7 @@ class WebPluginContainerImpl;
 
 class CORE_EXPORT PluginDocument final : public HTMLDocument {
  public:
-  static PluginDocument* Create(const DocumentInit& initializer,
-                                Color background_color) {
-    return MakeGarbageCollected<PluginDocument>(initializer, background_color);
-  }
-
-  PluginDocument(const DocumentInit&, Color background_color);
+  PluginDocument(const DocumentInit&);
 
   void SetPluginNode(HTMLPlugInElement* plugin_node) {
     plugin_node_ = plugin_node;
@@ -49,8 +44,6 @@ class CORE_EXPORT PluginDocument final : public HTMLDocument {
   HTMLPlugInElement* PluginNode() { return plugin_node_; }
 
   WebPluginContainerImpl* GetPluginView();
-
-  void SetShowBeforeUnloadDialog(bool show_dialog);
 
   void Shutdown() override;
 
@@ -62,12 +55,16 @@ class CORE_EXPORT PluginDocument final : public HTMLDocument {
   DocumentParser* CreateParser() override;
 
   Member<HTMLPlugInElement> plugin_node_;
-  Member<BeforeUnloadEventListener> before_unload_event_listener_;
 
   const Color background_color_;
 };
 
-DEFINE_DOCUMENT_TYPE_CASTS(PluginDocument);
+template <>
+struct DowncastTraits<PluginDocument> {
+  static bool AllowFrom(const Document& document) {
+    return document.IsPluginDocument();
+  }
+};
 
 }  // namespace blink
 

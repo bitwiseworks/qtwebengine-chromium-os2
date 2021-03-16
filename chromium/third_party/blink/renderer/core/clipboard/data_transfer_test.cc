@@ -10,9 +10,9 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/page/drag_image.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
-#include "third_party/blink/renderer/platform/drag_image.h"
 
 namespace blink {
 
@@ -135,8 +135,8 @@ TEST_F(DataTransferTest, NodeImageUnderScrollOffset) {
 
   const int scroll_amount = 10;
   LocalFrameView* frame_view = GetDocument().View();
-  frame_view->LayoutViewport()->SetScrollOffset(ScrollOffset(0, scroll_amount),
-                                                kProgrammaticScroll);
+  frame_view->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(0, scroll_amount), mojom::blink::ScrollType::kProgrammatic);
 
   // The first div should be offset by the scroll offset.
   Element& first = *GetDocument().getElementById("first");
@@ -176,8 +176,8 @@ TEST_F(DataTransferTest, NodeImageSizeWithPageScaleFactor) {
   // page scale factor.
   const int scroll_amount = 10;
   LocalFrameView* frame_view = GetDocument().View();
-  frame_view->LayoutViewport()->SetScrollOffset(ScrollOffset(0, scroll_amount),
-                                                kProgrammaticScroll);
+  frame_view->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(0, scroll_amount), mojom::blink::ScrollType::kProgrammatic);
   const auto image_with_offset = DataTransfer::NodeImage(GetFrame(), node);
   EXPECT_EQ(
       IntSize(node_width * page_scale_factor, node_height * page_scale_factor),
@@ -207,8 +207,8 @@ TEST_F(DataTransferTest, NodeImageSizeWithPageScaleFactorTooLarge) {
   // page scale factor.
   const int scroll_amount = 10;
   LocalFrameView* frame_view = GetDocument().View();
-  frame_view->LayoutViewport()->SetScrollOffset(ScrollOffset(0, scroll_amount),
-                                                kProgrammaticScroll);
+  frame_view->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(0, scroll_amount), mojom::blink::ScrollType::kProgrammatic);
   const auto image_with_offset = DataTransfer::NodeImage(GetFrame(), node);
   EXPECT_EQ(IntSize(node_width * page_scale_factor,
                     (node_height - scroll_amount) * page_scale_factor),
@@ -272,8 +272,8 @@ TEST_F(DataTransferTest, NodeImageFullyOffscreen) {
 
   const int scroll_amount = 800;
   LocalFrameView* frame_view = GetDocument().View();
-  frame_view->LayoutViewport()->SetScrollOffset(ScrollOffset(0, scroll_amount),
-                                                kProgrammaticScroll);
+  frame_view->LayoutViewport()->SetScrollOffset(
+      ScrollOffset(0, scroll_amount), mojom::blink::ScrollType::kProgrammatic);
 
   Element& target = *GetDocument().getElementById("target");
   const auto image = DataTransfer::NodeImage(GetFrame(), target);

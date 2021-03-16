@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/memory/ptr_util.h"
@@ -13,6 +14,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner.h"
 #include "base/task_runner_util.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -61,10 +63,9 @@ QuirksManager::QuirksManager(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
     : waiting_for_login_(true),
       delegate_(std::move(delegate)),
-      task_runner_(base::CreateTaskRunnerWithTraits({base::MayBlock()})),
+      task_runner_(base::ThreadPool::CreateTaskRunner({base::MayBlock()})),
       local_state_(local_state),
-      url_loader_factory_(std::move(url_loader_factory)),
-      weak_ptr_factory_(this) {}
+      url_loader_factory_(std::move(url_loader_factory)) {}
 
 QuirksManager::~QuirksManager() {
   clients_.clear();
@@ -92,6 +93,11 @@ QuirksManager* QuirksManager::Get() {
 }
 
 // static
+bool QuirksManager::HasInstance() {
+  return !!manager_;
+}
+
+// static
 void QuirksManager::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterDictionaryPref(prefs::kQuirksClientLastServerCheck);
 }
@@ -114,38 +120,35 @@ void QuirksManager::OnLoginCompleted() {
 void QuirksManager::RequestIccProfilePath(
     int64_t product_id,
     const std::string& display_name,
-    const RequestFinishedCallback& on_request_finished) {
+    RequestFinishedCallback on_request_finished) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   if (!QuirksEnabled()) {
     VLOG(1) << "Quirks Client disabled.";
-    on_request_finished.Run(base::FilePath(), false);
+    std::move(on_request_finished).Run(base::FilePath(), false);
     return;
   }
 
   if (!product_id) {
     VLOG(1) << "Could not determine display information (product id = 0)";
-    on_request_finished.Run(base::FilePath(), false);
+    std::move(on_request_finished).Run(base::FilePath(), false);
     return;
   }
 
   std::string name = IdToFileName(product_id);
   base::PostTaskAndReplyWithResult(
       task_runner_.get(), FROM_HERE,
-      base::Bind(&CheckForIccFile,
-                 delegate_->GetDisplayProfileDirectory().Append(name)),
-      base::Bind(&QuirksManager::OnIccFilePathRequestCompleted,
-                 weak_ptr_factory_.GetWeakPtr(), product_id, display_name,
-                 on_request_finished));
+      base::BindOnce(&CheckForIccFile,
+                     delegate_->GetDisplayProfileDirectory().Append(name)),
+      base::BindOnce(&QuirksManager::OnIccFilePathRequestCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), product_id, display_name,
+                     std::move(on_request_finished)));
 }
 
 void QuirksManager::ClientFinished(QuirksClient* client) {
   DCHECK(thread_checker_.CalledOnValidThread());
   SetLastServerCheck(client->product_id(), base::Time::Now());
-  auto it = std::find_if(clients_.begin(), clients_.end(),
-                         [client](const std::unique_ptr<QuirksClient>& c) {
-                           return c.get() == client;
-                         });
+  auto it = clients_.find(client);
   CHECK(it != clients_.end());
   clients_.erase(it);
 }
@@ -153,13 +156,13 @@ void QuirksManager::ClientFinished(QuirksClient* client) {
 void QuirksManager::OnIccFilePathRequestCompleted(
     int64_t product_id,
     const std::string& display_name,
-    const RequestFinishedCallback& on_request_finished,
+    RequestFinishedCallback on_request_finished,
     base::FilePath path) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // If we found a file, just inform requester.
   if (!path.empty()) {
-    on_request_finished.Run(path, false);
+    std::move(on_request_finished).Run(path, false);
     // TODO(glevin): If Quirks files are ever modified on the server, we'll need
     // to modify this logic to check for updates. See crbug.com/595024.
     return;
@@ -177,13 +180,13 @@ void QuirksManager::OnIccFilePathRequestCompleted(
     VLOG(2) << time_since.InDays()
             << " days since last Quirks Server check for display "
             << IdToHexString(product_id);
-    on_request_finished.Run(base::FilePath(), false);
+    std::move(on_request_finished).Run(base::FilePath(), false);
     return;
   }
 
   // Create and start a client to download file.
-  QuirksClient* client =
-      new QuirksClient(product_id, display_name, on_request_finished, this);
+  QuirksClient* client = new QuirksClient(product_id, display_name,
+                                          std::move(on_request_finished), this);
   clients_.insert(base::WrapUnique(client));
   if (!waiting_for_login_)
     client->StartDownload();

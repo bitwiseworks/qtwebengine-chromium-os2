@@ -23,7 +23,7 @@ std::unique_ptr<Event> EventFromNative(const PlatformEvent& native_event) {
   switch(type) {
     case ET_KEY_PRESSED:
     case ET_KEY_RELEASED:
-      event.reset(new KeyEvent(native_event));
+      event = std::make_unique<KeyEvent>(native_event);
       break;
 
     case ET_MOUSE_PRESSED:
@@ -32,24 +32,24 @@ std::unique_ptr<Event> EventFromNative(const PlatformEvent& native_event) {
     case ET_MOUSE_MOVED:
     case ET_MOUSE_ENTERED:
     case ET_MOUSE_EXITED:
-      event.reset(new MouseEvent(native_event));
+      event = std::make_unique<MouseEvent>(native_event);
       break;
 
     case ET_MOUSEWHEEL:
-      event.reset(new MouseWheelEvent(native_event));
+      event = std::make_unique<MouseWheelEvent>(native_event);
       break;
 
     case ET_SCROLL_FLING_START:
     case ET_SCROLL_FLING_CANCEL:
     case ET_SCROLL:
-      event.reset(new ScrollEvent(native_event));
+      event = std::make_unique<ScrollEvent>(native_event);
       break;
 
     case ET_TOUCH_RELEASED:
     case ET_TOUCH_PRESSED:
     case ET_TOUCH_MOVED:
     case ET_TOUCH_CANCELLED:
-      event.reset(new TouchEvent(native_event));
+      event = std::make_unique<TouchEvent>(native_event);
       break;
 
     default:
@@ -60,22 +60,6 @@ std::unique_ptr<Event> EventFromNative(const PlatformEvent& native_event) {
 
 int RegisterCustomEventType() {
   return ++g_custom_event_types;
-}
-
-bool IsValidTimebase(base::TimeTicks now, base::TimeTicks timestamp) {
-  int64_t delta = (now - timestamp).InMilliseconds();
-  return delta >= 0 && delta <= 60 * 1000;
-}
-
-void ValidateEventTimeClock(base::TimeTicks* timestamp) {
-  // Some fraction of devices, across all platforms provide bogus event
-  // timestamps. See https://crbug.com/650338#c1. Correct timestamps which are
-  // clearly bogus.
-  // TODO(861855): Replace this with an approach that doesn't require an extra
-  // read of the current time per event.
-  base::TimeTicks now = EventTimeForNow();
-  if (!IsValidTimebase(now, *timestamp))
-    *timestamp = now;
 }
 
 bool ShouldDefaultToNaturalScroll() {
@@ -125,6 +109,21 @@ void ComputeEventLatencyOS(const PlatformEvent& native_event) {
     case ET_TOUCH_RELEASED:
       UMA_HISTOGRAM_CUSTOM_COUNTS(
           "Event.Latency.OS.TOUCH_RELEASED",
+          base::saturated_cast<int>(delta.InMicroseconds()), 1, 1000000, 50);
+      return;
+    case ET_TOUCH_CANCELLED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.OS.TOUCH_CANCELLED",
+          base::saturated_cast<int>(delta.InMicroseconds()), 1, 1000000, 50);
+      return;
+    case ET_KEY_PRESSED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.OS.KEY_PRESSED",
+          base::saturated_cast<int>(delta.InMicroseconds()), 1, 1000000, 50);
+      return;
+    case ET_MOUSE_PRESSED:
+      UMA_HISTOGRAM_CUSTOM_COUNTS(
+          "Event.Latency.OS.MOUSE_PRESSED",
           base::saturated_cast<int>(delta.InMicroseconds()), 1, 1000000, 50);
       return;
     default:

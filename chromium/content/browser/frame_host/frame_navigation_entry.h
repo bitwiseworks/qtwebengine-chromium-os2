@@ -9,13 +9,18 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/public/common/page_state.h"
 #include "content/public/common/referrer.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
+
+class WebBundleNavigationInfo;
 
 // Represents a session history item for a particular frame.  It is matched with
 // corresponding FrameTreeNodes using unique name (or by the root position).
@@ -31,6 +36,9 @@ namespace content {
 class CONTENT_EXPORT FrameNavigationEntry
     : public base::RefCounted<FrameNavigationEntry> {
  public:
+  // The value of bindings() before it is set during commit.
+  enum : int { kInvalidBindings = -1 };
+
   FrameNavigationEntry();
   FrameNavigationEntry(
       const std::string& frame_unique_name,
@@ -41,6 +49,7 @@ class CONTENT_EXPORT FrameNavigationEntry
       const GURL& url,
       const url::Origin* origin,
       const Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       const std::vector<GURL>& redirect_chain,
       const PageState& page_state,
       const std::string& method,
@@ -49,7 +58,7 @@ class CONTENT_EXPORT FrameNavigationEntry
 
   // Creates a copy of this FrameNavigationEntry that can be modified
   // independently from the original.
-  FrameNavigationEntry* Clone() const;
+  scoped_refptr<FrameNavigationEntry> Clone() const;
 
   // Updates all the members of this entry.
   void UpdateEntry(
@@ -61,6 +70,7 @@ class CONTENT_EXPORT FrameNavigationEntry
       const GURL& url,
       const base::Optional<url::Origin>& origin,
       const Referrer& referrer,
+      const base::Optional<url::Origin>& initiator_origin,
       const std::vector<GURL>& redirect_chain,
       const PageState& page_state,
       const std::string& method,
@@ -124,6 +134,13 @@ class CONTENT_EXPORT FrameNavigationEntry
   void set_referrer(const Referrer& referrer) { referrer_ = referrer; }
   const Referrer& referrer() const { return referrer_; }
 
+  // The origin that initiated the original navigation.  base::nullopt means
+  // that the original navigation was browser-initiated (e.g. initiated from a
+  // trusted surface like the omnibox or the bookmarks bar).
+  const base::Optional<url::Origin>& initiator_origin() const {
+    return initiator_origin_;
+  }
+
   // The origin of the document the frame has committed. It is optional, since
   // pending entries do not have an origin associated with them and the real
   // origin is set at commit time.
@@ -143,6 +160,12 @@ class CONTENT_EXPORT FrameNavigationEntry
 
   void SetPageState(const PageState& page_state);
   const PageState& page_state() const { return page_state_; }
+
+  // Remember the set of bindings granted to this FrameNavigationEntry at the
+  // time of commit, to ensure that we do not grant it additional bindings if we
+  // navigate back to it in the future.  This can only be changed once.
+  void SetBindings(int bindings);
+  int bindings() const { return bindings_; }
 
   // The HTTP method used to navigate.
   const std::string& method() const { return method_; }
@@ -168,6 +191,10 @@ class CONTENT_EXPORT FrameNavigationEntry
     blob_url_loader_factory_ = std::move(factory);
   }
 
+  void set_web_bundle_navigation_info(
+      std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info);
+  WebBundleNavigationInfo* web_bundle_navigation_info() const;
+
  private:
   friend class base::RefCounted<FrameNavigationEntry>;
   virtual ~FrameNavigationEntry();
@@ -191,6 +218,7 @@ class CONTENT_EXPORT FrameNavigationEntry
   // and verified when receiving the DidCommit IPC.
   base::Optional<url::Origin> committed_origin_;
   Referrer referrer_;
+  base::Optional<url::Origin> initiator_origin_;
   // This is used when transferring a pending entry from one process to another.
   // We also send the main frame's redirect chain through session sync for
   // offline analysis.
@@ -198,9 +226,18 @@ class CONTENT_EXPORT FrameNavigationEntry
   std::vector<GURL> redirect_chain_;
   // TODO(creis): Change this to FrameState.
   PageState page_state_;
+  // TODO(creis): Persist bindings_. https://crbug.com/173672.
+  int bindings_ = kInvalidBindings;
   std::string method_;
   int64_t post_id_;
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory_;
+
+  // Keeps the Web Bundles related information when |this| is for a navigation
+  // within a Web Bundle file. Used when WebBundles feature or
+  // WebBundlesFromNetwork feature is enabled or TrustableWebBundleFileUrl
+  // switch is set.
+  // TODO(995177): Support Session/Tab restore.
+  std::unique_ptr<WebBundleNavigationInfo> web_bundle_navigation_info_;
 
   DISALLOW_COPY_AND_ASSIGN(FrameNavigationEntry);
 };

@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/css/resolver/style_adjuster.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/dom/dom_token_list.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
@@ -38,36 +39,10 @@
 
 namespace blink {
 
-using namespace html_names;
-
-TextControlInnerContainer::TextControlInnerContainer(Document& document)
-    : HTMLDivElement(document) {}
-
-TextControlInnerContainer* TextControlInnerContainer::Create(
-    Document& document) {
-  TextControlInnerContainer* element =
-      MakeGarbageCollected<TextControlInnerContainer>(document);
-  element->setAttribute(kIdAttr, shadow_element_names::TextFieldContainer());
-  return element;
-}
-
-LayoutObject* TextControlInnerContainer::CreateLayoutObject(
-    const ComputedStyle&) {
-  return new LayoutTextControlInnerContainer(this);
-}
-
-// ---------------------------
-
 EditingViewPortElement::EditingViewPortElement(Document& document)
     : HTMLDivElement(document) {
   SetHasCustomStyleCallbacks();
-}
-
-EditingViewPortElement* EditingViewPortElement::Create(Document& document) {
-  EditingViewPortElement* element =
-      MakeGarbageCollected<EditingViewPortElement>(document);
-  element->setAttribute(kIdAttr, shadow_element_names::EditingViewPort());
-  return element;
+  setAttribute(html_names::kIdAttr, shadow_element_names::EditingViewPort());
 }
 
 scoped_refptr<ComputedStyle>
@@ -78,7 +53,7 @@ EditingViewPortElement::CustomStyleForLayoutObject() {
   style->InheritFrom(OwnerShadowHost()->ComputedStyleRef());
 
   style->SetFlexGrow(1);
-  style->SetMinWidth(Length(0, kFixed));
+  style->SetMinWidth(Length::Fixed(0));
   style->SetDisplay(EDisplay::kBlock);
   style->SetDirection(TextDirection::kLtr);
 
@@ -91,15 +66,9 @@ EditingViewPortElement::CustomStyleForLayoutObject() {
 
 // ---------------------------
 
-inline TextControlInnerEditorElement::TextControlInnerEditorElement(
-    Document& document)
+TextControlInnerEditorElement::TextControlInnerEditorElement(Document& document)
     : HTMLDivElement(document) {
   SetHasCustomStyleCallbacks();
-}
-
-TextControlInnerEditorElement* TextControlInnerEditorElement::Create(
-    Document& document) {
-  return MakeGarbageCollected<TextControlInnerEditorElement>(document);
 }
 
 void TextControlInnerEditorElement::DefaultEventHandler(Event& event) {
@@ -118,6 +87,17 @@ void TextControlInnerEditorElement::DefaultEventHandler(Event& event) {
     if (shadow_ancestor)
       shadow_ancestor->DefaultEventHandler(event);
   }
+
+  if (event.type() == event_type_names::kScroll) {
+    // The scroller for a text control is inside of a shadow tree but the
+    // scroll event won't bubble past the shadow root and authors cannot add
+    // an event listener to it. Fire the scroll event at the shadow host so
+    // that the page can hear about the scroll.
+    Element* shadow_ancestor = OwnerShadowHost();
+    if (shadow_ancestor)
+      shadow_ancestor->DispatchEvent(event);
+  }
+
   if (!event.DefaultHandled())
     HTMLDivElement::DefaultEventHandler(event);
 }
@@ -132,7 +112,8 @@ void TextControlInnerEditorElement::SetVisibility(bool is_visible) {
 }
 
 LayoutObject* TextControlInnerEditorElement::CreateLayoutObject(
-    const ComputedStyle&) {
+    const ComputedStyle&,
+    LegacyLayout) {
   return new LayoutTextControlInnerEditor(this);
 }
 
@@ -161,12 +142,14 @@ TextControlInnerEditorElement::CreateInnerEditorStyle() const {
   text_block_style->SetUnicodeBidi(start_style.GetUnicodeBidi());
   text_block_style->SetUserSelect(EUserSelect::kText);
   text_block_style->SetUserModify(
-      ToHTMLFormControlElement(host)->IsDisabledOrReadOnly()
+      To<HTMLFormControlElement>(host)->IsDisabledOrReadOnly()
           ? EUserModify::kReadOnly
           : EUserModify::kReadWritePlaintextOnly);
   text_block_style->SetDisplay(EDisplay::kBlock);
+  text_block_style->SetHasLineIfEmpty(true);
+  text_block_style->SetShouldIgnoreOverflowPropertyForInlineBlockBaseline();
 
-  if (!IsHTMLTextAreaElement(host)) {
+  if (!IsA<HTMLTextAreaElement>(host)) {
     text_block_style->SetWhiteSpace(EWhiteSpace::kPre);
     text_block_style->SetOverflowWrap(EOverflowWrap::kNormal);
     text_block_style->SetTextOverflow(
@@ -194,7 +177,7 @@ TextControlInnerEditorElement::CreateInnerEditorStyle() const {
           ComputedStyleInitialValues::InitialLineHeight());
     }
 
-    if (ToHTMLInputElement(host)->ShouldRevealPassword())
+    if (To<HTMLInputElement>(host)->ShouldRevealPassword())
       text_block_style->SetTextSecurity(ETextSecurity::kNone);
 
     text_block_style->SetOverflowX(EOverflow::kScroll);
@@ -203,8 +186,8 @@ TextControlInnerEditorElement::CreateInnerEditorStyle() const {
     scoped_refptr<ComputedStyle> no_scrollbar_style = ComputedStyle::Create();
     no_scrollbar_style->SetStyleType(kPseudoIdScrollbar);
     no_scrollbar_style->SetDisplay(EDisplay::kNone);
-    text_block_style->AddCachedPseudoStyle(no_scrollbar_style);
-    text_block_style->SetHasPseudoStyle(kPseudoIdScrollbar);
+    text_block_style->AddCachedPseudoElementStyle(no_scrollbar_style);
+    text_block_style->SetHasPseudoElementStyle(kPseudoIdScrollbar);
   }
 
   return text_block_style;
@@ -212,31 +195,26 @@ TextControlInnerEditorElement::CreateInnerEditorStyle() const {
 
 // ----------------------------
 
-inline SearchFieldCancelButtonElement::SearchFieldCancelButtonElement(
+SearchFieldCancelButtonElement::SearchFieldCancelButtonElement(
     Document& document)
-    : HTMLDivElement(document) {}
-
-SearchFieldCancelButtonElement* SearchFieldCancelButtonElement::Create(
-    Document& document) {
-  SearchFieldCancelButtonElement* element =
-      MakeGarbageCollected<SearchFieldCancelButtonElement>(document);
-  element->SetShadowPseudoId(AtomicString("-webkit-search-cancel-button"));
-  element->setAttribute(kIdAttr, shadow_element_names::SearchClearButton());
-  return element;
+    : HTMLDivElement(document) {
+  SetShadowPseudoId(AtomicString("-webkit-search-cancel-button"));
+  setAttribute(html_names::kIdAttr, shadow_element_names::SearchClearButton());
 }
 
 void SearchFieldCancelButtonElement::DefaultEventHandler(Event& event) {
   // If the element is visible, on mouseup, clear the value, and set selection
-  HTMLInputElement* input(ToHTMLInputElement(OwnerShadowHost()));
+  auto* mouse_event = DynamicTo<MouseEvent>(event);
+  auto* input = To<HTMLInputElement>(OwnerShadowHost());
   if (!input || input->IsDisabledOrReadOnly()) {
     if (!event.DefaultHandled())
       HTMLDivElement::DefaultEventHandler(event);
     return;
   }
 
-  if (event.type() == event_type_names::kClick && event.IsMouseEvent() &&
-      ToMouseEvent(event).button() ==
-          static_cast<short>(WebPointerProperties::Button::kLeft)) {
+  if (event.type() == event_type_names::kClick && mouse_event &&
+      mouse_event->button() ==
+          static_cast<int16_t>(WebPointerProperties::Button::kLeft)) {
     input->SetValueForUser("");
     input->SetAutofillState(WebAutofillState::kNotFilled);
     input->OnSearch();
@@ -248,11 +226,49 @@ void SearchFieldCancelButtonElement::DefaultEventHandler(Event& event) {
 }
 
 bool SearchFieldCancelButtonElement::WillRespondToMouseClickEvents() {
-  const HTMLInputElement* input = ToHTMLInputElement(OwnerShadowHost());
+  auto* input = To<HTMLInputElement>(OwnerShadowHost());
   if (input && !input->IsDisabledOrReadOnly())
     return true;
 
   return HTMLDivElement::WillRespondToMouseClickEvents();
 }
 
+// ----------------------------
+
+PasswordRevealButtonElement::PasswordRevealButtonElement(Document& document)
+    : HTMLDivElement(document) {
+  SetShadowPseudoId(AtomicString("-internal-reveal"));
+  setAttribute(html_names::kIdAttr,
+               shadow_element_names::PasswordRevealButton());
+}
+
+void PasswordRevealButtonElement::DefaultEventHandler(Event& event) {
+  auto* input = To<HTMLInputElement>(OwnerShadowHost());
+  if (!input || input->IsDisabledOrReadOnly()) {
+    if (!event.DefaultHandled())
+      HTMLDivElement::DefaultEventHandler(event);
+    return;
+  }
+
+  // Toggle the should-reveal-password state when clicked.
+  if (event.type() == event_type_names::kClick && IsA<MouseEvent>(event)) {
+    bool shouldRevealPassword = !input->ShouldRevealPassword();
+
+    input->SetShouldRevealPassword(shouldRevealPassword);
+    input->UpdateView();
+
+    event.SetDefaultHandled();
+  }
+
+  if (!event.DefaultHandled())
+    HTMLDivElement::DefaultEventHandler(event);
+}
+
+bool PasswordRevealButtonElement::WillRespondToMouseClickEvents() {
+  auto* input = To<HTMLInputElement>(OwnerShadowHost());
+  if (input && !input->IsDisabledOrReadOnly())
+    return true;
+
+  return HTMLDivElement::WillRespondToMouseClickEvents();
+}
 }  // namespace blink

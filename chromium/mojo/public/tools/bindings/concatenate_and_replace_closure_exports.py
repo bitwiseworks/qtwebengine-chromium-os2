@@ -16,6 +16,8 @@ which is instead replaced with an inlined assignment to initialize the
 namespace.
 """
 
+from __future__ import print_function
+
 import optparse
 import re
 
@@ -31,12 +33,12 @@ def FilterLine(filename, line, output):
   if line.startswith("goog.provide"):
     match = re.match("goog.provide\('([^']+)'\);", line)
     if not match:
-      print "Invalid goog.provide line in %s:\n%s" % (filename, line)
+      print("Invalid goog.provide line in %s:\n%s" % (filename, line))
       exit(1)
 
     module_name = match.group(1)
     if module_name == _MOJO_INTERNAL_MODULE_NAME:
-      output.write("var mojo = { internal: {} };")
+      output.write("self.mojo = { internal: {} };")
     else:
       output.write("%s('%s');\n" % (_MOJO_EXPORT_MODULE_SYMBOL, module_name))
     return
@@ -45,18 +47,18 @@ def FilterLine(filename, line, output):
 
 def ConcatenateAndReplaceExports(filenames):
   if (len(filenames) < 2):
-    print "At least two filenames (one input and the output) are required."
+    print("At least two filenames (one input and the output) are required.")
     return False
 
   try:
-    with open(filenames[-1], "wb") as target:
+    with open(filenames[-1], "w") as target:
       for filename in filenames[:-1]:
-        with open(filename, "rb") as current:
+        with open(filename, "r") as current:
           for line in current.readlines():
             FilterLine(filename, line, target)
     return True
   except IOError as e:
-    print "Error generating %s\n: %s" % (filenames[-1], e)
+    print("Error generating %s\n: %s" % (filenames[-1], e))
     return False
 
 def main():

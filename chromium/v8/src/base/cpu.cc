@@ -16,7 +16,7 @@
 #if V8_OS_QNX
 #include <sys/syspage.h>  // cpuinfo
 #endif
-#if V8_OS_LINUX && V8_HOST_ARCH_PPC
+#if V8_OS_LINUX && (V8_HOST_ARCH_PPC || V8_HOST_ARCH_PPC64)
 #include <elf.h>
 #endif
 #if V8_OS_AIX
@@ -116,7 +116,10 @@ static uint32_t ReadELFHWCaps() {
   // Read the ELF HWCAP flags by parsing /proc/self/auxv.
   FILE* fp = fopen("/proc/self/auxv", "r");
   if (fp != nullptr) {
-    struct { uint32_t tag; uint32_t value; } entry;
+    struct {
+      uint32_t tag;
+      uint32_t value;
+    } entry;
     for (;;) {
       size_t n = fread(&entry, sizeof(entry), 1, fp);
       if (n == 0 || (entry.tag == 0 && entry.value == 0)) {
@@ -604,7 +607,7 @@ CPU::CPU()
 #elif V8_HOST_ARCH_ARM64
 // Implementer, variant and part are currently unused under ARM64.
 
-#elif V8_HOST_ARCH_PPC
+#elif V8_HOST_ARCH_PPC || V8_HOST_ARCH_PPC64
 
 #ifndef USE_SIMULATOR
 #if V8_OS_LINUX
@@ -678,7 +681,7 @@ CPU::CPU()
   }
 #endif  // V8_OS_AIX
 #endif  // !USE_SIMULATOR
-#endif  // V8_HOST_ARCH_PPC
+#endif  // V8_HOST_ARCH_PPC || V8_HOST_ARCH_PPC64
 }
 
 }  // namespace base

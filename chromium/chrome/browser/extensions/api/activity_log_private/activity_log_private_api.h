@@ -13,9 +13,9 @@
 #include "base/synchronization/lock.h"
 #include "chrome/browser/extensions/activity_log/activity_actions.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
 
 namespace extensions {
 
@@ -65,7 +65,7 @@ void
 
 // The implementation of activityLogPrivate.getExtensionActivities
 class ActivityLogPrivateGetExtensionActivitiesFunction
-    : public ChromeAsyncExtensionFunction {
+    : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.getExtensionActivities",
                              ACTIVITYLOGPRIVATE_GETEXTENSIONACTIVITIES)
@@ -74,7 +74,7 @@ class ActivityLogPrivateGetExtensionActivitiesFunction
   ~ActivityLogPrivateGetExtensionActivitiesFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  private:
   void OnLookupCompleted(
@@ -82,8 +82,7 @@ class ActivityLogPrivateGetExtensionActivitiesFunction
 };
 
 // The implementation of activityLogPrivate.deleteActivities
-class ActivityLogPrivateDeleteActivitiesFunction
-    : public UIThreadExtensionFunction {
+class ActivityLogPrivateDeleteActivitiesFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteActivities",
                              ACTIVITYLOGPRIVATE_DELETEACTIVITIES)
@@ -97,7 +96,7 @@ class ActivityLogPrivateDeleteActivitiesFunction
 
 // The implementation of activityLogPrivate.deleteActivitiesByExtension
 class ActivityLogPrivateDeleteActivitiesByExtensionFunction
-    : public UIThreadExtensionFunction {
+    : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteActivitiesByExtension",
                              ACTIVITYLOGPRIVATE_DELETEACTIVITIESBYEXTENSION)
@@ -110,8 +109,7 @@ class ActivityLogPrivateDeleteActivitiesByExtensionFunction
 };
 
 // The implementation of activityLogPrivate.deleteDatabase
-class ActivityLogPrivateDeleteDatabaseFunction
-    : public UIThreadExtensionFunction {
+class ActivityLogPrivateDeleteDatabaseFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteDatabase",
                              ACTIVITYLOGPRIVATE_DELETEDATABASE)
@@ -124,7 +122,7 @@ class ActivityLogPrivateDeleteDatabaseFunction
 };
 
 // The implementation of activityLogPrivate.deleteUrls
-class ActivityLogPrivateDeleteUrlsFunction : public UIThreadExtensionFunction {
+class ActivityLogPrivateDeleteUrlsFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("activityLogPrivate.deleteUrls",
                              ACTIVITYLOGPRIVATE_DELETEURLS)

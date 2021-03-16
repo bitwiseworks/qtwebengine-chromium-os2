@@ -16,7 +16,6 @@
 #include <utility>
 #include <vector>
 
-#include "absl/memory/memory.h"
 #include "api/crypto/crypto_options.h"
 #include "p2p/base/dtls_transport_internal.h"
 #include "p2p/base/fake_ice_transport.h"
@@ -57,8 +56,8 @@ class FakeDtlsTransport : public DtlsTransportInternal {
   // If this constructor is called, a new fake ICE transport will be created,
   // and this FakeDtlsTransport will take the ownership.
   explicit FakeDtlsTransport(const std::string& name, int component)
-      : FakeDtlsTransport(
-            absl::make_unique<FakeIceTransport>(name, component)) {}
+      : FakeDtlsTransport(std::make_unique<FakeIceTransport>(name, component)) {
+  }
 
   ~FakeDtlsTransport() override {
     if (dest_ && dest_->dest_ == this) {
@@ -84,7 +83,10 @@ class FakeDtlsTransport : public DtlsTransportInternal {
     ice_transport_->SetReceiving(receiving);
     set_receiving(receiving);
   }
-  void SetDtlsState(DtlsTransportState state) { dtls_state_ = state; }
+  void SetDtlsState(DtlsTransportState state) {
+    dtls_state_ = state;
+    SignalDtlsState(this, dtls_state_);
+  }
 
   // Simulates the two DTLS transports connecting to each other.
   // If |asymmetric| is true this method only affects this FakeDtlsTransport.
@@ -109,12 +111,11 @@ class FakeDtlsTransport : public DtlsTransportInternal {
       if (!asymmetric) {
         dest->SetDestination(this, true);
       }
-      dtls_state_ = DTLS_TRANSPORT_CONNECTED;
       // If the |dtls_role_| is unset, set it to SSL_CLIENT by default.
       if (!dtls_role_) {
         dtls_role_ = std::move(rtc::SSL_CLIENT);
       }
-      SignalDtlsState(this, dtls_state_);
+      SetDtlsState(DTLS_TRANSPORT_CONNECTED);
       ice_transport_->SetDestination(
           static_cast<FakeIceTransport*>(dest->ice_transport()), asymmetric);
     } else {
@@ -169,6 +170,13 @@ class FakeDtlsTransport : public DtlsTransportInternal {
     remote_cert_ = cert;
   }
   bool IsDtlsActive() const override { return do_dtls_; }
+  bool GetSslVersionBytes(int* version) const override {
+    if (!do_dtls_) {
+      return false;
+    }
+    *version = 0x0102;
+    return true;
+  }
   bool GetSrtpCryptoSuite(int* crypto_suite) override {
     if (!do_dtls_) {
       return false;
@@ -177,7 +185,17 @@ class FakeDtlsTransport : public DtlsTransportInternal {
     return true;
   }
   void SetSrtpCryptoSuite(int crypto_suite) { crypto_suite_ = crypto_suite; }
-  bool GetSslCipherSuite(int* cipher_suite) override { return false; }
+
+  bool GetSslCipherSuite(int* cipher_suite) override {
+    if (ssl_cipher_suite_) {
+      *cipher_suite = *ssl_cipher_suite_;
+      return true;
+    }
+    return false;
+  }
+  void SetSslCipherSuite(absl::optional<int> cipher_suite) {
+    ssl_cipher_suite_ = cipher_suite;
+  }
   rtc::scoped_refptr<rtc::RTCCertificate> GetLocalCertificate() const override {
     return local_cert_;
   }
@@ -185,7 +203,7 @@ class FakeDtlsTransport : public DtlsTransportInternal {
     if (!remote_cert_) {
       return nullptr;
     }
-    return absl::make_unique<rtc::SSLCertChain>(remote_cert_->Clone());
+    return std::make_unique<rtc::SSLCertChain>(remote_cert_->Clone());
   }
   bool ExportKeyingMaterial(const std::string& label,
                             const uint8_t* context,
@@ -278,6 +296,7 @@ class FakeDtlsTransport : public DtlsTransportInternal {
   rtc::SSLFingerprint dtls_fingerprint_;
   absl::optional<rtc::SSLRole> dtls_role_;
   int crypto_suite_ = rtc::SRTP_AES128_CM_SHA1_80;
+  absl::optional<int> ssl_cipher_suite_;
   webrtc::CryptoOptions crypto_options_;
 
   DtlsTransportState dtls_state_ = DTLS_TRANSPORT_NEW;

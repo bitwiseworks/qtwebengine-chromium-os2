@@ -53,7 +53,7 @@ class MockCertVerifier : public rtc::SSLCertificateVerifier {
   MOCK_METHOD1(Verify, bool(const rtc::SSLCertificate&));
 };
 
-// TODO(benwright) - Move to using INSTANTIATE_TEST_CASE_P instead of using
+// TODO(benwright) - Move to using INSTANTIATE_TEST_SUITE_P instead of using
 // duplicate test cases for simple parameter changes.
 class SSLAdapterTestDummyClient : public sigslot::has_slots<> {
  public:
@@ -164,7 +164,7 @@ class SSLAdapterTestDummyServer : public sigslot::has_slots<> {
                                      const rtc::KeyParams& key_params)
       : ssl_mode_(ssl_mode) {
     // Generate a key pair and a certificate for this host.
-    ssl_identity_.reset(rtc::SSLIdentity::Generate(GetHostname(), key_params));
+    ssl_identity_ = rtc::SSLIdentity::Create(GetHostname(), key_params);
 
     server_socket_.reset(CreateSocket(ssl_mode_));
 
@@ -255,9 +255,8 @@ class SSLAdapterTestDummyServer : public sigslot::has_slots<> {
 
  private:
   void DoHandshake(rtc::AsyncSocket* socket) {
-    rtc::SocketStream* stream = new rtc::SocketStream(socket);
-
-    ssl_stream_adapter_.reset(rtc::SSLStreamAdapter::Create(stream));
+    ssl_stream_adapter_ = rtc::SSLStreamAdapter::Create(
+        std::make_unique<rtc::SocketStream>(socket));
 
     ssl_stream_adapter_->SetMode(ssl_mode_);
     ssl_stream_adapter_->SetServerRole();
@@ -269,7 +268,7 @@ class SSLAdapterTestDummyServer : public sigslot::has_slots<> {
     // Accordingly, we must disable client authentication here.
     ssl_stream_adapter_->SetClientAuthEnabledForTesting(false);
 
-    ssl_stream_adapter_->SetIdentity(ssl_identity_->GetReference());
+    ssl_stream_adapter_->SetIdentity(ssl_identity_->Clone());
 
     // Set a bogus peer certificate digest.
     unsigned char digest[20];
@@ -293,7 +292,7 @@ class SSLAdapterTestDummyServer : public sigslot::has_slots<> {
   std::string data_;
 };
 
-class SSLAdapterTestBase : public testing::Test, public sigslot::has_slots<> {
+class SSLAdapterTestBase : public ::testing::Test, public sigslot::has_slots<> {
  public:
   explicit SSLAdapterTestBase(const rtc::SSLMode& ssl_mode,
                               const rtc::KeyParams& key_params)
@@ -323,7 +322,7 @@ class SSLAdapterTestBase : public testing::Test, public sigslot::has_slots<> {
   }
 
   void SetMockCertVerifier(bool return_value) {
-    auto mock_verifier = absl::make_unique<MockCertVerifier>();
+    auto mock_verifier = std::make_unique<MockCertVerifier>();
     EXPECT_CALL(*mock_verifier, Verify(_)).WillRepeatedly(Return(return_value));
     cert_verifier_ =
         std::unique_ptr<rtc::SSLCertificateVerifier>(std::move(mock_verifier));

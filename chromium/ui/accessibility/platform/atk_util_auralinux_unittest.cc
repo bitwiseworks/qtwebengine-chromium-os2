@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Chromium cannot upgrade to ATK 2.12 API as it still needs to run
-// valid builds for Ubuntu Trusty.
-#define ATK_DISABLE_DEPRECATION_WARNINGS
-
 #include <atk/atk.h>
 
 #include <string>
@@ -29,7 +25,7 @@ class AtkUtilAuraLinuxTest : public AXPlatformNodeTest {
     Init(root);
 
     TestAXNodeWrapper* wrapper =
-        TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode());
+        TestAXNodeWrapper::GetOrCreate(GetTree(), GetRootAsAXNode());
     if (!wrapper)
       NOTREACHED();
     AXPlatformNodeAuraLinux::SetApplication(wrapper->ax_platform_node());
@@ -39,11 +35,14 @@ class AtkUtilAuraLinuxTest : public AXPlatformNodeTest {
 
   ~AtkUtilAuraLinuxTest() override {
     TestAXNodeWrapper* wrapper =
-        TestAXNodeWrapper::GetOrCreate(tree_.get(), GetRootNode());
+        TestAXNodeWrapper::GetOrCreate(GetTree(), GetRootAsAXNode());
     if (!wrapper)
       NOTREACHED();
     g_object_unref(wrapper->ax_platform_node()->GetNativeViewAccessible());
   }
+
+  AtkUtilAuraLinuxTest(const AtkUtilAuraLinuxTest&) = delete;
+  AtkUtilAuraLinuxTest& operator=(const AtkUtilAuraLinuxTest&) = delete;
 };
 
 TEST_F(AtkUtilAuraLinuxTest, KeySnooping) {

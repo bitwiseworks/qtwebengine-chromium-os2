@@ -34,6 +34,7 @@
 #include "third_party/blink/renderer/core/svg/svg_integer.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -42,12 +43,6 @@ class SVGIntegerOptionalInteger final : public SVGPropertyBase {
   // Tearoff of SVGIntegerOptionalInteger is never created.
   typedef void TearOffType;
   typedef void PrimitiveType;
-
-  static SVGIntegerOptionalInteger* Create(SVGInteger* first_integer,
-                                           SVGInteger* second_integer) {
-    return MakeGarbageCollected<SVGIntegerOptionalInteger>(first_integer,
-                                                           second_integer);
-  }
 
   SVGIntegerOptionalInteger(SVGInteger* first_integer,
                             SVGInteger* second_integer);
@@ -61,7 +56,7 @@ class SVGIntegerOptionalInteger final : public SVGPropertyBase {
   static constexpr int kInitialValueBits = SVGInteger::kInitialValueBits;
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -79,14 +74,19 @@ class SVGIntegerOptionalInteger final : public SVGPropertyBase {
   SVGInteger* FirstInteger() const { return first_integer_; }
   SVGInteger* SecondInteger() const { return second_integer_; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   Member<SVGInteger> first_integer_;
   Member<SVGInteger> second_integer_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGIntegerOptionalInteger);
+template <>
+struct DowncastTraits<SVGIntegerOptionalInteger> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGIntegerOptionalInteger::ClassType();
+  }
+};
 
 }  // namespace blink
 

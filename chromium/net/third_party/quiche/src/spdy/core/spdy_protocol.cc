@@ -4,10 +4,11 @@
 
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 
+#include <limits>
 #include <ostream>
 
+#include "net/third_party/quiche/src/common/platform/api/quiche_str_cat.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_bug_tracker.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_ptr_util.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_string_utils.h"
 
 namespace spdy {
@@ -24,10 +25,9 @@ std::ostream& operator<<(std::ostream& out, SpdyFrameType frame_type) {
 }
 
 SpdyPriority ClampSpdy3Priority(SpdyPriority priority) {
-  if (priority < kV3HighestPriority) {
-    SPDY_BUG << "Invalid priority: " << static_cast<int>(priority);
-    return kV3HighestPriority;
-  }
+  static_assert(std::numeric_limits<SpdyPriority>::min() == kV3HighestPriority,
+                "The value of given priority shouldn't be smaller than highest "
+                "priority. Check this invariant explicitly.");
   if (priority > kV3LowestPriority) {
     SPDY_BUG << "Invalid priority: " << static_cast<int>(priority);
     return kV3LowestPriority;
@@ -157,11 +157,11 @@ bool ParseSettingsId(SpdySettingsId wire_setting_id,
   return false;
 }
 
-SpdyString SettingsIdToString(SpdySettingsId id) {
+std::string SettingsIdToString(SpdySettingsId id) {
   SpdyKnownSettingsId known_id;
   if (!ParseSettingsId(id, &known_id)) {
-    return SpdyStrCat("SETTINGS_UNKNOWN_",
-                      SpdyHexEncodeUInt32AndTrim(uint32_t{id}));
+    return quiche::QuicheStrCat("SETTINGS_UNKNOWN_",
+                                SpdyHexEncodeUInt32AndTrim(uint32_t{id}));
   }
 
   switch (known_id) {
@@ -183,8 +183,8 @@ SpdyString SettingsIdToString(SpdySettingsId id) {
       return "SETTINGS_EXPERIMENT_SCHEDULER";
   }
 
-  return SpdyStrCat("SETTINGS_UNKNOWN_",
-                    SpdyHexEncodeUInt32AndTrim(uint32_t{id}));
+  return quiche::QuicheStrCat("SETTINGS_UNKNOWN_",
+                              SpdyHexEncodeUInt32AndTrim(uint32_t{id}));
 }
 
 SpdyErrorCode ParseErrorCode(uint32_t wire_error_code) {
@@ -229,6 +229,20 @@ const char* ErrorCodeToString(SpdyErrorCode error_code) {
   return "UNKNOWN_ERROR_CODE";
 }
 
+const char* WriteSchedulerTypeToString(WriteSchedulerType type) {
+  switch (type) {
+    case WriteSchedulerType::LIFO:
+      return "LIFO";
+    case WriteSchedulerType::SPDY:
+      return "SPDY";
+    case WriteSchedulerType::HTTP2:
+      return "HTTP2";
+    case WriteSchedulerType::FIFO:
+      return "FIFO";
+  }
+  return "UNKNOWN";
+}
+
 size_t GetNumberRequiredContinuationFrames(size_t size) {
   DCHECK_GT(size, kHttp2MaxControlFrameSendSize);
   size_t overflow = size - kHttp2MaxControlFrameSendSize;
@@ -267,7 +281,7 @@ SpdyFrameWithHeaderBlockIR::SpdyFrameWithHeaderBlockIR(
 
 SpdyFrameWithHeaderBlockIR::~SpdyFrameWithHeaderBlockIR() = default;
 
-SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, SpdyStringPiece data)
+SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, quiche::QuicheStringPiece data)
     : SpdyFrameWithFinIR(stream_id),
       data_(nullptr),
       data_len_(0),
@@ -277,11 +291,11 @@ SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, SpdyStringPiece data)
 }
 
 SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, const char* data)
-    : SpdyDataIR(stream_id, SpdyStringPiece(data)) {}
+    : SpdyDataIR(stream_id, quiche::QuicheStringPiece(data)) {}
 
-SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, SpdyString data)
+SpdyDataIR::SpdyDataIR(SpdyStreamId stream_id, std::string data)
     : SpdyFrameWithFinIR(stream_id),
-      data_store_(SpdyMakeUnique<SpdyString>(std::move(data))),
+      data_store_(std::make_unique<std::string>(std::move(data))),
       data_(data_store_->data()),
       data_len_(data_store_->size()),
       padded_(false),
@@ -363,7 +377,7 @@ size_t SpdyPingIR::size() const {
 
 SpdyGoAwayIR::SpdyGoAwayIR(SpdyStreamId last_good_stream_id,
                            SpdyErrorCode error_code,
-                           SpdyStringPiece description)
+                           quiche::QuicheStringPiece description)
     : description_(description) {
   set_last_good_stream_id(last_good_stream_id);
   set_error_code(error_code);
@@ -374,11 +388,11 @@ SpdyGoAwayIR::SpdyGoAwayIR(SpdyStreamId last_good_stream_id,
                            const char* description)
     : SpdyGoAwayIR(last_good_stream_id,
                    error_code,
-                   SpdyStringPiece(description)) {}
+                   quiche::QuicheStringPiece(description)) {}
 
 SpdyGoAwayIR::SpdyGoAwayIR(SpdyStreamId last_good_stream_id,
                            SpdyErrorCode error_code,
-                           SpdyString description)
+                           std::string description)
     : description_store_(std::move(description)),
       description_(description_store_) {
   set_last_good_stream_id(last_good_stream_id);
@@ -401,7 +415,7 @@ size_t SpdyGoAwayIR::size() const {
 
 SpdyContinuationIR::SpdyContinuationIR(SpdyStreamId stream_id)
     : SpdyFrameIR(stream_id), end_headers_(false) {
-  encoding_ = SpdyMakeUnique<SpdyString>();
+  encoding_ = std::make_unique<std::string>();
 }
 
 SpdyContinuationIR::~SpdyContinuationIR() = default;
@@ -417,7 +431,7 @@ SpdyFrameType SpdyContinuationIR::frame_type() const {
 size_t SpdyContinuationIR::size() const {
   // We don't need to get the size of CONTINUATION frame directly. It is
   // calculated in HEADERS or PUSH_PROMISE frame.
-  DLOG(WARNING) << "Shouldn't not call size() for CONTINUATION frame.";
+  SPDY_DLOG(WARNING) << "Shouldn't not call size() for CONTINUATION frame.";
   return 0;
 }
 
@@ -505,7 +519,7 @@ size_t SpdyAltSvcIR::size() const {
   size_t size = kGetAltSvcFrameMinimumSize;
   size += origin_.length();
   // TODO(yasong): estimates the size without serializing the vector.
-  SpdyString str =
+  std::string str =
       SpdyAltSvcWireFormat::SerializeHeaderFieldValue(altsvc_vector_);
   size += str.size();
   return size;

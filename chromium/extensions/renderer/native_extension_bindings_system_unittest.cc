@@ -22,6 +22,7 @@
 #include "extensions/renderer/message_target.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
 #include "extensions/renderer/script_context.h"
+#include "extensions/renderer/script_context_set.h"
 
 namespace extensions {
 
@@ -34,7 +35,7 @@ bool PropertyExists(v8::Local<v8::Context> context,
   v8::Local<v8::Value> value = V8ValueFromScriptSource(context, property);
   EXPECT_FALSE(value.IsEmpty());
   return !value->IsUndefined();
-};
+}
 
 }  // namespace
 
@@ -827,8 +828,8 @@ TEST_F(NativeExtensionBindingsSystemUnittest, TestUpdatingPermissions) {
   extension->permissions_data()->SetPermissions(
       std::make_unique<PermissionSet>(), std::make_unique<PermissionSet>());
 
-  bindings_system()->OnExtensionPermissionsUpdated(extension->id());
-  bindings_system()->UpdateBindingsForContext(script_context);
+  bindings_system()->UpdateBindings(
+      extension->id(), true /* permissions_changed */, script_context_set());
   {
     // TODO(devlin): Neither the native nor JS bindings systems clear the
     // property on the chrome object when an API is no longer available. This
@@ -869,8 +870,8 @@ TEST_F(NativeExtensionBindingsSystemUnittest, TestUpdatingPermissions) {
                                         ManifestPermissionSet(),
                                         URLPatternSet(), URLPatternSet()),
         std::make_unique<PermissionSet>());
-    bindings_system()->OnExtensionPermissionsUpdated(extension->id());
-    bindings_system()->UpdateBindingsForContext(script_context);
+    bindings_system()->UpdateBindings(
+        extension->id(), true /* permissions_changed */, script_context_set());
   }
 
   {
@@ -1239,8 +1240,9 @@ TEST_P(ResponseValidationNativeExtensionBindingsSystemUnittest,
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        ResponseValidationNativeExtensionBindingsSystemUnittest,
-                        testing::Bool());
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    ResponseValidationNativeExtensionBindingsSystemUnittest,
+    testing::Bool());
 
 }  // namespace extensions

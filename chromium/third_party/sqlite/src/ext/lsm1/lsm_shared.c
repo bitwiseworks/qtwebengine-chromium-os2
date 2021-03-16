@@ -29,17 +29,17 @@ static struct SharedData {
 } gShared;
 
 /*
-** Database structure. There is one such structure for each distinct
-** database accessed by this process. They are stored in the singly linked
-** list starting at global variable gShared.pDatabase. Database objects are
+** Database structure. There is one such structure for each distinct 
+** database accessed by this process. They are stored in the singly linked 
+** list starting at global variable gShared.pDatabase. Database objects are 
 ** reference counted. Once the number of connections to the associated
 ** database drops to zero, they are removed from the linked list and deleted.
 **
 ** pFile:
-**   In multi-process mode, this file descriptor is used to obtain locks
+**   In multi-process mode, this file descriptor is used to obtain locks 
 **   and to access shared-memory. In single process mode, its only job is
 **   to hold the exclusive lock on the file.
-**
+**   
 */
 struct Database {
   /* Protected by the global mutex (enterGlobalMutex/leaveGlobalMutex): */
@@ -85,7 +85,7 @@ static int holdingGlobalMutex(lsm_env *pEnv){
 
 #if 0
 static void assertNotInFreelist(Freelist *p, int iBlk){
-  int i;
+  int i; 
   for(i=0; i<p->nEntry; i++){
     assert( p->aEntry[i].iBlk!=iBlk );
   }
@@ -100,7 +100,7 @@ static void assertNotInFreelist(Freelist *p, int iBlk){
 int freelistAppend(lsm_db *db, u32 iBlk, i64 iId){
   lsm_env *pEnv = db->pEnv;
   Freelist *p;
-  int i;
+  int i; 
 
   assert( iId==-1 || iId>=0 );
   p = db->bUseFreelist ? db->pFreelist : &db->pWorker->freelist;
@@ -108,8 +108,8 @@ int freelistAppend(lsm_db *db, u32 iBlk, i64 iId){
   /* Extend the space allocated for the freelist, if required */
   assert( p->nAlloc>=p->nEntry );
   if( p->nAlloc==p->nEntry ){
-    int nNew;
-    int nByte;
+    int nNew; 
+    int nByte; 
     FreelistEntry *aNew;
 
     nNew = (p->nAlloc==0 ? 4 : p->nAlloc*2);
@@ -193,7 +193,7 @@ static int dbTruncate(lsm_db *pDb, i64 iInUse){
   if( rc==LSM_OK ){
 #ifdef LSM_LOG_FREELIST
     if( ctx.nBlock!=pDb->pWorker->nBlock ){
-      lsmLogMessage(pDb, 0,
+      lsmLogMessage(pDb, 0, 
           "dbTruncate(): truncated db to %d blocks",ctx.nBlock
       );
     }
@@ -268,9 +268,9 @@ static void doDbDisconnect(lsm_db *pDb){
         /* Flush the in-memory tree, if required. If there is data to flush,
         ** this will create a new client snapshot in Database.pClient. The
         ** checkpoint (serialization) of this snapshot may be written to disk
-        ** by the following block.
+        ** by the following block.  
         **
-        ** There is no need to take a WRITER lock here. That there are no
+        ** There is no need to take a WRITER lock here. That there are no 
         ** other locks on DMS2 guarantees that there are no other read-write
         ** connections at this time (and the lock on DMS1 guarantees that
         ** no new ones may appear).
@@ -281,7 +281,7 @@ static void doDbDisconnect(lsm_db *pDb){
         }
 
         /* Now check if there are any read-only connections. If there are,
-        ** then do not truncate the db file or unlink the shared-memory
+        ** then do not truncate the db file or unlink the shared-memory 
         ** region.  */
         if( rc==LSM_OK ){
           rc = lsmShmTestLock(pDb, LSM_LOCK_DMS3, 1, LSM_LOCK_EXCL);
@@ -302,7 +302,7 @@ static void doDbDisconnect(lsm_db *pDb){
           int bRotrans = 0;
           Database *p = pDb->pDatabase;
 
-          /* The log file may only be deleted if there are no clients
+          /* The log file may only be deleted if there are no clients 
           ** read-only clients running rotrans transactions.  */
           rc = lsmDetectRoTrans(pDb, &bRotrans);
           if( rc==LSM_OK && bRotrans==0 ){
@@ -356,8 +356,8 @@ static int doDbConnect(lsm_db *pDb){
   if( rc!=LSM_OK ) return rc;
   pDb->pShmhdr = (ShmHeader *)pDb->apShm[0];
 
-  /* Try an exclusive lock on DMS2/DMS3. If successful, this is the first
-  ** and only connection to the database. In this case initialize the
+  /* Try an exclusive lock on DMS2/DMS3. If successful, this is the first 
+  ** and only connection to the database. In this case initialize the 
   ** shared-memory and run log file recovery.  */
   assert( LSM_LOCK_DMS3==1+LSM_LOCK_DMS2 );
   rc = lsmShmTestLock(pDb, LSM_LOCK_DMS2, 2, LSM_LOCK_EXCL);
@@ -376,10 +376,10 @@ static int doDbConnect(lsm_db *pDb){
     rc = LSM_OK;
   }
 
-  /* Take a shared lock on DMS2. In multi-process mode this lock "cannot"
-  ** fail, as connections may only hold an exclusive lock on DMS2 if they
-  ** first hold an exclusive lock on DMS1. And this connection is currently
-  ** holding the exclusive lock on DSM1.
+  /* Take a shared lock on DMS2. In multi-process mode this lock "cannot" 
+  ** fail, as connections may only hold an exclusive lock on DMS2 if they 
+  ** first hold an exclusive lock on DMS1. And this connection is currently 
+  ** holding the exclusive lock on DSM1. 
   **
   ** However, if some other connection has the database open in single-process
   ** mode, this operation will fail. In this case, return the error to the
@@ -422,12 +422,12 @@ static int dbOpenSharedFd(lsm_env *pEnv, Database *p, int bRoOk){
 }
 
 /*
-** Return a reference to the shared Database handle for the database
+** Return a reference to the shared Database handle for the database 
 ** identified by canonical path zName. If this is the first connection to
 ** the named database, a new Database object is allocated. Otherwise, a
 ** pointer to an existing object is returned.
 **
-** If successful, *ppDatabase is set to point to the shared Database
+** If successful, *ppDatabase is set to point to the shared Database 
 ** structure and LSM_OK returned. Otherwise, *ppDatabase is set to NULL
 ** and and LSM error code returned.
 **
@@ -459,7 +459,7 @@ int lsmDbDatabaseConnect(
       p = (Database *)lsmMallocZeroRc(pEnv, sizeof(Database)+nName+1, &rc);
 
       /* If the allocation was successful, fill in other fields and
-      ** allocate the client mutex. */
+      ** allocate the client mutex. */ 
       if( rc==LSM_OK ){
         p->bMultiProc = pDb->bMultiProc;
         p->zName = (char *)&p[1];
@@ -469,7 +469,7 @@ int lsmDbDatabaseConnect(
       }
 
       /* If nothing has gone wrong so far, open the shared fd. And if that
-      ** succeeds and this connection requested single-process mode,
+      ** succeeds and this connection requested single-process mode, 
       ** attempt to take the exclusive lock on DMS2.  */
       if( rc==LSM_OK ){
         int bReadonly = (pDb->bReadonly && pDb->bMultiProc);
@@ -552,8 +552,8 @@ LsmFile *lsmDbRecycleFd(lsm_db *db){
 }
 
 /*
-** Release a reference to a Database object obtained from
-** lsmDbDatabaseConnect(). There should be exactly one call to this function
+** Release a reference to a Database object obtained from 
+** lsmDbDatabaseConnect(). There should be exactly one call to this function 
 ** for each successful call to Find().
 */
 void lsmDbDatabaseRelease(lsm_db *pDb){
@@ -614,8 +614,8 @@ void lsmDbSnapshotSetLevel(Snapshot *pSnap, Level *pLevel){
 /* TODO: Shuffle things around to get rid of this */
 static int firstSnapshotInUse(lsm_db *, i64 *);
 
-/*
-** Context object used by the lsmWalkFreelist() utility.
+/* 
+** Context object used by the lsmWalkFreelist() utility. 
 */
 typedef struct WalkFreelistCtx WalkFreelistCtx;
 struct WalkFreelistCtx {
@@ -628,7 +628,7 @@ struct WalkFreelistCtx {
   int bDone;                      /* Set to true after xUsr() returns true */
 };
 
-/*
+/* 
 ** Callback used by lsmWalkFreelist().
 */
 static int walkFreelistCb(void *pCtx, int iBlk, i64 iSnapshot){
@@ -647,8 +647,8 @@ static int walkFreelistCb(void *pCtx, int iBlk, i64 iSnapshot){
         break;
       }else{
         p->iFree += iDir;
-        if( pEntry->iId>=0
-            && p->xUsr(p->pUsrctx, pEntry->iBlk, pEntry->iId)
+        if( pEntry->iId>=0 
+            && p->xUsr(p->pUsrctx, pEntry->iBlk, pEntry->iId) 
           ){
           p->bDone = 1;
           return 1;
@@ -673,7 +673,7 @@ static int walkFreelistCb(void *pCtx, int iBlk, i64 iSnapshot){
 **
 ** The difference between this function and lsmSortedWalkFreelist() is
 ** that lsmSortedWalkFreelist() only considers those free-list elements
-** stored within the LSM. This function also merges in any in-memory
+** stored within the LSM. This function also merges in any in-memory 
 ** elements.
 */
 int lsmWalkFreelist(
@@ -718,7 +718,7 @@ int lsmWalkFreelist(
     for(iCtx=0; iCtx<2; iCtx++){
       int i;
       WalkFreelistCtx *p = &ctx[iCtx];
-      for(i=p->iFree;
+      for(i=p->iFree; 
           p->pFreelist && rc==LSM_OK && i<p->pFreelist->nEntry && i>=0;
           i += iDir
          ){
@@ -765,7 +765,7 @@ static int findFreeblock(lsm_db *pDb, i64 iInUse, int bNotOne, int *piRet){
 
 /*
 ** Allocate a new database file block to write data to, either by extending
-** the database file or by recycling a free-list entry. The worker snapshot
+** the database file or by recycling a free-list entry. The worker snapshot 
 ** must be held in order to call this function.
 **
 ** If successful, *piBlk is set to the block number allocated and LSM_OK is
@@ -811,7 +811,7 @@ int lsmBlockAllocate(lsm_db *pDb, int iBefore, int *piBlk){
 #ifdef LSM_LOG_FREELIST
   {
     lsmLogMessage(pDb, 0, "lsmBlockAllocate(): "
-        "snapshot-in-use: %lld (iSynced=%lld) (client-id=%lld)",
+        "snapshot-in-use: %lld (iSynced=%lld) (client-id=%lld)", 
         iInUse, iSynced, (pDb->iReader>=0 ? pDb->pClient->iId : 0)
     );
   }
@@ -819,8 +819,8 @@ int lsmBlockAllocate(lsm_db *pDb, int iBefore, int *piBlk){
 
 
   /* Unless there exists a read-only transaction (which prevents us from
-  ** recycling any blocks regardless, query the free block list for a
-  ** suitable block to reuse.
+  ** recycling any blocks regardless, query the free block list for a 
+  ** suitable block to reuse. 
   **
   ** It might seem more natural to check for a read-only transaction at
   ** the start of this function. However, it is better do wait until after
@@ -839,12 +839,12 @@ int lsmBlockAllocate(lsm_db *pDb, int iBefore, int *piBlk){
     iRet = 0;
 
   }else if( rc==LSM_OK ){
-    /* If a block was found in the free block list, use it and remove it from
+    /* If a block was found in the free block list, use it and remove it from 
     ** the list. Otherwise, if no suitable block was found, allocate one from
     ** the end of the file.  */
     if( iRet>0 ){
 #ifdef LSM_LOG_FREELIST
-      lsmLogMessage(pDb, 0,
+      lsmLogMessage(pDb, 0, 
           "reusing block %d (snapshot-in-use=%lld)", iRet, iInUse);
 #endif
       rc = freelistAppend(pDb, iRet, -1);
@@ -865,10 +865,10 @@ int lsmBlockAllocate(lsm_db *pDb, int iBefore, int *piBlk){
 }
 
 /*
-** Free a database block. The worker snapshot must be held in order to call
+** Free a database block. The worker snapshot must be held in order to call 
 ** this function.
 **
-** If successful, LSM_OK is returned. Otherwise, an lsm error code (e.g.
+** If successful, LSM_OK is returned. Otherwise, an lsm error code (e.g. 
 ** LSM_NOMEM).
 */
 int lsmBlockFree(lsm_db *pDb, int iBlk){
@@ -883,13 +883,13 @@ int lsmBlockFree(lsm_db *pDb, int iBlk){
 }
 
 /*
-** Refree a database block. The worker snapshot must be held in order to call
+** Refree a database block. The worker snapshot must be held in order to call 
 ** this function.
 **
 ** Refreeing is required when a block is allocated using lsmBlockAllocate()
 ** but then not used. This function is used to push the block back onto
 ** the freelist. Refreeing a block is different from freeing is, as a refreed
-** block may be reused immediately. Whereas a freed block can not be reused
+** block may be reused immediately. Whereas a freed block can not be reused 
 ** until (at least) after the next checkpoint.
 */
 int lsmBlockRefree(lsm_db *pDb, int iBlk){
@@ -962,7 +962,7 @@ int lsmCheckpointWrite(lsm_db *pDb, u32 *pnWrite){
         nWrite = lsmCheckpointNWrite(pDb->aSnapshot, 0) - nWrite;
       }
 #ifdef LSM_LOG_WORK
-      lsmLogMessage(pDb, 0, "finish checkpoint %d",
+      lsmLogMessage(pDb, 0, "finish checkpoint %d", 
           (int)lsmCheckpointId(pDb->aSnapshot, 0)
       );
 #endif
@@ -1105,7 +1105,7 @@ int lsmFinishRecovery(lsm_db *pDb){
 ** Check if the currently configured compression functions
 ** (LSM_CONFIG_SET_COMPRESSION) are compatible with a database that has its
 ** compression id set to iReq. Compression routines are compatible if iReq
-** is zero (indicating the database is empty), or if it is equal to the
+** is zero (indicating the database is empty), or if it is equal to the 
 ** compression id of the configured compression routines.
 **
 ** If the check shows that the current compression are incompatible and there
@@ -1179,8 +1179,8 @@ int lsmBeginReadTrans(lsm_db *pDb){
         if( lsmTreeLoadHeaderOk(pDb, iTreehdr)
          && lsmCheckpointLoadOk(pDb, iSnap)
         ){
-          /* Read lock has been successfully obtained. Deserialize the
-          ** checkpoint just loaded. TODO: This will be removed after
+          /* Read lock has been successfully obtained. Deserialize the 
+          ** checkpoint just loaded. TODO: This will be removed after 
           ** lsm_sorted.c is changed to work directly from the serialized
           ** version of the snapshot.  */
           if( pDb->pClient==0 ){
@@ -1205,10 +1205,10 @@ int lsmBeginReadTrans(lsm_db *pDb){
     }
 #if 0
 if( rc==LSM_OK && pDb->pClient ){
-  fprintf(stderr,
+  fprintf(stderr, 
       "reading %p: snapshot:%d used-shmid:%d trans-id:%d iOldShmid=%d\n",
       (void *)pDb,
-      (int)pDb->pClient->iId, (int)pDb->treehdr.iUsedShmid,
+      (int)pDb->pClient->iId, (int)pDb->treehdr.iUsedShmid, 
       (int)pDb->treehdr.root.iTransId,
       (int)pDb->treehdr.iOldShmid
   );
@@ -1233,7 +1233,7 @@ if( rc==LSM_OK && pDb->pClient ){
 ** connection on a non-live database).
 **
 ** If no error occurs, LSM_OK is returned and *pbExists is set to true if
-** some other connection has a read-only transaction open, or false
+** some other connection has a read-only transaction open, or false 
 ** otherwise. If an error occurs an LSM error code is returned and the final
 ** value of *pbExist is undefined.
 */
@@ -1379,7 +1379,7 @@ int lsmBeginWriteTrans(lsm_db *pDb){
   }
 
   /* If everything was successful, set the "transaction-in-progress" flag
-  ** and return LSM_OK. Otherwise, if some error occurred, relinquish the
+  ** and return LSM_OK. Otherwise, if some error occurred, relinquish the 
   ** WRITER lock and return an error code.  */
   if( rc==LSM_OK ){
     TreeHeader *p = &pDb->treehdr;
@@ -1398,13 +1398,13 @@ int lsmBeginWriteTrans(lsm_db *pDb){
 
 /*
 ** End the current write transaction. The connection is left with an open
-** read transaction. It is an error to call this if there is no open write
+** read transaction. It is an error to call this if there is no open write 
 ** transaction.
 **
 ** If the transaction was committed, then a commit record has already been
 ** written into the log file when this function is called. Or, if the
-** transaction was rolled back, both the log file and in-memory tree
-** structure have already been restored. In either case, this function
+** transaction was rolled back, both the log file and in-memory tree 
+** structure have already been restored. In either case, this function 
 ** merely releases locks and other resources held by the write-transaction.
 **
 ** LSM_OK is returned if successful, or an LSM error code otherwise.
@@ -1447,8 +1447,8 @@ int lsmHoldingClientMutex(lsm_db *pDb){
 #endif
 
 static int slotIsUsable(ShmReader *p, i64 iLsm, u32 iShmMin, u32 iShmMax){
-  return(
-      p->iLsmId && p->iLsmId<=iLsm
+  return( 
+      p->iLsmId && p->iLsmId<=iLsm 
       && shm_sequence_ge(iShmMax, p->iTreeId)
       && shm_sequence_ge(p->iTreeId, iShmMin)
   );
@@ -1523,9 +1523,9 @@ int lsmReadlock(lsm_db *db, i64 iLsm, u32 iShmMin, u32 iShmMax){
 
 /*
 ** This is used to check if there exists a read-lock locking a particular
-** version of either the in-memory tree or database file.
+** version of either the in-memory tree or database file. 
 **
-** If iLsmId is non-zero, then it is a snapshot id. If there exists a
+** If iLsmId is non-zero, then it is a snapshot id. If there exists a 
 ** read-lock using this snapshot or newer, set *pbInUse to true. Or,
 ** if there is no such read-lock, set it to false.
 **
@@ -1540,7 +1540,7 @@ static int isInUse(lsm_db *db, i64 iLsmId, u32 iShmid, int *pbInUse){
   for(i=0; rc==LSM_OK && i<LSM_LOCK_NREADER; i++){
     ShmReader *p = &pShm->aReader[i];
     if( p->iLsmId ){
-      if( (iLsmId!=0 && p->iLsmId!=0 && iLsmId>=p->iLsmId)
+      if( (iLsmId!=0 && p->iLsmId!=0 && iLsmId>=p->iLsmId) 
        || (iLsmId==0 && shm_sequence_ge(p->iTreeId, iShmid))
       ){
         rc = lsmShmLock(db, LSM_LOCK_READER(i), LSM_LOCK_EXCL, 0);
@@ -1633,7 +1633,7 @@ int lsmDbMultiProc(lsm_db *pDb){
 *************************************************************************/
 
 /*
-** Ensure that database connection db has cached pointers to at least the
+** Ensure that database connection db has cached pointers to at least the 
 ** first nChunk chunks of shared memory.
 */
 int lsmShmCacheChunks(lsm_db *db, int nChunk){
@@ -1648,7 +1648,7 @@ int lsmShmCacheChunks(lsm_db *db, int nChunk){
     /* Ensure that the db->apShm[] array is large enough. If an attempt to
     ** allocate memory fails, return LSM_NOMEM immediately. The apShm[] array
     ** is always extended in multiples of 16 entries - so the actual allocated
-    ** size can be inferred from nShm.  */
+    ** size can be inferred from nShm.  */ 
     nAlloc = ((db->nShm + NINCR - 1) / NINCR) * NINCR;
     while( nChunk>=nAlloc ){
       void **apShm;
@@ -1724,7 +1724,7 @@ static int lockSharedFile(lsm_env *pEnv, Database *p, int iLock, int eOp){
 ** Test if it would be possible for connection db to obtain a lock of type
 ** eType on the nLock locks starting at iLock. If so, return LSM_OK. If it
 ** would not be possible to obtain the lock due to a lock held by another
-** connection, return LSM_BUSY. If an IO or other error occurs (i.e. in the
+** connection, return LSM_BUSY. If an IO or other error occurs (i.e. in the 
 ** lsm_env.xTestLock function), return some other LSM error code.
 **
 ** Note that this function never actually locks the database - it merely
@@ -1768,7 +1768,7 @@ int lsmShmTestLock(
 
 /*
 ** Attempt to obtain the lock identified by the iLock and bExcl parameters.
-** If successful, return LSM_OK. If the lock cannot be obtained because
+** If successful, return LSM_OK. If the lock cannot be obtained because 
 ** there exists some other conflicting lock, return LSM_BUSY. If some other
 ** error occurs, return an LSM error code.
 **
@@ -1776,7 +1776,7 @@ int lsmShmTestLock(
 ** or else a value returned by the LSM_LOCK_READER macro.
 */
 int lsmShmLock(
-  lsm_db *db,
+  lsm_db *db, 
   int iLock,
   int eOp,                        /* One of LSM_LOCK_UNLOCK, SHARED or EXCL */
   int bBlock                      /* True for a blocking lock */
@@ -1871,8 +1871,8 @@ int shmLockType(lsm_db *db, int iLock){
 
 /*
 ** The arguments passed to this function are similar to those passed to
-** the lsmShmLock() function. However, instead of obtaining a new lock
-** this function returns true if the specified connection already holds
+** the lsmShmLock() function. However, instead of obtaining a new lock 
+** this function returns true if the specified connection already holds 
 ** (or does not hold) such a lock, depending on the value of eOp. As
 ** follows:
 **
@@ -1918,11 +1918,11 @@ int lsmShmAssertWorker(lsm_db *db){
 ** an interactive debugger.
 **
 ** When called, this function prints a single line of human readable output
-** to stdout describing the locks currently held by the connection. For
+** to stdout describing the locks currently held by the connection. For 
 ** example:
 **
 **     (gdb) call print_db_locks(pDb)
-**     (shared on dms2) (exclusive on writer)
+**     (shared on dms2) (exclusive on writer) 
 */
 void print_db_locks(lsm_db *db){
   int iLock;
@@ -1962,7 +1962,7 @@ int lsm_checkpoint(lsm_db *pDb, int *pnKB){
   ** pages written between this and the previous checkpoint.  */
   rc = lsmCheckpointWrite(pDb, &nWrite);
 
-  /* If required, calculate the output variable (KB of data checkpointed).
+  /* If required, calculate the output variable (KB of data checkpointed). 
   ** Set it to zero if an error occured.  */
   if( pnKB ){
     int nKB = 0;

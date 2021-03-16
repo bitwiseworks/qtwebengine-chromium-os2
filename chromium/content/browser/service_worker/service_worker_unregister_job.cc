@@ -4,6 +4,9 @@
 
 #include "content/browser/service_worker/service_worker_unregister_job.h"
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_job_coordinator.h"
@@ -18,12 +21,15 @@ namespace content {
 typedef ServiceWorkerRegisterJobBase::RegistrationJobType RegistrationJobType;
 
 ServiceWorkerUnregisterJob::ServiceWorkerUnregisterJob(
-    base::WeakPtr<ServiceWorkerContextCore> context,
-    const GURL& scope)
+    ServiceWorkerContextCore* context,
+    const GURL& scope,
+    bool is_immediate)
     : context_(context),
       scope_(scope),
-      is_promise_resolved_(false),
-      weak_factory_(this) {}
+      is_immediate_(is_immediate),
+      is_promise_resolved_(false) {
+  DCHECK(context_);
+}
 
 ServiceWorkerUnregisterJob::~ServiceWorkerUnregisterJob() {}
 
@@ -32,7 +38,7 @@ void ServiceWorkerUnregisterJob::AddCallback(UnregistrationCallback callback) {
 }
 
 void ServiceWorkerUnregisterJob::Start() {
-  context_->storage()->FindRegistrationForScope(
+  context_->registry()->FindRegistrationForScope(
       scope_, base::BindOnce(&ServiceWorkerUnregisterJob::OnRegistrationFound,
                              weak_factory_.GetWeakPtr()));
 }
@@ -41,6 +47,8 @@ void ServiceWorkerUnregisterJob::Abort() {
   CompleteInternal(blink::mojom::kInvalidServiceWorkerRegistrationId,
                    blink::ServiceWorkerStatusCode::kErrorAbort);
 }
+
+void ServiceWorkerUnregisterJob::WillShutDown() {}
 
 bool ServiceWorkerUnregisterJob::Equals(
     ServiceWorkerRegisterJobBase* job) const {
@@ -63,18 +71,19 @@ void ServiceWorkerUnregisterJob::OnRegistrationFound(
     return;
   }
 
-  if (status != blink::ServiceWorkerStatusCode::kOk ||
-      registration->is_uninstalling()) {
+  if (status != blink::ServiceWorkerStatusCode::kOk) {
     Complete(blink::mojom::kInvalidServiceWorkerRegistrationId, status);
     return;
   }
 
-  // TODO: "7. If registration.updatePromise is not null..."
+  DCHECK(!registration->is_uninstalling());
 
-  // "8. Resolve promise."
   ResolvePromise(registration->id(), blink::ServiceWorkerStatusCode::kOk);
 
-  registration->ClearWhenReady();
+  if (is_immediate_)
+    registration->DeleteAndClearImmediately();
+  else
+    registration->DeleteAndClearWhenReady();
 
   Complete(registration->id(), blink::ServiceWorkerStatusCode::kOk);
 }

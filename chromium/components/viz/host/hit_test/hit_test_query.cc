@@ -6,7 +6,7 @@
 
 #include "base/containers/stack.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/timer/elapsed_timer.h"
+#include "base/strings/string_util.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -32,55 +32,48 @@ bool CheckChildCount(int32_t child_count, size_t child_count_max) {
 }
 
 const std::string GetFlagNames(uint32_t flag) {
-  std::string names = "";
-  uint32_t mask = 1;
+  std::vector<base::StringPiece> names;
 
-  while (flag) {
-    std::string name = "";
-    switch (flag & mask) {
-      case kHitTestMine:
-        name = "Mine";
-        break;
-      case kHitTestIgnore:
-        name = "Ignore";
-        break;
-      case kHitTestChildSurface:
-        name = "ChildSurface";
-        break;
-      case kHitTestAsk:
-        name = "Ask";
-        break;
-      case kHitTestMouse:
-        name = "Mouse";
-        break;
-      case kHitTestTouch:
-        name = "Touch";
-        break;
-      case kHitTestNotActive:
-        name = "NotActive";
-        break;
-      case kHitTestDebug:
-        name = "Debug";
-        break;
-      case 0:
-        break;
-    }
-    if (!name.empty()) {
-      names += names.empty() ? name : ", " + name;
-    }
+  if (flag & kHitTestMine)
+    names.emplace_back("Mine");
+  if (flag & kHitTestIgnore)
+    names.emplace_back("Ignore");
+  if (flag & kHitTestChildSurface)
+    names.emplace_back("ChildSurface");
+  if (flag & kHitTestAsk)
+    names.emplace_back("Ask");
+  if (flag & kHitTestMouse)
+    names.emplace_back("Mouse");
+  if (flag & kHitTestTouch)
+    names.emplace_back("Touch");
+  if (flag & kHitTestNotActive)
+    names.emplace_back("NotActive");
+  if (flag & kHitTestDebug)
+    names.emplace_back("Debug");
 
-    flag &= ~mask;
-    mask <<= 1;
-  }
+  return base::JoinString(std::move(names), ", ");
+}
 
-  return names;
+const std::string GetAsyncHitTestReasons(uint32_t async_hit_test_reasons) {
+  std::vector<base::StringPiece> reasons;
+
+  if (async_hit_test_reasons & kOverlappedRegion)
+    reasons.emplace_back("OverlappedRegion");
+  if (async_hit_test_reasons & kIrregularClip)
+    reasons.emplace_back("IrregularClip");
+  if (async_hit_test_reasons & kRegionNotActive)
+    reasons.emplace_back("RegionNotActive");
+  if (async_hit_test_reasons & kPerspectiveTransform)
+    reasons.emplace_back("PerspectiveTransform");
+  if (async_hit_test_reasons & kUseDrawQuadData)
+    reasons.emplace_back("UseDrawQuadData");
+
+  return reasons.empty() ? "None" : base::JoinString(std::move(reasons), ", ");
 }
 
 }  // namespace
 
-HitTestQuery::HitTestQuery(base::RepeatingClosure bad_message_gpu_callback)
-    : bad_message_gpu_callback_(std::move(bad_message_gpu_callback)) {}
-
+HitTestQuery::HitTestQuery() = default;
 HitTestQuery::~HitTestQuery() = default;
 
 void HitTestQuery::OnAggregatedHitTestRegionListUpdated(
@@ -109,12 +102,9 @@ Target HitTestQuery::FindTargetForLocationStartingFrom(
 }
 
 bool HitTestQuery::TransformLocationForTarget(
-    EventSource event_source,
     const std::vector<FrameSinkId>& target_ancestors,
     const gfx::PointF& location_in_root,
     gfx::PointF* transformed_location) const {
-  base::ElapsedTimer transform_timer;
-
   if (hit_test_data_.empty())
     return false;
 
@@ -135,16 +125,11 @@ bool HitTestQuery::TransformLocationForTarget(
     return false;
   }
 
-  // TODO(riajiang): Cache the matrix product such that the transform can be
-  // done immediately. crbug/758062.
+  // TODO(crbug.com/966944): Cache the matrix product such that the transform
+  // can be done immediately.
   *transformed_location = location_in_root;
-  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES("Event.VizHitTest.TransformTimeUs",
-                                          transform_timer.Elapsed(),
-                                          base::TimeDelta::FromMicroseconds(1),
-                                          base::TimeDelta::FromSeconds(10), 50);
-  return TransformLocationForTargetRecursively(event_source, target_ancestors,
-                                               target_ancestors.size() - 1, 0,
-                                               transformed_location);
+  return TransformLocationForTargetRecursively(
+      target_ancestors, target_ancestors.size() - 1, 0, transformed_location);
 }
 
 bool HitTestQuery::GetTransformToTarget(const FrameSinkId& target,
@@ -174,18 +159,14 @@ Target HitTestQuery::FindTargetForLocationStartingFromImpl(
   if (hit_test_data_.empty())
     return Target();
 
-  base::ElapsedTimer target_timer;
   Target target;
   size_t start_index = 0;
   if (!FindIndexOfFrameSink(frame_sink_id, &start_index))
     return Target();
 
   FindTargetInRegionForLocation(event_source, location, start_index,
-                                is_location_relative_to_parent, &target);
-  UMA_HISTOGRAM_CUSTOM_MICROSECONDS_TIMES("Event.VizHitTest.TargetTimeUs",
-                                          target_timer.Elapsed(),
-                                          base::TimeDelta::FromMicroseconds(1),
-                                          base::TimeDelta::FromSeconds(10), 50);
+                                is_location_relative_to_parent, frame_sink_id,
+                                &target);
   return target;
 }
 
@@ -194,8 +175,14 @@ bool HitTestQuery::FindTargetInRegionForLocation(
     const gfx::PointF& location,
     size_t region_index,
     bool is_location_relative_to_parent,
+    const FrameSinkId& root_view_frame_sink_id,
     Target* target) const {
   gfx::PointF location_transformed(location);
+
+  // Exclude a region and all its descendants if the region has the ignore bit
+  // set.
+  if (hit_test_data_[region_index].flags & HitTestRegionFlags::kHitTestIgnore)
+    return false;
 
   if (is_location_relative_to_parent) {
     // HasPerspective() is checked for the transform because the point will not
@@ -230,15 +217,27 @@ bool HitTestQuery::FindTargetInRegionForLocation(
 
   const uint32_t flags = hit_test_data_[region_index].flags;
 
+  DCHECK(hit_test_data_[region_index].frame_sink_id.is_valid());
+  // Root view should not be overlapped by others. However, the root view
+  // information is not visible to LTHI::BuildHitTestData(). Therefore the
+  // kOverlappedRegion flag could still be set for the root view upon building
+  // hit test data, e.g. overlapped by ShelfApp on ChromeOS.
+  // The kHitTestAsk flag should be ignored in such a case because there is no
+  // need to do async hit testing on the root merely because it was overlapped.
+  // TODO(yigu): Do not set the kHitTestAsk and kOverlappedRegion flags for
+  // root when building hit test data.
+  bool root_view_overlapped =
+      hit_test_data_[region_index].frame_sink_id == root_view_frame_sink_id &&
+      hit_test_data_[region_index].async_hit_test_reasons ==
+          AsyncHitTestReasons::kOverlappedRegion;
+
   // Verify that async_hit_test_reasons is set if and only if there's
   // a kHitTestAsk flag.
   DCHECK_EQ(!!(flags & HitTestRegionFlags::kHitTestAsk),
             !!hit_test_data_[region_index].async_hit_test_reasons);
 
-  // TODO(sunxd): v2 doesn't work with drag-n-drop when it still relies on
-  // synchronous targeting result for nested OOPIF cases. crbug.com/896786
-  if (features::IsVizHitTestingSurfaceLayerEnabled() &&
-      (flags & HitTestRegionFlags::kHitTestAsk)) {
+  if ((flags & HitTestRegionFlags::kHitTestAsk) &&
+      !(flags & HitTestRegionFlags::kHitTestIgnore) && !root_view_overlapped) {
     target->frame_sink_id = hit_test_data_[region_index].frame_sink_id;
     target->location_in_target = location_in_target;
     target->flags = flags;
@@ -247,10 +246,13 @@ bool HitTestQuery::FindTargetInRegionForLocation(
     return true;
   }
 
+  // If the current region is not the root view, neither is its children.
+  // Therefore when recursively calling FindTargetInRegionForLocation, pass an
+  // invalid frame sink id as "root".
   while (child_region < child_region_end) {
     if (FindTargetInRegionForLocation(
             event_source, location_in_target, child_region,
-            /*is_location_relative_to_parent=*/true, target)) {
+            /*is_location_relative_to_parent=*/true, FrameSinkId(), target)) {
       return true;
     }
 
@@ -265,31 +267,32 @@ bool HitTestQuery::FindTargetInRegionForLocation(
   if (!RegionMatchEventSource(event_source, flags))
     return false;
 
-  if (flags &
-      (HitTestRegionFlags::kHitTestMine | HitTestRegionFlags::kHitTestAsk)) {
+  if ((flags & HitTestRegionFlags::kHitTestMine) &&
+      !(flags & HitTestRegionFlags::kHitTestIgnore)) {
     target->frame_sink_id = hit_test_data_[region_index].frame_sink_id;
     target->location_in_target = location_in_target;
-    target->flags = flags;
+    uint32_t async_hit_test_reasons =
+        hit_test_data_[region_index].async_hit_test_reasons;
+    uint32_t target_flags = flags;
+    if (root_view_overlapped) {
+      DCHECK_EQ(hit_test_data_[region_index].async_hit_test_reasons,
+                AsyncHitTestReasons::kOverlappedRegion);
+      target_flags &= ~HitTestRegionFlags::kHitTestAsk;
+      async_hit_test_reasons = AsyncHitTestReasons::kNotAsyncHitTest;
+    }
+    target->flags = target_flags;
     // We record fast path hit testing instances with reason kNotAsyncHitTest.
-    RecordSlowPathHitTestReasons(
-        hit_test_data_[region_index].async_hit_test_reasons);
+    RecordSlowPathHitTestReasons(async_hit_test_reasons);
     return true;
   }
   return false;
 }
 
 bool HitTestQuery::TransformLocationForTargetRecursively(
-    EventSource event_source,
     const std::vector<FrameSinkId>& target_ancestors,
     size_t target_ancestor,
     size_t region_index,
     gfx::PointF* location_in_target) const {
-  const uint32_t flags = hit_test_data_[region_index].flags;
-  if ((flags & HitTestRegionFlags::kHitTestChildSurface) == 0u &&
-      !RegionMatchEventSource(event_source, flags)) {
-    return false;
-  }
-
   hit_test_data_[region_index].transform().TransformPoint(location_in_target);
   if (!target_ancestor)
     return true;
@@ -306,7 +309,7 @@ bool HitTestQuery::TransformLocationForTargetRecursively(
     if (hit_test_data_[child_region].frame_sink_id ==
         target_ancestors[target_ancestor - 1]) {
       return TransformLocationForTargetRecursively(
-          event_source, target_ancestors, target_ancestor - 1, child_region,
+          target_ancestors, target_ancestor - 1, child_region,
           location_in_target);
     }
 
@@ -325,8 +328,8 @@ bool HitTestQuery::GetTransformToTargetRecursively(
     const FrameSinkId& target,
     size_t region_index,
     gfx::Transform* transform) const {
-  // TODO(riajiang): Cache the matrix product such that the transform can be
-  // found immediately.
+  // TODO(crbug.com/966944): Cache the matrix product such that the transform
+  // can be found immediately.
   if (hit_test_data_[region_index].frame_sink_id == target) {
     *transform = hit_test_data_[region_index].transform();
     return true;
@@ -358,11 +361,6 @@ bool HitTestQuery::GetTransformToTargetRecursively(
   }
 
   return false;
-}
-
-void HitTestQuery::ReceivedBadMessageFromGpuProcess() const {
-  if (!bad_message_gpu_callback_.is_null())
-    bad_message_gpu_callback_.Run();
 }
 
 void HitTestQuery::RecordSlowPathHitTestReasons(uint32_t reasons) const {
@@ -397,6 +395,8 @@ std::string HitTestQuery::PrintHitTestData() const {
     oss << tabs << "Index: " << i << '\n';
     oss << tabs << "Children: " << htr.child_count << '\n';
     oss << tabs << "Flags: " << GetFlagNames(htr.flags) << '\n';
+    oss << tabs << "AsyncHitTestReasons: "
+        << GetAsyncHitTestReasons(htr.async_hit_test_reasons) << '\n';
     oss << tabs << "Frame Sink Id: " << htr.frame_sink_id.ToString() << '\n';
     oss << tabs << "Rect: " << htr.rect.ToString() << '\n';
     oss << tabs << "Transform:" << '\n';

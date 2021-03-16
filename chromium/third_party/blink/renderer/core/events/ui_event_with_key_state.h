@@ -24,12 +24,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_UI_EVENT_WITH_KEY_STATE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EVENTS_UI_EVENT_WITH_KEY_STATE_H_
 
-#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/events/event_modifier_init.h"
 #include "third_party/blink/renderer/core/events/ui_event.h"
 
 namespace blink {
+
+class EventModifierInit;
 
 class CORE_EXPORT UIEventWithKeyState : public UIEvent {
  public:
@@ -72,14 +73,14 @@ class CORE_EXPORT UIEventWithKeyState : public UIEvent {
                       AbstractView*,
                       int detail,
                       WebInputEvent::Modifiers,
-                      TimeTicks platform_time_stamp,
+                      base::TimeTicks platform_time_stamp,
                       InputDeviceCapabilities* source_capabilities = nullptr);
   UIEventWithKeyState(const AtomicString& type,
                       const EventModifierInit* initializer,
-                      TimeTicks platform_time_stamp);
+                      base::TimeTicks platform_time_stamp);
   UIEventWithKeyState(const AtomicString& type,
                       const EventModifierInit* initializer)
-      : UIEventWithKeyState(type, initializer, CurrentTimeTicks()) {}
+      : UIEventWithKeyState(type, initializer, base::TimeTicks::Now()) {}
   void InitModifiers(bool ctrl_key,
                      bool alt_key,
                      bool shift_key,
@@ -91,7 +92,7 @@ class CORE_EXPORT UIEventWithKeyState : public UIEvent {
   static bool new_tab_modifier_set_from_isolated_world_;
 };
 
-UIEventWithKeyState* FindEventWithKeyState(Event*);
+const UIEventWithKeyState* FindEventWithKeyState(const Event*);
 
 }  // namespace blink
 

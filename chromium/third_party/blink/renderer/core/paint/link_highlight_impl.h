@@ -30,67 +30,52 @@
 
 #include "cc/layers/content_layer_client.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_client.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_delegate.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/compositor_element_id.h"
-#include "third_party/blink/renderer/platform/graphics/link_highlight.h"
 #include "third_party/blink/renderer/platform/graphics/path.h"
 #include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace cc {
 class Layer;
 class PictureLayer;
-}
+}  // namespace cc
 
 namespace blink {
 
+class EffectPaintPropertyNode;
 class GraphicsContext;
-class GraphicsLayer;
-class LayoutBoxModelObject;
-class Node;
 
-class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
-                                            public CompositorAnimationDelegate,
+class CORE_EXPORT LinkHighlightImpl final : public CompositorAnimationDelegate,
                                             public CompositorAnimationClient {
  public:
-  static std::unique_ptr<LinkHighlightImpl> Create(Node*);
+  explicit LinkHighlightImpl(Node*);
   ~LinkHighlightImpl() override;
 
   void StartHighlightAnimationIfNeeded();
 
-  // Recalculates |path_| based on |node_|'s geometry and updates the link
-  // highlight layer. To avoid re-computing |path_|, a dirty bit is used
-  // (see |geometry_needs_update_| and |Invalidate()|) which is based on raster
-  // invalidation of the owning graphics layer.
-  void UpdateGeometry();
-
   // CompositorAnimationDelegate implementation.
-  void NotifyAnimationStarted(double monotonic_time, int group) override;
+  void NotifyAnimationStarted(double monotonic_time, int group) override {}
   void NotifyAnimationFinished(double monotonic_time, int group) override;
   void NotifyAnimationAborted(double monotonic_time, int group) override {}
-
-  // LinkHighlight implementation.
-  void Invalidate() override;
-  cc::Layer* Layer() override;
-  void ClearCurrentGraphicsLayer() override;
 
   // CompositorAnimationClient implementation.
   CompositorAnimation* GetCompositorAnimation() const override;
 
-  GraphicsLayer* CurrentGraphicsLayerForTesting() const {
-    return current_graphics_layer_;
+  LayoutObject* GetLayoutObject() const {
+    return node_ ? node_->GetLayoutObject() : nullptr;
   }
 
-  Node* GetNode() const { return node_; }
+  CompositorElementId ElementIdForTesting() const { return element_id_; }
 
-  CompositorElementId element_id() const;
+  const EffectPaintPropertyNode& Effect() const { return *effect_; }
 
-  const EffectPaintPropertyNode* effect() const override;
-
+  void UpdateBeforePrePaint();
+  void UpdateAfterPrePaint();
   void Paint(GraphicsContext&);
 
   wtf_size_t FragmentCountForTesting() const { return fragments_.size(); }
@@ -99,23 +84,14 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
   }
 
  private:
-  LinkHighlightImpl(Node*);
-
   void ReleaseResources();
-  void ComputeQuads(const Node&, Vector<FloatQuad>&) const;
-
-  void AttachLinkHighlightToCompositingLayer(
-      const LayoutBoxModelObject& paint_invalidation_container);
-  void ClearGraphicsLayerLinkHighlightPointer();
-  // This function computes the highlight path, and returns true if it has
-  // changed size since the last call to this function.
-  bool ComputeHighlightLayerPathAndPosition(const LayoutBoxModelObject&);
 
   void SetPaintArtifactCompositorNeedsUpdate();
+  void UpdateOpacity(float opacity);
 
   class LinkHighlightFragment : private cc::ContentLayerClient {
    public:
-    LinkHighlightFragment(CompositorElementId);
+    LinkHighlightFragment();
     ~LinkHighlightFragment() override;
 
     cc::PictureLayer* Layer() const { return layer_.get(); }
@@ -137,15 +113,13 @@ class CORE_EXPORT LinkHighlightImpl final : public LinkHighlight,
   };
   Vector<LinkHighlightFragment> fragments_;
 
-  Persistent<Node> node_;
-  GraphicsLayer* current_graphics_layer_;
-  bool is_scrolling_graphics_layer_;
+  WeakPersistent<Node> node_;
   std::unique_ptr<CompositorAnimation> compositor_animation_;
+  scoped_refptr<EffectPaintPropertyNode> effect_;
 
-  bool geometry_needs_update_;
   bool is_animating_;
-  TimeTicks start_time_;
-  UniqueObjectId unique_id_;
+  base::TimeTicks start_time_;
+  CompositorElementId element_id_;
 };
 
 }  // namespace blink

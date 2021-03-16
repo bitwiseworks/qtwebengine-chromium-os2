@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/core/script/document_write_intervention.h"
 
-#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/web_effective_connection_type.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
@@ -13,6 +13,7 @@
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/script_fetch_options.h"
 #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
@@ -31,9 +32,10 @@ void EmitWarningMayBeBlocked(const String& url, Document& document) {
       "confirmed in a subsequent console message. "
       "See https://www.chromestatus.com/feature/5718547946799104 "
       "for more details.";
-  document.AddConsoleMessage(
-      ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel, message));
-  DVLOG(1) << message.Utf8().data();
+  document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+      mojom::ConsoleMessageSource::kJavaScript,
+      mojom::ConsoleMessageLevel::kWarning, message));
+  DVLOG(1) << message.Utf8();
 }
 
 void EmitWarningNotBlocked(const String& url, Document& document) {
@@ -42,8 +44,9 @@ void EmitWarningNotBlocked(const String& url, Document& document) {
       ", invoked via document.write was NOT BLOCKED on this page load, but MAY "
       "be blocked by the browser in future page loads with poor network "
       "connectivity.";
-  document.AddConsoleMessage(
-      ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel, message));
+  document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+      mojom::ConsoleMessageSource::kJavaScript,
+      mojom::ConsoleMessageLevel::kWarning, message));
 }
 
 void EmitErrorBlocked(const String& url, Document& document) {
@@ -53,19 +56,20 @@ void EmitErrorBlocked(const String& url, Document& document) {
       url +
       ", invoked via document.write was BLOCKED by the browser due to poor "
       "network connectivity. ";
-  document.AddConsoleMessage(ConsoleMessage::Create(
-      kInterventionMessageSource, kErrorMessageLevel, message));
+  document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+      mojom::ConsoleMessageSource::kIntervention,
+      mojom::ConsoleMessageLevel::kError, message));
 }
 
 void AddWarningHeader(FetchParameters* params) {
-  params->MutableResourceRequest().AddHTTPHeaderField(
+  params->MutableResourceRequest().AddHttpHeaderField(
       "Intervention",
       "<https://www.chromestatus.com/feature/5718547946799104>; "
       "level=\"warning\"");
 }
 
 void AddHeader(FetchParameters* params) {
-  params->MutableResourceRequest().AddHTTPHeaderField(
+  params->MutableResourceRequest().AddHttpHeaderField(
       "Intervention",
       "<https://www.chromestatus.com/feature/5718547946799104>");
 }
@@ -121,7 +125,7 @@ bool MaybeDisallowFetchForDocWrittenScript(FetchParameters& params,
   if (params.Defer() != FetchParameters::kNoDefer)
     return false;
 
-  probe::documentWriteFetchScript(&document);
+  probe::DocumentWriteFetchScript(&document);
 
   if (!params.Url().ProtocolIsInHTTPFamily())
     return false;
@@ -157,8 +161,8 @@ bool MaybeDisallowFetchForDocWrittenScript(FetchParameters& params,
     // block more scripts than necessary.
     if (params.Url().Protocol() != document.GetSecurityOrigin()->Protocol()) {
       document.Loader()->DidObserveLoadingBehavior(
-          WebLoadingBehaviorFlag::
-              kWebLoadingBehaviorDocumentWriteBlockDifferentScheme);
+          LoadingBehaviorFlag::
+              kLoadingBehaviorDocumentWriteBlockDifferentScheme);
     }
     return false;
   }
@@ -173,7 +177,7 @@ bool MaybeDisallowFetchForDocWrittenScript(FetchParameters& params,
     // Recording this metric since an increase in number of reloads for pages
     // where a script was blocked could be indicative of a page break.
     document.Loader()->DidObserveLoadingBehavior(
-        WebLoadingBehaviorFlag::kWebLoadingBehaviorDocumentWriteBlockReload);
+        LoadingBehaviorFlag::kLoadingBehaviorDocumentWriteBlockReload);
     AddWarningHeader(&params);
     return false;
   }
@@ -182,11 +186,10 @@ bool MaybeDisallowFetchForDocWrittenScript(FetchParameters& params,
   // that are eligible for blocking. Note that if there are multiple scripts
   // the flag will be conveyed to the browser process only once.
   document.Loader()->DidObserveLoadingBehavior(
-      WebLoadingBehaviorFlag::kWebLoadingBehaviorDocumentWriteBlock);
+      LoadingBehaviorFlag::kLoadingBehaviorDocumentWriteBlock);
 
-  if (!ShouldDisallowFetch(
-          settings, GetNetworkStateNotifier().ConnectionType(),
-          document.GetFrame()->Client()->GetEffectiveConnectionType())) {
+  if (!ShouldDisallowFetch(settings, GetNetworkStateNotifier().ConnectionType(),
+                           GetNetworkStateNotifier().EffectiveType())) {
     AddWarningHeader(&params);
     return false;
   }
@@ -215,9 +218,9 @@ void PossiblyFetchBlockedDocWriteScript(
 
   EmitErrorBlocked(resource->Url(), element_document);
 
-  FetchParameters params = options.CreateFetchParameters(
+  FetchParameters params(options.CreateFetchParameters(
       resource->Url(), element_document.GetSecurityOrigin(), cross_origin,
-      resource->Encoding(), FetchParameters::kIdleLoad);
+      resource->Encoding(), FetchParameters::kIdleLoad));
   AddHeader(&params);
   ScriptResource::Fetch(params, element_document.Fetcher(), nullptr,
                         ScriptResource::kNoStreaming);

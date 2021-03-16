@@ -6,11 +6,11 @@
 
 #include "base/test/launcher/unit_test_launcher.h"
 #include "base/test/test_suite.h"
-#include "cc/base/lap_timer.h"
+#include "base/timer/lap_timer.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_op_buffer_serializer.h"
 #include "cc/test/test_options_provider.h"
-#include "testing/perf/perf_test.h"
+#include "testing/perf/perf_result_reporter.h"
 #include "third_party/skia/include/core/SkMaskFilter.h"
 #include "third_party/skia/include/effects/SkColorMatrixFilter.h"
 #include "third_party/skia/include/effects/SkDashPathEffect.h"
@@ -56,8 +56,7 @@ class PaintOpPerfTest : public testing::Test {
           test_options_provider.color_space(),
           test_options_provider.can_use_lcd_text(),
           test_options_provider.context_supports_distance_field_text(),
-          test_options_provider.max_texture_size(),
-          test_options_provider.max_texture_bytes());
+          test_options_provider.max_texture_size());
       serializer.Serialize(&buffer, nullptr, preamble);
       bytes_written = serializer.written();
 
@@ -67,9 +66,9 @@ class PaintOpPerfTest : public testing::Test {
     } while (!timer_.HasTimeLimitExpired());
     CHECK_GT(bytes_written, 0u);
 
-    perf_test::PrintResult(name.c_str(), "", "  serialize",
-                           buffer.size() * timer_.LapsPerSecond(), "ops/s",
-                           true);
+    perf_test::PerfResultReporter reporter(name, "  serialize");
+    reporter.RegisterImportantMetric("", "runs/s");
+    reporter.AddResult("", timer_.LapsPerSecond());
 
     size_t bytes_read = 0;
     timer_.Reset();
@@ -98,13 +97,13 @@ class PaintOpPerfTest : public testing::Test {
       timer_.NextLap();
     } while (!timer_.HasTimeLimitExpired());
 
-    perf_test::PrintResult(name.c_str(), "", "deserialize",
-                           buffer.size() * timer_.LapsPerSecond(), "ops/s",
-                           true);
+    reporter = perf_test::PerfResultReporter(name, "deserialize");
+    reporter.RegisterImportantMetric("", "runs/s");
+    reporter.AddResult("", timer_.LapsPerSecond());
   }
 
  protected:
-  LapTimer timer_;
+  base::LapTimer timer_;
   std::unique_ptr<char, base::AlignedFreeDeleter> serialized_data_;
   std::unique_ptr<char, base::AlignedFreeDeleter> deserialized_data_;
 };
@@ -169,8 +168,7 @@ TEST_F(PaintOpPerfTest, TextOps) {
 
   SkTextBlobBuilder builder;
   int glyph_count = 5;
-  SkRect rect = SkRect::MakeXYWH(1, 1, 1, 1);
-  const auto& run = builder.allocRun(font, glyph_count, 1.2f, 2.3f, &rect);
+  const auto& run = builder.allocRun(font, glyph_count, 1.2f, 2.3f);
   std::fill(run.glyphs, run.glyphs + glyph_count, 0);
   auto blob = builder.make();
 

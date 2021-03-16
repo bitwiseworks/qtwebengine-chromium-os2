@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/observer_list.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
@@ -29,7 +30,7 @@ namespace {
 // do-nothing implementation.
 void PluginCrashed(PP_Module module) {
   NOTREACHED();
-};
+}
 
 PP_Instance GetInstanceForResource(PP_Resource resource) {
   // If a test relies on this, we need to implement it.
@@ -225,7 +226,7 @@ void PluginProxyTestHarness::TearDownHarness() {
 }
 
 void PluginProxyTestHarness::CreatePluginGlobals(
-    const scoped_refptr<base::TaskRunner>& ipc_task_runner) {
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
   if (globals_config_ == PER_THREAD_GLOBALS) {
     plugin_globals_.reset(new PluginGlobals(PpapiGlobals::PerThreadForTest(),
                                             ipc_task_runner));
@@ -252,13 +253,6 @@ PluginProxyTestHarness::PluginDelegateMock::ShareHandleWithRemote(
     bool should_close_source) {
   return IPC::GetPlatformFileForTransit(handle,
                                         should_close_source);
-}
-
-base::SharedMemoryHandle
-PluginProxyTestHarness::PluginDelegateMock::ShareSharedMemoryHandleWithRemote(
-    const base::SharedMemoryHandle& handle,
-    base::ProcessId /* remote_pid */) {
-  return base::SharedMemory::DuplicateHandle(handle);
 }
 
 base::UnsafeSharedMemoryRegion PluginProxyTestHarness::PluginDelegateMock::
@@ -370,12 +364,12 @@ void PluginProxyMultiThreadTest::RunTest() {
 
     // The destruction requires a valid PpapiGlobals instance, so we should
     // explicitly release it.
-    secondary_thread_message_loop_ = NULL;
+    secondary_thread_message_loop_.reset();
   }
 
   secondary_thread_.reset(NULL);
   nested_main_thread_message_loop_.reset(NULL);
-  main_thread_task_runner_ = NULL;
+  main_thread_task_runner_.reset();
 }
 
 void PluginProxyMultiThreadTest::CheckOnThread(ThreadType thread_type) {
@@ -390,8 +384,8 @@ void PluginProxyMultiThreadTest::CheckOnThread(ThreadType thread_type) {
 
 void PluginProxyMultiThreadTest::PostQuitForMainThread() {
   main_thread_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&PluginProxyMultiThreadTest::QuitNestedLoop,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&PluginProxyMultiThreadTest::QuitNestedLoop,
+                                base::Unretained(this)));
 }
 
 void PluginProxyMultiThreadTest::PostQuitForSecondaryThread() {
@@ -505,13 +499,6 @@ HostProxyTestHarness::DelegateMock::ShareHandleWithRemote(
                                         should_close_source);
 }
 
-base::SharedMemoryHandle
-HostProxyTestHarness::DelegateMock::ShareSharedMemoryHandleWithRemote(
-    const base::SharedMemoryHandle& handle,
-    base::ProcessId /*remote_pid*/) {
-  return base::SharedMemory::DuplicateHandle(handle);
-}
-
 base::UnsafeSharedMemoryRegion
 HostProxyTestHarness::DelegateMock::ShareUnsafeSharedMemoryRegionWithRemote(
     const base::UnsafeSharedMemoryRegion& region,
@@ -571,7 +558,7 @@ TwoWayTest::~TwoWayTest() {
 
 void TwoWayTest::SetUp() {
   base::Thread::Options options;
-  options.message_loop_type = base::MessageLoop::TYPE_IO;
+  options.message_pump_type = base::MessagePumpType::IO;
   io_thread_.StartWithOptions(options);
   plugin_thread_.Start();
 
@@ -580,10 +567,10 @@ void TwoWayTest::SetUp() {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   plugin_thread_.task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&SetUpRemoteHarness, remote_harness_, pipe.handle0.release(),
-                 base::RetainedRef(io_thread_.task_runner()), &shutdown_event_,
-                 &remote_harness_set_up));
+      FROM_HERE, base::BindOnce(&SetUpRemoteHarness, remote_harness_,
+                                pipe.handle0.release(),
+                                base::RetainedRef(io_thread_.task_runner()),
+                                &shutdown_event_, &remote_harness_set_up));
   remote_harness_set_up.Wait();
   local_harness_->SetUpHarnessWithChannel(
       pipe.handle1.release(), io_thread_.task_runner().get(), &shutdown_event_,
@@ -595,8 +582,8 @@ void TwoWayTest::TearDown() {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   plugin_thread_.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&TearDownRemoteHarness, remote_harness_,
-                            &remote_harness_torn_down));
+      FROM_HERE, base::BindOnce(&TearDownRemoteHarness, remote_harness_,
+                                &remote_harness_torn_down));
   remote_harness_torn_down.Wait();
 
   local_harness_->TearDownHarness();
@@ -609,7 +596,7 @@ void TwoWayTest::PostTaskOnRemoteHarness(const base::Closure& task) {
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   plugin_thread_.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&RunTaskOnRemoteHarness, task, &task_complete));
+      FROM_HERE, base::BindOnce(&RunTaskOnRemoteHarness, task, &task_complete));
   task_complete.Wait();
 }
 

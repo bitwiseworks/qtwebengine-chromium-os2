@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -18,7 +19,7 @@
 #include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/api/file_system/file_system_delegate.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -136,7 +137,7 @@ class FileSystemApiConsentProviderTest : public testing::Test {
   chromeos::FakeChromeUserManager*
       user_manager_;  // Owned by the scope enabler.
   std::unique_ptr<user_manager::ScopedUserManager> scoped_user_manager_enabler_;
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<Volume> download_volume_;
 };

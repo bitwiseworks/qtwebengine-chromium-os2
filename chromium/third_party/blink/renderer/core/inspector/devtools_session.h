@@ -5,8 +5,14 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_DEVTOOLS_SESSION_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_DEVTOOLS_SESSION_H_
 
+#include <memory>
+#include "base/callback.h"
 #include "base/macros.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/inspector/inspector_session_state.h"
@@ -20,22 +26,26 @@
 namespace blink {
 
 class DevToolsAgent;
+class Document;
 class DocumentLoader;
 class InspectorAgent;
 class LocalFrame;
 
-class CORE_EXPORT DevToolsSession
-    : public GarbageCollectedFinalized<DevToolsSession>,
-      public mojom::blink::DevToolsSession,
-      public protocol::FrontendChannel,
-      public v8_inspector::V8Inspector::Channel {
+class CORE_EXPORT DevToolsSession : public GarbageCollected<DevToolsSession>,
+                                    public mojom::blink::DevToolsSession,
+                                    public protocol::FrontendChannel,
+                                    public v8_inspector::V8Inspector::Channel {
  public:
   DevToolsSession(
       DevToolsAgent*,
-      mojom::blink::DevToolsSessionHostAssociatedPtrInfo host_ptr_info,
-      mojom::blink::DevToolsSessionAssociatedRequest main_request,
-      mojom::blink::DevToolsSessionRequest io_request,
-      mojom::blink::DevToolsSessionStatePtr reattach_session_state);
+      mojo::PendingAssociatedRemote<mojom::blink::DevToolsSessionHost>
+          host_remote,
+      mojo::PendingAssociatedReceiver<mojom::blink::DevToolsSession>
+          main_receiver,
+      mojo::PendingReceiver<mojom::blink::DevToolsSession> io_receiver,
+      mojom::blink::DevToolsSessionStatePtr reattach_session_state,
+      bool client_expects_binary_responses,
+      const String& session_id);
   ~DevToolsSession() override;
 
   void ConnectToV8(v8_inspector::V8Inspector*, int context_group_id);
@@ -43,13 +53,17 @@ class CORE_EXPORT DevToolsSession
 
   void Append(InspectorAgent*);
   void Detach();
-  void FlushProtocolNotifications();
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
+
+  // protocol::FrontendChannel implementation.
+  void FlushProtocolNotifications() override;
 
   // Core probes.
   void DidStartProvisionalLoad(LocalFrame*);
   void DidFailProvisionalLoad(LocalFrame*);
   void DidCommitLoad(LocalFrame*, DocumentLoader*);
+  void PaintTiming(Document* document, const char* name, double timestamp);
+  void DomContentLoadedEventFired(LocalFrame*);
 
  private:
   class IOSession;
@@ -57,18 +71,20 @@ class CORE_EXPORT DevToolsSession
   // mojom::blink::DevToolsSession implementation.
   void DispatchProtocolCommand(int call_id,
                                const String& method,
-                               const String& message) override;
+                               base::span<const uint8_t> message) override;
+  void DispatchProtocolCommandImpl(int call_id,
+                                   const String& method,
+                                   base::span<const uint8_t> message);
 
   // protocol::FrontendChannel implementation.
-  void sendProtocolResponse(
+  void SendProtocolResponse(
       int call_id,
       std::unique_ptr<protocol::Serializable> message) override;
-  void sendProtocolNotification(
+  void SendProtocolNotification(
       std::unique_ptr<protocol::Serializable> message) override;
-  void fallThrough(int call_id,
-                   const String& method,
-                   const String& message) override;
-  void flushProtocolNotifications() override;
+  void FallThrough(int call_id,
+                   crdtp::span<uint8_t> method,
+                   crdtp::span<uint8_t> message) override;
 
   // v8_inspector::V8Inspector::Channel implementation.
   void sendResponse(
@@ -76,22 +92,31 @@ class CORE_EXPORT DevToolsSession
       std::unique_ptr<v8_inspector::StringBuffer> message) override;
   void sendNotification(
       std::unique_ptr<v8_inspector::StringBuffer> message) override;
+  void flushProtocolNotifications() override;
 
   bool IsDetached();
-  void SendProtocolResponse(int call_id, const String& message);
+  void SendProtocolResponse(int call_id, std::vector<uint8_t> message);
+
+  // Converts to JSON if requested by the client.
+  blink::mojom::blink::DevToolsMessagePtr FinalizeMessage(
+      std::vector<uint8_t> message) const;
 
   Member<DevToolsAgent> agent_;
-  mojo::AssociatedBinding<mojom::blink::DevToolsSession> binding_;
-  mojom::blink::DevToolsSessionHostAssociatedPtr host_ptr_;
+  mojo::AssociatedReceiver<mojom::blink::DevToolsSession> receiver_;
+  mojo::AssociatedRemote<mojom::blink::DevToolsSessionHost> host_remote_;
   IOSession* io_session_;
   std::unique_ptr<v8_inspector::V8InspectorSession> v8_session_;
   std::unique_ptr<protocol::UberDispatcher> inspector_backend_dispatcher_;
   InspectorSessionState session_state_;
   HeapVector<Member<InspectorAgent>> agents_;
-  class Notification;
-  Vector<std::unique_ptr<Notification>> notification_queue_;
+  // Notifications are lazily serialized to shift the serialization overhead
+  // from performance measurements. We may want to revisit this.
+  // See https://bugs.chromium.org/p/chromium/issues/detail?id=1044989#c8
+  Vector<base::OnceCallback<std::vector<uint8_t>()>> notification_queue_;
+  const bool client_expects_binary_responses_;
   InspectorAgentState v8_session_state_;
-  InspectorAgentState::String v8_session_state_json_;
+  InspectorAgentState::Bytes v8_session_state_cbor_;
+  const String session_id_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsSession);
 };

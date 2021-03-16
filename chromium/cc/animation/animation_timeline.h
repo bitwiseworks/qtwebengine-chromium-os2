@@ -8,7 +8,6 @@
 #include <memory>
 #include <unordered_map>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/animation/animation_export.h"
 
@@ -25,7 +24,10 @@ class CC_ANIMATION_EXPORT AnimationTimeline
     : public base::RefCounted<AnimationTimeline> {
  public:
   static scoped_refptr<AnimationTimeline> Create(int id);
-  scoped_refptr<AnimationTimeline> CreateImplInstance() const;
+  virtual scoped_refptr<AnimationTimeline> CreateImplInstance() const;
+
+  AnimationTimeline(const AnimationTimeline&) = delete;
+  AnimationTimeline& operator=(const AnimationTimeline&) = delete;
 
   int id() const { return id_; }
 
@@ -40,20 +42,30 @@ class CC_ANIMATION_EXPORT AnimationTimeline
   void AttachAnimation(scoped_refptr<Animation> animation);
   void DetachAnimation(scoped_refptr<Animation> animation);
 
+  std::vector<Animation*> GetAnimations() const;
   void ClearAnimations();
+  bool HasAnimation() const { return !id_to_animation_map_.empty(); }
 
-  void PushPropertiesTo(AnimationTimeline* timeline_impl);
+  virtual void PushPropertiesTo(AnimationTimeline* timeline_impl);
+  virtual void ActivateTimeline() {}
 
   Animation* GetAnimationById(int animation_id) const;
 
   void SetNeedsPushProperties();
   bool needs_push_properties() const { return needs_push_properties_; }
 
- private:
-  friend class base::RefCounted<AnimationTimeline>;
+  virtual bool IsScrollTimeline() const;
 
+ protected:
   explicit AnimationTimeline(int id);
   virtual ~AnimationTimeline();
+
+  // A list of all animations which this timeline owns.
+  using IdToAnimationMap = std::unordered_map<int, scoped_refptr<Animation>>;
+  IdToAnimationMap id_to_animation_map_;
+
+ private:
+  friend class base::RefCounted<AnimationTimeline>;
 
   void PushAttachedAnimationsToImplThread(AnimationTimeline* timeline) const;
   void RemoveDetachedAnimationsFromImplThread(
@@ -62,10 +74,6 @@ class CC_ANIMATION_EXPORT AnimationTimeline
 
   void EraseAnimation(scoped_refptr<Animation> animation);
 
-  // A list of all animations which this timeline owns.
-  using IdToAnimationMap = std::unordered_map<int, scoped_refptr<Animation>>;
-  IdToAnimationMap id_to_animation_map_;
-
   int id_;
   AnimationHost* animation_host_;
   bool needs_push_properties_;
@@ -73,8 +81,6 @@ class CC_ANIMATION_EXPORT AnimationTimeline
   // Impl-only AnimationTimeline has no main thread instance and lives on
   // it's own.
   bool is_impl_only_;
-
-  DISALLOW_COPY_AND_ASSIGN(AnimationTimeline);
 };
 
 }  // namespace cc

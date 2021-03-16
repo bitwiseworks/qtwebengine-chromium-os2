@@ -23,7 +23,7 @@
 #include <memory>
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/style/style_difference.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 
 namespace blink {
@@ -42,8 +42,7 @@ class SVGResourcesCache {
   static SVGResources* CachedResourcesForLayoutObject(const LayoutObject&);
 
   // Called from all SVG layoutObjects addChild() methods.
-  static void ClientWasAddedToTree(LayoutObject&,
-                                   const ComputedStyle& new_style);
+  static void ClientWasAddedToTree(LayoutObject&);
 
   // Called from all SVG layoutObjects removeChild() methods.
   static void ClientWillBeRemovedFromTree(LayoutObject&);
@@ -84,9 +83,17 @@ class SVGResourcesCache {
   };
 
  private:
-  bool AddResourcesFromLayoutObject(LayoutObject&, const ComputedStyle&);
+  struct ResourceUpdateInfo {
+    bool changed;
+    bool needs_layout;
+
+    explicit operator bool() const { return changed; }
+  };
+  SVGResources* AddResourcesFromLayoutObject(LayoutObject&,
+                                             const ComputedStyle&);
   bool RemoveResourcesFromLayoutObject(LayoutObject&);
-  bool UpdateResourcesFromLayoutObject(LayoutObject&, const ComputedStyle&);
+  ResourceUpdateInfo UpdateResourcesFromLayoutObject(LayoutObject&,
+                                                     const ComputedStyle&);
 
   typedef HashMap<const LayoutObject*, std::unique_ptr<SVGResources>> CacheMap;
   CacheMap cache_;

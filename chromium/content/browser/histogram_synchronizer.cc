@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -47,12 +48,11 @@ class HistogramSynchronizer::RequestContext {
   // A map from sequence_number_ to the actual RequestContexts.
   typedef std::map<int, RequestContext*> RequestContextMap;
 
-  RequestContext(const base::Closure& callback, int sequence_number)
-      : callback_(callback),
+  RequestContext(base::OnceClosure callback, int sequence_number)
+      : callback_(std::move(callback)),
         sequence_number_(sequence_number),
         received_process_group_count_(0),
-        processes_pending_(0) {
-  }
+        processes_pending_(0) {}
   ~RequestContext() {}
 
   void SetReceivedProcessGroupCount(bool done) {
@@ -84,10 +84,11 @@ class HistogramSynchronizer::RequestContext {
 
   // Register |callback| in |outstanding_requests_| map for the given
   // |sequence_number|.
-  static void Register(const base::Closure& callback, int sequence_number) {
+  static void Register(base::OnceClosure callback, int sequence_number) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-    RequestContext* request = new RequestContext(callback, sequence_number);
+    RequestContext* request =
+        new RequestContext(std::move(callback), sequence_number);
     outstanding_requests_.Get()[sequence_number] = request;
   }
 
@@ -120,7 +121,7 @@ class HistogramSynchronizer::RequestContext {
     bool received_process_group_count = request->received_process_group_count_;
     int unresponsive_processes = request->processes_pending_;
 
-    request->callback_.Run();
+    std::move(request->callback_).Run();
 
     delete request;
     outstanding_requests_.Get().erase(it);
@@ -142,7 +143,7 @@ class HistogramSynchronizer::RequestContext {
   }
 
   // Requests are made to asynchronously send data to the |callback_|.
-  base::Closure callback_;
+  base::OnceClosure callback_;
 
   // The sequence number used by the most recent update request to contact all
   // processes.
@@ -177,7 +178,7 @@ HistogramSynchronizer::~HistogramSynchronizer() {
   RequestContext::OnShutdown();
 
   // Just in case we have any pending tasks, clear them out.
-  SetTaskRunnerAndCallback(nullptr, base::Closure());
+  SetTaskRunnerAndCallback(nullptr, base::NullCallback());
 }
 
 HistogramSynchronizer* HistogramSynchronizer::GetInstance() {
@@ -189,9 +190,8 @@ HistogramSynchronizer* HistogramSynchronizer::GetInstance() {
 // static
 void HistogramSynchronizer::FetchHistograms() {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::BindOnce(&HistogramSynchronizer::FetchHistograms));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&HistogramSynchronizer::FetchHistograms));
     return;
   }
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -207,24 +207,24 @@ void HistogramSynchronizer::FetchHistograms() {
 }
 
 void FetchHistogramsAsynchronously(scoped_refptr<base::TaskRunner> task_runner,
-                                   const base::Closure& callback,
+                                   base::OnceClosure callback,
                                    base::TimeDelta wait_time) {
-  HistogramSynchronizer::FetchHistogramsAsynchronously(std::move(task_runner),
-                                                       callback, wait_time);
+  HistogramSynchronizer::FetchHistogramsAsynchronously(
+      std::move(task_runner), std::move(callback), wait_time);
 }
 
 // static
 void HistogramSynchronizer::FetchHistogramsAsynchronously(
     scoped_refptr<base::TaskRunner> task_runner,
-    const base::Closure& callback,
+    base::OnceClosure callback,
     base::TimeDelta wait_time) {
   DCHECK(task_runner);
-  DCHECK(!callback.is_null());
+  DCHECK(callback);
 
   HistogramSynchronizer* current_synchronizer =
       HistogramSynchronizer::GetInstance();
   current_synchronizer->SetTaskRunnerAndCallback(std::move(task_runner),
-                                                 callback);
+                                                 std::move(callback));
 
   current_synchronizer->RegisterAndNotifyAllProcesses(
       HistogramSynchronizer::ASYNC_HISTOGRAMS, wait_time);
@@ -237,10 +237,9 @@ void HistogramSynchronizer::RegisterAndNotifyAllProcesses(
 
   int sequence_number = GetNextAvailableSequenceNumber(requester);
 
-  base::Closure callback = base::Bind(
+  base::OnceClosure callback = base::BindOnce(
       &HistogramSynchronizer::ForceHistogramSynchronizationDoneCallback,
-      base::Unretained(this),
-      sequence_number);
+      base::Unretained(this), sequence_number);
 
   RequestContext::Register(std::move(callback), sequence_number);
 
@@ -249,7 +248,7 @@ void HistogramSynchronizer::RegisterAndNotifyAllProcesses(
 
   // Post a task that would be called after waiting for wait_time.  This acts
   // as a watchdog, to cancel the requests for non-responsive processes.
-  base::PostDelayedTaskWithTraits(
+  base::PostDelayedTask(
       FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&RequestContext::Unregister, sequence_number), wait_time);
 }
@@ -286,13 +285,13 @@ void HistogramSynchronizer::OnHistogramDataCollected(
 
 void HistogramSynchronizer::SetTaskRunnerAndCallback(
     scoped_refptr<base::TaskRunner> task_runner,
-    const base::Closure& callback) {
-  base::Closure old_callback;
+    base::OnceClosure callback) {
+  base::OnceClosure old_callback;
   scoped_refptr<base::TaskRunner> old_task_runner;
   {
     base::AutoLock auto_lock(lock_);
-    old_callback = callback_;
-    callback_ = callback;
+    old_callback = std::move(callback_);
+    callback_ = std::move(callback);
     old_task_runner = std::move(callback_task_runner_);
     callback_task_runner_ = std::move(task_runner);
     // Prevent premature calling of our new callbacks.
@@ -304,13 +303,13 @@ void HistogramSynchronizer::SetTaskRunnerAndCallback(
 
 void HistogramSynchronizer::ForceHistogramSynchronizationDoneCallback(
     int sequence_number) {
-  base::Closure callback;
+  base::OnceClosure callback;
   scoped_refptr<base::TaskRunner> task_runner;
   {
     base::AutoLock lock(lock_);
     if (sequence_number != async_sequence_number_)
       return;
-    callback = callback_;
+    callback = std::move(callback_);
     task_runner = std::move(callback_task_runner_);
     callback_.Reset();
   }
@@ -319,10 +318,10 @@ void HistogramSynchronizer::ForceHistogramSynchronizationDoneCallback(
 
 void HistogramSynchronizer::InternalPostTask(
     scoped_refptr<base::TaskRunner> task_runner,
-    const base::Closure& callback) {
+    base::OnceClosure callback) {
   if (callback.is_null() || !task_runner)
     return;
-  task_runner->PostTask(FROM_HERE, callback);
+  task_runner->PostTask(FROM_HERE, std::move(callback));
 }
 
 int HistogramSynchronizer::GetNextAvailableSequenceNumber(

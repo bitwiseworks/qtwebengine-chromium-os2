@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -29,7 +29,7 @@ class WindowSurfaceWGL : public SurfaceWGL
     ~WindowSurfaceWGL() override;
 
     egl::Error initialize(const egl::Display *display) override;
-    egl::Error makeCurrent() override;
+    egl::Error makeCurrent(const gl::Context *context) override;
 
     egl::Error swap(const gl::Context *context) override;
     egl::Error postSubBuffer(const gl::Context *context,

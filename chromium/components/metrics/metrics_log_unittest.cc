@@ -81,15 +81,25 @@ class MetricsLogTest : public testing::Test {
   ~MetricsLogTest() override {}
 
  protected:
-  // Check that the values in |system_values| correspond to the test data
-  // defined at the top of this file.
+  // Check that the values in |system_values| are filled in and expected ones
+  // correspond to the test data defined at the top of this file.
   void CheckSystemProfile(const SystemProfileProto& system_profile) {
+    // Check for presence of core system profile fields.
+    EXPECT_TRUE(system_profile.has_build_timestamp());
+    EXPECT_TRUE(system_profile.has_app_version());
+    EXPECT_TRUE(system_profile.has_channel());
+    EXPECT_TRUE(system_profile.has_application_locale());
+
+    const SystemProfileProto::OS& os = system_profile.os();
+    EXPECT_TRUE(os.has_name());
+    EXPECT_TRUE(os.has_version());
+
+    // Check matching test brand code.
     EXPECT_EQ(TestMetricsServiceClient::kBrandForTesting,
               system_profile.brand_code());
 
-    const SystemProfileProto::Hardware& hardware =
-        system_profile.hardware();
-
+    // Check for presence of fields set by a metrics provider.
+    const SystemProfileProto::Hardware& hardware = system_profile.hardware();
     EXPECT_TRUE(hardware.has_cpu());
     EXPECT_TRUE(hardware.cpu().has_vendor_name());
     EXPECT_TRUE(hardware.cpu().has_signature());
@@ -117,9 +127,9 @@ TEST_F(MetricsLogTest, LogType) {
 TEST_F(MetricsLogTest, BasicRecord) {
   TestMetricsServiceClient client;
   client.set_version_string("bogus version");
+  const std::string kClientId = "totally bogus client ID";
   TestingPrefServiceSimple prefs;
-  MetricsLog log("totally bogus client ID", 137, MetricsLog::ONGOING_LOG,
-                 &client);
+  MetricsLog log(kClientId, 137, MetricsLog::ONGOING_LOG, &client);
   log.CloseLog();
 
   std::string encoded;
@@ -136,6 +146,9 @@ TEST_F(MetricsLogTest, BasicRecord) {
 
   SystemProfileProto* system_profile = expected.mutable_system_profile();
   system_profile->set_app_version("bogus version");
+  // Make sure |client_uuid| in the system profile is the unhashed client id
+  // and is the same as the client id in |local_prefs|.
+  system_profile->set_client_uuid(kClientId);
   system_profile->set_channel(client.GetChannel());
   system_profile->set_application_locale(client.GetApplicationLocale());
 
@@ -245,6 +258,19 @@ TEST_F(MetricsLogTest, RecordEnvironment) {
   auto cpu_provider = std::make_unique<metrics::CPUMetricsProvider>();
   delegating_provider.RegisterMetricsProvider(std::move(cpu_provider));
   log.RecordEnvironment(&delegating_provider);
+
+  // Check non-system profile values.
+  EXPECT_EQ(MetricsLog::Hash(kClientId), log.uma_proto().client_id());
+  EXPECT_EQ(kSessionId, log.uma_proto().session_id());
+  // Check that the system profile on the log has the correct values set.
+  CheckSystemProfile(log.system_profile());
+
+  // Call RecordEnvironment() again and verify things are are still filled in.
+  log.RecordEnvironment(&delegating_provider);
+
+  // Check non-system profile values.
+  EXPECT_EQ(MetricsLog::Hash(kClientId), log.uma_proto().client_id());
+  EXPECT_EQ(kSessionId, log.uma_proto().session_id());
   // Check that the system profile on the log has the correct values set.
   CheckSystemProfile(log.system_profile());
 }
@@ -350,7 +376,7 @@ TEST_F(MetricsLogTest, TruncateEvents) {
   TestMetricsLog log(kClientId, kSessionId, MetricsLog::ONGOING_LOG, &client);
 
   for (int i = 0; i < internal::kUserActionEventLimit * 2; ++i) {
-    log.RecordUserAction("BasicAction");
+    log.RecordUserAction("BasicAction", base::TimeTicks::Now());
     EXPECT_EQ(i + 1, log.uma_proto().user_action_event_size());
   }
   for (int i = 0; i < internal::kOmniboxEventLimit * 2; ++i) {

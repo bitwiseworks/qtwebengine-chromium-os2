@@ -24,11 +24,11 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -54,7 +54,6 @@ using base::UserMetricsAction;
 using content::BrowserThread;
 using content::PluginService;
 using content::WebUIMessageHandler;
-using webui::webui_util::AddPair;
 
 namespace {
 
@@ -63,7 +62,7 @@ content::WebUIDataSource* CreateNaClUIHTMLSource() {
       content::WebUIDataSource::Create(chrome::kChromeUINaClHost);
   source->OverrideContentSecurityPolicyScriptSrc(
       "script-src chrome://resources 'self' 'unsafe-eval';");
-  source->SetJsonPath("strings.js");
+  source->UseStringsJs();
   source->AddResourcePath("about_nacl.css", IDR_ABOUT_NACL_CSS);
   source->AddResourcePath("about_nacl.js", IDR_ABOUT_NACL_JS);
   source->SetDefaultResource(IDR_ABOUT_NACL_HTML);
@@ -133,7 +132,7 @@ class NaClDomHandler : public WebUIMessageHandler {
   std::string pnacl_version_string_;
 
   // Factory for the creating refs in callbacks.
-  base::WeakPtrFactory<NaClDomHandler> weak_ptr_factory_;
+  base::WeakPtrFactory<NaClDomHandler> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(NaClDomHandler);
 };
@@ -141,8 +140,7 @@ class NaClDomHandler : public WebUIMessageHandler {
 NaClDomHandler::NaClDomHandler()
     : has_plugin_info_(false),
       pnacl_path_validated_(false),
-      pnacl_path_exists_(false),
-      weak_ptr_factory_(this) {
+      pnacl_path_exists_(false) {
   PluginService::GetInstance()->GetPlugins(base::Bind(
       &NaClDomHandler::OnGotPlugins, weak_ptr_factory_.GetWeakPtr()));
 }
@@ -155,6 +153,15 @@ void NaClDomHandler::RegisterMessages() {
       "requestNaClInfo",
       base::BindRepeating(&NaClDomHandler::HandleRequestNaClInfo,
                           base::Unretained(this)));
+}
+
+void AddPair(base::ListValue* list,
+             const base::string16& key,
+             const base::string16& value) {
+  std::unique_ptr<base::DictionaryValue> results(new base::DictionaryValue());
+  results->SetString("key", key);
+  results->SetString("value", value);
+  list->Append(std::move(results));
 }
 
 // Generate an empty data-pair which acts as a line break.
@@ -185,19 +192,27 @@ void NaClDomHandler::AddOperatingSystemInfo(base::ListValue* list) {
 #if defined(OS_WIN)
   base::win::OSInfo* os = base::win::OSInfo::GetInstance();
   switch (os->version()) {
-    case base::win::VERSION_XP: os_label += " XP"; break;
-    case base::win::VERSION_SERVER_2003:
+    case base::win::Version::XP:
+      os_label += " XP";
+      break;
+    case base::win::Version::SERVER_2003:
       os_label += " Server 2003 or XP Pro 64 bit";
       break;
-    case base::win::VERSION_VISTA: os_label += " Vista or Server 2008"; break;
-    case base::win::VERSION_WIN7: os_label += " 7 or Server 2008 R2"; break;
-    case base::win::VERSION_WIN8: os_label += " 8 or Server 2012"; break;
+    case base::win::Version::VISTA:
+      os_label += " Vista or Server 2008";
+      break;
+    case base::win::Version::WIN7:
+      os_label += " 7 or Server 2008 R2";
+      break;
+    case base::win::Version::WIN8:
+      os_label += " 8 or Server 2012";
+      break;
     default:  os_label += " UNKNOWN"; break;
   }
-  os_label += " SP" + base::IntToString(os->service_pack().major);
+  os_label += " SP" + base::NumberToString(os->service_pack().major);
   if (os->service_pack().minor > 0)
-    os_label += "." + base::IntToString(os->service_pack().minor);
-  if (os->architecture() == base::win::OSInfo::X64_ARCHITECTURE)
+    os_label += "." + base::NumberToString(os->service_pack().minor);
+  if (os->GetArchitecture() == base::win::OSInfo::X64_ARCHITECTURE)
     os_label += " 64 bit";
 #endif
   AddPair(list, l10n_util::GetStringUTF16(IDS_VERSION_UI_OS),
@@ -357,12 +372,12 @@ void NaClDomHandler::MaybeRespondToPage() {
 
   if (!pnacl_path_validated_) {
     std::string* version_string = new std::string;
-    base::PostTaskWithTraitsAndReplyWithResult(
+    base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
-        base::Bind(&CheckPathAndVersion, version_string),
-        base::Bind(&NaClDomHandler::DidCheckPathAndVersion,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   base::Owned(version_string)));
+        base::BindOnce(&CheckPathAndVersion, version_string),
+        base::BindOnce(&NaClDomHandler::DidCheckPathAndVersion,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       base::Owned(version_string)));
     return;
   }
 

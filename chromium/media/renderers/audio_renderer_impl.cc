@@ -19,6 +19,7 @@
 #include "base/power_monitor/power_monitor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "media/audio/null_audio_sink.h"
@@ -46,7 +47,8 @@ AudioRendererImpl::AudioRendererImpl(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     media::AudioRendererSink* sink,
     const CreateAudioDecodersCB& create_audio_decoders_cb,
-    MediaLog* media_log)
+    MediaLog* media_log,
+    const TranscribeAudioCallback& transcribe_audio_callback)
     : task_runner_(task_runner),
       expecting_config_changes_(false),
       sink_(sink),
@@ -69,24 +71,20 @@ AudioRendererImpl::AudioRendererImpl(
       rendered_end_of_stream_(false),
       is_suspending_(false),
       is_passthrough_(false),
-      weak_factory_(this) {
+      transcribe_audio_callback_(transcribe_audio_callback) {
   DCHECK(create_audio_decoders_cb_);
-  // Tests may not have a power monitor.
-  base::PowerMonitor* monitor = base::PowerMonitor::Get();
-  if (!monitor)
-    return;
 
   // PowerObserver's must be added and removed from the same thread, but we
   // won't remove the observer until we're destructed on |task_runner_| so we
   // must post it here if we're on the wrong thread.
   if (task_runner_->BelongsToCurrentThread()) {
-    monitor->AddObserver(this);
+    base::PowerMonitor::AddObserver(this);
   } else {
     // Safe to post this without a WeakPtr because this class must be destructed
     // on the same thread and construction has not completed yet.
-    task_runner_->PostTask(FROM_HERE,
-                           base::BindOnce(&base::PowerMonitor::AddObserver,
-                                          base::Unretained(monitor), this));
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(IgnoreResult(&base::PowerMonitor::AddObserver), this));
   }
 
   // Do not add anything below this line since the above actions are only safe
@@ -96,18 +94,11 @@ AudioRendererImpl::AudioRendererImpl(
 AudioRendererImpl::~AudioRendererImpl() {
   DVLOG(1) << __func__;
   DCHECK(task_runner_->BelongsToCurrentThread());
-  if (base::PowerMonitor::Get())
-    base::PowerMonitor::Get()->RemoveObserver(this);
+  base::PowerMonitor::RemoveObserver(this);
 
   // If Render() is in progress, this call will wait for Render() to finish.
   // After this call, the |sink_| will not call back into |this| anymore.
   sink_->Stop();
-
-  // Trying to track down AudioClock crash, http://crbug.com/674856. If the sink
-  // hasn't truly stopped above we will fail to acquire the lock. The sink must
-  // be stopped to avoid destroying the AudioClock while its still being used.
-  CHECK(lock_.Try());
-  lock_.Release();
 
   if (init_cb_)
     FinishInitialization(PIPELINE_ERROR_ABORT);
@@ -270,16 +261,21 @@ TimeSource* AudioRendererImpl::GetTimeSource() {
   return this;
 }
 
-void AudioRendererImpl::Flush(const base::Closure& callback) {
+void AudioRendererImpl::Flush(base::OnceClosure callback) {
   DVLOG(1) << __func__;
   DCHECK(task_runner_->BelongsToCurrentThread());
   TRACE_EVENT_ASYNC_BEGIN0("media", "AudioRendererImpl::Flush", this);
+
+  // Flush |sink_| now.  |sink_| must only be accessed on |task_runner_| and not
+  // be called under |lock_|.
+  DCHECK(!sink_playing_);
+  sink_->Flush();
 
   base::AutoLock auto_lock(lock_);
   DCHECK_EQ(state_, kPlaying);
   DCHECK(!flush_cb_);
 
-  flush_cb_ = callback;
+  flush_cb_ = std::move(callback);
   ChangeState_Locked(kFlushing);
 
   if (pending_read_)
@@ -323,7 +319,7 @@ void AudioRendererImpl::ResetDecoderDone() {
 
   // Changes in buffering state are always posted. Flush callback must only be
   // run after buffering state has been set back to nothing.
-  flush_cb_ = BindToCurrentLoop(flush_cb_);
+  flush_cb_ = BindToCurrentLoop(std::move(flush_cb_));
   FinishFlush();
 }
 
@@ -344,7 +340,7 @@ void AudioRendererImpl::StartPlaying() {
 void AudioRendererImpl::Initialize(DemuxerStream* stream,
                                    CdmContext* cdm_context,
                                    RendererClient* client,
-                                   const PipelineStatusCB& init_cb) {
+                                   PipelineStatusCallback init_cb) {
   DVLOG(1) << __func__;
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(client);
@@ -355,35 +351,24 @@ void AudioRendererImpl::Initialize(DemuxerStream* stream,
   DCHECK(sink_.get());
   TRACE_EVENT_ASYNC_BEGIN0("media", "AudioRendererImpl::Initialize", this);
 
-  // Trying to track down AudioClock crash, http://crbug.com/674856.
-  // Initialize should never be called while Rendering is ongoing. This can lead
-  // to race conditions between media/audio-device threads.
-  CHECK(!sink_playing_);
-  // This lock is not required by Initialize, but failing to acquire the lock
-  // would indicate a race with the rendering thread, which should not be active
-  // at this time. This is just extra verification on the |sink_playing_| CHECK
-  // above. We hold |lock_| while setting |sink_playing_|, but release the lock
-  // when calling sink_->Pause() to avoid deadlocking with the AudioMixer.
-  CHECK(lock_.Try());
-  lock_.Release();
-
   // If we are re-initializing playback (e.g. switching media tracks), stop the
   // sink first.
   if (state_ == kFlushed)
     sink_->Stop();
 
   state_ = kInitializing;
+  demuxer_stream_ = stream;
   client_ = client;
 
   // Always post |init_cb_| because |this| could be destroyed if initialization
   // failed.
-  init_cb_ = BindToCurrentLoop(init_cb);
+  init_cb_ = BindToCurrentLoop(std::move(init_cb));
 
   // Retrieve hardware device parameters asynchronously so we don't block the
   // media thread on synchronous IPC.
   sink_->GetOutputDeviceInfoAsync(
       base::BindOnce(&AudioRendererImpl::OnDeviceInfoReceived,
-                     weak_factory_.GetWeakPtr(), stream, cdm_context));
+                     weak_factory_.GetWeakPtr(), demuxer_stream_, cdm_context));
 }
 
 void AudioRendererImpl::OnDeviceInfoReceived(
@@ -406,11 +391,11 @@ void AudioRendererImpl::OnDeviceInfoReceived(
                             output_device_info.device_status(),
                             OUTPUT_DEVICE_STATUS_MAX + 1);
   if (output_device_info.device_status() != OUTPUT_DEVICE_STATUS_OK) {
-    sink_ = new NullAudioSink(task_runner_);
-    output_device_info = sink_->GetOutputDeviceInfo();
     MEDIA_LOG(ERROR, media_log_)
         << "Output device error, falling back to null sink. device_status="
         << output_device_info.device_status();
+    sink_ = new NullAudioSink(task_runner_);
+    output_device_info = sink_->GetOutputDeviceInfo();
   }
 
   current_decoder_config_ = stream->audio_decoder_config();
@@ -558,6 +543,13 @@ void AudioRendererImpl::OnDeviceInfoReceived(
 
   audio_parameters_.set_latency_tag(AudioLatency::LATENCY_PLAYBACK);
 
+  if (!client_->IsVideoStreamAvailable()) {
+    // When video is not available, audio prefetch can be enabled.  See
+    // crbug/988535.
+    audio_parameters_.set_effects(audio_parameters_.effects() |
+                                  ::media::AudioParameters::AUDIO_PREFETCH);
+  }
+
   last_decoded_channel_layout_ =
       stream->audio_decoder_config().channel_layout();
 
@@ -613,8 +605,20 @@ void AudioRendererImpl::OnAudioDecoderStreamInitialized(bool success) {
 
   // We're all good! Continue initializing the rest of the audio renderer
   // based on the decoder format.
-  algorithm_.reset(new AudioRendererAlgorithm());
+  auto* media_client = GetMediaClient();
+  auto params =
+      (media_client ? media_client->GetAudioRendererAlgorithmParameters(
+                          audio_parameters_)
+                    : base::nullopt);
+  if (params && !client_->IsVideoStreamAvailable()) {
+    algorithm_ =
+        std::make_unique<AudioRendererAlgorithm>(media_log_, params.value());
+  } else {
+    algorithm_ = std::make_unique<AudioRendererAlgorithm>(media_log_);
+  }
   algorithm_->Initialize(audio_parameters_, is_encrypted_);
+  if (latency_hint_)
+    algorithm_->SetLatencyHint(latency_hint_);
   ConfigureChannelMask();
 
   ChangeState_Locked(kFlushed);
@@ -635,7 +639,7 @@ void AudioRendererImpl::OnAudioDecoderStreamInitialized(bool success) {
 void AudioRendererImpl::FinishInitialization(PipelineStatus status) {
   DCHECK(init_cb_);
   TRACE_EVENT_ASYNC_END1("media", "AudioRendererImpl::Initialize", this,
-                         "status", MediaLog::PipelineStatusToString(status));
+                         "status", PipelineStatusToString(status));
   std::move(init_cb_).Run(status);
 }
 
@@ -660,11 +664,22 @@ void AudioRendererImpl::OnStatisticsUpdate(const PipelineStatistics& stats) {
   client_->OnStatisticsUpdate(stats);
 }
 
-void AudioRendererImpl::OnBufferingStateChange(BufferingState state) {
+void AudioRendererImpl::OnBufferingStateChange(BufferingState buffering_state) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  media_log_->AddEvent(media_log_->CreateBufferingStateChangedEvent(
-      "audio_buffering_state", state));
-  client_->OnBufferingStateChange(state);
+
+  // "Underflow" is only possible when playing. This avoids noise like blaming
+  // the decoder for an "underflow" that is really just a seek.
+  BufferingStateChangeReason reason = BUFFERING_CHANGE_REASON_UNKNOWN;
+  if (state_ == kPlaying && buffering_state == BUFFERING_HAVE_NOTHING) {
+    reason = demuxer_stream_->IsReadPending() ? DEMUXER_UNDERFLOW
+                                              : DECODER_UNDERFLOW;
+  }
+
+  media_log_->AddEvent<MediaLogEvent::kBufferingStateChanged>(
+      SerializableBufferingState<SerializableBufferingStateType::kAudio>{
+          buffering_state, reason});
+
+  client_->OnBufferingStateChange(buffering_state, reason);
 }
 
 void AudioRendererImpl::OnWaiting(WaitingReason reason) {
@@ -676,6 +691,21 @@ void AudioRendererImpl::SetVolume(float volume) {
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(sink_.get());
   sink_->SetVolume(volume);
+}
+
+void AudioRendererImpl::SetLatencyHint(
+    base::Optional<base::TimeDelta> latency_hint) {
+  base::AutoLock auto_lock(lock_);
+
+  latency_hint_ = latency_hint;
+
+  if (algorithm_) {
+    algorithm_->SetLatencyHint(latency_hint);
+
+    // See if we need further reads to fill up to the new playback threshold.
+    // This may be needed if rendering isn't active to schedule regular reads.
+    AttemptRead_Locked();
+  }
 }
 
 void AudioRendererImpl::OnSuspend() {
@@ -693,9 +723,8 @@ void AudioRendererImpl::SetPlayDelayCBForTesting(PlayDelayCBForTesting cb) {
   play_delay_cb_for_testing_ = std::move(cb);
 }
 
-void AudioRendererImpl::DecodedAudioReady(
-    AudioDecoderStream::Status status,
-    const scoped_refptr<AudioBuffer>& buffer) {
+void AudioRendererImpl::DecodedAudioReady(AudioDecoderStream::ReadStatus status,
+                                          scoped_refptr<AudioBuffer> buffer) {
   DVLOG(2) << __func__ << "(" << status << ")";
   DCHECK(task_runner_->BelongsToCurrentThread());
 
@@ -717,7 +746,7 @@ void AudioRendererImpl::DecodedAudioReady(
   }
 
   DCHECK_EQ(status, AudioDecoderStream::OK);
-  DCHECK(buffer.get());
+  DCHECK(buffer);
 
   if (state_ == kFlushing) {
     ChangeState_Locked(kFlushed);
@@ -756,7 +785,7 @@ void AudioRendererImpl::DecodedAudioReady(
     }
 
     DCHECK(buffer_converter_);
-    buffer_converter_->AddInput(buffer);
+    buffer_converter_->AddInput(std::move(buffer));
 
     while (buffer_converter_->HasNextBuffer()) {
       need_another_buffer =
@@ -783,7 +812,7 @@ void AudioRendererImpl::DecodedAudioReady(
       return;
     }
 
-    need_another_buffer = HandleDecodedBuffer_Locked(buffer);
+    need_another_buffer = HandleDecodedBuffer_Locked(std::move(buffer));
   }
 
   if (!need_another_buffer && !CanRead_Locked())
@@ -793,13 +822,19 @@ void AudioRendererImpl::DecodedAudioReady(
 }
 
 bool AudioRendererImpl::HandleDecodedBuffer_Locked(
-    const scoped_refptr<AudioBuffer>& buffer) {
+    scoped_refptr<AudioBuffer> buffer) {
   lock_.AssertAcquired();
+  bool should_render_end_of_stream = false;
   if (buffer->end_of_stream()) {
     received_end_of_stream_ = true;
+    algorithm_->MarkEndOfStream();
+
+    // We received no audio to play before EOS, so enter the ended state.
+    if (first_packet_timestamp_ == kNoTimestamp)
+      should_render_end_of_stream = true;
   } else {
     if (buffer->IsBitstreamFormat() && state_ == kPlaying) {
-      if (IsBeforeStartTime(buffer))
+      if (IsBeforeStartTime(*buffer))
         return true;
 
       // Adjust the start time since we are unable to trim a compressed audio
@@ -811,7 +846,7 @@ bool AudioRendererImpl::HandleDecodedBuffer_Locked(
                                           audio_parameters_.sample_rate()));
       }
     } else if (state_ == kPlaying) {
-      if (IsBeforeStartTime(buffer))
+      if (IsBeforeStartTime(*buffer))
         return true;
 
       // Trim off any additional time before the start timestamp.
@@ -831,14 +866,17 @@ bool AudioRendererImpl::HandleDecodedBuffer_Locked(
         return true;
     }
 
-    if (state_ != kUninitialized)
-      algorithm_->EnqueueBuffer(buffer);
-  }
+    // Store the timestamp of the first packet so we know when to start actual
+    // audio playback.
+    if (first_packet_timestamp_ == kNoTimestamp)
+      first_packet_timestamp_ = buffer->timestamp();
 
-  // Store the timestamp of the first packet so we know when to start actual
-  // audio playback.
-  if (first_packet_timestamp_ == kNoTimestamp)
-    first_packet_timestamp_ = buffer->timestamp();
+    if (!transcribe_audio_callback_.is_null())
+      transcribe_audio_callback_.Run(buffer);
+
+    if (state_ != kUninitialized)
+      algorithm_->EnqueueBuffer(std::move(buffer));
+  }
 
   const size_t memory_usage = algorithm_->GetMemoryUsage();
   PipelineStatistics stats;
@@ -860,9 +898,16 @@ bool AudioRendererImpl::HandleDecodedBuffer_Locked(
       return false;
 
     case kPlaying:
-      if (buffer->end_of_stream() || algorithm_->IsQueueFull()) {
+      if (received_end_of_stream_ || algorithm_->IsQueueAdequateForPlayback()) {
         if (buffering_state_ == BUFFERING_HAVE_NOTHING)
           SetBufferingState_Locked(BUFFERING_HAVE_ENOUGH);
+        // This must be done after SetBufferingState_Locked() to ensure the
+        // proper state transitions for higher levels.
+        if (should_render_end_of_stream) {
+          task_runner_->PostTask(
+              FROM_HERE, base::BindOnce(&AudioRendererImpl::OnPlaybackEnded,
+                                        weak_factory_.GetWeakPtr()));
+        }
         return false;
       }
       return true;
@@ -945,11 +990,10 @@ void AudioRendererImpl::SetPlaybackRate(double playback_rate) {
   }
 }
 
-bool AudioRendererImpl::IsBeforeStartTime(
-    const scoped_refptr<AudioBuffer>& buffer) {
+bool AudioRendererImpl::IsBeforeStartTime(const AudioBuffer& buffer) {
   DCHECK_EQ(state_, kPlaying);
-  return buffer.get() && !buffer->end_of_stream() &&
-         (buffer->timestamp() + buffer->duration()) < start_timestamp_;
+  return !buffer.end_of_stream() &&
+         (buffer.timestamp() + buffer.duration()) < start_timestamp_;
 }
 
 int AudioRendererImpl::Render(base::TimeDelta delay,
@@ -961,6 +1005,11 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
   DVLOG(4) << __func__ << " delay:" << delay
            << " prior_frames_skipped:" << prior_frames_skipped
            << " frames_requested:" << frames_requested;
+
+  // Since this information is coming from the OS or potentially a fake stream,
+  // it may end up with spurious values.
+  if (delay < base::TimeDelta())
+    delay = base::TimeDelta();
 
   int frames_written = 0;
   {
@@ -996,7 +1045,7 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
       return 0;
     }
 
-    if (is_passthrough_ && algorithm_->frames_buffered() > 0) {
+    if (is_passthrough_ && algorithm_->BufferedFrames() > 0) {
       // TODO(tsunghung): For compressed bitstream formats, play zeroed buffer
       // won't generate delay. It could be discarded immediately. Need another
       // way to generate audio delay.
@@ -1015,7 +1064,7 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
       // bitstream cases. Fix |frames_requested| to avoid incorrent time
       // calculation of |audio_clock_| below.
       frames_requested = frames_written;
-    } else if (algorithm_->frames_buffered() > 0) {
+    } else if (algorithm_->BufferedFrames() > 0) {
       // Delay playback by writing silence if we haven't reached the first
       // timestamp yet; this can occur if the video starts before the audio.
       CHECK_NE(first_packet_timestamp_, kNoTimestamp);
@@ -1080,13 +1129,27 @@ int AudioRendererImpl::Render(base::TimeDelta delay,
         frames_after_end_of_stream = frames_requested;
       } else if (state_ == kPlaying &&
                  buffering_state_ != BUFFERING_HAVE_NOTHING) {
-        algorithm_->IncreaseQueueCapacity();
+        // Don't increase queue capacity if the queue latency is explicitly
+        // specified.
+        if (!latency_hint_)
+          algorithm_->IncreasePlaybackThreshold();
+
         SetBufferingState_Locked(BUFFERING_HAVE_NOTHING);
       }
-    } else if (frames_written < frames_requested && !received_end_of_stream_) {
+    } else if (frames_written < frames_requested && !received_end_of_stream_ &&
+               state_ == kPlaying &&
+               buffering_state_ != BUFFERING_HAVE_NOTHING) {
       // If we only partially filled the request and should have more data, go
       // ahead and increase queue capacity to try and meet the next request.
-      algorithm_->IncreaseQueueCapacity();
+      // Trigger underflow to give us a chance to refill up to the new cap.
+      // When a latency hint is present, don't override the user's preference
+      // with a queue increase, but still signal HAVE_NOTHING for them to take
+      // action if they choose.
+
+      if (!latency_hint_)
+        algorithm_->IncreasePlaybackThreshold();
+
+      SetBufferingState_Locked(BUFFERING_HAVE_NOTHING);
     }
 
     audio_clock_->WroteAudio(frames_written + frames_after_end_of_stream,
@@ -1137,8 +1200,8 @@ void AudioRendererImpl::HandleAbortedReadOrDecodeError(PipelineStatus status) {
         return;
       }
 
-      MEDIA_LOG(ERROR, media_log_) << "audio error during flushing, status: "
-                                   << MediaLog::PipelineStatusToString(status);
+      MEDIA_LOG(ERROR, media_log_)
+          << "audio error during flushing, status: " << status;
       client_->OnError(status);
       FinishFlush();
       return;
@@ -1147,8 +1210,7 @@ void AudioRendererImpl::HandleAbortedReadOrDecodeError(PipelineStatus status) {
     case kPlaying:
       if (status != PIPELINE_OK) {
         MEDIA_LOG(ERROR, media_log_)
-            << "audio error during playing, status: "
-            << MediaLog::PipelineStatusToString(status);
+            << "audio error during playing, status: " << status;
         client_->OnError(status);
       }
       return;

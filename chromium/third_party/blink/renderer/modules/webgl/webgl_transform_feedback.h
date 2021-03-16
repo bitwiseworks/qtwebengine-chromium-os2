@@ -28,8 +28,6 @@ class WebGLTransformFeedback : public WebGLContextObject {
 
   GLuint Object() const { return object_; }
 
-  static WebGLTransformFeedback* Create(WebGL2RenderingContextBase*, TFType);
-
   bool IsDefaultObject() const { return type_ == TFTypeDefault; }
 
   GLenum GetTarget() const { return target_; }
@@ -51,11 +49,11 @@ class WebGLTransformFeedback : public WebGLContextObject {
   bool UsesBuffer(WebGLBuffer*);
   void UnbindBuffer(WebGLBuffer*);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   bool active() const { return active_; }
   bool paused() const { return paused_; }
-  const HeapVector<TraceWrapperMember<WebGLBuffer>>&
+  const HeapVector<Member<WebGLBuffer>>&
   bound_indexed_transform_feedback_buffers() const {
     return bound_indexed_transform_feedback_buffers_;
   }
@@ -81,8 +79,7 @@ class WebGLTransformFeedback : public WebGLContextObject {
   TFType type_;
   GLenum target_;
 
-  HeapVector<TraceWrapperMember<WebGLBuffer>>
-      bound_indexed_transform_feedback_buffers_;
+  HeapVector<Member<WebGLBuffer>> bound_indexed_transform_feedback_buffers_;
 
   Member<WebGLProgram> program_;
   unsigned program_link_count_;

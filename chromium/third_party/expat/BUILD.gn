@@ -18,29 +18,33 @@ if (is_linux && !is_chromecast && !use_fuzzing_engine) {
     public_configs = [ ":expat_config" ]
   }
 } else {
-  config("expat_config") {
-    include_dirs = [ "files/lib" ]
+  config("expat_public_config") {
+    include_dirs = [
+      "src/expat/lib",
+      "include/expat_config",
+    ]
     defines = [ "XML_STATIC" ]
+  }
+  config("expat_internal_config") {
+    # xmlparse.c has some |if (0 && ...)| statements.
+    cflags = [ "-Wno-unreachable-code" ]
   }
 
   static_library("expat") {
     sources = [
-      "files/lib/expat.h",
-      "files/lib/loadlibrary.c",
-      "files/lib/xmlparse.c",
-      "files/lib/xmlrole.c",
-      "files/lib/xmltok.c",
+      "src/expat/lib/expat.h",
+      "src/expat/lib/xmlparse.c",
+      "src/expat/lib/xmlrole.c",
+      "src/expat/lib/xmltok.c",
     ]
 
-    public_configs = [ ":expat_config" ]
-
-    # TODO(thakis): Remove this once clang no longer crashes when building
-    # libexpat with -Oz.
-    configs -= [ "//build/config/compiler:default_optimization" ]
-    configs += [ "//build/config/compiler:optimize_max" ]
+    public_configs = [ ":expat_public_config" ]
+    configs += [ ":expat_internal_config" ]
 
     defines = [ "_LIB" ]
     if (is_win) {
+      # expat expects to define WIN32_LEAN_AND_MEAN itself
+      configs -= [ "//build/config/win:lean_and_mean" ]
       defines += [ "COMPILED_FROM_DSP" ]
     } else {
       defines += [ "HAVE_EXPAT_CONFIG_H" ]
@@ -49,12 +53,8 @@ if (is_linux && !is_chromecast && !use_fuzzing_engine) {
 }
 
 fuzzer_test("expat_xml_parse_fuzzer") {
-  sources = [
-    "fuzz/expat_xml_parse_fuzzer.cc",
-  ]
-  deps = [
-    ":expat",
-  ]
+  sources = [ "fuzz/expat_xml_parse_fuzzer.cc" ]
+  deps = [ ":expat" ]
   dict = "//third_party/libxml/fuzz/xml.dict"
   seed_corpus = "//third_party/libxml/fuzz/seed_corpus"
 }

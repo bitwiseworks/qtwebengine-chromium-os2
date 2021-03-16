@@ -6,6 +6,10 @@
  * @fileoverview Behavior for cr-radio-button-like elements.
  */
 
+// clang-format off
+// #import {PaperRippleBehavior} from 'chrome://resources/polymer/v3_0/paper-behaviors/paper-ripple-behavior.js'
+// clang-format on
+
 /** @polymerBehavior */
 const CrRadioButtonBehaviorImpl = {
   properties: {
@@ -13,7 +17,6 @@ const CrRadioButtonBehaviorImpl = {
       type: Boolean,
       value: false,
       reflectToAttribute: true,
-      observer: 'checkedChanged_',
     },
 
     disabled: {
@@ -21,7 +24,17 @@ const CrRadioButtonBehaviorImpl = {
       value: false,
       reflectToAttribute: true,
       notify: true,
-      observer: 'disabledChanged_',
+    },
+
+    /**
+     * Whether the radio button should be focusable or not. Toggling this
+     * property sets the corresponding tabindex of the button itself as well
+     * as any links in the button description.
+     */
+    focusable: {
+      type: Boolean,
+      value: false,
+      observer: 'onFocusableChanged_',
     },
 
     label: {
@@ -34,54 +47,90 @@ const CrRadioButtonBehaviorImpl = {
       notify: true,
       reflectToAttribute: true,
     },
+
+    /**
+     * Holds the tabIndex for the radio button.
+     * @private {number}
+     */
+    buttonTabIndex_: {
+      type: Number,
+      computed: 'getTabIndex_(focusable)',
+    },
   },
 
   listeners: {
-    blur: 'cancelRipple_',
+    blur: 'hideRipple_',
     focus: 'onFocus_',
-    pointerup: 'cancelRipple_',
+    up: 'hideRipple_',
   },
 
-  hostAttributes: {
-    'aria-disabled': 'false',
-    'aria-checked': 'false',
-    role: 'radio',
+  focus() {
+    this.$.button.focus();
   },
 
   /** @private */
-  checkedChanged_: function() {
-    this.setAttribute('aria-checked', this.checked ? 'true' : 'false');
+  onFocusableChanged_() {
+    const links = this.querySelectorAll('a');
+    links.forEach((link) => {
+      // Remove the tab stop on any links when the row is unchecked. Since the
+      // row is not tabbable, any links within the row should not be either.
+      link.tabIndex = this.checked ? 0 : -1;
+    });
+  },
+
+  /** @private */
+  onFocus_() {
+    this.getRipple().showAndHoldDown();
+  },
+
+  /** @private */
+  hideRipple_() {
+    this.getRipple().clear();
   },
 
   /**
-   * @param {boolean} current
-   * @param {boolean} previous
+   * @return {string}
    * @private
    */
-  disabledChanged_: function(current, previous) {
-    if (previous === undefined && !this.disabled) {
-      return;
+  getAriaChecked_() {
+    return this.checked ? 'true' : 'false';
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getAriaDisabled_() {
+    return this.disabled ? 'true' : 'false';
+  },
+
+  /**
+   * @return {number}
+   * @private
+   */
+  getTabIndex_() {
+    return this.focusable ? 0 : -1;
+  },
+
+  /**
+   * When shift-tab is pressed, first bring the focus to the host element.
+   * This accomplishes 2 things:
+   * 1) Host doesn't get focused when the browser moves the focus backward.
+   * 2) focus now escaped the shadow-dom of this element, so that it'll
+   *    correctly obey non-zero tabindex ordering of the containing document.
+   * @param {!Event} e
+   * @private
+   */
+  onInputKeydown_(e) {
+    if (e.shiftKey && e.key === 'Tab') {
+      this.focus();
     }
-
-    this.setAttribute('aria-disabled', this.disabled ? 'true' : 'false');
-  },
-
-  /** @private */
-  onFocus_: function() {
-    this.ensureRipple();
-    this.$$('paper-ripple').holdDown = true;
-  },
-
-  /** @private */
-  cancelRipple_: function() {
-    this.ensureRipple();
-    this.$$('paper-ripple').holdDown = false;
   },
 
   // customize the element's ripple
-  _createRipple: function() {
+  _createRipple() {
     this._rippleContainer = this.$$('.disc-wrapper');
-    let ripple = Polymer.PaperRippleBehavior._createRipple();
+    const ripple = Polymer.PaperRippleBehavior._createRipple();
     ripple.id = 'ink';
     ripple.setAttribute('recenters', '');
     ripple.classList.add('circle', 'toggle-ink');
@@ -91,7 +140,7 @@ const CrRadioButtonBehaviorImpl = {
 
 
 /** @polymerBehavior */
-const CrRadioButtonBehavior = [
+/* #export */ const CrRadioButtonBehavior = [
   Polymer.PaperRippleBehavior,
   CrRadioButtonBehaviorImpl,
 ];

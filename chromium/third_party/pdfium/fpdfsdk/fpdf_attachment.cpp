@@ -15,12 +15,14 @@
 #include "core/fpdfapi/parser/cpdf_name.h"
 #include "core/fpdfapi/parser/cpdf_number.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
+#include "core/fpdfapi/parser/cpdf_stream.h"
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/fpdf_parser_decode.h"
 #include "core/fpdfdoc/cpdf_filespec.h"
 #include "core/fpdfdoc/cpdf_nametree.h"
 #include "core/fxcrt/cfx_datetime.h"
 #include "core/fxcrt/fx_extension.h"
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "third_party/base/ptr_util.h"
 
@@ -31,13 +33,13 @@ constexpr char kChecksumKey[] = "CheckSum";
 ByteString CFXByteStringHexDecode(const ByteString& bsHex) {
   std::unique_ptr<uint8_t, FxFreeDeleter> result;
   uint32_t size = 0;
-  HexDecode(bsHex.AsRawSpan(), &result, &size);
+  HexDecode(bsHex.raw_span(), &result, &size);
   return ByteString(result.get(), size);
 }
 
 ByteString GenerateMD5Base16(const void* contents, const unsigned long len) {
   uint8_t digest[16];
-  CRYPT_MD5Generate(reinterpret_cast<const uint8_t*>(contents), len, digest);
+  CRYPT_MD5Generate({static_cast<const uint8_t*>(contents), len}, digest);
   char buf[32];
   for (int i = 0; i < 16; ++i)
     FXSYS_IntToTwoHexChars(digest[i], &buf[i * 2]);
@@ -74,14 +76,15 @@ FPDFDoc_AddAttachment(FPDF_DOCUMENT document, FPDF_WIDESTRING name) {
   CPDF_Dictionary* pNames = pRoot->GetDictFor("Names");
   if (!pNames) {
     pNames = pDoc->NewIndirect<CPDF_Dictionary>();
-    pRoot->SetFor("Names", pNames->MakeReference(pDoc));
+    pRoot->SetNewFor<CPDF_Reference>("Names", pDoc, pNames->GetObjNum());
   }
 
   // Create the EmbeddedFiles dictionary if missing.
   if (!pNames->GetDictFor("EmbeddedFiles")) {
     CPDF_Dictionary* pFiles = pDoc->NewIndirect<CPDF_Dictionary>();
     pFiles->SetNewFor<CPDF_Array>("Names");
-    pNames->SetFor("EmbeddedFiles", pFiles->MakeReference(pDoc));
+    pNames->SetNewFor<CPDF_Reference>("EmbeddedFiles", pDoc,
+                                      pFiles->GetObjNum());
   }
 
   // Set up the basic entries in the filespec dictionary.
@@ -91,8 +94,8 @@ FPDFDoc_AddAttachment(FPDF_DOCUMENT document, FPDF_WIDESTRING name) {
   pFile->SetNewFor<CPDF_String>(pdfium::stream::kF, wsName);
 
   // Add the new attachment name and filespec into the document's EmbeddedFiles.
-  CPDF_NameTree nameTree(pDoc, "EmbeddedFiles");
-  if (!nameTree.AddValueAndName(pFile->MakeReference(pDoc), wsName)) {
+  CPDF_NameTree name_tree(pDoc, "EmbeddedFiles");
+  if (!name_tree.AddValueAndName(pFile->MakeReference(pDoc), wsName)) {
     return nullptr;
   }
 
@@ -105,13 +108,13 @@ FPDFDoc_GetAttachment(FPDF_DOCUMENT document, int index) {
   if (!pDoc || index < 0)
     return nullptr;
 
-  CPDF_NameTree nameTree(pDoc, "EmbeddedFiles");
-  if (static_cast<size_t>(index) >= nameTree.GetCount())
+  CPDF_NameTree name_tree(pDoc, "EmbeddedFiles");
+  if (static_cast<size_t>(index) >= name_tree.GetCount())
     return nullptr;
 
   WideString csName;
   return FPDFAttachmentFromCPDFObject(
-      nameTree.LookupValueAndName(index, &csName));
+      name_tree.LookupValueAndName(index, &csName));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -120,16 +123,16 @@ FPDFDoc_DeleteAttachment(FPDF_DOCUMENT document, int index) {
   if (!pDoc || index < 0)
     return false;
 
-  CPDF_NameTree nameTree(pDoc, "EmbeddedFiles");
-  if (static_cast<size_t>(index) >= nameTree.GetCount())
+  CPDF_NameTree name_tree(pDoc, "EmbeddedFiles");
+  if (static_cast<size_t>(index) >= name_tree.GetCount())
     return false;
 
-  return nameTree.DeleteValueAndName(index);
+  return name_tree.DeleteValueAndName(index);
 }
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 FPDFAttachment_GetName(FPDF_ATTACHMENT attachment,
-                       void* buffer,
+                       FPDF_WCHAR* buffer,
                        unsigned long buflen) {
   CPDF_Object* pFile = CPDFObjectFromFPDFAttachment(attachment);
   if (!pFile)
@@ -184,7 +187,7 @@ FPDFAttachment_SetStringValue(FPDF_ATTACHMENT attachment,
 FPDF_EXPORT unsigned long FPDF_CALLCONV
 FPDFAttachment_GetStringValue(FPDF_ATTACHMENT attachment,
                               FPDF_BYTESTRING key,
-                              void* buffer,
+                              FPDF_WCHAR* buffer,
                               unsigned long buflen) {
   CPDF_Object* pFile = CPDFObjectFromFPDFAttachment(attachment);
   if (!pFile)
@@ -200,7 +203,8 @@ FPDFAttachment_GetStringValue(FPDF_ATTACHMENT attachment,
     CPDF_String* stringValue = pParamsDict->GetObjectFor(bsKey)->AsString();
     if (stringValue->IsHex()) {
       ByteString encoded = PDF_EncodeString(stringValue->GetString(), true);
-      value = CPDF_String(nullptr, encoded, false).GetUnicodeText();
+      value = pdfium::MakeRetain<CPDF_String>(nullptr, encoded, false)
+                  ->GetUnicodeText();
     }
   }
 
@@ -222,7 +226,7 @@ FPDFAttachment_SetFile(FPDF_ATTACHMENT attachment,
     return false;
 
   // Create a dictionary for the new embedded file stream.
-  auto pFileStreamDict = pdfium::MakeUnique<CPDF_Dictionary>();
+  auto pFileStreamDict = pdfium::MakeRetain<CPDF_Dictionary>();
   CPDF_Dictionary* pParamsDict =
       pFileStreamDict->SetNewFor<CPDF_Dictionary>("Params");
 
@@ -247,13 +251,13 @@ FPDFAttachment_SetFile(FPDF_ATTACHMENT attachment,
       true);
 
   // Create the file stream and have the filespec dictionary link to it.
-  std::unique_ptr<uint8_t, FxFreeDeleter> stream(FX_Alloc(uint8_t, len));
+  std::unique_ptr<uint8_t, FxFreeDeleter> stream(FX_AllocUninit(uint8_t, len));
   memcpy(stream.get(), contents, len);
   CPDF_Stream* pFileStream = pDoc->NewIndirect<CPDF_Stream>(
       std::move(stream), len, std::move(pFileStreamDict));
   CPDF_Dictionary* pEFDict =
       pFile->AsDictionary()->SetNewFor<CPDF_Dictionary>("EF");
-  pEFDict->SetFor("F", pFileStream->MakeReference(pDoc));
+  pEFDict->SetNewFor<CPDF_Reference>("F", pDoc, pFileStream->GetObjNum());
   return true;
 }
 

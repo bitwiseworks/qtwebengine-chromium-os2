@@ -72,10 +72,9 @@ typedef struct SegmentContext {
     int segment_idx_wrap;  ///< number after which the index wraps
     int segment_idx_wrap_nb;  ///< number of time the index has wraped
     int segment_count;     ///< number of segment files already written
-    AVOutputFormat *oformat;
+    ff_const59 AVOutputFormat *oformat;
     AVFormatContext *avf;
     char *format;              ///< format to use for output segment files
-    char *format_options_str;  ///< format options to use for output segment files
     AVDictionary *format_options;
     char *list;            ///< filename for the segment list file
     int   list_flags;      ///< flags affecting list generation
@@ -180,6 +179,13 @@ static int segment_mux_init(AVFormatContext *s)
         }
         st->sample_aspect_ratio = s->streams[i]->sample_aspect_ratio;
         st->time_base = s->streams[i]->time_base;
+        st->avg_frame_rate = s->streams[i]->avg_frame_rate;
+#if FF_API_LAVF_AVCTX
+FF_DISABLE_DEPRECATION_WARNINGS
+        if (s->streams[i]->codecpar->codec_tag == MKTAG('t','m','c','d'))
+            st->codec->time_base = s->streams[i]->codec->time_base;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
         av_dict_copy(&st->metadata, s->streams[i]->metadata, 0);
     }
 
@@ -421,7 +427,7 @@ static int segment_end(AVFormatContext *s, int write_trailer, int is_last)
                     rate = s->streams[i]->avg_frame_rate;/* Get fps from the video stream */
                     err = av_timecode_init_from_string(&tc, rate, tcr->value, s);
                     if (err < 0) {
-                        av_log(s, AV_LOG_WARNING, "Could not increment timecode, error occurred during timecode creation.");
+                        av_log(s, AV_LOG_WARNING, "Could not increment global timecode, error occurred during timecode creation.\n");
                         break;
                     }
                     tc.start += (int)((seg->cur_entry.end_time - seg->cur_entry.start_time) * av_q2d(rate));/* increment timecode */
@@ -431,7 +437,23 @@ static int segment_end(AVFormatContext *s, int write_trailer, int is_last)
                 }
             }
         } else {
-            av_log(s, AV_LOG_WARNING, "Could not increment timecode, no timecode metadata found");
+            av_log(s, AV_LOG_WARNING, "Could not increment global timecode, no global timecode metadata found.\n");
+        }
+        for (i = 0; i < s->nb_streams; i++) {
+            if (s->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+                char st_buf[AV_TIMECODE_STR_SIZE];
+                AVTimecode st_tc;
+                AVRational st_rate = s->streams[i]->avg_frame_rate;
+                AVDictionaryEntry *st_tcr = av_dict_get(s->streams[i]->metadata, "timecode", NULL, 0);
+                if (st_tcr) {
+                    if ((av_timecode_init_from_string(&st_tc, st_rate, st_tcr->value, s) < 0)) {
+                        av_log(s, AV_LOG_WARNING, "Could not increment stream %d timecode, error occurred during timecode creation.\n", i);
+                        continue;
+                    }
+                st_tc.start += (int)((seg->cur_entry.end_time - seg->cur_entry.start_time) * av_q2d(st_rate));    // increment timecode
+                av_dict_set(&s->streams[i]->metadata, "timecode", av_timecode_make_string(&st_tc, st_buf, 0), 0);
+                }
+            }
         }
     }
 
@@ -697,15 +719,6 @@ static int seg_init(AVFormatContext *s)
         }
     }
 
-    if (seg->format_options_str) {
-        ret = av_dict_parse_string(&seg->format_options, seg->format_options_str, "=", ":", 0);
-        if (ret < 0) {
-            av_log(s, AV_LOG_ERROR, "Could not parse format options list '%s'\n",
-                   seg->format_options_str);
-            return ret;
-        }
-    }
-
     if (seg->list) {
         if (seg->list_type == LIST_TYPE_UNDEFINED) {
             if      (av_match_ext(seg->list, "csv" )) seg->list_type = LIST_TYPE_CSV;
@@ -768,7 +781,7 @@ static int seg_init(AVFormatContext *s)
     ret = avformat_init_output(oc, &options);
     if (av_dict_count(options)) {
         av_log(s, AV_LOG_ERROR,
-               "Some of the provided format options in '%s' are not recognized\n", seg->format_options_str);
+               "Some of the provided format options are not recognized\n");
         av_dict_free(&options);
         return AVERROR(EINVAL);
     }
@@ -858,6 +871,20 @@ static int seg_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     if (!seg->avf || !seg->avf->pb)
         return AVERROR(EINVAL);
+
+    if (!st->codecpar->extradata_size) {
+        int pkt_extradata_size = 0;
+        uint8_t *pkt_extradata = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &pkt_extradata_size);
+        if (pkt_extradata && pkt_extradata_size > 0) {
+            ret = ff_alloc_extradata(st->codecpar, pkt_extradata_size);
+            if (ret < 0) {
+                av_log(s, AV_LOG_WARNING, "Unable to add extradata to stream. Output segments may be invalid.\n");
+                goto calc_times;
+            }
+            memcpy(st->codecpar->extradata, pkt_extradata, pkt_extradata_size);
+            st->codecpar->extradata_size = pkt_extradata_size;
+        }
+    }
 
 calc_times:
     if (seg->times) {
@@ -980,7 +1007,6 @@ fail:
     if (seg->list)
         ff_format_io_close(s, &seg->list_pb);
 
-    av_dict_free(&seg->format_options);
     av_opt_free(seg);
     av_freep(&seg->times);
     av_freep(&seg->frames);
@@ -1023,7 +1049,7 @@ static int seg_check_bitstream(struct AVFormatContext *s, const AVPacket *pkt)
 static const AVOption options[] = {
     { "reference_stream",  "set reference stream", OFFSET(reference_stream_specifier), AV_OPT_TYPE_STRING, {.str = "auto"}, CHAR_MIN, CHAR_MAX, E },
     { "segment_format",    "set container format used for the segments", OFFSET(format),  AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       E },
-    { "segment_format_options", "set list of options for the container format used for the segments", OFFSET(format_options_str), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E },
+    { "segment_format_options", "set list of options for the container format used for the segments", OFFSET(format_options), AV_OPT_TYPE_DICT, {.str = NULL}, 0, 0, E },
     { "segment_list",      "set the segment list filename",              OFFSET(list),    AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       E },
     { "segment_header_filename", "write a single file containing the header", OFFSET(header_filename), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E },
 

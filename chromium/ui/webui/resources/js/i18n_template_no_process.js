@@ -44,28 +44,8 @@ var i18nTemplate = (function() {
      * @param {!LoadTimeData} data The data source to draw from.
      * @param {!Set<ProcessingRoot>} visited
      */
-    'i18n-content': function(element, key, data, visited) {
+    'i18n-content'(element, key, data, visited) {
       element.textContent = data.getString(key);
-    },
-
-    /**
-     * This handler adds options to a <select> element.
-     * @param {!HTMLElement} select The node to modify.
-     * @param {string} key The name of the value in |data|. It should
-     *     identify an array of values to initialize an <option>. Each value,
-     *     if a pair, represents [content, value]. Otherwise, it should be a
-     *     content string with no value.
-     * @param {!LoadTimeData} data The data source to draw from.
-     * @param {!Set<ProcessingRoot>} visited
-     */
-    'i18n-options': function(select, key, data, visited) {
-      const options = data.getValue(key);
-      options.forEach(function(optionData) {
-        const option = typeof optionData == 'string' ?
-            new Option(optionData) :
-            new Option(optionData[1], optionData[0]);
-        select.appendChild(option);
-      });
     },
 
     /**
@@ -80,7 +60,7 @@ var i18nTemplate = (function() {
      * @param {!LoadTimeData} data The data source to draw from.
      * @param {!Set<ProcessingRoot>} visited
      */
-    'i18n-values': function(element, attributeAndKeys, data, visited) {
+    'i18n-values'(element, attributeAndKeys, data, visited) {
       const parts = attributeAndKeys.replace(/\s/g, '').split(/;/);
       parts.forEach(function(part) {
         if (!part) {
@@ -99,7 +79,7 @@ var i18nTemplate = (function() {
 
         // Allow a property of the form '.foo.bar' to assign a value into
         // element.foo.bar.
-        if (propName[0] == '.') {
+        if (propName[0] === '.') {
           const path = propName.slice(1).split('.');
           let targetObject = element;
           while (targetObject && path.length > 1) {
@@ -109,7 +89,7 @@ var i18nTemplate = (function() {
             targetObject[path] = value;
             // In case we set innerHTML (ignoring others) we need to recursively
             // check the content.
-            if (path == 'innerHTML') {
+            if (path[0] === 'innerHTML') {
               for (let i = 0; i < element.children.length; ++i) {
                 processWithoutCycles(element.children[i], data, visited, false);
               }
@@ -213,7 +193,7 @@ var i18nTemplate = (function() {
     for (let i = 0; i < attributeNames.length; i++) {
       const name = attributeNames[i];
       const attribute = element.getAttribute(name);
-      if (attribute != null) {
+      if (attribute !== null) {
         handlers[name](element, attribute, data, visited);
       }
     }

@@ -10,10 +10,10 @@
 **   * Both functions always return LSM_MISUSE if the cursor is at EOF
 **     when they are called.
 **
-**   * lsm_csr_next() may only be used after lsm_csr_seek(LSM_SEEK_GE) or
-**     lsm_csr_first().
+**   * lsm_csr_next() may only be used after lsm_csr_seek(LSM_SEEK_GE) or 
+**     lsm_csr_first(). 
 **
-**   * lsm_csr_prev() may only be used after lsm_csr_seek(LSM_SEEK_LE) or
+**   * lsm_csr_prev() may only be used after lsm_csr_seek(LSM_SEEK_LE) or 
 **     lsm_csr_last().
 */
 static void do_test_api1_lsm(lsm_db *pDb, int *pRc){
@@ -126,8 +126,8 @@ static void do_test_api1(const char *zPattern, int *pRc){
 }
 
 static lsm_db *newLsmConnection(
-  const char *zDb,
-  int nPgsz,
+  const char *zDb, 
+  int nPgsz, 
   int nBlksz,
   int *pRc
 ){
@@ -159,9 +159,9 @@ static void testPagesize(lsm_db *db, int nPgsz, int nBlksz, int *pRc){
 }
 
 /*
-** Test case "api2" tests that the default page and block sizes of a
+** Test case "api2" tests that the default page and block sizes of a 
 ** database may only be modified before lsm_open() is called. And that
-** after lsm_open() is called lsm_config() may be used to read the
+** after lsm_open() is called lsm_config() may be used to read the 
 ** actual page and block size of the db.
 */
 static void do_test_api2(const char *zPattern, int *pRc){

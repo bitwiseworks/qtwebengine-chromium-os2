@@ -15,8 +15,8 @@ struct Datasource {
 };
 
 void testDatasourceEntry(
-  Datasource *p,
-  int iData,
+  Datasource *p, 
+  int iData, 
   void **ppKey, int *pnKey,
   void **ppVal, int *pnVal
 ){
@@ -28,7 +28,7 @@ void testDatasourceEntry(
     switch( p->eType ){
       case TEST_DATASOURCE_RANDOM: {
         int nRange = (1 + p->nMaxKey - p->nMinKey);
-        nKey = (int)( testPrngValue((u32)iData) % nRange ) + p->nMinKey;
+        nKey = (int)( testPrngValue((u32)iData) % nRange ) + p->nMinKey; 
         testPrngString((u32)iData, p->aKey, nKey);
         break;
       }
@@ -68,10 +68,10 @@ char *testDatasourceName(const DatasourceDefn *p){
 
 Datasource *testDatasourceNew(const DatasourceDefn *pDefn){
   Datasource *p;
-  int nMinKey;
+  int nMinKey; 
   int nMaxKey;
   int nMinVal;
-  int nMaxVal;
+  int nMaxVal; 
 
   if( pDefn->eType==TEST_DATASOURCE_SEQUENCE ){
     nMinKey = 128;
@@ -89,7 +89,7 @@ Datasource *testDatasourceNew(const DatasourceDefn *pDefn){
   p->nMinVal = nMinVal;
   p->nMaxKey = nMaxKey;
   p->nMaxVal = nMaxVal;
-
+  
   p->aKey = (char *)&p[1];
   p->aVal = &p->aKey[nMaxKey];
   return p;

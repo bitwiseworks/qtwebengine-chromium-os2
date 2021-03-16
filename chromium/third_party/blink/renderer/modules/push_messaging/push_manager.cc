@@ -7,35 +7,37 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/public/platform/modules/push_messaging/web_push_client.h"
-#include "third_party/blink/public/platform/modules/push_messaging/web_push_provider.h"
-#include "third_party/blink/public/platform/modules/push_messaging/web_push_subscription_options.h"
-#include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_push_subscription_options_init.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/modules/push_messaging/push_controller.h"
+#include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_error.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_messaging_bridge.h"
+#include "third_party/blink/renderer/modules/push_messaging/push_messaging_client.h"
+#include "third_party/blink/renderer/modules/push_messaging/push_provider.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription_callbacks.h"
 #include "third_party/blink/renderer/modules/push_messaging/push_subscription_options.h"
-#include "third_party/blink/renderer/modules/push_messaging/push_subscription_options_init.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker_registration.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 
 namespace blink {
 namespace {
 
-WebPushProvider* PushProvider() {
-  WebPushProvider* web_push_provider = Platform::Current()->PushProvider();
-  DCHECK(web_push_provider);
-  return web_push_provider;
+PushProvider* GetPushProvider(
+    ServiceWorkerRegistration* service_worker_registration) {
+  PushProvider* push_provider = PushProvider::From(service_worker_registration);
+  DCHECK(push_provider);
+  return push_provider;
 }
 
 }  // namespace
@@ -50,57 +52,77 @@ Vector<String> PushManager::supportedContentEncodings() {
   return Vector<String>({"aes128gcm", "aesgcm"});
 }
 
-ScriptPromise PushManager::subscribe(ScriptState* script_state,
-                                     const PushSubscriptionOptionsInit* options,
-                                     ExceptionState& exception_state) {
-  if (!registration_->active())
-    return ScriptPromise::RejectWithDOMException(
-        script_state,
-        DOMException::Create(DOMExceptionCode::kAbortError,
-                             "Subscription failed - no active Service Worker"));
+namespace {
+bool ValidateOptions(blink::PushSubscriptionOptions* options,
+                     ExceptionState& exception_state) {
+  DOMArrayBuffer* buffer = options->applicationServerKey();
+  if (!base::CheckedNumeric<wtf_size_t>(buffer->ByteLengthAsSizeT())
+           .IsValid()) {
+    exception_state.ThrowRangeError(
+        "ApplicationServerKey size exceeded the maximum supported size");
+    return false;
+  }
+  return true;
+}
+}  // namespace
 
-  const WebPushSubscriptionOptions& web_options =
-      PushSubscriptionOptions::ToWeb(options, exception_state);
+ScriptPromise PushManager::subscribe(
+    ScriptState* script_state,
+    const PushSubscriptionOptionsInit* options_init,
+    ExceptionState& exception_state) {
+  if (!registration_->active()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kAbortError,
+        "Subscription failed - no active Service Worker");
+    return ScriptPromise();
+  }
+
+  PushSubscriptionOptions* options =
+      PushSubscriptionOptions::FromOptionsInit(options_init, exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
 
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  if (!ValidateOptions(options, exception_state))
+    return ScriptPromise();
+
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
   // The document context is the only reasonable context from which to ask the
   // user for permission to use the Push API. The embedder should persist the
   // permission so that later calls in different contexts can succeed.
   if (auto* document =
-          DynamicTo<Document>(ExecutionContext::From(script_state))) {
+          Document::DynamicFrom(ExecutionContext::From(script_state))) {
     LocalFrame* frame = document->GetFrame();
-    if (!document->domWindow() || !frame)
-      return ScriptPromise::RejectWithDOMException(
-          script_state,
-          DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                               "Document is detached from window."));
-    PushController::ClientFrom(frame).Subscribe(
-        registration_->RegistrationId(), web_options,
-        LocalFrame::HasTransientUserActivation(frame,
-                                               true /* check_if_main_thread */),
+    if (!document->domWindow() || !frame) {
+      exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                        "Document is detached from window.");
+      return ScriptPromise();
+    }
+
+    PushMessagingClient* messaging_client = PushMessagingClient::From(frame);
+    DCHECK(messaging_client);
+
+    messaging_client->Subscribe(
+        registration_, options, LocalFrame::HasTransientUserActivation(frame),
         std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   } else {
-    PushProvider()->Subscribe(
-        registration_->RegistrationId(), web_options,
-        LocalFrame::HasTransientUserActivation(nullptr,
-                                               true /* check_if_main_thread */),
-        std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
+    GetPushProvider(registration_)
+        ->Subscribe(options, LocalFrame::HasTransientUserActivation(nullptr),
+                    std::make_unique<PushSubscriptionCallbacks>(resolver,
+                                                                registration_));
   }
 
   return promise;
 }
 
 ScriptPromise PushManager::getSubscription(ScriptState* script_state) {
-  ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(script_state);
   ScriptPromise promise = resolver->Promise();
 
-  PushProvider()->GetSubscription(
-      registration_->RegistrationId(),
-      std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
+  GetPushProvider(registration_)
+      ->GetSubscription(
+          std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   return promise;
 }
 
@@ -109,19 +131,19 @@ ScriptPromise PushManager::permissionState(
     const PushSubscriptionOptionsInit* options,
     ExceptionState& exception_state) {
   if (auto* document =
-          DynamicTo<Document>(ExecutionContext::From(script_state))) {
-    if (!document->domWindow() || !document->GetFrame())
-      return ScriptPromise::RejectWithDOMException(
-          script_state,
-          DOMException::Create(DOMExceptionCode::kInvalidStateError,
-                               "Document is detached from window."));
+          Document::DynamicFrom(ExecutionContext::From(script_state))) {
+    if (!document->domWindow() || !document->GetFrame()) {
+      exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                        "Document is detached from window.");
+      return ScriptPromise();
+    }
   }
 
   return PushMessagingBridge::From(registration_)
       ->GetPermissionState(script_state, options);
 }
 
-void PushManager::Trace(blink::Visitor* visitor) {
+void PushManager::Trace(Visitor* visitor) {
   visitor->Trace(registration_);
   ScriptWrappable::Trace(visitor);
 }

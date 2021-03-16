@@ -2,17 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CONTENT_CHILD_CHILD_HISTOGRAM_IMPL_H
-#define CONTENT_CHILD_CHILD_HISTOGRAM_IMPL_H
+#ifndef CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H
+#define CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H
 
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
+#include "base/memory/writable_shared_memory_region.h"
 #include "content/common/histogram_fetcher.mojom.h"
 #include "ipc/message_filter.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 
 namespace base {
 class HistogramDeltaSerialization;
@@ -26,11 +27,13 @@ class ChildHistogramFetcherFactoryImpl
   ChildHistogramFetcherFactoryImpl();
   ~ChildHistogramFetcherFactoryImpl() override;
 
-  static void Create(content::mojom::ChildHistogramFetcherFactoryRequest);
+  static void Create(
+      mojo::PendingReceiver<content::mojom::ChildHistogramFetcherFactory>);
 
  private:
-  void CreateFetcher(mojo::ScopedSharedBufferHandle,
-                     content::mojom::ChildHistogramFetcherRequest) override;
+  void CreateFetcher(
+      base::WritableSharedMemoryRegion,
+      mojo::PendingReceiver<content::mojom::ChildHistogramFetcher>) override;
 };
 
 class ChildHistogramFetcherImpl : public content::mojom::ChildHistogramFetcher {
@@ -61,4 +64,4 @@ class ChildHistogramFetcherImpl : public content::mojom::ChildHistogramFetcher {
 
 }  // namespace content
 
-#endif  // CONTENT_CHILD_CHILD_HISTOGRAM_IMPL_H
+#endif  // CONTENT_CHILD_CHILD_HISTOGRAM_FETCHER_IMPL_H

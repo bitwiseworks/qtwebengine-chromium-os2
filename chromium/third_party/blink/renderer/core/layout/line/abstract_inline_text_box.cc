@@ -33,6 +33,8 @@
 #include "third_party/blink/renderer/core/accessibility/ax_object_cache.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_inline_node.h"
+#include "third_party/blink/renderer/core/layout/ng/inline/ng_offset_mapping.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 
 namespace blink {
@@ -42,6 +44,22 @@ AbstractInlineTextBox::AbstractInlineTextBox(LineLayoutText line_layout_item)
 
 AbstractInlineTextBox::~AbstractInlineTextBox() {
   DCHECK(!line_layout_item_);
+}
+
+LayoutText* AbstractInlineTextBox::GetFirstLetterPseudoLayoutText() const {
+  // We only want to apply the first letter to the first inline text box
+  // for a LayoutObject.
+  if (!IsFirst())
+    return nullptr;
+
+  Node* node = GetLineLayoutItem().GetNode();
+  if (!node)
+    return nullptr;
+
+  LayoutObject* layout_object = node->GetLayoutObject();
+  if (!layout_object || !layout_object->IsText())
+    return nullptr;
+  return ToLayoutText(layout_object)->GetFirstLetterPart();
 }
 
 // ----
@@ -133,6 +151,28 @@ unsigned LegacyAbstractInlineTextBox::Len() const {
   return inline_text_box_->Len();
 }
 
+unsigned LegacyAbstractInlineTextBox::TextOffsetInContainer(
+    unsigned offset) const {
+  if (!inline_text_box_)
+    return 0;
+
+  unsigned offset_in_container = inline_text_box_->Start() + offset;
+
+  const NGOffsetMapping* offset_mapping = GetOffsetMapping();
+  if (!offset_mapping)
+    return offset_in_container;
+
+  // The start offset of the inline text box returned by
+  // inline_text_box_->Start() includes the collapsed white-spaces. Here, we
+  // want the position in the parent node after white-space collapsing.
+  // NGOffsetMapping can map an offset before whites-spaces are collapsed to the
+  // offset after white-spaces are collapsed.
+  Position position(GetNode(), offset_in_container);
+  const NGOffsetMappingUnit* unit =
+      offset_mapping->GetMappingUnitForPosition(position);
+  return offset_in_container - unit->DOMStart() + unit->TextContentStart();
+}
+
 AbstractInlineTextBox::Direction LegacyAbstractInlineTextBox::GetDirection()
     const {
   if (!inline_text_box_ || !GetLineLayoutItem())
@@ -186,29 +226,29 @@ String LegacyAbstractInlineTextBox::GetText() const {
   if (!inline_text_box_ || !GetLineLayoutItem())
     return String();
 
-  unsigned start = inline_text_box_->Start();
-  unsigned len = inline_text_box_->Len();
-  if (Node* node = GetLineLayoutItem().GetNode()) {
-    if (node->IsTextNode()) {
-      return PlainText(
-          EphemeralRange(Position(node, start), Position(node, start + len)),
-          TextIteratorBehavior::IgnoresStyleVisibilityBehavior());
-    }
-    return PlainText(
-        EphemeralRange(Position(node, PositionAnchorType::kBeforeAnchor),
-                       Position(node, PositionAnchorType::kAfterAnchor)),
-        TextIteratorBehavior::IgnoresStyleVisibilityBehavior());
+  String result = inline_text_box_->GetText();
+
+  // Simplify all whitespace to just a space character, except for
+  // actual line breaks.
+  if (!inline_text_box_->IsLineBreak())
+    result = result.SimplifyWhiteSpace(WTF::kDoNotStripWhiteSpace);
+
+  // When the CSS first-letter pseudoselector is used, the LayoutText for the
+  // first letter is excluded from the accessibility tree, so we need to prepend
+  // its text here.
+  if (LayoutText* first_letter = GetFirstLetterPseudoLayoutText()) {
+    result = first_letter->GetText().SimplifyWhiteSpace() + result;
   }
 
-  String result = GetLineLayoutItem()
-                      .GetText()
-                      .Substring(start, len)
-                      .SimplifyWhiteSpace(WTF::kDoNotStripWhiteSpace);
-  if (inline_text_box_->NextForSameLayoutObject() &&
-      inline_text_box_->NextForSameLayoutObject()->Start() >
-          inline_text_box_->end() &&
-      result.length() && !result.Right(1).ContainsOnlyWhitespaceOrEmpty())
-    return result + " ";
+  // Insert a space at the end of this if necessary.
+  if (InlineTextBox* next = inline_text_box_->NextForSameLayoutObject()) {
+    if (next->Start() > inline_text_box_->Start() + inline_text_box_->Len() &&
+        result.length() && !result.Right(1).ContainsOnlyWhitespaceOrEmpty() &&
+        next->GetText().length() &&
+        !next->GetText().Left(1).ContainsOnlyWhitespaceOrEmpty())
+      return result + " ";
+  }
+
   return result;
 }
 
@@ -252,6 +292,36 @@ LegacyAbstractInlineTextBox::PreviousOnLine() const {
                        ToInlineTextBox(previous));
 
   return nullptr;
+}
+
+bool LegacyAbstractInlineTextBox::IsLineBreak() const {
+  DCHECK(!inline_text_box_ ||
+         !inline_text_box_->GetLineLayoutItem().NeedsLayout());
+  if (!inline_text_box_)
+    return false;
+
+  return inline_text_box_->IsLineBreak();
+}
+
+const NGOffsetMapping* LegacyAbstractInlineTextBox::GetOffsetMapping() const {
+  const auto* text_node = DynamicTo<Text>(GetNode());
+  if (!text_node)
+    return nullptr;
+
+  LayoutBlockFlow& block_flow = *NGOffsetMapping::GetInlineFormattingContextOf(
+      *text_node->GetLayoutObject());
+  const NGOffsetMapping* offset_mapping =
+      NGInlineNode::GetOffsetMapping(&block_flow);
+
+  if (UNLIKELY(!offset_mapping)) {
+    // TODO(crbug.com/955678): There are certain cases where we fail to
+    // compute // |NGOffsetMapping| due to failures in layout. As the root
+    // cause is hard to fix at the moment, we work around it here so that the
+    // production build doesn't crash.
+    NOTREACHED();
+    return nullptr;
+  }
+  return offset_mapping;
 }
 
 }  // namespace blink

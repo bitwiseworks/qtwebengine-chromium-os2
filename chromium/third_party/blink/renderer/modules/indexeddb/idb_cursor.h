@@ -36,7 +36,6 @@
 #include "third_party/blink/renderer/modules/indexeddb/indexed_db.h"
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_cursor.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
 
 namespace blink {
 
@@ -53,12 +52,6 @@ class IDBCursor : public ScriptWrappable {
 
   static mojom::IDBCursorDirection StringToDirection(const String& mode_string);
 
-  static IDBCursor* Create(std::unique_ptr<WebIDBCursor>,
-                           mojom::IDBCursorDirection,
-                           IDBRequest*,
-                           const Source&,
-                           IDBTransaction*);
-
   IDBCursor(std::unique_ptr<WebIDBCursor>,
             mojom::IDBCursorDirection,
             IDBRequest*,
@@ -66,7 +59,7 @@ class IDBCursor : public ScriptWrappable {
             IDBTransaction*);
   ~IDBCursor() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   void ContextWillBeDestroyed() { backend_.reset(); }
 
   WARN_UNUSED_RESULT v8::Local<v8::Object> AssociateWithWrapper(
@@ -79,6 +72,7 @@ class IDBCursor : public ScriptWrappable {
   ScriptValue key(ScriptState*);
   ScriptValue primaryKey(ScriptState*);
   ScriptValue value(ScriptState*);
+  IDBRequest* request() { return request_.Get(); }
   void source(Source&) const;
 
   IDBRequest* update(ScriptState*, const ScriptValue&, ExceptionState&);

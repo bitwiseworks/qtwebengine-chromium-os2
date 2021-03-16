@@ -28,7 +28,7 @@
 
 #include "third_party/blink/renderer/core/dom/dom_time_stamp.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/modules/geolocation/coordinates.h"
+#include "third_party/blink/renderer/modules/geolocation/geolocation_coordinates.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
@@ -39,25 +39,21 @@ class Geoposition final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static Geoposition* Create(Coordinates* coordinates, DOMTimeStamp timestamp) {
-    return MakeGarbageCollected<Geoposition>(coordinates, timestamp);
-  }
-
-  Geoposition(Coordinates* coordinates, DOMTimeStamp timestamp)
+  Geoposition(GeolocationCoordinates* coordinates, DOMTimeStamp timestamp)
       : coordinates_(coordinates), timestamp_(timestamp) {
     DCHECK(coordinates_);
   }
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(coordinates_);
     ScriptWrappable::Trace(visitor);
   }
 
   DOMTimeStamp timestamp() const { return timestamp_; }
-  Coordinates* coords() const { return coordinates_; }
+  GeolocationCoordinates* coords() const { return coordinates_; }
 
  private:
-  Member<Coordinates> coordinates_;
+  Member<GeolocationCoordinates> coordinates_;
   DOMTimeStamp timestamp_;
 };
 

@@ -9,7 +9,7 @@
 
 namespace blink {
 
-static String HitTestRectsAsString(HitTestRects rects) {
+static String TouchActionRectsAsString(const Vector<TouchActionRect>& rects) {
   StringBuilder sb;
   sb.Append("[");
   bool first = true;
@@ -32,33 +32,34 @@ String HitTestData::ToString() const {
   bool printed_top_level_field = false;
   if (!touch_action_rects.IsEmpty()) {
     sb.Append("touch_action_rects: ");
-    sb.Append(HitTestRectsAsString(touch_action_rects));
+    sb.Append(TouchActionRectsAsString(touch_action_rects));
     printed_top_level_field = true;
   }
 
-  if (!wheel_event_handler_region.IsEmpty()) {
+  if (!scroll_hit_test_rect.IsEmpty()) {
     if (printed_top_level_field)
       sb.Append(", ");
-    sb.Append("wheel_event_handler_region: ");
-    sb.Append(HitTestRectsAsString(wheel_event_handler_region));
+    sb.Append("scroll_hit_test_rect: ");
+    sb.Append(scroll_hit_test_rect.ToString());
     printed_top_level_field = true;
   }
 
-  if (!non_fast_scrollable_region.IsEmpty()) {
+  if (scroll_translation) {
     if (printed_top_level_field)
       sb.Append(", ");
-    sb.Append("non_fast_scrollable_region: ");
-    sb.Append(HitTestRectsAsString(non_fast_scrollable_region));
-    printed_top_level_field = true;
+    sb.AppendFormat("scroll_translation: %p", scroll_translation);
   }
 
   sb.Append("}");
-
   return sb.ToString();
 }
 
 std::ostream& operator<<(std::ostream& os, const HitTestData& data) {
-  return os << data.ToString().Utf8().data();
+  return os << data.ToString().Utf8();
+}
+
+std::ostream& operator<<(std::ostream& os, const HitTestData* data) {
+  return os << (data ? data->ToString().Utf8() : "null");
 }
 
 }  // namespace blink

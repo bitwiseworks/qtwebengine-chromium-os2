@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "content/browser/accessibility/accessibility_tree_formatter.h"
+#include "content/browser/accessibility/accessibility_tree_formatter_base.h"
 
 #include <math.h>
 #include <oleacc.h>
@@ -14,6 +14,7 @@
 #include <string>
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
@@ -24,43 +25,19 @@
 #include "base/win/com_init_util.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_variant.h"
+#include "content/browser/accessibility/accessibility_tree_formatter_blink.h"
+#include "content/browser/accessibility/accessibility_tree_formatter_uia_win.h"
 #include "content/browser/accessibility/accessibility_tree_formatter_utils_win.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/browser_accessibility_win.h"
 #include "third_party/iaccessible2/ia2_api_all.h"
+#include "ui/accessibility/accessibility_switches.h"
 #include "ui/base/win/atl_module.h"
 #include "ui/gfx/win/hwnd_util.h"
 
-namespace {
-
-struct HwndWithProcId {
-  HwndWithProcId(const base::ProcessId id) : pid(id), hwnd(nullptr) {}
-  const base::ProcessId pid;
-  HWND hwnd;
-};
-
-BOOL CALLBACK EnumWindowsProcPid(HWND hwnd, LPARAM lParam) {
-  DWORD process_id;
-  GetWindowThreadProcessId(hwnd, &process_id);
-  HwndWithProcId* hwnd_with_proc_id = (HwndWithProcId*)lParam;
-  if (process_id == static_cast<DWORD>(hwnd_with_proc_id->pid)) {
-    hwnd_with_proc_id->hwnd = hwnd;
-    return FALSE;
-  }
-  return TRUE;
-}
-
-HWND GetHwndForProcess(base::ProcessId pid) {
-  HwndWithProcId hwnd_with_proc_id(pid);
-  EnumWindows(&EnumWindowsProcPid, (LPARAM)&hwnd_with_proc_id);
-  return hwnd_with_proc_id.hwnd;
-}
-
-}  // namespace
-
 namespace content {
 
-class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
+class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatterBase {
  public:
   AccessibilityTreeFormatterWin();
   ~AccessibilityTreeFormatterWin() override;
@@ -78,6 +55,10 @@ class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
       LONG window_x = 0,
       LONG window_y = 0);
 
+  static void SetUpCommandLineForTestPass(base::CommandLine* command_line);
+  void AddDefaultFilters(
+      std::vector<PropertyFilter>* property_filters) override;
+
  private:
   void RecursiveBuildAccessibilityTree(
       const Microsoft::WRL::ComPtr<IAccessible> node,
@@ -85,10 +66,11 @@ class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
       LONG root_x,
       LONG root_y);
 
-  const base::FilePath::StringType GetExpectedFileSuffix() override;
+  base::FilePath::StringType GetExpectedFileSuffix() override;
   const std::string GetAllowEmptyString() override;
   const std::string GetAllowString() override;
   const std::string GetDenyString() override;
+  const std::string GetDenyNodeString() override;
   void AddProperties(const Microsoft::WRL::ComPtr<IAccessible>,
                      base::DictionaryValue* dict,
                      LONG root_x,
@@ -125,12 +107,77 @@ AccessibilityTreeFormatter::Create() {
   return std::make_unique<AccessibilityTreeFormatterWin>();
 }
 
+// static
+std::vector<AccessibilityTreeFormatter::TestPass>
+AccessibilityTreeFormatter::GetTestPasses() {
+  // In addition to the 'Blink' pass, Windows includes two accessibility APIs
+  // that need to be tested independently (MSAA & UIA).
+  return {
+      {"blink", &AccessibilityTreeFormatterBlink::CreateBlink, nullptr},
+      {"win", &AccessibilityTreeFormatter::Create,
+       &AccessibilityTreeFormatterWin::SetUpCommandLineForTestPass},
+      {"uia", &AccessibilityTreeFormatterUia::CreateUia,
+       &AccessibilityTreeFormatterUia::SetUpCommandLineForTestPass},
+  };
+}
+
+void AccessibilityTreeFormatterWin::SetUpCommandLineForTestPass(
+    base::CommandLine* command_line) {
+  command_line->RemoveSwitch(::switches::kEnableExperimentalUIAutomation);
+}
+
+void AccessibilityTreeFormatterWin::AddDefaultFilters(
+    std::vector<PropertyFilter>* property_filters) {
+  // Too noisy: HOTTRACKED, LINKED, SELECTABLE, IA2_STATE_EDITABLE,
+  //            IA2_STATE_OPAQUE, IA2_STATE_SELECTAbLE_TEXT,
+  //            IA2_STATE_SINGLE_LINE, IA2_STATE_VERTICAL.
+  // Too unpredictiable: OFFSCREEN
+  // Windows states to log by default:
+  AddPropertyFilter(property_filters, "ALERT*");
+  AddPropertyFilter(property_filters, "ANIMATED*");
+  AddPropertyFilter(property_filters, "BUSY");
+  AddPropertyFilter(property_filters, "CHECKED");
+  AddPropertyFilter(property_filters, "COLLAPSED");
+  AddPropertyFilter(property_filters, "EXPANDED");
+  AddPropertyFilter(property_filters, "FLOATING");
+  AddPropertyFilter(property_filters, "FOCUSABLE");
+  AddPropertyFilter(property_filters, "HASPOPUP");
+  AddPropertyFilter(property_filters, "INVISIBLE");
+  AddPropertyFilter(property_filters, "MARQUEED");
+  AddPropertyFilter(property_filters, "MIXED");
+  AddPropertyFilter(property_filters, "MOVEABLE");
+  AddPropertyFilter(property_filters, "MULTISELECTABLE");
+  AddPropertyFilter(property_filters, "PRESSED");
+  AddPropertyFilter(property_filters, "PROTECTED");
+  AddPropertyFilter(property_filters, "READONLY");
+  AddPropertyFilter(property_filters, "SELECTED");
+  AddPropertyFilter(property_filters, "SIZEABLE");
+  AddPropertyFilter(property_filters, "TRAVERSED");
+  AddPropertyFilter(property_filters, "UNAVAILABLE");
+  AddPropertyFilter(property_filters, "IA2_STATE_ACTIVE");
+  AddPropertyFilter(property_filters, "IA2_STATE_ARMED");
+  AddPropertyFilter(property_filters, "IA2_STATE_CHECKABLE");
+  AddPropertyFilter(property_filters, "IA2_STATE_DEFUNCT");
+  AddPropertyFilter(property_filters, "IA2_STATE_HORIZONTAL");
+  AddPropertyFilter(property_filters, "IA2_STATE_ICONIFIED");
+  AddPropertyFilter(property_filters, "IA2_STATE_INVALID_ENTRY");
+  AddPropertyFilter(property_filters, "IA2_STATE_MODAL");
+  AddPropertyFilter(property_filters, "IA2_STATE_MULTI_LINE");
+  AddPropertyFilter(property_filters, "IA2_STATE_PINNED");
+  AddPropertyFilter(property_filters, "IA2_STATE_REQUIRED");
+  AddPropertyFilter(property_filters, "IA2_STATE_STALE");
+  AddPropertyFilter(property_filters, "IA2_STATE_TRANSIENT");
+  // Reduce flakiness.
+  AddPropertyFilter(property_filters, "FOCUSED", PropertyFilter::DENY);
+  AddPropertyFilter(property_filters, "HOTTRACKED", PropertyFilter::DENY);
+  AddPropertyFilter(property_filters, "OFFSCREEN", PropertyFilter::DENY);
+}
+
 AccessibilityTreeFormatterWin::AccessibilityTreeFormatterWin() {
   ui::win::CreateATLModuleIfNeeded();
 }
 
-AccessibilityTreeFormatterWin::~AccessibilityTreeFormatterWin() {
-}
+AccessibilityTreeFormatterWin::~AccessibilityTreeFormatterWin() {}
 
 static HRESULT QuerySimpleDOMNode(IAccessible* accessible,
                                   ISimpleDOMNode** simple_dom_node) {
@@ -230,11 +277,14 @@ std::unique_ptr<base::DictionaryValue>
 AccessibilityTreeFormatterWin::BuildAccessibilityTree(
     BrowserAccessibility* start_node) {
   DCHECK(start_node);
+  DCHECK(start_node->instance_active());
+  BrowserAccessibilityManager* root_manager =
+      start_node->manager()->GetRootManager();
+  DCHECK(root_manager);
 
   base::win::ScopedVariant variant_self(CHILDID_SELF);
   LONG root_x, root_y, root_width, root_height;
-  BrowserAccessibility* root =
-      start_node->manager()->GetRootManager()->GetRoot();
+  BrowserAccessibility* root = root_manager->GetRoot();
   HRESULT hr = ToBrowserAccessibilityWin(root)->GetCOM()->accLocation(
       &root_x, &root_y, &root_width, &root_height, variant_self);
   DCHECK(SUCCEEDED(hr));
@@ -340,7 +390,8 @@ void AccessibilityTreeFormatterWin::RecursiveBuildAccessibilityTree(
         }
         base::win::ScopedBstr temp_bstr;
         if (S_OK == node->get_accName(child_variant, temp_bstr.Receive())) {
-          base::string16 name = base::string16(temp_bstr, temp_bstr.Length());
+          base::string16 name =
+              base::string16(temp_bstr.Get(), temp_bstr.Length());
           child_dict->SetString("name", name);
         }
       }
@@ -440,7 +491,7 @@ void AccessibilityTreeFormatterWin::AddMSAAProperties(
 
   // If S_FALSE it means there is no name
   if (S_OK == node->get_accName(variant_self, temp_bstr.Receive())) {
-    base::string16 name = base::string16(temp_bstr, temp_bstr.Length());
+    base::string16 name = base::string16(temp_bstr.Get(), temp_bstr.Length());
     dict->SetString("name", name);
   }
   temp_bstr.Reset();
@@ -475,7 +526,8 @@ void AccessibilityTreeFormatterWin::AddMSAAProperties(
   }
 
   if (SUCCEEDED(node->get_accValue(variant_self, temp_bstr.Receive())))
-    dict->SetString("value", base::string16(temp_bstr, temp_bstr.Length()));
+    dict->SetString("value",
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   temp_bstr.Reset();
 
   int32_t ia_state = 0;
@@ -491,28 +543,29 @@ void AccessibilityTreeFormatterWin::AddMSAAProperties(
   }
 
   if (SUCCEEDED(node->get_accDescription(variant_self, temp_bstr.Receive()))) {
-    dict->SetString("description", base::string16(temp_bstr,
-        temp_bstr.Length()));
+    dict->SetString("description",
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
   temp_bstr.Reset();
 
   // |get_accDefaultAction| returns a localized string.
   if (SUCCEEDED(
           node->get_accDefaultAction(variant_self, temp_bstr.Receive()))) {
-    dict->SetString("default_action", base::string16(temp_bstr,
-        temp_bstr.Length()));
+    dict->SetString("default_action",
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
   temp_bstr.Reset();
 
   if (SUCCEEDED(
           node->get_accKeyboardShortcut(variant_self, temp_bstr.Receive()))) {
-    dict->SetString("keyboard_shortcut", base::string16(temp_bstr,
-        temp_bstr.Length()));
+    dict->SetString("keyboard_shortcut",
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
   temp_bstr.Reset();
 
   if (SUCCEEDED(node->get_accHelp(variant_self, temp_bstr.Receive())))
-    dict->SetString("help", base::string16(temp_bstr, temp_bstr.Length()));
+    dict->SetString("help",
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
 
   temp_bstr.Reset();
 
@@ -542,7 +595,7 @@ void AccessibilityTreeFormatterWin::AddSimpleDOMNodeProperties(
 
   if (SUCCEEDED(simple_dom_node->get_innerHTML(temp_bstr.Receive()))) {
     dict->SetString("inner_html",
-                    base::string16(temp_bstr, temp_bstr.Length()));
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
   temp_bstr.Reset();
 }
@@ -579,8 +632,8 @@ bool AccessibilityTreeFormatterWin::AddIA2Properties(
     // get_attributes() returns a semicolon delimited string. Turn it into a
     // ListValue
     std::vector<base::string16> ia2_attributes = base::SplitString(
-        base::string16(temp_bstr, temp_bstr.Length()), base::string16(1, ';'),
-        base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+        base::string16(temp_bstr.Get(), temp_bstr.Length()),
+        base::string16(1, ';'), base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
 
     std::unique_ptr<base::ListValue> attributes(new base::ListValue());
     attributes->AppendStrings(ia2_attributes);
@@ -608,7 +661,7 @@ bool AccessibilityTreeFormatterWin::AddIA2Properties(
 
   if (SUCCEEDED(ia2->get_localizedExtendedRole(temp_bstr.Receive()))) {
     dict->SetString("localized_extended_role",
-                    base::string16(temp_bstr, temp_bstr.Length()));
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
   temp_bstr.Reset();
 
@@ -628,7 +681,7 @@ void AccessibilityTreeFormatterWin::AddIA2ActionProperties(
   if (SUCCEEDED(
           ia2action->get_name(0 /* action_index */, temp_bstr.Receive()))) {
     dict->SetString("action_name",
-                    base::string16(temp_bstr, temp_bstr.Length()));
+                    base::string16(temp_bstr.Get(), temp_bstr.Length()));
   }
 }
 
@@ -646,7 +699,7 @@ void AccessibilityTreeFormatterWin::AddIA2HypertextProperties(
   if (FAILED(hr))
     return;
 
-  base::string16 ia2_hypertext(text_bstr, text_bstr.Length());
+  base::string16 ia2_hypertext(text_bstr.Get(), text_bstr.Length());
   // IA2 Spec calls embedded objects hyperlinks. We stick to embeds for clarity.
   LONG number_of_embeds;
   hr = ia2hyper->get_nHyperlinks(&number_of_embeds);
@@ -724,7 +777,6 @@ static base::string16 ProcessAccessiblesArray(IUnknown** accessibles,
     return related_accessibles_string;
 
   base::win::ScopedVariant variant_self(CHILDID_SELF);
-
   for (int index = 0; index < num_accessibles; index++) {
     related_accessibles_string += index > 0 ? L"," : L"<";
     Microsoft::WRL::ComPtr<IUnknown> unknown = accessibles[index];
@@ -732,7 +784,7 @@ static base::string16 ProcessAccessiblesArray(IUnknown** accessibles,
     if (SUCCEEDED(unknown.CopyTo(accessible.GetAddressOf()))) {
       base::win::ScopedBstr temp_bstr;
       if (S_OK == accessible->get_accName(variant_self, temp_bstr.Receive()))
-        related_accessibles_string += temp_bstr;
+        related_accessibles_string += temp_bstr.Get();
       else
         related_accessibles_string += L"no name";
     }
@@ -820,14 +872,14 @@ void AccessibilityTreeFormatterWin::AddIA2TextProperties(
     if (FAILED(hr) || start_offset < current_offset)
       break;
     // DCHECK(start_offset == current_offset);  // Always at text range start.
-    if (hr == S_OK && temp_bstr && wcslen(temp_bstr)) {
+    if (hr == S_OK && temp_bstr.Get() && wcslen(temp_bstr.Get())) {
       // Append offset:<number>.
       base::string16 offset_str =
-          base::ASCIIToUTF16("offset:") + base::IntToString16(start_offset);
+          base::ASCIIToUTF16("offset:") + base::NumberToString16(start_offset);
       text_attributes->AppendString(offset_str);
       // Append name:value pairs.
       std::vector<base::string16> name_val_pairs =
-          SplitString(base::string16(temp_bstr), base::ASCIIToUTF16(";"),
+          SplitString(base::string16(temp_bstr.Get()), base::ASCIIToUTF16(";"),
                       base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
       text_attributes->AppendStrings(name_val_pairs);
     }
@@ -871,7 +923,7 @@ base::string16 AccessibilityTreeFormatterWin::ProcessTreeForOutput(
   // Always show role, and show it first.
   base::string16 role_value;
   dict.GetString("role", &role_value);
-  WriteAttribute(true, base::UTF16ToUTF8(role_value), &line);
+  WriteAttribute(true, role_value, &line);
   if (filtered_dict_result)
     filtered_dict_result->SetString("role", role_value);
 
@@ -928,8 +980,7 @@ base::string16 AccessibilityTreeFormatterWin::ProcessTreeForOutput(
         std::unique_ptr<base::ListValue> filtered_list(new base::ListValue());
 
         for (base::ListValue::const_iterator it = list_value->begin();
-             it != list_value->end();
-             ++it) {
+             it != list_value->end(); ++it) {
           base::string16 string_value;
           if (it->GetAsString(&string_value))
             if (WriteAttribute(false, string_value, &line))
@@ -947,11 +998,11 @@ base::string16 AccessibilityTreeFormatterWin::ProcessTreeForOutput(
         bool did_pass_filters = false;
         if (strcmp(attribute_name, "size") == 0) {
           did_pass_filters = WriteAttribute(
-              false, FormatCoordinates("size", "width", "height", *dict_value),
+              false, FormatCoordinates(*dict_value, "size", "width", "height"),
               &line);
         } else if (strcmp(attribute_name, "location") == 0) {
           did_pass_filters = WriteAttribute(
-              false, FormatCoordinates("location", "x", "y", *dict_value),
+              false, FormatCoordinates(*dict_value, "location", "x", "y"),
               &line);
         }
         if (filtered_dict_result && did_pass_filters)
@@ -967,7 +1018,7 @@ base::string16 AccessibilityTreeFormatterWin::ProcessTreeForOutput(
   return line;
 }
 
-const base::FilePath::StringType
+base::FilePath::StringType
 AccessibilityTreeFormatterWin::GetExpectedFileSuffix() {
   return FILE_PATH_LITERAL("-expected-win.txt");
 }
@@ -982,6 +1033,10 @@ const std::string AccessibilityTreeFormatterWin::GetAllowString() {
 
 const std::string AccessibilityTreeFormatterWin::GetDenyString() {
   return "@WIN-DENY:";
+}
+
+const std::string AccessibilityTreeFormatterWin::GetDenyNodeString() {
+  return "@WIN-DENY-NODE:";
 }
 
 }  // namespace content

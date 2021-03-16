@@ -17,12 +17,11 @@
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
-#include "jni/MediaCodecBridgeBuilder_jni.h"
-#include "jni/MediaCodecBridge_jni.h"
 #include "media/base/android/jni_hdr_metadata.h"
 #include "media/base/android/media_codec_util.h"
+#include "media/base/android/media_jni_headers/MediaCodecBridgeBuilder_jni.h"
+#include "media/base/android/media_jni_headers/MediaCodecBridge_jni.h"
 #include "media/base/audio_codecs.h"
-#include "media/base/bit_reader.h"
 #include "media/base/subsample_entry.h"
 #include "media/base/video_codecs.h"
 
@@ -55,20 +54,27 @@ enum {
 using CodecSpecificData = std::vector<uint8_t>;
 
 // Parses |extra_data| to get info to be added to a Java MediaFormat.
-bool GetCodecSpecificDataForAudio(AudioCodec codec,
-                                  const uint8_t* extra_data,
-                                  size_t extra_data_size,
-                                  int64_t codec_delay_ns,
-                                  int64_t seek_preroll_ns,
+bool GetCodecSpecificDataForAudio(const AudioDecoderConfig& config,
                                   CodecSpecificData* output_csd0,
                                   CodecSpecificData* output_csd1,
                                   CodecSpecificData* output_csd2,
                                   bool* output_frame_has_adts_header) {
+  // It's important that the multiplication is first in this calculation to
+  // reduce the precision loss due to integer truncation.
+  const int64_t codec_delay_ns = base::Time::kNanosecondsPerSecond *
+                                 config.codec_delay() /
+                                 config.samples_per_second();
+  const int64_t seek_preroll_ns = config.seek_preroll().InMicroseconds() *
+                                  base::Time::kNanosecondsPerMicrosecond;
+
+  const uint8_t* extra_data = config.extra_data().data();
+  const size_t extra_data_size = config.extra_data().size();
+
   *output_frame_has_adts_header = false;
-  if (extra_data_size == 0 && codec != kCodecOpus)
+  if (extra_data_size == 0 && config.codec() != kCodecOpus)
     return true;
 
-  switch (codec) {
+  switch (config.codec()) {
     case kCodecVorbis: {
       if (extra_data[0] != 2) {
         LOG(ERROR) << "Invalid number of vorbis headers before the codec "
@@ -107,43 +113,13 @@ bool GetCodecSpecificDataForAudio(AudioCodec codec,
 
       // The last header is the codec header.
       output_csd1->assign(extra_data + total_length,
-                          extra_data + extra_data_size - total_length);
+                          extra_data + extra_data_size);
       break;
     }
     case kCodecAAC: {
-      media::BitReader reader(extra_data, extra_data_size);
-
-      // The following code is copied from aac.cc
-      // TODO(qinmin): refactor the code in aac.cc to make it more reusable.
-      uint8_t profile = 0;
-      uint8_t frequency_index = 0;
-      uint8_t channel_config = 0;
-      RETURN_ON_ERROR(reader.ReadBits(5, &profile));
-      RETURN_ON_ERROR(reader.ReadBits(4, &frequency_index));
-
-      if (0xf == frequency_index)
-        RETURN_ON_ERROR(reader.SkipBits(24));
-      RETURN_ON_ERROR(reader.ReadBits(4, &channel_config));
-
-      if (profile == 5 || profile == 29) {
-        // Read extension config.
-        uint8_t ext_frequency_index = 0;
-        RETURN_ON_ERROR(reader.ReadBits(4, &ext_frequency_index));
-        if (ext_frequency_index == 0xf)
-          RETURN_ON_ERROR(reader.SkipBits(24));
-        RETURN_ON_ERROR(reader.ReadBits(5, &profile));
-      }
-
-      if (profile < 1 || profile > 4 || frequency_index == 0xf ||
-          channel_config > 7) {
-        LOG(ERROR) << "Invalid AAC header";
-        return false;
-      }
-
-      output_csd0->push_back(profile << 3 | frequency_index >> 1);
-      output_csd0->push_back((frequency_index & 0x01) << 7 | channel_config
-                                                                 << 3);
-      *output_frame_has_adts_header = true;
+      output_csd0->assign(extra_data, extra_data + extra_data_size);
+      *output_frame_has_adts_header =
+          config.profile() != AudioCodecProfile::kXHE_AAC;
       break;
     }
     case kCodecOpus: {
@@ -170,14 +146,17 @@ bool GetCodecSpecificDataForAudio(AudioCodec codec,
       break;
     }
     default:
-      LOG(ERROR) << "Invalid header encountered for codec: "
-                 << GetCodecName(codec);
+      LOG(ERROR) << "Unsupported audio codec encountered: "
+                 << GetCodecName(config.codec());
       return false;
   }
   return true;
 }
 
 }  // namespace
+
+VideoCodecConfig::VideoCodecConfig() = default;
+VideoCodecConfig::~VideoCodecConfig() = default;
 
 // static
 std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
@@ -201,19 +180,9 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
   const int channel_count =
       ChannelLayoutToChannelCount(config.channel_layout());
 
-  // It's important that the multiplication is first in this calculation to
-  // reduce the precision loss due to integer truncation.
-  const int64_t codec_delay_ns = base::Time::kNanosecondsPerSecond *
-                                 config.codec_delay() /
-                                 config.samples_per_second();
-  const int64_t seek_preroll_ns = config.seek_preroll().InMicroseconds() *
-                                  base::Time::kNanosecondsPerMicrosecond;
-
   CodecSpecificData csd0, csd1, csd2;
   bool output_frame_has_adts_header;
-  if (!GetCodecSpecificDataForAudio(config.codec(), config.extra_data().data(),
-                                    config.extra_data().size(), codec_delay_ns,
-                                    seek_preroll_ns, &csd0, &csd1, &csd2,
+  if (!GetCodecSpecificDataForAudio(config, &csd0, &csd1, &csd2,
                                     &output_frame_has_adts_header)) {
     return nullptr;
   }
@@ -231,56 +200,45 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
   if (j_bridge.is_null())
     return nullptr;
 
-  return base::WrapUnique(new MediaCodecBridgeImpl(
-      std::move(j_bridge), std::move(on_buffers_available_cb)));
+  return base::WrapUnique(
+      new MediaCodecBridgeImpl(CodecType::kAny, std::move(j_bridge),
+                               std::move(on_buffers_available_cb)));
 }
 
 // static
 std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoDecoder(
-    VideoCodec codec,
-    CodecType codec_type,
-    const gfx::Size& size,
-    const JavaRef<jobject>& surface,
-    const JavaRef<jobject>& media_crypto,
-    const CodecSpecificData& csd0,
-    const CodecSpecificData& csd1,
-    const VideoColorSpace& color_space,
-    const base::Optional<HDRMetadata>& hdr_metadata,
-    bool allow_adaptive_playback,
-    base::RepeatingClosure on_buffers_available_cb) {
+    const VideoCodecConfig& config) {
   if (!MediaCodecUtil::IsMediaCodecAvailable())
     return nullptr;
 
-  const std::string mime = MediaCodecUtil::CodecToAndroidMimeType(codec);
+  const std::string mime = MediaCodecUtil::CodecToAndroidMimeType(config.codec);
   if (mime.empty())
     return nullptr;
 
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jstring> j_mime = ConvertUTF8ToJavaString(env, mime);
-
-  ScopedJavaLocalRef<jbyteArray> j_csd0 =
-      ToJavaByteArray(env, csd0.data(), csd0.size());
-  ScopedJavaLocalRef<jbyteArray> j_csd1 =
-      ToJavaByteArray(env, csd1.data(), csd1.size());
+  auto j_mime = ConvertUTF8ToJavaString(env, mime);
+  auto j_csd0 = ToJavaByteArray(env, config.csd0.data(), config.csd0.size());
+  auto j_csd1 = ToJavaByteArray(env, config.csd1.data(), config.csd1.size());
 
   std::unique_ptr<JniHdrMetadata> jni_hdr_metadata;
-  if (hdr_metadata.has_value()) {
-    jni_hdr_metadata.reset(
-        new JniHdrMetadata(color_space, hdr_metadata.value()));
+  if (config.hdr_metadata.has_value()) {
+    jni_hdr_metadata = std::make_unique<JniHdrMetadata>(
+        config.container_color_space, config.hdr_metadata.value());
   }
-  ScopedJavaLocalRef<jobject> j_hdr_metadata(
-      jni_hdr_metadata ? jni_hdr_metadata->obj() : nullptr);
+  auto j_hdr_metadata = jni_hdr_metadata ? jni_hdr_metadata->obj() : nullptr;
 
   ScopedJavaGlobalRef<jobject> j_bridge(
       Java_MediaCodecBridgeBuilder_createVideoDecoder(
-          env, j_mime, static_cast<int>(codec_type), media_crypto, size.width(),
-          size.height(), surface, j_csd0, j_csd1, j_hdr_metadata,
-          allow_adaptive_playback, !!on_buffers_available_cb));
+          env, j_mime, static_cast<int>(config.codec_type), config.media_crypto,
+          config.initial_expected_coded_size.width(),
+          config.initial_expected_coded_size.height(), config.surface, j_csd0,
+          j_csd1, j_hdr_metadata, true /* allow_adaptive_playback */,
+          !!config.on_buffers_available_cb));
   if (j_bridge.is_null())
     return nullptr;
 
   return base::WrapUnique(new MediaCodecBridgeImpl(
-      std::move(j_bridge), std::move(on_buffers_available_cb)));
+      config.codec_type, std::move(j_bridge), config.on_buffers_available_cb));
 }
 
 // static
@@ -308,7 +266,8 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoEncoder(
   if (j_bridge.is_null())
     return nullptr;
 
-  return base::WrapUnique(new MediaCodecBridgeImpl(std::move(j_bridge)));
+  return base::WrapUnique(
+      new MediaCodecBridgeImpl(CodecType::kAny, std::move(j_bridge)));
 }
 
 // static
@@ -324,9 +283,11 @@ void MediaCodecBridgeImpl::SetupCallbackHandlerForTesting() {
 }
 
 MediaCodecBridgeImpl::MediaCodecBridgeImpl(
+    CodecType codec_type,
     ScopedJavaGlobalRef<jobject> j_bridge,
     base::RepeatingClosure on_buffers_available_cb)
-    : on_buffers_available_cb_(std::move(on_buffers_available_cb)),
+    : codec_type_(codec_type),
+      on_buffers_available_cb_(std::move(on_buffers_available_cb)),
       j_bridge_(std::move(j_bridge)) {
   DCHECK(!j_bridge_.is_null());
 
@@ -421,7 +382,8 @@ MediaCodecStatus MediaCodecBridgeImpl::QueueSecureInputBuffer(
     const std::string& key_id,
     const std::string& iv,
     const std::vector<SubsampleEntry>& subsamples,
-    const EncryptionScheme& encryption_scheme,
+    EncryptionScheme encryption_scheme,
+    base::Optional<EncryptionPattern> encryption_pattern,
     base::TimeDelta presentation_time) {
   DVLOG(3) << __func__ << " " << index << ": " << data_size;
   if (data_size >
@@ -470,9 +432,11 @@ MediaCodecStatus MediaCodecBridgeImpl::QueueSecureInputBuffer(
   return static_cast<MediaCodecStatus>(
       Java_MediaCodecBridge_queueSecureInputBuffer(
           env, j_bridge_, index, 0, j_iv, j_key_id, clear_array, cypher_array,
-          num_subsamples, static_cast<int>(encryption_scheme.mode()),
-          static_cast<int>(encryption_scheme.pattern().crypt_byte_block()),
-          static_cast<int>(encryption_scheme.pattern().skip_byte_block()),
+          num_subsamples, static_cast<int>(encryption_scheme),
+          static_cast<int>(
+              encryption_pattern ? encryption_pattern->crypt_byte_block() : 0),
+          static_cast<int>(
+              encryption_pattern ? encryption_pattern->skip_byte_block() : 0),
           presentation_time.InMicroseconds()));
 }
 
@@ -592,9 +556,6 @@ void MediaCodecBridgeImpl::OnBuffersAvailable(
 }
 
 std::string MediaCodecBridgeImpl::GetName() {
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_JELLY_BEAN_MR2)
-    return "";
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jstring> j_name =
       Java_MediaCodecBridge_getName(env, j_bridge_);
@@ -616,6 +577,10 @@ void MediaCodecBridgeImpl::SetVideoBitrate(int bps, int frame_rate) {
 void MediaCodecBridgeImpl::RequestKeyFrameSoon() {
   JNIEnv* env = AttachCurrentThread();
   Java_MediaCodecBridge_requestKeyFrameSoon(env, j_bridge_);
+}
+
+CodecType MediaCodecBridgeImpl::GetCodecType() const {
+  return codec_type_;
 }
 
 bool MediaCodecBridgeImpl::FillInputBuffer(int index,

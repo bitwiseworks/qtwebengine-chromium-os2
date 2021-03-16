@@ -54,7 +54,17 @@ class H264Encoder : public AcceleratedVideoEncoder {
     unsigned int cpb_size_bits;
 
     // Quantization parameter.
-    int qp;
+    int initial_qp;
+    ScalingSettings scaling_settings;
+
+    // Maxium Number of Reference frames.
+    size_t max_num_ref_frames;
+
+    // Maximum size of reference picture list 0.
+    size_t max_ref_pic_list0_size;
+
+    // Maximum size of reference picture list 1.
+    size_t max_ref_pic_list1_size;
   };
 
   // An accelerator interface. The client must provide an appropriate
@@ -95,14 +105,18 @@ class H264Encoder : public AcceleratedVideoEncoder {
   ~H264Encoder() override;
 
   // AcceleratedVideoEncoder implementation.
-  bool Initialize(const VideoEncodeAccelerator::Config& config) override;
+  bool Initialize(const VideoEncodeAccelerator::Config& config,
+                  const AcceleratedVideoEncoder::Config& ave_config) override;
   bool UpdateRates(const VideoBitrateAllocation& bitrate_allocation,
                    uint32_t framerate) override;
   gfx::Size GetCodedSize() const override;
   size_t GetMaxNumOfRefFrames() const override;
+  ScalingSettings GetScalingSettings() const override;
   bool PrepareEncodeJob(EncodeJob* encode_job) override;
 
  private:
+  friend class H264EncoderTest;
+
   // Fill current_sps_ and current_pps_ with current encoding state parameters.
   void UpdateSPS();
   void UpdatePPS();
@@ -147,8 +161,8 @@ class H264Encoder : public AcceleratedVideoEncoder {
   // idr_pic_id (spec section 7.4.3) to be used for the next frame.
   unsigned int idr_pic_id_ = 0;
 
-  // True if encoding parameters have changed and we need to submit a keyframe
-  // with updated parameters.
+  // True if encoding parameters have changed that affect decoder process, then
+  // we need to submit a keyframe with updated parameters.
   bool encoding_parameters_changed_ = false;
 
   // Currently active reference frames.

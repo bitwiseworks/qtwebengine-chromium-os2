@@ -159,13 +159,6 @@ void LogServiceApiAction(DownloadClient client, ServiceApiAction action);
 void LogStartDownloadResult(DownloadClient client,
                             DownloadParams::StartResult result);
 
-// Logs the client response to StartDownload() attempt on the service.
-void LogStartDownloadResponse(DownloadClient client,
-                              download::Client::ShouldDownload should_download);
-
-// Logs the download parameters when StartDownload() is called.
-void LogDownloadParams(const DownloadParams& params);
-
 // Logs recovery operations that happened when we had to move from one state
 // to another on startup.
 void LogRecoveryOperation(Entry::State to_state);
@@ -201,8 +194,7 @@ void LogFileCleanupStatus(FileCleanupReason reason,
                           int external_cleanups);
 
 // Logs the file life time for successfully completed download.
-void LogFileLifeTime(const base::TimeDelta& file_life_time,
-                     int num_cleanup_attempts);
+void LogFileLifeTime(const base::TimeDelta& file_life_time);
 
 // Logs the total disk space utilized by download files.
 // This includes the total size of all the files in |file_dir|.
@@ -218,14 +210,15 @@ void LogFilePathRenamed(bool renamed);
 // Logs an action the Controller takes on an active download.
 void LogEntryEvent(DownloadEvent event);
 
-// At the time of a resumption, logs which resumption attempt count this is.
-void LogEntryResumptionCount(uint32_t resume_count);
-
 // At the time of a retry, logs which retry attempt count this is.
 void LogEntryRetryCount(uint32_t retry_count);
 
 // Records whether the entry was an upload.
 void LogHasUploadData(DownloadClient client, bool has_upload_data);
+
+// Records count of reduced mode to full browser transitions requested by each
+// client.
+void LogDownloadClientInflatedFullBrowser(DownloadClient client);
 
 }  // namespace stats
 }  // namespace download

@@ -23,10 +23,15 @@ namespace dawn_native {
 
     class ObjectBase : public RefCounted {
       public:
+        struct ErrorTag {};
+        static constexpr ErrorTag kError = {};
+
         ObjectBase(DeviceBase* device);
+        ObjectBase(DeviceBase* device, ErrorTag tag);
         virtual ~ObjectBase();
 
         DeviceBase* GetDevice() const;
+        bool IsError() const;
 
       private:
         DeviceBase* mDevice;

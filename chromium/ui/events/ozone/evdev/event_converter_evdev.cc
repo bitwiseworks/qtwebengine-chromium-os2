@@ -17,6 +17,11 @@
 #include "ui/events/devices/input_device.h"
 #include "ui/events/event_utils.h"
 
+#ifndef input_event_sec
+#define input_event_sec time.tv_sec
+#define input_event_usec time.tv_usec
+#endif
+
 namespace ui {
 
 EventConverterEvdev::EventConverterEvdev(int fd,
@@ -26,7 +31,8 @@ EventConverterEvdev::EventConverterEvdev(int fd,
                                          const std::string& name,
                                          const std::string& phys,
                                          uint16_t vendor_id,
-                                         uint16_t product_id)
+                                         uint16_t product_id,
+                                         uint16_t version)
     : fd_(fd),
       path_(path),
       input_device_(id,
@@ -35,7 +41,8 @@ EventConverterEvdev::EventConverterEvdev(int fd,
                     phys,
                     GetInputPathInSys(path),
                     vendor_id,
-                    product_id),
+                    product_id,
+                    version),
       controller_(FROM_HERE) {
   input_device_.enabled = false;
 }
@@ -45,7 +52,7 @@ EventConverterEvdev::~EventConverterEvdev() {
 
 void EventConverterEvdev::Start() {
   base::MessageLoopCurrentForUI::Get()->WatchFileDescriptor(
-      fd_, true, base::MessagePumpLibevent::WATCH_READ, &controller_, this);
+      fd_, true, base::MessagePumpForUI::WATCH_READ, &controller_, this);
   watching_ = true;
 }
 
@@ -122,6 +129,12 @@ gfx::Size EventConverterEvdev::GetTouchscreenSize() const {
   return gfx::Size();
 }
 
+std::vector<ui::GamepadDevice::Axis> EventConverterEvdev::GetGamepadAxes()
+    const {
+  NOTREACHED();
+  return std::vector<ui::GamepadDevice::Axis>();
+}
+
 int EventConverterEvdev::GetTouchPoints() const {
   NOTREACHED();
   return 0;
@@ -168,8 +181,8 @@ void EventConverterEvdev::SetPalmSuppressionCallback(
 base::TimeTicks EventConverterEvdev::TimeTicksFromInputEvent(
     const input_event& event) {
   base::TimeTicks timestamp =
-      ui::EventTimeStampFromSeconds(event.time.tv_sec) +
-      base::TimeDelta::FromMicroseconds(event.time.tv_usec);
+      ui::EventTimeStampFromSeconds(event.input_event_sec) +
+      base::TimeDelta::FromMicroseconds(event.input_event_usec);
   ValidateEventTimeClock(&timestamp);
   return timestamp;
 }

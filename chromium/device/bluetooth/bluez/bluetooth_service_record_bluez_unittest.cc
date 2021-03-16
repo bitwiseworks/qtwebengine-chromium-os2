@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
@@ -183,7 +184,7 @@ TEST_F(BluetoothServiceRecordBlueZTest, GetServiceRecords) {
       static_cast<BluetoothDeviceBlueZ*>(adapter_->GetDevice(
           bluez::FakeBluetoothDeviceClient::kPairedDeviceAddress));
   GetServiceRecords(device, false);
-  device->Connect(nullptr, GetCallback(Call::EXPECTED),
+  device->Connect(nullptr, GetOnceCallback(Call::EXPECTED),
                   GetConnectErrorCallback(Call::NOT_EXPECTED));
   GetServiceRecords(device, true);
   VerifyRecords();

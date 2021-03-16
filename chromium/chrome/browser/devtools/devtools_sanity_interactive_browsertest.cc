@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
+#include "base/bind.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/devtools/protocol/browser_handler.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "ui/display/types/display_constants.h"
 
 #if defined(OS_MACOSX)
 #include "ui/base/test/scoped_fake_nswindow_fullscreen.h"
@@ -42,7 +46,7 @@ class CheckWaiter {
   bool Check() {
     if (callback_.Run() != expected_ &&
         base::Time::NowFromSystemTime() < timeout_) {
-      base::MessageLoopCurrent::Get()->task_runner()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE, base::BindOnce(base::IgnoreResult(&CheckWaiter::Check),
                                     base::Unretained(this)));
       return false;
@@ -50,7 +54,7 @@ class CheckWaiter {
 
     // Quit the run_loop to end the wait.
     if (!quit_.is_null())
-      base::ResetAndReturn(&quit_).Run();
+      std::move(quit_).Run();
     return true;
   }
 
@@ -217,7 +221,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsManagerDelegateTest, ExitFullscreenWindow) {
   ui::test::ScopedFakeNSWindowFullscreen faker;
 #endif
   browser()->window()->GetExclusiveAccessContext()->EnterFullscreen(
-      GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE);
+      GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE, display::kInvalidDisplayId);
 #if defined(OS_MACOSX)
   faker.FinishTransition();
 #endif

@@ -17,6 +17,7 @@
 #include "extensions/browser/api_unittest.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/unloaded_extension_reason.h"
 #include "extensions/common/api/idle.h"
 #include "extensions/common/extension.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -217,7 +218,7 @@ TEST_F(IdleTest, QueryMinThreshold) {
       SCOPED_TRACE(time);
       idle_provider_->set_idle_time(time);
 
-      std::string args = "[" + base::IntToString(threshold) + "]";
+      std::string args = "[" + base::NumberToString(threshold) + "]";
       std::unique_ptr<base::Value> result(
           RunFunctionAndReturnValue(new IdleQueryStateFunction(), args));
 
@@ -246,7 +247,7 @@ TEST_F(IdleTest, QueryMaxThreshold) {
       SCOPED_TRACE(time);
       idle_provider_->set_idle_time(time);
 
-      std::string args = "[" + base::IntToString(threshold) + "]";
+      std::string args = "[" + base::NumberToString(threshold) + "]";
       std::unique_ptr<base::Value> result(
           RunFunctionAndReturnValue(new IdleQueryStateFunction(), args));
 

@@ -60,8 +60,6 @@ namespace blink {
 InternalSettings::Backup::Backup(Settings* settings)
     : original_csp_(RuntimeEnabledFeatures::
                         ExperimentalContentSecurityPolicyFeaturesEnabled()),
-      original_overlay_scrollbars_enabled_(
-          RuntimeEnabledFeatures::OverlayScrollbarsEnabled()),
       original_editing_behavior_(settings->GetEditingBehaviorType()),
       original_text_autosizing_enabled_(settings->TextAutosizingEnabled()),
       original_text_autosizing_window_size_override_(
@@ -70,7 +68,6 @@ InternalSettings::Backup::Backup(Settings* settings)
           settings->GetAccessibilityFontScaleFactor()),
       original_media_type_override_(settings->GetMediaTypeOverride()),
       original_display_mode_override_(settings->GetDisplayModeOverride()),
-      original_mock_scrollbars_enabled_(settings->MockScrollbarsEnabled()),
       original_mock_gesture_tap_highlights_enabled_(
           settings->GetMockGestureTapHighlightsEnabled()),
       lang_attribute_aware_form_control_ui_enabled_(
@@ -84,8 +81,6 @@ InternalSettings::Backup::Backup(Settings* settings)
 void InternalSettings::Backup::RestoreTo(Settings* settings) {
   RuntimeEnabledFeatures::SetExperimentalContentSecurityPolicyFeaturesEnabled(
       original_csp_);
-  RuntimeEnabledFeatures::SetOverlayScrollbarsEnabled(
-      original_overlay_scrollbars_enabled_);
   settings->SetEditingBehaviorType(original_editing_behavior_);
   settings->SetTextAutosizingEnabled(original_text_autosizing_enabled_);
   settings->SetTextAutosizingWindowSizeOverride(
@@ -94,7 +89,6 @@ void InternalSettings::Backup::RestoreTo(Settings* settings) {
       original_accessibility_font_scale_factor_);
   settings->SetMediaTypeOverride(original_media_type_override_);
   settings->SetDisplayModeOverride(original_display_mode_override_);
-  settings->SetMockScrollbarsEnabled(original_mock_scrollbars_enabled_);
   settings->SetMockGestureTapHighlightsEnabled(
       original_mock_gesture_tap_highlights_enabled_);
   RuntimeEnabledFeatures::SetLangAttributeAwareFormControlUIEnabled(
@@ -115,13 +109,12 @@ InternalSettings* InternalSettings::From(Page& page) {
   }
   return supplement;
 }
-const char InternalSettings::kSupplementName[] = "InternalSettings";
 
 InternalSettings::~InternalSettings() = default;
 
 InternalSettings::InternalSettings(Page& page)
     : InternalSettingsGenerated(&page),
-      Supplement<Page>(page),
+      InternalSettingsPageSupplementBase(page),
       backup_(&page.GetSettings()) {}
 
 void InternalSettings::ResetToConsistentState() {
@@ -137,13 +130,6 @@ Settings* InternalSettings::GetSettings() const {
   if (!GetPage())
     return nullptr;
   return &GetPage()->GetSettings();
-}
-
-void InternalSettings::setMockScrollbarsEnabled(
-    bool enabled,
-    ExceptionState& exception_state) {
-  InternalSettingsGuardForSettings();
-  GetSettings()->SetMockScrollbarsEnabled(enabled);
 }
 
 void InternalSettings::setHideScrollbars(bool enabled,
@@ -180,11 +166,11 @@ void InternalSettings::setViewportMetaEnabled(bool enabled,
 void InternalSettings::setViewportStyle(const String& style,
                                         ExceptionState& exception_state) {
   InternalSettingsGuardForSettings();
-  if (DeprecatedEqualIgnoringCase(style, "default"))
+  if (EqualIgnoringASCIICase(style, "default"))
     GetSettings()->SetViewportStyle(WebViewportStyle::kDefault);
-  else if (DeprecatedEqualIgnoringCase(style, "mobile"))
+  else if (EqualIgnoringASCIICase(style, "mobile"))
     GetSettings()->SetViewportStyle(WebViewportStyle::kMobile);
-  else if (DeprecatedEqualIgnoringCase(style, "television"))
+  else if (EqualIgnoringASCIICase(style, "television"))
     GetSettings()->SetViewportStyle(WebViewportStyle::kTelevision);
   else
     exception_state.ThrowDOMException(
@@ -328,13 +314,13 @@ void InternalSettings::setAccessibilityFontScaleFactor(
 void InternalSettings::setEditingBehavior(const String& editing_behavior,
                                           ExceptionState& exception_state) {
   InternalSettingsGuardForSettings();
-  if (DeprecatedEqualIgnoringCase(editing_behavior, "win"))
+  if (EqualIgnoringASCIICase(editing_behavior, "win"))
     GetSettings()->SetEditingBehaviorType(kEditingWindowsBehavior);
-  else if (DeprecatedEqualIgnoringCase(editing_behavior, "mac"))
+  else if (EqualIgnoringASCIICase(editing_behavior, "mac"))
     GetSettings()->SetEditingBehaviorType(kEditingMacBehavior);
-  else if (DeprecatedEqualIgnoringCase(editing_behavior, "unix"))
+  else if (EqualIgnoringASCIICase(editing_behavior, "unix"))
     GetSettings()->SetEditingBehaviorType(kEditingUnixBehavior);
-  else if (DeprecatedEqualIgnoringCase(editing_behavior, "android"))
+  else if (EqualIgnoringASCIICase(editing_behavior, "android"))
     GetSettings()->SetEditingBehaviorType(kEditingAndroidBehavior);
   else
     exception_state.ThrowDOMException(DOMExceptionCode::kSyntaxError,
@@ -359,7 +345,7 @@ void InternalSettings::setDefaultVideoPosterURL(
   GetSettings()->SetDefaultVideoPosterURL(url);
 }
 
-void InternalSettings::Trace(blink::Visitor* visitor) {
+void InternalSettings::Trace(Visitor* visitor) {
   InternalSettingsGenerated::Trace(visitor);
   Supplement<Page>::Trace(visitor);
 }
@@ -400,15 +386,15 @@ void InternalSettings::setDisplayModeOverride(const String& display_mode,
   InternalSettingsGuardForSettings();
   String token = display_mode.StripWhiteSpace();
 
-  WebDisplayMode mode = kWebDisplayModeBrowser;
+  auto mode = blink::mojom::DisplayMode::kBrowser;
   if (token == "browser") {
-    mode = kWebDisplayModeBrowser;
+    mode = blink::mojom::DisplayMode::kBrowser;
   } else if (token == "minimal-ui") {
-    mode = kWebDisplayModeMinimalUi;
+    mode = blink::mojom::DisplayMode::kMinimalUi;
   } else if (token == "standalone") {
-    mode = kWebDisplayModeStandalone;
+    mode = blink::mojom::DisplayMode::kStandalone;
   } else if (token == "fullscreen") {
-    mode = kWebDisplayModeFullscreen;
+    mode = blink::mojom::DisplayMode::kFullscreen;
   } else {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
@@ -492,11 +478,11 @@ void InternalSettings::setImageAnimationPolicy(
     const String& policy,
     ExceptionState& exception_state) {
   InternalSettingsGuardForSettings();
-  if (DeprecatedEqualIgnoringCase(policy, "allowed")) {
+  if (EqualIgnoringASCIICase(policy, "allowed")) {
     GetSettings()->SetImageAnimationPolicy(kImageAnimationPolicyAllowed);
-  } else if (DeprecatedEqualIgnoringCase(policy, "once")) {
+  } else if (EqualIgnoringASCIICase(policy, "once")) {
     GetSettings()->SetImageAnimationPolicy(kImageAnimationPolicyAnimateOnce);
-  } else if (DeprecatedEqualIgnoringCase(policy, "none")) {
+  } else if (EqualIgnoringASCIICase(policy, "none")) {
     GetSettings()->SetImageAnimationPolicy(kImageAnimationPolicyNoAnimation);
   } else {
     exception_state.ThrowDOMException(
@@ -538,8 +524,6 @@ void InternalSettings::setAutoplayPolicy(const String& policy_str,
     policy = AutoplayPolicy::Type::kNoUserGestureRequired;
   } else if (policy_str == "user-gesture-required") {
     policy = AutoplayPolicy::Type::kUserGestureRequired;
-  } else if (policy_str == "user-gesture-required-for-cross-origin") {
-    policy = AutoplayPolicy::Type::kUserGestureRequiredForCrossOrigin;
   } else if (policy_str == "document-user-activation-required") {
     policy = AutoplayPolicy::Type::kDocumentUserActivationRequired;
   } else {
@@ -549,6 +533,13 @@ void InternalSettings::setAutoplayPolicy(const String& policy_str,
   }
 
   GetSettings()->SetAutoplayPolicy(policy);
+}
+
+void InternalSettings::setUniversalAccessFromFileURLs(
+    bool enabled,
+    ExceptionState& exception_state) {
+  InternalSettingsGuardForSettings();
+  GetSettings()->SetAllowUniversalAccessFromFileURLs(enabled);
 }
 
 }  // namespace blink

@@ -51,9 +51,9 @@
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_callbacks_impl.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/histogram.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 
 namespace blink {
 
@@ -62,21 +62,25 @@ IDBRequest::AsyncTraceState::AsyncTraceState(const char* trace_event_name)
   // If PopulateForNewEvent is called, it sets trace_event_name_ to
   // trace_event_name. Otherwise, trace_event_name_ is nullptr, so this instance
   // is considered empty. This roundabout initialization lets us avoid calling
-  // TRACE_EVENT_ASYNC_END0 with an uninitalized ID.
-  TRACE_EVENT_ASYNC_BEGIN0("IndexedDB", trace_event_name,
-                           PopulateForNewEvent(trace_event_name));
+  // TRACE_EVENT_NESTABLE_ASYNC_END0 with an uninitalized ID.
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+      "IndexedDB", trace_event_name,
+      TRACE_ID_LOCAL(PopulateForNewEvent(trace_event_name)));
 }
 
 void IDBRequest::AsyncTraceState::RecordAndReset() {
   if (trace_event_name_) {
-    TRACE_EVENT_ASYNC_END0("IndexedDB", trace_event_name_, id_);
+    TRACE_EVENT_NESTABLE_ASYNC_END0("IndexedDB", trace_event_name_,
+                                    TRACE_ID_LOCAL(id_));
     trace_event_name_ = nullptr;
   }
 }
 
 IDBRequest::AsyncTraceState::~AsyncTraceState() {
-  if (trace_event_name_)
-    TRACE_EVENT_ASYNC_END0("IndexedDB", trace_event_name_, id_);
+  if (trace_event_name_) {
+    TRACE_EVENT_NESTABLE_ASYNC_END0("IndexedDB", trace_event_name_,
+                                    TRACE_ID_LOCAL(id_));
+  }
 }
 
 size_t IDBRequest::AsyncTraceState::PopulateForNewEvent(
@@ -131,20 +135,21 @@ IDBRequest::IDBRequest(ScriptState* script_state,
                        const Source& source,
                        IDBTransaction* transaction,
                        AsyncTraceState metrics)
-    : ContextLifecycleObserver(ExecutionContext::From(script_state)),
+    : ExecutionContextLifecycleObserver(ExecutionContext::From(script_state)),
       transaction_(transaction),
       isolate_(script_state->GetIsolate()),
       metrics_(std::move(metrics)),
       source_(source),
-      event_queue_(EventQueue::Create(ExecutionContext::From(script_state),
-                                      TaskType::kInternalIndexedDB)) {}
+      event_queue_(
+          MakeGarbageCollected<EventQueue>(ExecutionContext::From(script_state),
+                                           TaskType::kDatabaseAccess)) {}
 
 IDBRequest::~IDBRequest() {
   DCHECK((ready_state_ == DONE && metrics_.IsEmpty()) ||
          ready_state_ == kEarlyDeath || !GetExecutionContext());
 }
 
-void IDBRequest::Trace(blink::Visitor* visitor) {
+void IDBRequest::Trace(Visitor* visitor) {
   visitor->Trace(transaction_);
   visitor->Trace(source_);
   visitor->Trace(result_);
@@ -152,7 +157,7 @@ void IDBRequest::Trace(blink::Visitor* visitor) {
   visitor->Trace(event_queue_);
   visitor->Trace(pending_cursor_);
   EventTargetWithInlineData::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 ScriptValue IDBRequest::result(ScriptState* script_state,
@@ -204,8 +209,7 @@ const String& IDBRequest::readyState() const {
 
 std::unique_ptr<WebIDBCallbacks> IDBRequest::CreateWebCallbacks() {
   DCHECK(!web_callbacks_);
-  std::unique_ptr<WebIDBCallbacks> callbacks =
-      WebIDBCallbacksImpl::Create(this);
+  auto callbacks = std::make_unique<WebIDBCallbacksImpl>(this);
   web_callbacks_ = callbacks.get();
   return callbacks;
 }
@@ -230,7 +234,7 @@ void IDBRequest::Abort() {
 
   error_.Clear();
   result_.Clear();
-  EnqueueResponse(DOMException::Create(
+  EnqueueResponse(MakeGarbageCollected<DOMException>(
       DOMExceptionCode::kAbortError,
       "The transaction was aborted, so the request cannot be fulfilled."));
   request_aborted_ = true;
@@ -278,7 +282,7 @@ void IDBRequest::SetResultCursor(IDBCursor* cursor,
   cursor_primary_key_ = std::move(primary_key);
   cursor_value_ = std::move(value);
 
-  EnqueueResultInternal(IDBAny::Create(cursor));
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(cursor));
 }
 
 bool IDBRequest::ShouldEnqueueEvent() const {
@@ -413,10 +417,9 @@ void IDBRequest::EnqueueResponse(DOMException* error) {
   }
 
   error_ = error;
-  SetResult(IDBAny::CreateUndefined());
+  SetResult(MakeGarbageCollected<IDBAny>(IDBAny::kUndefinedType));
   pending_cursor_.Clear();
   EnqueueEvent(Event::CreateCancelableBubble(event_type_names::kError));
-  metrics_.RecordAndReset();
 }
 
 void IDBRequest::EnqueueResponse(const Vector<String>& string_list) {
@@ -426,11 +429,10 @@ void IDBRequest::EnqueueResponse(const Vector<String>& string_list) {
     return;
   }
 
-  DOMStringList* dom_string_list = DOMStringList::Create();
+  auto* dom_string_list = MakeGarbageCollected<DOMStringList>();
   for (const auto& item : string_list)
     dom_string_list->Append(item);
-  EnqueueResultInternal(IDBAny::Create(dom_string_list));
-  metrics_.RecordAndReset();
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(dom_string_list));
 }
 
 void IDBRequest::EnqueueResponse(std::unique_ptr<WebIDBCursor> backend,
@@ -458,19 +460,20 @@ void IDBRequest::EnqueueResponse(std::unique_ptr<WebIDBCursor> backend,
 
   switch (cursor_type_) {
     case indexed_db::kCursorKeyOnly:
-      cursor = IDBCursor::Create(std::move(backend), cursor_direction_, this,
-                                 source, transaction_.Get());
+      cursor =
+          MakeGarbageCollected<IDBCursor>(std::move(backend), cursor_direction_,
+                                          this, source, transaction_.Get());
       break;
     case indexed_db::kCursorKeyAndValue:
-      cursor = IDBCursorWithValue::Create(std::move(backend), cursor_direction_,
-                                          this, source, transaction_.Get());
+      cursor = MakeGarbageCollected<IDBCursorWithValue>(
+          std::move(backend), cursor_direction_, this, source,
+          transaction_.Get());
       break;
     default:
       NOTREACHED();
   }
   SetResultCursor(cursor, std::move(key), std::move(primary_key),
                   std::move(value));
-  metrics_.RecordAndReset();
 }
 
 void IDBRequest::EnqueueResponse(std::unique_ptr<IDBKey> idb_key) {
@@ -481,10 +484,9 @@ void IDBRequest::EnqueueResponse(std::unique_ptr<IDBKey> idb_key) {
   }
 
   if (idb_key && idb_key->IsValid())
-    EnqueueResultInternal(IDBAny::Create(std::move(idb_key)));
+    EnqueueResultInternal(MakeGarbageCollected<IDBAny>(std::move(idb_key)));
   else
-    EnqueueResultInternal(IDBAny::CreateUndefined());
-  metrics_.RecordAndReset();
+    EnqueueResultInternal(MakeGarbageCollected<IDBAny>(IDBAny::kUndefinedType));
 }
 
 namespace {
@@ -504,8 +506,7 @@ void IDBRequest::EnqueueResponse(Vector<std::unique_ptr<IDBValue>> values) {
     return;
   }
 
-  EnqueueResultInternal(IDBAny::Create(std::move(values)));
-  metrics_.RecordAndReset();
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(std::move(values)));
 }
 
 #if DCHECK_IS_ON()
@@ -541,8 +542,7 @@ void IDBRequest::EnqueueResponse(std::unique_ptr<IDBValue> value) {
          value->KeyPath() == EffectiveObjectStore(source_)->IdbKeyPath());
 #endif
 
-  EnqueueResultInternal(IDBAny::Create(std::move(value)));
-  metrics_.RecordAndReset();
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(std::move(value)));
 }
 
 void IDBRequest::EnqueueResponse(int64_t value) {
@@ -551,8 +551,7 @@ void IDBRequest::EnqueueResponse(int64_t value) {
     metrics_.RecordAndReset();
     return;
   }
-  EnqueueResultInternal(IDBAny::Create(value));
-  metrics_.RecordAndReset();
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(value));
 }
 
 void IDBRequest::EnqueueResponse() {
@@ -561,8 +560,7 @@ void IDBRequest::EnqueueResponse() {
     metrics_.RecordAndReset();
     return;
   }
-  EnqueueResultInternal(IDBAny::CreateUndefined());
-  metrics_.RecordAndReset();
+  EnqueueResultInternal(MakeGarbageCollected<IDBAny>(IDBAny::kUndefinedType));
 }
 
 void IDBRequest::EnqueueResultInternal(IDBAny* result) {
@@ -600,7 +598,7 @@ bool IDBRequest::HasPendingActivity() const {
   return has_pending_activity_ && GetExecutionContext();
 }
 
-void IDBRequest::ContextDestroyed(ExecutionContext*) {
+void IDBRequest::ContextDestroyed() {
   if (ready_state_ == PENDING) {
     ready_state_ = kEarlyDeath;
     if (queue_item_)
@@ -626,11 +624,34 @@ const AtomicString& IDBRequest::InterfaceName() const {
 }
 
 ExecutionContext* IDBRequest::GetExecutionContext() const {
-  return ContextLifecycleObserver::GetExecutionContext();
+  return ExecutionContextLifecycleObserver::GetExecutionContext();
 }
 
 DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
   IDB_TRACE("IDBRequest::dispatchEvent");
+
+  event.SetTarget(this);
+
+  HeapVector<Member<EventTarget>> targets;
+  targets.push_back(this);
+  if (transaction_ && !prevent_propagation_) {
+    // Per spec: "A request's get the parent algorithm returns the request’s
+    // transaction."
+    targets.push_back(transaction_);
+    // Per spec: "A transaction's get the parent algorithm returns the
+    // transaction’s connection."
+    targets.push_back(transaction_->db());
+  }
+
+  // If this event originated from script, it should have no side effects.
+  if (!event.isTrusted())
+    return IDBEventDispatcher::Dispatch(event, targets);
+  DCHECK(event.type() == event_type_names::kSuccess ||
+         event.type() == event_type_names::kError ||
+         event.type() == event_type_names::kBlocked ||
+         event.type() == event_type_names::kUpgradeneeded)
+      << "event type was " << event.type();
+
   if (!GetExecutionContext())
     return DispatchEventResult::kCanceledBeforeDispatch;
   DCHECK_EQ(ready_state_, PENDING);
@@ -639,17 +660,6 @@ DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
 
   if (event.type() != event_type_names::kBlocked)
     ready_state_ = DONE;
-
-  HeapVector<Member<EventTarget>> targets;
-  targets.push_back(this);
-  if (transaction_ && !prevent_propagation_) {
-    targets.push_back(transaction_);
-    // If there ever are events that are associated with a database but
-    // that do not have a transaction, then this will not work and we need
-    // this object to actually hold a reference to the database (to ensure
-    // it stays alive).
-    targets.push_back(transaction_->db());
-  }
 
   // Cursor properties should not be updated until the success event is being
   // dispatched.
@@ -668,13 +678,6 @@ DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
     did_fire_upgrade_needed_event_ = true;
   }
 
-  // FIXME: When we allow custom event dispatching, this will probably need to
-  // change.
-  DCHECK(event.type() == event_type_names::kSuccess ||
-         event.type() == event_type_names::kError ||
-         event.type() == event_type_names::kBlocked ||
-         event.type() == event_type_names::kUpgradeneeded)
-      << "event type was " << event.type();
   const bool set_transaction_active =
       transaction_ &&
       (event.type() == event_type_names::kSuccess ||
@@ -694,7 +697,10 @@ DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
   if (event.type() == event_type_names::kError && transaction_)
     transaction_->IncrementNumErrorsHandled();
 
-  event.SetTarget(this);
+  // Now that the event dispatching has been triggered, record that the metric
+  // has completed.
+  metrics_.RecordAndReset();
+
   DispatchEventResult dispatch_result =
       IDBEventDispatcher::Dispatch(event, targets);
 
@@ -706,9 +712,9 @@ DispatchEventResult IDBRequest::DispatchEventInternal(Event& event) {
       // Transactions should be aborted after event dispatch if an exception was
       // not caught.
       if (event.LegacyDidListenersThrow()) {
-        transaction_->SetError(
-            DOMException::Create(DOMExceptionCode::kAbortError,
-                                 "Uncaught exception in event handler."));
+        transaction_->SetError(MakeGarbageCollected<DOMException>(
+            DOMExceptionCode::kAbortError,
+            "Uncaught exception in event handler."));
         transaction_->abort(IGNORE_EXCEPTION_FOR_TESTING);
       } else if (event.type() == event_type_names::kError &&
                  dispatch_result == DispatchEventResult::kNotCanceled) {

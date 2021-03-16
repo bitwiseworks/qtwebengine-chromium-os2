@@ -9,27 +9,26 @@ import("//third_party/protobuf/proto_library.gni")
 
 blink_platform_sources("scheduler") {
   sources = [
-    "common/background_scheduler.cc",
     "common/cancelable_closure_holder.cc",
     "common/cancelable_closure_holder.h",
-    "common/features.cc",
+    "common/cooperative_scheduling_manager.cc",
+    "common/dummy_schedulers.cc",
+    "common/event_loop.cc",
     "common/features.h",
     "common/frame_or_worker_scheduler.cc",
     "common/idle_helper.cc",
     "common/idle_helper.h",
-    "common/idle_memory_reclaimer.cc",
-    "common/idle_memory_reclaimer.h",
     "common/metrics_helper.cc",
     "common/metrics_helper.h",
     "common/pollable_thread_safe_flag.cc",
     "common/pollable_thread_safe_flag.h",
     "common/post_cancellable_task.cc",
-    "common/post_cross_thread_task.cc",
     "common/process_state.cc",
     "common/process_state.h",
     "common/scheduler_helper.cc",
     "common/scheduler_helper.h",
     "common/scheduling_lifecycle_state.cc",
+    "common/scheduling_policy.cc",
     "common/simple_thread_scheduler.cc",
     "common/simple_thread_scheduler.h",
     "common/single_thread_idle_task_runner.cc",
@@ -39,10 +38,11 @@ blink_platform_sources("scheduler") {
     "common/thread_load_tracker.cc",
     "common/thread_load_tracker.h",
     "common/thread_scheduler.cc",
-    "common/thread_scheduler_impl.cc",
     "common/thread_scheduler_impl.h",
+    "common/thread_type.cc",
     "common/throttling/budget_pool.cc",
     "common/throttling/budget_pool.h",
+    "common/throttling/budget_pool_controller.h",
     "common/throttling/cpu_time_budget_pool.cc",
     "common/throttling/cpu_time_budget_pool.h",
     "common/throttling/task_queue_throttler.cc",
@@ -53,14 +53,23 @@ blink_platform_sources("scheduler") {
     "common/throttling/wake_up_budget_pool.h",
     "common/tracing_helper.cc",
     "common/tracing_helper.h",
+    "common/ukm_task_sampler.cc",
+    "common/ukm_task_sampler.h",
     "common/unprioritized_resource_loading_task_runner_handle.cc",
     "common/unprioritized_resource_loading_task_runner_handle.h",
     "common/web_resource_loading_task_runner_handle.cc",
     "common/web_thread_scheduler.cc",
+    "common/worker_pool.cc",
+    "main_thread/agent_interference_recorder.cc",
+    "main_thread/agent_interference_recorder.h",
     "main_thread/auto_advancing_virtual_time_domain.cc",
     "main_thread/auto_advancing_virtual_time_domain.h",
+    "main_thread/compositor_priority_experiments.cc",
+    "main_thread/compositor_priority_experiments.h",
     "main_thread/deadline_task_runner.cc",
     "main_thread/deadline_task_runner.h",
+    "main_thread/find_in_page_budget_pool_controller.cc",
+    "main_thread/find_in_page_budget_pool_controller.h",
     "main_thread/frame_origin_type.cc",
     "main_thread/frame_origin_type.h",
     "main_thread/frame_scheduler_impl.cc",
@@ -80,10 +89,16 @@ blink_platform_sources("scheduler") {
     "main_thread/main_thread_scheduler_impl.h",
     "main_thread/main_thread_task_queue.cc",
     "main_thread/main_thread_task_queue.h",
+    "main_thread/memory_purge_manager.cc",
+    "main_thread/memory_purge_manager.h",
+    "main_thread/non_waking_time_domain.cc",
+    "main_thread/non_waking_time_domain.h",
     "main_thread/page_scheduler_impl.cc",
     "main_thread/page_scheduler_impl.h",
     "main_thread/page_visibility_state.cc",
     "main_thread/page_visibility_state.h",
+    "main_thread/pending_user_input.cc",
+    "main_thread/pending_user_input.h",
     "main_thread/prioritize_compositing_after_input_experiment.cc",
     "main_thread/prioritize_compositing_after_input_experiment.h",
     "main_thread/queueing_time_estimator.cc",
@@ -98,20 +113,34 @@ blink_platform_sources("scheduler") {
     "main_thread/user_model.cc",
     "main_thread/user_model.h",
     "main_thread/web_render_widget_scheduling_state.cc",
+    "main_thread/web_scheduling_priority.cc",
+    "main_thread/web_scheduling_task_queue_impl.cc",
+    "main_thread/web_scheduling_task_queue_impl.h",
     "main_thread/web_scoped_virtual_time_pauser.cc",
+    "main_thread/widget_scheduler.cc",
+    "main_thread/widget_scheduler.h",
     "public/aggregated_metric_reporter.h",
-    "public/background_scheduler.h",
+    "public/cooperative_scheduling_manager.h",
+    "public/dummy_schedulers.h",
+    "public/event_loop.h",
     "public/frame_or_worker_scheduler.h",
     "public/frame_scheduler.h",
     "public/frame_status.h",
     "public/page_lifecycle_state.h",
     "public/page_scheduler.h",
+    "public/pending_user_input_type.h",
     "public/post_cancellable_task.h",
     "public/post_cross_thread_task.h",
+    "public/rail_mode_observer.h",
     "public/scheduling_lifecycle_state.h",
+    "public/scheduling_policy.h",
     "public/thread.h",
     "public/thread_cpu_throttler.h",
     "public/thread_scheduler.h",
+    "public/thread_type.h",
+    "public/web_scheduling_priority.h",
+    "public/web_scheduling_task_queue.h",
+    "public/worker_pool.h",
     "public/worker_scheduler.h",
     "worker/compositor_metrics_helper.cc",
     "worker/compositor_metrics_helper.h",
@@ -144,7 +173,9 @@ blink_platform_sources("scheduler") {
     "//services/metrics/public/cpp:ukm_builders",
     "//services/metrics/public/mojom",
     "//third_party/blink/renderer/platform:make_platform_generated",
+    "//third_party/blink/renderer/platform/instrumentation",
     "//third_party/blink/renderer/platform/wtf",
+    "//v8",
   ]
 }
 
@@ -156,16 +187,22 @@ jumbo_source_set("test_support") {
     "test/fake_page_scheduler.h",
     "test/fake_task_runner.cc",
     "test/fake_task_runner.h",
+    "test/recording_task_time_observer.cc",
+    "test/recording_task_time_observer.h",
     "test/renderer_scheduler_test_support.cc",
     "test/test_queueing_time_estimator_client.cc",
     "test/test_queueing_time_estimator_client.h",
     "test/web_fake_thread_scheduler.cc",
+    "test/web_fake_widget_scheduler.cc",
+    "test/web_fake_widget_scheduler.h",
   ]
 
   deps = [
     "//base",
     "//base/test:test_support",
     "//mojo/public/cpp/bindings",
+    "//skia",
+    "//testing/gmock",
     "//third_party/blink/public/mojom:mojom_platform_blink_headers",
   ]
 
@@ -176,9 +213,8 @@ jumbo_source_set("unit_tests") {
   testonly = true
 
   sources = [
-    "common/background_scheduler_unittest.cc",
+    "common/cooperative_scheduling_manager_unittest.cc",
     "common/idle_helper_unittest.cc",
-    "common/idle_memory_reclaimer_unittest.cc",
     "common/metrics_helper_unittest.cc",
     "common/post_cancellable_task_unittest.cc",
     "common/scheduler_helper_unittest.cc",
@@ -186,6 +222,9 @@ jumbo_source_set("unit_tests") {
     "common/throttling/budget_pool_unittest.cc",
     "common/throttling/task_queue_throttler_unittest.cc",
     "common/tracing_helper_unittest.cc",
+    "common/ukm_task_sampler_unittest.cc",
+    "common/worker_pool_unittest.cc",
+    "main_thread/agent_interference_recorder_unittest.cc",
     "main_thread/auto_advancing_virtual_time_domain_unittest.cc",
     "main_thread/deadline_task_runner_unittest.cc",
     "main_thread/frame_scheduler_impl_unittest.cc",
@@ -194,11 +233,12 @@ jumbo_source_set("unit_tests") {
     "main_thread/main_thread_metrics_helper_unittest.cc",
     "main_thread/main_thread_scheduler_impl_unittest.cc",
     "main_thread/main_thread_unittest.cc",
+    "main_thread/memory_purge_manager_unittest.cc",
     "main_thread/page_scheduler_impl_unittest.cc",
+    "main_thread/pending_user_input_unittest.cc",
     "main_thread/queueing_time_estimator_unittest.cc",
     "main_thread/render_widget_signals_unittest.cc",
     "main_thread/user_model_unittest.cc",
-    "worker/compositor_thread_scheduler_unittest.cc",
     "worker/worker_scheduler_proxy_unittest.cc",
     "worker/worker_scheduler_unittest.cc",
     "worker/worker_thread_scheduler_unittest.cc",
@@ -219,9 +259,7 @@ jumbo_source_set("unit_tests") {
 source_set("perf_tests") {
   testonly = true
 
-  sources = [
-    "test/queueing_time_estimator_perf_test.cc",
-  ]
+  sources = [ "test/queueing_time_estimator_perf_test.cc" ]
 
   deps = [
     "//base",
@@ -235,7 +273,7 @@ source_set("perf_tests") {
   configs += [ "//third_party/blink/renderer/platform:blink_platform_config" ]
 }
 
-source_set("scheduler_fuzzer_tests") {
+jumbo_source_set("scheduler_fuzzer_tests") {
   testonly = true
 
   sources = []
@@ -293,7 +331,5 @@ fuzzer_test("sequence_manager_fuzzer") {
 }
 
 proto_library("sequence_manager_test_description_proto") {
-  sources = [
-    "test/fuzzer/proto/sequence_manager_test_description.proto",
-  ]
+  sources = [ "test/fuzzer/proto/sequence_manager_test_description.proto" ]
 }

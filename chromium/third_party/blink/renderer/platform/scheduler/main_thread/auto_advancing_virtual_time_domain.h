@@ -6,8 +6,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_SCHEDULER_MAIN_THREAD_AUTO_ADVANCING_VIRTUAL_TIME_DOMAIN_H_
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/task/sequence_manager/time_domain.h"
+#include "base/task/task_observer.h"
 #include "base/time/time_override.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 
@@ -26,7 +26,7 @@ class SchedulerHelper;
 // |-----------------------------> time
 class PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
     : public base::sequence_manager::TimeDomain,
-      public base::MessageLoop::TaskObserver {
+      public base::TaskObserver {
  public:
   enum class BaseTimeOverridePolicy { OVERRIDE, DO_NOT_OVERRIDE };
 
@@ -35,19 +35,6 @@ class PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
                                  SchedulerHelper* helper,
                                  BaseTimeOverridePolicy policy);
   ~AutoAdvancingVirtualTimeDomain() override;
-
-  class PLATFORM_EXPORT Observer {
-   public:
-    Observer();
-    virtual ~Observer();
-
-    // Notification received when the virtual time advances.
-    virtual void OnVirtualTimeAdvanced() = 0;
-  };
-
-  // Note its assumed that |observer| will either remove itself or last at least
-  // as long as this AutoAdvancingVirtualTimeDomain.
-  void SetObserver(Observer* observer);
 
   // Controls whether or not virtual time is allowed to advance, when the
   // SequenceManager runs out of immediate work to do.
@@ -67,7 +54,8 @@ class PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
   bool MaybeAdvanceVirtualTime(base::TimeTicks new_virtual_time);
 
   // base::PendingTask implementation:
-  void WillProcessTask(const base::PendingTask& pending_task) override;
+  void WillProcessTask(const base::PendingTask& pending_task,
+                       bool was_blocked_or_low_priority) override;
   void DidProcessTask(const base::PendingTask& pending_task) override;
 
   int task_starvation_count() const { return task_starvation_count_; }
@@ -102,7 +90,6 @@ class PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
   int max_task_starvation_count_;
 
   bool can_advance_virtual_time_;
-  Observer* observer_;       // NOT OWNED
   SchedulerHelper* helper_;  // NOT OWNED
 
   // VirtualTime is usually doled out in 100ms intervals using fences and this

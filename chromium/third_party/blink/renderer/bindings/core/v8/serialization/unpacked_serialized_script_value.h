@@ -35,14 +35,14 @@ class ImageBitmap;
 // but (for security reasons) separate JavaScript wrappers must exist. For this
 // reason, a SerializedScriptValue can only be unpacked once, but thereafter it
 // can be deserialized multiple times.
-class CORE_EXPORT UnpackedSerializedScriptValue
-    : public GarbageCollectedFinalized<UnpackedSerializedScriptValue> {
+class CORE_EXPORT UnpackedSerializedScriptValue final
+    : public GarbageCollected<UnpackedSerializedScriptValue> {
  public:
   // Callers should use SerializedScriptValue::Unpack.
   explicit UnpackedSerializedScriptValue(scoped_refptr<SerializedScriptValue>);
   ~UnpackedSerializedScriptValue();
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   SerializedScriptValue* Value() { return value_.get(); }
   const SerializedScriptValue* Value() const { return value_.get(); }

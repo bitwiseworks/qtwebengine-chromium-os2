@@ -31,7 +31,7 @@ class MtabWatcherLinux {
   using MountPointDeviceMap = std::map<base::FilePath, base::FilePath>;
 
   using UpdateMtabCallback =
-      base::Callback<void(const MountPointDeviceMap& new_mtab)>;
+      base::RepeatingCallback<void(const MountPointDeviceMap& new_mtab)>;
 
   // |callback| is called on the same sequence as the rest of the class.
   // Caller is responsible for bouncing to the correct sequence.
@@ -56,7 +56,7 @@ class MtabWatcherLinux {
 
   SEQUENCE_CHECKER(sequence_checker_);
 
-  base::WeakPtrFactory<MtabWatcherLinux> weak_ptr_factory_;
+  base::WeakPtrFactory<MtabWatcherLinux> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MtabWatcherLinux);
 };

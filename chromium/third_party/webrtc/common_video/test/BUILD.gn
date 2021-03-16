@@ -9,14 +9,16 @@
 import("../../webrtc.gni")
 
 if (rtc_include_tests) {
-  rtc_source_set("utilities") {
+  rtc_library("utilities") {
     testonly = true
     sources = [
       "utilities.cc",
       "utilities.h",
     ]
     deps = [
+      "../../api:rtp_packet_info",
       "../../api/video:video_frame",
+      "../../api/video:video_rtp_headers",
     ]
   }
 }

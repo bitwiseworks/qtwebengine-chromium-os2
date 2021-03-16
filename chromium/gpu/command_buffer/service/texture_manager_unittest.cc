@@ -71,7 +71,7 @@ class TextureManagerTest : public GpuServiceTest {
   static const GLint kMax3dLevels = 10;
   static const bool kUseDefaultTextures = false;
 
-  TextureManagerTest() {
+  TextureManagerTest() : discardable_manager_(GpuPreferences()) {
     GpuDriverBugWorkarounds gpu_driver_bug_workaround;
     feature_info_ =
         new FeatureInfo(gpu_driver_bug_workaround, GpuFeatureInfo());
@@ -638,8 +638,8 @@ class TextureTestBase : public GpuServiceTest {
   static const bool kUseDefaultTextures = false;
 
   TextureTestBase()
-      : feature_info_(new FeatureInfo()) {
-  }
+      : feature_info_(new FeatureInfo()),
+        discardable_manager_(GpuPreferences()) {}
   ~TextureTestBase() override { texture_ref_ = nullptr; }
 
  protected:
@@ -655,7 +655,7 @@ class TextureTestBase : public GpuServiceTest {
         kMaxArrayTextureLayers, kUseDefaultTextures, nullptr,
         &discardable_manager_));
     decoder_.reset(new ::testing::StrictMock<MockGLES2Decoder>(
-        &command_buffer_service_, &outputter_));
+        &client_, &command_buffer_service_, &outputter_));
     error_state_.reset(new ::testing::StrictMock<MockErrorState>());
     manager_->CreateTexture(kClient1Id, kService1Id);
     texture_ref_ = manager_->GetTexture(kClient1Id);
@@ -689,6 +689,7 @@ class TextureTestBase : public GpuServiceTest {
   }
 
   FakeCommandBufferServiceBase command_buffer_service_;
+  FakeDecoderClient client_;
   TraceOutputter outputter_;
   std::unique_ptr<MockGLES2Decoder> decoder_;
   std::unique_ptr<MockErrorState> error_state_;
@@ -755,12 +756,12 @@ TEST_F(TextureTest, SetTargetTextureExternalOES) {
   EXPECT_FALSE(TextureTestHelper::IsCubeComplete(texture));
   EXPECT_FALSE(manager_->CanGenerateMipmaps(texture_ref_.get()));
   EXPECT_TRUE(TextureTestHelper::IsNPOT(texture));
-  EXPECT_TRUE(manager_->CanRender(texture_ref_.get()));
+  EXPECT_FALSE(manager_->CanRender(texture_ref_.get()));
   EXPECT_TRUE(texture->SafeToRenderFrom());
   EXPECT_TRUE(texture->IsImmutable());
 }
 
-TEST_F(TextureTest, ZeroSizeCanNotRender) {
+TEST_F(TextureTest, ZeroSizeCanNotRender2D) {
   manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_2D);
   EXPECT_FALSE(manager_->CanRender(texture_ref_.get()));
   manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 1,
@@ -768,6 +769,19 @@ TEST_F(TextureTest, ZeroSizeCanNotRender) {
   EXPECT_TRUE(manager_->CanRender(texture_ref_.get()));
   manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, 1,
                          0, GL_RGBA, GL_UNSIGNED_BYTE, gfx::Rect());
+  EXPECT_FALSE(manager_->CanRender(texture_ref_.get()));
+}
+
+TEST_F(TextureTest, ZeroSizeCanNotRenderExternalOES) {
+  manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES);
+  EXPECT_FALSE(manager_->CanRender(texture_ref_.get()));
+  manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0,
+                         GL_RGBA, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         gfx::Rect(1, 1));
+  EXPECT_TRUE(manager_->CanRender(texture_ref_.get()));
+  manager_->SetLevelInfo(texture_ref_.get(), GL_TEXTURE_EXTERNAL_OES, 0,
+                         GL_RGBA, 0, 0, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         gfx::Rect());
   EXPECT_FALSE(manager_->CanRender(texture_ref_.get()));
 }
 
@@ -2134,9 +2148,9 @@ TEST_P(ProduceConsumeTextureTest, ProduceConsumeTextureWithImage) {
 static const GLenum kTextureTargets[] = {GL_TEXTURE_2D, GL_TEXTURE_EXTERNAL_OES,
                                          GL_TEXTURE_RECTANGLE_ARB, };
 
-INSTANTIATE_TEST_CASE_P(Target,
-                        ProduceConsumeTextureTest,
-                        ::testing::ValuesIn(kTextureTargets));
+INSTANTIATE_TEST_SUITE_P(Target,
+                         ProduceConsumeTextureTest,
+                         ::testing::ValuesIn(kTextureTargets));
 
 TEST_F(ProduceConsumeTextureTest, ProduceConsumeCube) {
   manager_->SetTarget(texture_ref_.get(), GL_TEXTURE_CUBE_MAP);
@@ -2172,7 +2186,8 @@ class CountingMemoryTracker : public MemoryTracker {
   }
   ~CountingMemoryTracker() override = default;
 
-  void TrackMemoryAllocatedChange(uint64_t delta) override {
+  void TrackMemoryAllocatedChange(int64_t delta) override {
+    DCHECK(delta >= 0 || current_size_ >= static_cast<uint64_t>(-delta));
     current_size_ += delta;
   }
 
@@ -2193,7 +2208,9 @@ class SharedTextureTest : public GpuServiceTest {
  public:
   static const bool kUseDefaultTextures = false;
 
-  SharedTextureTest() : feature_info_(new FeatureInfo()) {}
+  SharedTextureTest()
+      : feature_info_(new FeatureInfo()),
+        discardable_manager_(GpuPreferences()) {}
 
   ~SharedTextureTest() override = default;
 
@@ -2736,18 +2753,19 @@ TEST_F(TextureFormatTypeValidationTest, ES3Basic) {
   ExpectInvalid(true, GL_RGB_INTEGER, GL_INT, GL_RGBA8);
 }
 
-TEST_F(TextureFormatTypeValidationTest, ES2WithTextureNorm16) {
-  SetupFeatureInfo("GL_EXT_texture_norm16", "OpenGL ES 2.0",
-                   CONTEXT_TYPE_OPENGLES2);
-
-  ExpectValid(true, GL_RED, GL_UNSIGNED_SHORT, GL_RED);
-}
-
 TEST_F(TextureFormatTypeValidationTest, ES3WithTextureNorm16) {
   SetupFeatureInfo("GL_EXT_texture_norm16", "OpenGL ES 3.0",
                    CONTEXT_TYPE_OPENGLES3);
 
   ExpectValid(true, GL_RED, GL_UNSIGNED_SHORT, GL_R16_EXT);
+  ExpectValid(true, GL_RG, GL_UNSIGNED_SHORT, GL_RG16_EXT);
+  ExpectValid(true, GL_RGB, GL_UNSIGNED_SHORT, GL_RGB16_EXT);
+  ExpectValid(true, GL_RGBA, GL_UNSIGNED_SHORT, GL_RGBA16_EXT);
+
+  ExpectValid(true, GL_RED, GL_SHORT, GL_R16_SNORM_EXT);
+  ExpectValid(true, GL_RG, GL_SHORT, GL_RG16_SNORM_EXT);
+  ExpectValid(true, GL_RGB, GL_SHORT, GL_RGB16_SNORM_EXT);
+  ExpectValid(true, GL_RGBA, GL_SHORT, GL_RGBA16_SNORM_EXT);
 }
 
 }  // namespace gles2

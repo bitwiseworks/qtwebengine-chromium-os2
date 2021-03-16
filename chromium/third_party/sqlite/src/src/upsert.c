@@ -107,11 +107,11 @@ int sqlite3UpsertAnalyzeTarget(
   rc = sqlite3ResolveExprNames(&sNC, pUpsert->pUpsertTargetWhere);
   if( rc ) return rc;
 
-  /* Check to see if the conflict target matches the rowid. */
+  /* Check to see if the conflict target matches the rowid. */  
   pTab = pTabList->a[0].pTab;
   pTarget = pUpsert->pUpsertTarget;
   iCursor = pTabList->a[0].iCursor;
-  if( HasRowid(pTab)
+  if( HasRowid(pTab) 
    && pTarget->nExpr==1
    && (pTerm = pTarget->a[0].pExpr)->op==TK_COLUMN
    && pTerm->iColumn==XN_ROWID
@@ -205,6 +205,7 @@ void sqlite3UpsertDoUpdate(
   sqlite3 *db = pParse->db;
   SrcList *pSrc;            /* FROM clause for the UPDATE */
   int iDataCur;
+  int i;
 
   assert( v!=0 );
   assert( pUpsert!=0 );
@@ -221,12 +222,11 @@ void sqlite3UpsertDoUpdate(
       Index *pPk = sqlite3PrimaryKeyIndex(pTab);
       int nPk = pPk->nKeyCol;
       int iPk = pParse->nMem+1;
-      int i;
       pParse->nMem += nPk;
       for(i=0; i<nPk; i++){
         int k;
         assert( pPk->aiColumn[i]>=0 );
-        k = sqlite3ColumnOfIndex(pIdx, pPk->aiColumn[i]);
+        k = sqlite3TableColumnToIndex(pIdx, pPk->aiColumn[i]);
         sqlite3VdbeAddOp3(v, OP_Column, iCur, k, iPk+i);
         VdbeComment((v, "%s.%s", pIdx->zName,
                     pTab->aCol[pPk->aiColumn[i]].zName));
@@ -234,14 +234,21 @@ void sqlite3UpsertDoUpdate(
       sqlite3VdbeVerifyAbortable(v, OE_Abort);
       i = sqlite3VdbeAddOp4Int(v, OP_Found, iDataCur, 0, iPk, nPk);
       VdbeCoverage(v);
-      sqlite3VdbeAddOp4(v, OP_Halt, SQLITE_CORRUPT, OE_Abort, 0,
+      sqlite3VdbeAddOp4(v, OP_Halt, SQLITE_CORRUPT, OE_Abort, 0, 
             "corrupt database", P4_STATIC);
+      sqlite3MayAbort(pParse);
       sqlite3VdbeJumpHere(v, i);
     }
   }
   /* pUpsert does not own pUpsertSrc - the outer INSERT statement does.  So
   ** we have to make a copy before passing it down into sqlite3Update() */
   pSrc = sqlite3SrcListDup(db, pUpsert->pUpsertSrc, 0);
+  /* excluded.* columns of type REAL need to be converted to a hard real */
+  for(i=0; i<pTab->nCol; i++){
+    if( pTab->aCol[i].affinity==SQLITE_AFF_REAL ){
+      sqlite3VdbeAddOp1(v, OP_RealAffinity, pUpsert->regData+i);
+    }
+  }
   sqlite3Update(pParse, pSrc, pUpsert->pUpsertSet,
       pUpsert->pUpsertWhere, OE_Abort, 0, 0, pUpsert);
   pUpsert->pUpsertSet = 0;    /* Will have been deleted by sqlite3Update() */

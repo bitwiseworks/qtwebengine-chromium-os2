@@ -27,9 +27,11 @@ class SharedImageBackingFactory {
   virtual std::unique_ptr<SharedImageBacking> CreateSharedImage(
       const Mailbox& mailbox,
       viz::ResourceFormat format,
+      SurfaceHandle surface_handle,
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
-      uint32_t usage) = 0;
+      uint32_t usage,
+      bool is_thread_safe) = 0;
   virtual std::unique_ptr<SharedImageBacking> CreateSharedImage(
       const Mailbox& mailbox,
       viz::ResourceFormat format,
@@ -46,6 +48,11 @@ class SharedImageBackingFactory {
       const gfx::Size& size,
       const gfx::ColorSpace& color_space,
       uint32_t usage) = 0;
+
+  // Returns true if the specified GpuMemoryBufferType can be imported using
+  // this factory.
+  virtual bool CanImportGpuMemoryBuffer(
+      gfx::GpuMemoryBufferType memory_buffer_type) = 0;
 };
 
 }  // namespace gpu

@@ -5,31 +5,29 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_ERROR_CONTROLLER_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_ERROR_CONTROLLER_H_
 
-#include <set>
 #include <string>
 
-#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/scoped_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/google_service_auth_error.h"
-#include "services/identity/public/cpp/identity_manager.h"
 
 // Keep track of auth errors and expose them to observers in the UI. Services
 // that wish to expose auth errors to the user should register an
 // AuthStatusProvider to report their current authentication state, and should
 // invoke AuthStatusChanged() when their authentication state may have changed.
 class SigninErrorController : public KeyedService,
-                              public identity::IdentityManager::Observer {
+                              public signin::IdentityManager::Observer {
  public:
   enum class AccountMode {
     // Signin error controller monitors all the accounts. When multiple accounts
     // are in error state, only one of the errors is reported.
     ANY_ACCOUNT,
 
-    // Only errors on the primary account are reported. Other accounts are
-    // ignored.
+    // Only errors on the primary account are reported. The primary account
+    // must have sync consent. Other accounts are ignored.
     PRIMARY_ACCOUNT
   };
 
@@ -42,7 +40,7 @@ class SigninErrorController : public KeyedService,
   };
 
   SigninErrorController(AccountMode mode,
-                        identity::IdentityManager* identity_manager);
+                        signin::IdentityManager* identity_manager);
   ~SigninErrorController() override;
 
   // KeyedService implementation:
@@ -57,30 +55,42 @@ class SigninErrorController : public KeyedService,
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  const std::string& error_account_id() const { return error_account_id_; }
+  const CoreAccountId& error_account_id() const { return error_account_id_; }
   const GoogleServiceAuthError& auth_error() const { return auth_error_; }
 
  private:
   // Invoked when the auth status has changed.
   void Update();
 
-  // identity::IdentityManager::Observer:
+  // Checks for Secondary Account errors and updates |auth_error_| and
+  // |error_account_id_| accordingly. Does not do anything if no Secondary
+  // Account has any error. Returns true if an error was found in a Secondary
+  // Account, false otherwise.
+  // Note: This function must not be called if |account_mode_| is
+  // |AccountMode::PRIMARY_ACCOUNT|.
+  bool UpdateSecondaryAccountErrors(
+      const CoreAccountId& primary_account_id,
+      const CoreAccountId& prev_account_id,
+      const GoogleServiceAuthError::State& prev_error_state);
+
+  // signin::IdentityManager::Observer:
   void OnEndBatchOfRefreshTokenStateChanges() override;
   void OnErrorStateOfRefreshTokenUpdatedForAccount(
-      const AccountInfo& account_info,
+      const CoreAccountInfo& account_info,
       const GoogleServiceAuthError& error) override;
-  void OnPrimaryAccountSet(const AccountInfo& primary_account_info) override;
+  void OnPrimaryAccountSet(
+      const CoreAccountInfo& primary_account_info) override;
   void OnPrimaryAccountCleared(
-      const AccountInfo& previous_primary_account_info) override;
+      const CoreAccountInfo& previous_primary_account_info) override;
 
   const AccountMode account_mode_;
-  identity::IdentityManager* identity_manager_;
+  signin::IdentityManager* identity_manager_;
 
-  ScopedObserver<identity::IdentityManager, SigninErrorController>
-      scoped_identity_manager_observer_;
+  ScopedObserver<signin::IdentityManager, signin::IdentityManager::Observer>
+      scoped_identity_manager_observer_{this};
 
   // The account that generated the last auth error.
-  std::string error_account_id_;
+  CoreAccountId error_account_id_;
 
   // The auth error detected the last time AuthStatusChanged() was invoked (or
   // NONE if AuthStatusChanged() has never been invoked).

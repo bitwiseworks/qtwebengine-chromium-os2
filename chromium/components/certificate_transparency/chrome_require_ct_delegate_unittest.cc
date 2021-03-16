@@ -10,7 +10,7 @@
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_message_loop.h"
 #include "base/values.h"
 #include "components/certificate_transparency/pref_names.h"
@@ -30,17 +30,18 @@ namespace {
 class ChromeRequireCTDelegateTest : public ::testing::Test {
  public:
   void SetUp() override {
+    // Use a certificate with a notBefore prior to May 2018, so that CT is not
+    // implicitly required.
     cert_ = net::CreateCertificateChainFromFile(
-        net::GetTestCertsDirectory(), "ok_cert.pem",
+        net::GetTestCertsDirectory(), "expired_cert.pem",
         net::X509Certificate::FORMAT_PEM_CERT_SEQUENCE);
     ASSERT_TRUE(cert_);
-    hashes_.push_back(net::HashValue(
-        net::X509Certificate::CalculateFingerprint256(cert_->cert_buffer())));
+    hashes_.push_back(net::HashValue(net::SHA256HashValue{0}));
   }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_{
-      base::test::ScopedTaskEnvironment::MainThreadType::IO};
+  base::test::SingleThreadTaskEnvironment task_environment_{
+      base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
   scoped_refptr<net::X509Certificate> cert_;
   net::HashValueVector hashes_;
 };

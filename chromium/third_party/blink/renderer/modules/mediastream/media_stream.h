@@ -27,6 +27,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_MEDIA_STREAM_H_
 
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/mediastream/media_stream_track.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
@@ -48,12 +49,12 @@ class MODULES_EXPORT MediaStreamObserver : public GarbageCollectedMixin {
   // Invoked when |MediaStream::removeTrack| is called.
   virtual void OnStreamRemoveTrack(MediaStream*, MediaStreamTrack*) = 0;
 
-  void Trace(blink::Visitor* visitor) override {}
+  void Trace(Visitor* visitor) override {}
 };
 
 class MODULES_EXPORT MediaStream final
     : public EventTargetWithInlineData,
-      public ContextClient,
+      public ExecutionContextClient,
       public ActiveScriptWrappable<MediaStream>,
       public MediaStreamDescriptorClient {
   USING_GARBAGE_COLLECTED_MIXIN(MediaStream);
@@ -106,10 +107,10 @@ class MODULES_EXPORT MediaStream final
 
   bool active() const { return descriptor_->Active(); }
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(active, kActive);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(inactive, kInactive);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(addtrack, kAddtrack);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(removetrack, kRemovetrack);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(active, kActive)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(inactive, kInactive)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(addtrack, kAddtrack)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(removetrack, kRemovetrack)
 
   void TrackEnded();
 
@@ -134,13 +135,13 @@ class MODULES_EXPORT MediaStream final
   // EventTarget
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override {
-    return ContextClient::GetExecutionContext();
+    return ExecutionContextClient::GetExecutionContext();
   }
 
   // ActiveScriptWrappable
   bool HasPendingActivity() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   bool AddEventListenerInternal(

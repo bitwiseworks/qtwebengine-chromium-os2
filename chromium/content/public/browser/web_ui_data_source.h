@@ -15,6 +15,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
+#include "url/gurl.h"
 
 namespace base {
 class DictionaryValue;
@@ -67,8 +68,9 @@ class WebUIDataSource {
   // MAX_SAFE_INTEGER in /v8/src/globals.h.
   virtual void AddInteger(base::StringPiece name, int32_t value) = 0;
 
-  // Sets the path which will return the JSON strings.
-  virtual void SetJsonPath(base::StringPiece path) = 0;
+  // Call this to enable a virtual "strings.js" (or "strings.m.js" for modules)
+  // URL that provides translations and dynamic data when requested.
+  virtual void UseStringsJs() = 0;
 
   // Adds a mapping between a path name and a resource to return.
   virtual void AddResourcePath(base::StringPiece path, int resource_id) = 0;
@@ -79,18 +81,27 @@ class WebUIDataSource {
   // Used as a parameter to GotDataCallback. The caller has to run this callback
   // with the result for the path that they filtered, passing ownership of the
   // memory.
-  typedef base::Callback<void(scoped_refptr<base::RefCountedMemory>)>
-      GotDataCallback;
+  using GotDataCallback =
+      base::OnceCallback<void(scoped_refptr<base::RefCountedMemory>)>;
 
   // Used by SetRequestFilter. The string parameter is the path of the request.
-  // If the callee doesn't want to handle the data, false is returned. Otherwise
-  // true is returned and the GotDataCallback parameter is called either then or
-  // asynchronously with the response.
-  typedef base::Callback<bool(const std::string&, const GotDataCallback&)>
-      HandleRequestCallback;
+  // The return value indicates if the callee wants to handle the request. Iff
+  // true is returned, |handle_request_callback| will be called to provide the
+  // request's response.
+  typedef base::RepeatingCallback<bool(const std::string&)>
+      ShouldHandleRequestCallback;
+
+  // Used by SetRequestFilter. The string parameter is the path of the request.
+  // This callback is only called if a prior call to ShouldHandleRequestCallback
+  // returned true. GotDataCallback should be used to provide the response
+  // bytes.
+  using HandleRequestCallback =
+      base::RepeatingCallback<void(const std::string&, GotDataCallback)>;
 
   // Allows a caller to add a filter for URL requests.
-  virtual void SetRequestFilter(const HandleRequestCallback& callback) = 0;
+  virtual void SetRequestFilter(
+      const ShouldHandleRequestCallback& should_handle_request_callback,
+      const HandleRequestCallback& handle_request_callback) = 0;
 
   // The following map to methods on URLDataSource. See the documentation there.
   // NOTE: it's not acceptable to call DisableContentSecurityPolicy for new
@@ -106,18 +117,18 @@ class WebUIDataSource {
       const std::string& data) = 0;
   virtual void OverrideContentSecurityPolicyChildSrc(
       const std::string& data) = 0;
+  virtual void OverrideContentSecurityPolicyWorkerSrc(
+      const std::string& data) = 0;
+  // This method is deprecated and AddFrameAncestors should be used instead.
   virtual void DisableDenyXFrameOptions() = 0;
+  virtual void AddFrameAncestor(const GURL& frame_ancestor) = 0;
 
-  // Tells the loading code that resources are gzipped on disk.
-  virtual void UseGzip() = 0;
-
-  // Same as UseGzip() above, but |is_gzipped_callback| is used to dynamically
-  // determine whether a given |const std::string& path| argument is gzipped.
-  virtual void UseGzip(base::RepeatingCallback<bool(const std::string&)>
-                           is_gzipped_callback) = 0;
+  // Replace i18n template strings in JS files. Needed for Web UIs that are
+  // using Polymer 3.
+  virtual void EnableReplaceI18nInJS() = 0;
 
   // The |source_name| this WebUIDataSource was created with.
-  virtual std::string GetSource() const = 0;
+  virtual std::string GetSource() = 0;
 };
 
 }  // namespace content

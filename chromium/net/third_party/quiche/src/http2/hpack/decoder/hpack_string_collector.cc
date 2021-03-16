@@ -36,7 +36,7 @@ HpackStringCollector::HpackStringCollector() {
   Clear();
 }
 
-HpackStringCollector::HpackStringCollector(const Http2String& str, bool huffman)
+HpackStringCollector::HpackStringCollector(const std::string& str, bool huffman)
     : s(str), len(str.size()), huffman_encoded(huffman), state(kEnded) {}
 
 void HpackStringCollector::Clear() {
@@ -66,7 +66,7 @@ void HpackStringCollector::OnStringStart(bool huffman, size_t length) {
 }
 
 void HpackStringCollector::OnStringData(const char* data, size_t length) {
-  Http2StringPiece sp(data, length);
+  quiche::QuicheStringPiece sp(data, length);
   EXPECT_TRUE(IsInProgress()) << ToString();
   EXPECT_LE(sp.size(), len) << ToString();
   Http2StrAppend(&s, sp);
@@ -80,7 +80,7 @@ void HpackStringCollector::OnStringEnd() {
 }
 
 ::testing::AssertionResult HpackStringCollector::Collected(
-    Http2StringPiece str,
+    quiche::QuicheStringPiece str,
     bool is_huffman_encoded) const {
   VERIFY_TRUE(HasEnded());
   VERIFY_EQ(str.size(), len);
@@ -89,7 +89,7 @@ void HpackStringCollector::OnStringEnd() {
   return ::testing::AssertionSuccess();
 }
 
-Http2String HpackStringCollector::ToString() const {
+std::string HpackStringCollector::ToString() const {
   std::stringstream ss;
   ss << *this;
   return ss.str();

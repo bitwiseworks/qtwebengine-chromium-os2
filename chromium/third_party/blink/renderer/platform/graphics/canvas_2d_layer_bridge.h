@@ -27,6 +27,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_CANVAS_2D_LAYER_BRIDGE_H_
 
 #include <memory>
+#include <random>
+#include <utility>
 
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
@@ -34,14 +36,16 @@
 #include "base/numerics/checked_math.h"
 #include "build/build_config.h"
 #include "cc/layers/texture_layer_client.h"
+#include "components/viz/common/resources/transferable_resource.h"
+#include "gpu/GLES2/gl2extchromium.h"
+#include "gpu/command_buffer/client/raster_interface.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
 #include "third_party/blink/renderer/platform/geometry/int_size.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_color_params.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_host.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
-#include "third_party/blink/renderer/platform/graphics/paint/paint_recorder.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 #include "third_party/khronos/GLES2/gl2.h"
@@ -53,7 +57,7 @@ struct SkImageInfo;
 namespace cc {
 class Layer;
 class TextureLayer;
-}
+}  // namespace cc
 
 namespace blink {
 
@@ -73,7 +77,6 @@ class StaticBitmapImage;
 #define CANVAS2D_BACKGROUND_RENDER_SWITCH_TO_CPU 0
 
 class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
-
  public:
   enum AccelerationMode {
     kDisableAcceleration,
@@ -95,12 +98,12 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
       override;
 
   void FinalizeFrame();
-  void SetIsHidden(bool);
+  void SetIsInHiddenPage(bool);
+  void SetIsBeingDisplayed(bool);
   void DidDraw(const FloatRect&);
   void DoPaintInvalidation(const FloatRect& dirty_rect);
   cc::Layer* Layer();
   bool Restore();
-  void DisableDeferral(DisableDeferralReason);
   void UpdateFilterQuality();
 
   // virtual for unit testing
@@ -109,8 +112,9 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
   virtual void DidRestoreCanvasMatrixClipStack(cc::PaintCanvas*) {}
   virtual bool IsAccelerated() const;
 
-  cc::PaintCanvas* Canvas();
-  bool IsValid() const;
+  // This may recreate CanvasResourceProvider
+  cc::PaintCanvas* GetPaintCanvas();
+  bool IsValid();
   bool WritePixels(const SkImageInfo&,
                    const void* pixels,
                    size_t row_bytes,
@@ -119,9 +123,7 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
   void DontUseIdleSchedulingForTesting() {
     dont_use_idle_scheduling_for_testing_ = true;
   }
-  void SetCanvasResourceHost(CanvasResourceHost* host) {
-    resource_host_ = host;
-  }
+  void SetCanvasResourceHost(CanvasResourceHost* host);
 
   void Hibernate();
   bool IsHibernating() const { return hibernation_image_ != nullptr; }
@@ -130,9 +132,8 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
   bool HasRecordedDrawCommands() { return have_recorded_draw_commands_; }
 
   scoped_refptr<StaticBitmapImage> NewImageSnapshot(AccelerationHint);
-  bool WasDrawnToAfterSnapshot() const {
-    return snapshot_state_ == kDrawnToAfterSnapshot;
-  }
+
+  cc::TextureLayer* layer_for_testing() { return layer_.get(); }
 
   // The values of the enum entries must not change because they are used for
   // usage metrics histograms. New values can be added to the end.
@@ -144,11 +145,12 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
     kHibernationAbortedDueGpuContextLoss = 4,
     kHibernationAbortedDueToSwitchToUnacceleratedRendering = 5,
     kHibernationAbortedDueToAllocationFailure = 6,
-    kHibernationEndedNormally = 7,
-    kHibernationEndedWithSwitchToBackgroundRendering = 8,
-    kHibernationEndedWithFallbackToSW = 9,
-    kHibernationEndedWithTeardown = 10,
-    kHibernationAbortedBecauseNoSurface = 11,
+    kHibernationAbortedDueSnapshotFailure = 7,
+    kHibernationEndedNormally = 8,
+    kHibernationEndedWithSwitchToBackgroundRendering = 9,
+    kHibernationEndedWithFallbackToSW = 10,
+    kHibernationEndedWithTeardown = 11,
+    kHibernationAbortedBecauseNoSurface = 12,
     kMaxValue = kHibernationAbortedBecauseNoSurface,
   };
 
@@ -159,57 +161,95 @@ class PLATFORM_EXPORT Canvas2DLayerBridge : public cc::TextureLayerClient {
     virtual ~Logger() = default;
   };
 
-  void SetLoggerForTesting(std::unique_ptr<Logger>);
+  void SetLoggerForTesting(std::unique_ptr<Logger> logger) {
+    logger_ = std::move(logger);
+  }
   CanvasResourceProvider* GetOrCreateResourceProvider(
       AccelerationHint = kPreferAcceleration);
   CanvasResourceProvider* ResourceProvider() const;
   void FlushRecording();
 
+  sk_sp<cc::PaintRecord> getLastRecord() {
+    return last_record_tainted_by_write_pixels_ ? nullptr : last_recording_;
+  }
+
+  // This is called when the Canvas element has cleared the frame, so the 2D
+  // bridge knows that there's no previous content on the resource.
+  void ClearFrame() { clear_frame_ = true; }
+
+  bool HasRateLimiterForTesting();
+
  private:
-  bool IsHidden() { return is_hidden_; }
-  bool CheckResourceProviderValid();
-  void ResetResourceProvider();
-
-  void StartRecording();
-  void SkipQueuedDrawCommands();
-
-  bool ShouldAccelerate(AccelerationHint) const;
-
-  std::unique_ptr<PaintRecorder> recorder_;
-  sk_sp<SkImage> hibernation_image_;
-  scoped_refptr<cc::TextureLayer> layer_;
-  std::unique_ptr<SharedContextRateLimiter> rate_limiter_;
-  std::unique_ptr<Logger> logger_;
-  int msaa_sample_count_;
-  int frames_since_last_commit_ = 0;
-  size_t bytes_allocated_;
-  bool have_recorded_draw_commands_;
-  bool is_hidden_;
-  bool is_deferral_enabled_;
-  bool software_rendering_while_hidden_;
-  bool hibernation_scheduled_ = false;
-  bool dont_use_idle_scheduling_for_testing_ = false;
-  bool context_lost_ = false;
-
   friend class Canvas2DLayerBridgeTest;
   friend class CanvasRenderingContext2DTest;
   friend class HTMLCanvasPainterTestForCAP;
 
-  AccelerationMode acceleration_mode_;
-  CanvasColorParams color_params_;
-  IntSize size_;
-  base::CheckedNumeric<int> recording_pixel_count_;
+  bool IsHidden() { return is_hidden_; }
+  bool CheckResourceProviderValid();
+  void ResetResourceProvider();
+
+  void SkipQueuedDrawCommands();
+  void EnsureCleared();
+
+  bool ShouldAccelerate(AccelerationHint) const;
+
+  sk_sp<SkImage> hibernation_image_;
+  scoped_refptr<cc::TextureLayer> layer_;
+  std::unique_ptr<SharedContextRateLimiter> rate_limiter_;
+  std::unique_ptr<Logger> logger_;
+  int frames_since_last_commit_ = 0;
+  bool have_recorded_draw_commands_;
+  bool is_hidden_;
+  bool is_being_displayed_;
+  bool software_rendering_while_hidden_;
+  bool hibernation_scheduled_ = false;
+  bool dont_use_idle_scheduling_for_testing_ = false;
+  bool context_lost_ = false;
+  bool clear_frame_ = true;
+
+  // WritePixels content is not saved in recording. If a call was made to
+  // WritePixels, the recording is now missing that information.
+  bool last_record_tainted_by_write_pixels_ = false;
+
+  const AccelerationMode acceleration_mode_;
+  const CanvasColorParams color_params_;
+  const IntSize size_;
 
   enum SnapshotState {
     kInitialSnapshotState,
     kDidAcquireSnapshot,
-    kDrawnToAfterSnapshot,
   };
   mutable SnapshotState snapshot_state_;
 
-  CanvasResourceHost* resource_host_;
+  void ClearPendingRasterTimers();
+  void FinishRasterTimers(gpu::raster::RasterInterface*);
+  struct RasterTimer {
+    RasterTimer() : gl_query_id(0) { }
+    // The id for querying the duration of the gpu-side of the draw
+    GLuint gl_query_id;
 
-  base::WeakPtrFactory<Canvas2DLayerBridge> weak_ptr_factory_;
+    // The duration of the CPU-side of the draw
+    base::TimeDelta cpu_raster_duration;
+  };
+
+  CanvasResourceHost* resource_host_;
+  viz::TransferableResource previous_frame_resource_;
+
+  // For measuring a sample of frames for end-to-end raster time
+  // Every frame has a 1% chance of being sampled
+  static constexpr float kRasterMetricProbability = 0.01;
+
+  std::mt19937 random_generator_;
+  std::bernoulli_distribution bernoulli_distribution_;
+  Deque<RasterTimer> pending_raster_timers_;
+
+  sk_sp<cc::PaintRecord> last_recording_;
+
+  // This tracks whether the canvas has been cleared once after
+  // this bridge was created.
+  bool cleared_ = false;
+
+  base::WeakPtrFactory<Canvas2DLayerBridge> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Canvas2DLayerBridge);
 };

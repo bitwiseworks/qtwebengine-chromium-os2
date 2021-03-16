@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -103,15 +104,13 @@ class VideoDecoderTest : public ::testing::TestWithParam<Codec> {
 
     // Post a task to decode the encoded frame.
     cast_environment_->PostTask(
-        CastEnvironment::MAIN,
-        FROM_HERE,
-        base::Bind(&VideoDecoder::DecodeFrame,
-                   base::Unretained(video_decoder_.get()),
-                   base::Passed(&encoded_frame),
-                   base::Bind(&VideoDecoderTest::OnDecodedFrame,
-                              base::Unretained(this),
-                              video_frame,
-                              num_dropped_frames == 0)));
+        CastEnvironment::MAIN, FROM_HERE,
+        base::BindOnce(&VideoDecoder::DecodeFrame,
+                       base::Unretained(video_decoder_.get()),
+                       std::move(encoded_frame),
+                       base::Bind(&VideoDecoderTest::OnDecodedFrame,
+                                  base::Unretained(this), video_frame,
+                                  num_dropped_frames == 0)));
   }
 
   // Blocks the caller until all video that has been feed in has been decoded.
@@ -125,14 +124,14 @@ class VideoDecoderTest : public ::testing::TestWithParam<Codec> {
 
  private:
   // Called by |vp8_decoder_| to deliver each frame of decoded video.
-  void OnDecodedFrame(const scoped_refptr<VideoFrame>& expected_video_frame,
+  void OnDecodedFrame(scoped_refptr<VideoFrame> expected_video_frame,
                       bool should_be_continuous,
-                      const scoped_refptr<VideoFrame>& video_frame,
+                      scoped_refptr<VideoFrame> video_frame,
                       bool is_continuous) {
     DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
 
     // A NULL |video_frame| indicates a decode error, which we don't expect.
-    ASSERT_TRUE(video_frame.get());
+    ASSERT_TRUE(video_frame);
 
     // Did the decoder detect whether frames were dropped?
     EXPECT_EQ(should_be_continuous, is_continuous);
@@ -142,7 +141,7 @@ class VideoDecoderTest : public ::testing::TestWithParam<Codec> {
               video_frame->coded_size().width());
     EXPECT_EQ(expected_video_frame->coded_size().height(),
               video_frame->coded_size().height());
-    EXPECT_LT(40.0, I420PSNR(expected_video_frame, video_frame));
+    EXPECT_LT(40.0, I420PSNR(*expected_video_frame, *video_frame));
     // TODO(miu): Once we start using VideoFrame::timestamp_, check that here.
 
     // Signal the main test thread that more video was decoded.
@@ -235,9 +234,9 @@ TEST_P(VideoDecoderTest, DecodesFramesOfVaryingSizes) {
   WaitForAllVideoToBeDecoded();
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        VideoDecoderTest,
-                        ::testing::Values(CODEC_VIDEO_VP8));
+INSTANTIATE_TEST_SUITE_P(All,
+                         VideoDecoderTest,
+                         ::testing::Values(CODEC_VIDEO_VP8));
 
 }  // namespace cast
 }  // namespace media

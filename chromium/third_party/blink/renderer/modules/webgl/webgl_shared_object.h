@@ -27,7 +27,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_SHARED_OBJECT_H_
 
 #include "third_party/blink/renderer/modules/webgl/webgl_object.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 
 namespace blink {
 
@@ -52,7 +51,7 @@ class WebGLSharedObject : public WebGLObject {
   bool Validate(const WebGLContextGroup* context_group,
                 const WebGLRenderingContextBase*) const final;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   explicit WebGLSharedObject(WebGLRenderingContextBase*);
@@ -64,7 +63,7 @@ class WebGLSharedObject : public WebGLObject {
   gpu::gles2::GLES2Interface* GetAGLInterface() const final;
 
  private:
-  TraceWrapperMember<WebGLContextGroup> context_group_;
+  Member<WebGLContextGroup> context_group_;
 };
 
 }  // namespace blink

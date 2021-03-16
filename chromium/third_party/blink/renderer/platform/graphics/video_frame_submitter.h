@@ -6,19 +6,25 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_VIDEO_FRAME_SUBMITTER_H_
 
 #include <memory>
-#include <utility>
 
+#include "base/memory/read_only_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
+#include "cc/metrics/frame_sequence_tracker.h"
+#include "cc/metrics/video_playback_roughness_reporter.h"
 #include "components/viz/client/shared_bitmap_reporter.h"
 #include "components/viz/common/gpu/context_provider.h"
 #include "components/viz/common/resources/shared_bitmap.h"
 #include "components/viz/common/surfaces/child_local_surface_id_allocator.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/buffer.h"
-#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/frame_sinks/embedded_frame_sink.mojom-blink.h"
+#include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom-blink.h"
+#include "services/viz/public/mojom/compositing/frame_timing_details.mojom-blink.h"
+#include "third_party/blink/public/mojom/frame_sinks/embedded_frame_sink.mojom-blink.h"
 #include "third_party/blink/public/platform/web_video_frame_submitter.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_resource_provider.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
@@ -39,6 +45,7 @@ class PLATFORM_EXPORT VideoFrameSubmitter
       public viz::mojom::blink::CompositorFrameSinkClient {
  public:
   VideoFrameSubmitter(WebContextProviderCallback,
+                      cc::PlaybackRoughnessReportingCallback,
                       std::unique_ptr<VideoFrameResourceProvider>);
   ~VideoFrameSubmitter() override;
 
@@ -67,14 +74,14 @@ class PLATFORM_EXPORT VideoFrameSubmitter
       const WTF::Vector<viz::ReturnedResource>& resources) override;
   void OnBeginFrame(
       const viz::BeginFrameArgs&,
-      WTF::HashMap<uint32_t, ::gfx::mojom::blink::PresentationFeedbackPtr>)
+      WTF::HashMap<uint32_t, ::viz::mojom::blink::FrameTimingDetailsPtr>)
       override;
   void OnBeginFramePausedChanged(bool paused) override {}
   void ReclaimResources(
       const WTF::Vector<viz::ReturnedResource>& resources) override;
 
   // viz::SharedBitmapReporter implementation.
-  void DidAllocateSharedBitmap(mojo::ScopedSharedBufferHandle,
+  void DidAllocateSharedBitmap(base::ReadOnlySharedMemoryRegion,
                                const viz::SharedBitmapId&) override;
   void DidDeleteSharedBitmap(const viz::SharedBitmapId&) override;
 
@@ -85,7 +92,7 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // requested.
   void OnReceivedContextProvider(
       bool use_gpu_compositing,
-      scoped_refptr<viz::ContextProvider> context_provider);
+      scoped_refptr<viz::RasterContextProvider> context_provider);
 
   // Starts submission and calls UpdateSubmissionState(); which may submit.
   void StartSubmitting();
@@ -93,6 +100,9 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // Sets CompositorFrameSink::SetNeedsBeginFrame() state and submits a frame if
   // visible or an empty frame if not.
   void UpdateSubmissionState();
+
+  // Will submit an empty frame to clear resource usage if it's safe.
+  void SubmitEmptyFrameIfNeeded();
 
   // Returns whether a frame was submitted.
   bool SubmitFrame(const viz::BeginFrameAck&, scoped_refptr<media::VideoFrame>);
@@ -119,14 +129,15 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // Helper method for creating viz::CompositorFrame. If |video_frame| is null
   // then the frame will be empty.
   viz::CompositorFrame CreateCompositorFrame(
+      uint32_t frame_token,
       const viz::BeginFrameAck& begin_frame_ack,
       scoped_refptr<media::VideoFrame> video_frame);
 
   cc::VideoFrameProvider* video_frame_provider_ = nullptr;
-  scoped_refptr<viz::ContextProvider> context_provider_;
-  viz::mojom::blink::CompositorFrameSinkPtr compositor_frame_sink_;
-  mojom::blink::SurfaceEmbedderPtr surface_embedder_;
-  mojo::Binding<viz::mojom::blink::CompositorFrameSinkClient> binding_;
+  scoped_refptr<viz::RasterContextProvider> context_provider_;
+  mojo::Remote<viz::mojom::blink::CompositorFrameSink> compositor_frame_sink_;
+  mojo::Remote<mojom::blink::SurfaceEmbedder> surface_embedder_;
+  mojo::Receiver<viz::mojom::blink::CompositorFrameSinkClient> receiver_{this};
   WebContextProviderCallback context_provider_callback_;
   std::unique_ptr<VideoFrameResourceProvider> resource_provider_;
   bool waiting_for_compositor_ack_ = false;
@@ -162,12 +173,28 @@ class PLATFORM_EXPORT VideoFrameSubmitter
   // size.
   viz::ChildLocalSurfaceIdAllocator child_local_surface_id_allocator_;
 
-  const bool enable_surface_synchronization_;
   viz::FrameTokenGenerator next_frame_token_;
+
+  std::unique_ptr<cc::VideoPlaybackRoughnessReporter> roughness_reporter_;
+
+  base::OneShotTimer empty_frame_timer_;
+
+  base::Optional<int> last_frame_id_;
+
+  cc::FrameSequenceTrackerCollection frame_trackers_;
+
+  // The BeginFrameArgs passed to the most recent call of OnBeginFrame().
+  // Required for FrameSequenceTrackerCollection::NotifySubmitFrame
+  viz::BeginFrameArgs last_begin_frame_args_;
+
+  // The token of the frames that are submitted outside OnBeginFrame(). These
+  // frames should be ignored by the video tracker even if they are reported as
+  // presented.
+  base::flat_set<uint32_t> ignorable_submitted_frames_;
 
   THREAD_CHECKER(thread_checker_);
 
-  base::WeakPtrFactory<VideoFrameSubmitter> weak_ptr_factory_;
+  base::WeakPtrFactory<VideoFrameSubmitter> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VideoFrameSubmitter);
 };

@@ -87,7 +87,7 @@ TEST(TypeConversionsTest, ToAuthenticatorMakeCredentialResponse) {
        false},
   };
   size_t i = 0;
-  for (const auto test : test_cases) {
+  for (const auto& test : test_cases) {
     SCOPED_TRACE(::testing::Message() << "Test case " << i++);
     auto response =
         ToAuthenticatorMakeCredentialResponse(WEBAUTHN_CREDENTIAL_ATTESTATION{
@@ -119,14 +119,13 @@ TEST(TypeConversionsTest, ToAuthenticatorMakeCredentialResponse) {
               test.authenticator_data);
     EXPECT_EQ(
         response->attestation_object().attestation_statement().format_name(),
-        base::UTF16ToUTF8(test.format));
-    EXPECT_EQ(cbor::Writer::Write(cbor::Value(response->attestation_object()
-                                                  .attestation_statement()
-                                                  .GetAsCBORMap())),
+        base::WideToUTF8(test.format));
+    EXPECT_EQ(cbor::Writer::Write(AsCBOR(
+                  response->attestation_object().attestation_statement())),
               test.cbor_attestation_statement);
     EXPECT_EQ(response->transport_used(), test.expected_transport);
   }
-};
+}
 
 }  // namespace
 }  // namespace device

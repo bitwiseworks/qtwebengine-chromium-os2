@@ -12,24 +12,19 @@
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/common/content_export.h"
-#include "content/common/service_worker/service_worker_types.h"
-#include "mojo/public/cpp/bindings/associated_binding_set.h"
+#include "mojo/public/cpp/bindings/associated_receiver_set.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
-namespace service_worker_registration_unittest {
-class ServiceWorkerRegistrationObjectHostTest;
-}  // namespace service_worker_registration_unittest
 
+class ServiceWorkerContainerHost;
 class ServiceWorkerContextCore;
 class ServiceWorkerVersion;
 
 // ServiceWorkerRegistrationObjectHost has a 1:1 correspondence to
-// WebServiceWorkerRegistration in the renderer process.
-// The host stays alive while the WebServiceWorkerRegistration is alive, and
-// also initiates destruction of the WebServiceWorkerRegistration once detected
-// that it's no longer needed. See the class documentation in
-// WebServiceWorkerRegistrationImpl for details.
+// blink::ServiceWorkerRegistration in the renderer process.
+// The host stays alive while the blink::ServiceWorkerRegistration is alive.
 //
 // Has a reference to the corresponding ServiceWorkerRegistration in order to
 // ensure that the registration is alive while this object host is around.
@@ -39,18 +34,17 @@ class CONTENT_EXPORT ServiceWorkerRegistrationObjectHost
  public:
   ServiceWorkerRegistrationObjectHost(
       base::WeakPtr<ServiceWorkerContextCore> context,
-      ServiceWorkerProviderHost* provider_host,
+      ServiceWorkerContainerHost* container_host,
       scoped_refptr<ServiceWorkerRegistration> registration);
   ~ServiceWorkerRegistrationObjectHost() override;
 
-  // Establishes a new mojo connection into |bindings_|.
+  // Establishes a new mojo connection into |receivers_|.
   blink::mojom::ServiceWorkerRegistrationObjectInfoPtr CreateObjectInfo();
 
   ServiceWorkerRegistration* registration() { return registration_.get(); }
 
  private:
-  friend class service_worker_registration_unittest::
-      ServiceWorkerRegistrationObjectHostTest;
+  friend class ServiceWorkerRegistrationObjectHostTest;
 
   using StatusCallback =
       base::OnceCallback<void(blink::ServiceWorkerStatusCode status)>;
@@ -66,7 +60,9 @@ class CONTENT_EXPORT ServiceWorkerRegistrationObjectHost
   void OnUpdateFound(ServiceWorkerRegistration* registration) override;
 
   // Implements blink::mojom::ServiceWorkerRegistrationObjectHost.
-  void Update(UpdateCallback callback) override;
+  void Update(blink::mojom::FetchClientSettingsObjectPtr
+                  outside_fetch_client_settings_object,
+              UpdateCallback callback) override;
   void Unregister(UnregisterCallback callback) override;
   void EnableNavigationPreload(
       bool enable,
@@ -87,10 +83,11 @@ class CONTENT_EXPORT ServiceWorkerRegistrationObjectHost
   //
   // TODO(falken): See if tests can call |Update| directly, then this separate
   // function isn't needed.
-  static void DelayUpdate(blink::mojom::ServiceWorkerProviderType provider_type,
-                          ServiceWorkerRegistration* registration,
-                          ServiceWorkerVersion* version,
-                          StatusCallback update_function);
+  static void DelayUpdate(
+      blink::mojom::ServiceWorkerContainerType container_type,
+      ServiceWorkerRegistration* registration,
+      ServiceWorkerVersion* version,
+      StatusCallback update_function);
   // Called back from ServiceWorkerContextCore when an update is complete.
   void UpdateComplete(UpdateCallback callback,
                       blink::ServiceWorkerStatusCode status,
@@ -100,13 +97,13 @@ class CONTENT_EXPORT ServiceWorkerRegistrationObjectHost
   // complete.
   void UnregistrationComplete(UnregisterCallback callback,
                               blink::ServiceWorkerStatusCode status);
-  // Called back from ServiceWorkerStorage when setting navigation preload is
+  // Called back from ServiceWorkerRegistry when setting navigation preload is
   // complete.
   void DidUpdateNavigationPreloadEnabled(
       bool enable,
       EnableNavigationPreloadCallback callback,
       blink::ServiceWorkerStatusCode status);
-  // Called back from ServiceWorkerStorage when setting navigation preload
+  // Called back from ServiceWorkerRegistry when setting navigation preload
   // header is complete.
   void DidUpdateNavigationPreloadHeader(
       const std::string& value,
@@ -129,24 +126,30 @@ class CONTENT_EXPORT ServiceWorkerRegistrationObjectHost
   // error message prefixed by |error_prefix| and |args|, and false is returned.
   template <typename CallbackType, typename... Args>
   bool CanServeRegistrationObjectHostMethods(CallbackType* callback,
-                                             const char* error_prefix,
+                                             const std::string& error_prefix,
                                              Args... args);
 
-  // |provider_host_| is valid throughout lifetime of |this| because it owns
+  // When |version_to_update| is nullptr, the returned string uses "Unknown" as
+  // the script url.
+  std::string ComposeUpdateErrorMessagePrefix(
+      const ServiceWorkerVersion* version_to_update) const;
+
+  // |container_host_| is valid throughout lifetime of |this| because it owns
   // |this|.
-  ServiceWorkerProviderHost* provider_host_;
+  ServiceWorkerContainerHost* container_host_;
   base::WeakPtr<ServiceWorkerContextCore> context_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
 
-  mojo::AssociatedBindingSet<blink::mojom::ServiceWorkerRegistrationObjectHost>
-      bindings_;
+  mojo::AssociatedReceiverSet<blink::mojom::ServiceWorkerRegistrationObjectHost>
+      receivers_;
   // Mojo connection to the content::WebServiceWorkerRegistrationImpl in the
   // renderer, which corresponds to the ServiceWorkerRegistration JavaScript
   // object.
-  blink::mojom::ServiceWorkerRegistrationObjectAssociatedPtr
+  mojo::AssociatedRemote<blink::mojom::ServiceWorkerRegistrationObject>
       remote_registration_;
 
-  base::WeakPtrFactory<ServiceWorkerRegistrationObjectHost> weak_ptr_factory_;
+  base::WeakPtrFactory<ServiceWorkerRegistrationObjectHost> weak_ptr_factory_{
+      this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerRegistrationObjectHost);
 };

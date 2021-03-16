@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -52,7 +53,7 @@ ComponentInfo::ComponentInfo(const std::string& id,
     : id(id), fingerprint(fingerprint), name(name), version(version) {}
 ComponentInfo::ComponentInfo(const ComponentInfo& other) = default;
 ComponentInfo::ComponentInfo(ComponentInfo&& other) = default;
-ComponentInfo::~ComponentInfo() {}
+ComponentInfo::~ComponentInfo() = default;
 
 CrxUpdateService::CrxUpdateService(scoped_refptr<Configurator> config,
                                    std::unique_ptr<UpdateScheduler> scheduler,
@@ -96,8 +97,9 @@ void CrxUpdateService::Start() {
   scheduler_->Schedule(
       base::TimeDelta::FromSeconds(config_->InitialDelay()),
       base::TimeDelta::FromSeconds(config_->NextCheckDelay()),
-      base::Bind(base::IgnoreResult(&CrxUpdateService::CheckForUpdates),
-                 base::Unretained(this)),
+      base::BindRepeating(
+          base::IgnoreResult(&CrxUpdateService::CheckForUpdates),
+          base::Unretained(this)),
       base::DoNothing());
 }
 
@@ -113,30 +115,30 @@ void CrxUpdateService::Stop() {
 // it will be replaced.
 bool CrxUpdateService::RegisterComponent(const CrxComponent& component) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (component.pk_hash.empty() || !component.version.IsValid() ||
+  if (component.app_id.empty() || !component.version.IsValid() ||
       !component.installer) {
     return false;
   }
 
   // Update the registration data if the component has been registered before.
-  const std::string id(GetCrxComponentID(component));
-  auto it = components_.find(id);
+  auto it = components_.find(component.app_id);
   if (it != components_.end()) {
     it->second = component;
     return true;
   }
 
-  components_.insert(std::make_pair(id, component));
-  components_order_.push_back(id);
+  components_.insert(std::make_pair(component.app_id, component));
+  components_order_.push_back(component.app_id);
   for (const auto& mime_type : component.handled_mime_types)
-    component_ids_by_mime_type_[mime_type] = id;
+    component_ids_by_mime_type_[mime_type] = component.app_id;
 
   // Create an initial state for this component. The state is mutated in
   // response to events from the UpdateClient instance.
   CrxUpdateItem item;
-  item.id = id;
+  item.id = component.app_id;
   item.component = component;
-  const auto inserted = component_states_.insert(std::make_pair(id, item));
+  const auto inserted =
+      component_states_.insert(std::make_pair(component.app_id, item));
   DCHECK(inserted.second);
 
   // Start the timer if this is the first component registered. The first timer
@@ -305,10 +307,10 @@ void CrxUpdateService::OnDemandUpdateInternal(const std::string& id,
       std::move(callback), base::TimeTicks::Now());
 
   if (priority == Priority::FOREGROUND)
-    update_client_->Install(id, std::move(crx_data_callback),
+    update_client_->Install(id, std::move(crx_data_callback), {},
                             std::move(update_complete_callback));
   else if (priority == Priority::BACKGROUND)
-    update_client_->Update({id}, std::move(crx_data_callback), false,
+    update_client_->Update({id}, std::move(crx_data_callback), {}, false,
                            std::move(update_complete_callback));
   else
     NOTREACHED();
@@ -326,7 +328,7 @@ bool CrxUpdateService::CheckForUpdates(
 
   std::vector<std::string> secure_ids;    // Requires HTTPS for update checks.
   std::vector<std::string> unsecure_ids;  // Can fallback to HTTP.
-  for (const auto id : components_order_) {
+  for (const auto& id : components_order_) {
     DCHECK(components_.find(id) != components_.end());
 
     const auto component = GetComponent(id);
@@ -352,7 +354,7 @@ bool CrxUpdateService::CheckForUpdates(
         unsecure_ids,
         base::BindOnce(&CrxUpdateService::GetCrxComponents,
                        base::Unretained(this)),
-        false,
+        {}, false,
         base::BindOnce(
             &CrxUpdateService::OnUpdateComplete, base::Unretained(this),
             secure_ids.empty() ? std::move(on_finished_callback) : Callback(),
@@ -364,7 +366,7 @@ bool CrxUpdateService::CheckForUpdates(
         secure_ids,
         base::BindOnce(&CrxUpdateService::GetCrxComponents,
                        base::Unretained(this)),
-        false,
+        {}, false,
         base::BindOnce(&CrxUpdateService::OnUpdateComplete,
                        base::Unretained(this), std::move(on_finished_callback),
                        base::TimeTicks::Now()));
@@ -415,7 +417,7 @@ void CrxUpdateService::OnUpdateComplete(Callback callback,
   UMA_HISTOGRAM_LONG_TIMES_100("ComponentUpdater.UpdateCompleteTime",
                                base::TimeTicks::Now() - start_time);
 
-  for (const auto id : components_pending_unregistration_) {
+  for (const auto& id : components_pending_unregistration_) {
     if (!update_client_->IsUpdating(id)) {
       const auto component = GetComponent(id);
       if (component)

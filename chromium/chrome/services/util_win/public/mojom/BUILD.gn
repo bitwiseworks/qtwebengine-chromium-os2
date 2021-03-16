@@ -5,18 +5,7 @@
 import("//mojo/public/tools/bindings/mojom.gni")
 
 mojom("mojom") {
-  sources = [
-    "util_win.mojom",
-  ]
+  sources = [ "util_win.mojom" ]
 
-  public_deps = [
-    ":constants",
-    "//mojo/public/mojom/base",
-  ]
-}
-
-mojom("constants") {
-  sources = [
-    "constants.mojom",
-  ]
+  public_deps = [ "//mojo/public/mojom/base" ]
 }

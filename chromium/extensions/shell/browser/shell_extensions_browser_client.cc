@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/task/post_task.h"
 #include "build/build_config.h"
@@ -14,12 +15,11 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/resource_request_info.h"
 #include "content/public/common/user_agent.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/core_extensions_browser_api_provider.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/mojo/interface_registration.h"
+#include "extensions/browser/extensions_browser_interface_binders.h"
 #include "extensions/browser/null_app_sorting.h"
 #include "extensions/browser/updater/null_extension_cache.h"
 #include "extensions/browser/url_request_util.h"
@@ -32,6 +32,7 @@
 #include "extensions/shell/browser/shell_extensions_api_client.h"
 #include "extensions/shell/browser/shell_extensions_browser_api_provider.h"
 #include "extensions/shell/browser/shell_navigation_ui_data.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/login/login_state/login_state.h"
@@ -118,16 +119,6 @@ bool ShellExtensionsBrowserClient::CanExtensionCrossIncognito(
   return false;
 }
 
-net::URLRequestJob*
-ShellExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate,
-    const base::FilePath& directory_path,
-    const std::string& content_security_policy,
-    bool send_cors_header) {
-  return NULL;
-}
-
 base::FilePath ShellExtensionsBrowserClient::GetBundleResourcePath(
     const network::ResourceRequest& request,
     const base::FilePath& extension_resources_path,
@@ -138,18 +129,18 @@ base::FilePath ShellExtensionsBrowserClient::GetBundleResourcePath(
 
 void ShellExtensionsBrowserClient::LoadResourceFromResourceBundle(
     const network::ResourceRequest& request,
-    network::mojom::URLLoaderRequest loader,
+    mojo::PendingReceiver<network::mojom::URLLoader> loader,
     const base::FilePath& resource_relative_path,
     int resource_id,
     const std::string& content_security_policy,
-    network::mojom::URLLoaderClientPtr client,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client,
     bool send_cors_header) {
   NOTREACHED() << "Load resources from bundles not supported.";
 }
 
 bool ShellExtensionsBrowserClient::AllowCrossRendererResourceLoad(
     const GURL& url,
-    content::ResourceType resource_type,
+    blink::mojom::ResourceType resource_type,
     ui::PageTransition page_transition,
     int child_id,
     bool is_incognito,
@@ -175,8 +166,7 @@ PrefService* ShellExtensionsBrowserClient::GetPrefServiceForContext(
 
 void ShellExtensionsBrowserClient::GetEarlyExtensionPrefsObservers(
     content::BrowserContext* context,
-    std::vector<ExtensionPrefsObserver*>* observers) const {
-}
+    std::vector<EarlyExtensionPrefsObserver*>* observers) const {}
 
 ProcessManagerDelegate*
 ShellExtensionsBrowserClient::GetProcessManagerDelegate() const {
@@ -223,12 +213,12 @@ ShellExtensionsBrowserClient::GetExtensionSystemFactory() {
   return ShellExtensionSystemFactory::GetInstance();
 }
 
-void ShellExtensionsBrowserClient::RegisterExtensionInterfaces(
-    service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
-        registry,
+void ShellExtensionsBrowserClient::RegisterBrowserInterfaceBindersForFrame(
+    service_manager::BinderMapWithContext<content::RenderFrameHost*>*
+        binder_map,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) const {
-  RegisterInterfacesForExtension(registry, render_frame_host, extension);
+  PopulateExtensionFrameBinders(binder_map, render_frame_host, extension);
 }
 
 std::unique_ptr<RuntimeAPIDelegate>
@@ -245,23 +235,20 @@ ShellExtensionsBrowserClient::GetComponentExtensionResourceManager() {
 void ShellExtensionsBrowserClient::BroadcastEventToRenderers(
     events::HistogramValue histogram_value,
     const std::string& event_name,
-    std::unique_ptr<base::ListValue> args) {
+    std::unique_ptr<base::ListValue> args,
+    bool dispatch_to_off_the_record_profiles) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::UI},
-        base::Bind(&ShellExtensionsBrowserClient::BroadcastEventToRenderers,
-                   base::Unretained(this), histogram_value, event_name,
-                   base::Passed(&args)));
+        base::BindOnce(&ShellExtensionsBrowserClient::BroadcastEventToRenderers,
+                       base::Unretained(this), histogram_value, event_name,
+                       std::move(args), dispatch_to_off_the_record_profiles));
     return;
   }
 
   std::unique_ptr<Event> event(
       new Event(histogram_value, event_name, std::move(args)));
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
-}
-
-net::NetLog* ShellExtensionsBrowserClient::GetNetLog() {
-  return NULL;
 }
 
 ExtensionCache* ShellExtensionsBrowserClient::GetExtensionCache() {
@@ -286,20 +273,6 @@ ExtensionWebContentsObserver*
 ShellExtensionsBrowserClient::GetExtensionWebContentsObserver(
     content::WebContents* web_contents) {
   return ShellExtensionWebContentsObserver::FromWebContents(web_contents);
-}
-
-ExtensionNavigationUIData*
-ShellExtensionsBrowserClient::GetExtensionNavigationUIData(
-    net::URLRequest* request) {
-  const content::ResourceRequestInfo* info =
-      content::ResourceRequestInfo::ForRequest(request);
-  if (!info)
-    return nullptr;
-  ShellNavigationUIData* navigation_data =
-      static_cast<ShellNavigationUIData*>(info->GetNavigationUIData());
-  if (!navigation_data)
-    return nullptr;
-  return navigation_data->GetExtensionNavigationUIData();
 }
 
 KioskDelegate* ShellExtensionsBrowserClient::GetKioskDelegate() {

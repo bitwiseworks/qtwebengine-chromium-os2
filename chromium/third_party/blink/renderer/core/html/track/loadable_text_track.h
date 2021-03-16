@@ -36,10 +36,6 @@ class HTMLTrackElement;
 
 class LoadableTextTrack final : public TextTrack {
  public:
-  static LoadableTextTrack* Create(HTMLTrackElement* track) {
-    return MakeGarbageCollected<LoadableTextTrack>(track);
-  }
-
   explicit LoadableTextTrack(HTMLTrackElement*);
   ~LoadableTextTrack() override;
 
@@ -59,11 +55,12 @@ class LoadableTextTrack final : public TextTrack {
   Member<HTMLTrackElement> track_element_;
 };
 
-DEFINE_TYPE_CASTS(LoadableTextTrack,
-                  TextTrack,
-                  track,
-                  track->TrackType() == TextTrack::kTrackElement,
-                  track.TrackType() == TextTrack::kTrackElement);
+template <>
+struct DowncastTraits<LoadableTextTrack> {
+  static bool AllowFrom(const TextTrack& track) {
+    return track.TrackType() == TextTrack::kTrackElement;
+  }
+};
 
 }  // namespace blink
 

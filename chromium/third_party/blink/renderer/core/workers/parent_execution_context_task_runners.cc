@@ -26,14 +26,13 @@ ParentExecutionContextTaskRunners* ParentExecutionContextTaskRunners::Create() {
 
 ParentExecutionContextTaskRunners::ParentExecutionContextTaskRunners(
     ExecutionContext* context)
-    : ContextLifecycleObserver(context) {
+    : ExecutionContextLifecycleObserver(context) {
   // For now we only support very limited task types. Sort in the TaskType enum
   // value order.
   for (auto type : {TaskType::kNetworking, TaskType::kPostedMessage,
                     TaskType::kWorkerAnimation, TaskType::kInternalDefault,
                     TaskType::kInternalLoading, TaskType::kInternalTest,
-                    TaskType::kInternalMedia, TaskType::kInternalInspector,
-                    TaskType::kInternalWorker}) {
+                    TaskType::kInternalMedia, TaskType::kInternalInspector}) {
     auto task_runner = context ? context->GetTaskRunner(type)
                                : Thread::Current()->GetTaskRunner();
     task_runners_.insert(type, std::move(task_runner));
@@ -46,11 +45,11 @@ ParentExecutionContextTaskRunners::Get(TaskType type) {
   return task_runners_.at(type);
 }
 
-void ParentExecutionContextTaskRunners::Trace(blink::Visitor* visitor) {
-  ContextLifecycleObserver::Trace(visitor);
+void ParentExecutionContextTaskRunners::Trace(Visitor* visitor) {
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
-void ParentExecutionContextTaskRunners::ContextDestroyed(ExecutionContext*) {
+void ParentExecutionContextTaskRunners::ContextDestroyed() {
   MutexLocker lock(mutex_);
   for (auto& entry : task_runners_)
     entry.value = Thread::Current()->GetTaskRunner();

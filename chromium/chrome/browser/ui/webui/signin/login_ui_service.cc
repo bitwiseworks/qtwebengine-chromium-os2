@@ -13,12 +13,9 @@
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/url_constants.h"
-#include "components/signin/core/browser/account_consistency_method.h"
-#include "components/signin/core/browser/signin_header_helper.h"
 
 #if !defined(OS_CHROMEOS)
 #include "chrome/browser/ui/user_manager.h"
@@ -60,7 +57,8 @@ void LoginUIService::SyncConfirmationUIClosed(
     observer.OnSyncConfirmationUIClosed(result);
 }
 
-void LoginUIService::ShowLoginPopup() {
+void LoginUIService::ShowExtensionLoginPrompt(bool enable_sync,
+                                              const std::string& email_hint) {
 #if defined(OS_CHROMEOS)
   NOTREACHED();
 #else
@@ -76,10 +74,21 @@ void LoginUIService::ShowLoginPopup() {
     return;
   }
 
-  chrome::ScopedTabbedBrowserDisplayer displayer(profile_);
-  chrome::ShowBrowserSignin(
-      displayer.browser(),
-      signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS);
+  // This may be called in incognito. Redirect to the original profile.
+  chrome::ScopedTabbedBrowserDisplayer displayer(
+      profile_->GetOriginalProfile());
+  Browser* browser = displayer.browser();
+
+  if (enable_sync) {
+    // Set a primary account.
+    browser->signin_view_controller()->ShowDiceEnableSyncTab(
+        signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO, email_hint);
+  } else {
+    // Add an account to the web without setting a primary account.
+    browser->signin_view_controller()->ShowDiceAddAccountTab(
+        signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS, email_hint);
+  }
 #endif
 }
 
@@ -95,14 +104,13 @@ void LoginUIService::DisplayLoginResult(Browser* browser,
   last_login_error_email_ = email;
   if (!error_message.empty()) {
     if (browser)
-      browser->signin_view_controller()->ShowModalSigninErrorDialog(browser);
+      browser->signin_view_controller()->ShowModalSigninErrorDialog();
     else
       UserManagerProfileDialog::DisplayErrorMessage();
   } else if (browser) {
     browser->window()->ShowAvatarBubbleFromAvatarButton(
-        error_message.empty() ? BrowserWindow::AVATAR_BUBBLE_MODE_CONFIRM_SIGNIN
-                              : BrowserWindow::AVATAR_BUBBLE_MODE_SHOW_ERROR,
-        signin::ManageAccountsParams(),
+        BrowserWindow::AVATAR_BUBBLE_MODE_CONFIRM_SIGNIN,
+
         signin_metrics::AccessPoint::ACCESS_POINT_EXTENSIONS, false);
   }
 #endif

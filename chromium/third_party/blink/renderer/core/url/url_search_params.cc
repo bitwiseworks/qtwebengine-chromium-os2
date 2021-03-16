@@ -36,7 +36,7 @@ class URLSearchParamsIterationSource final
     return true;
   }
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(params_);
     PairIterable<String, String>::IterationSource::Trace(visitor);
   }
@@ -48,7 +48,7 @@ class URLSearchParamsIterationSource final
 
 bool CompareParams(const std::pair<String, String>& a,
                    const std::pair<String, String>& b) {
-  return WTF::CodePointCompareLessThan(a.first, b.first);
+  return WTF::CodeUnitCompareLessThan(a.first, b.first);
 }
 
 }  // namespace
@@ -111,7 +111,7 @@ URLSearchParams* URLSearchParams::Create(
 
 URLSearchParams::~URLSearchParams() = default;
 
-void URLSearchParams::Trace(blink::Visitor* visitor) {
+void URLSearchParams::Trace(Visitor* visitor) {
   visitor->Trace(url_object_);
   ScriptWrappable::Trace(visitor);
 }
@@ -133,8 +133,10 @@ void URLSearchParams::RunUpdateSteps() {
 }
 
 static String DecodeString(String input) {
+  // |DecodeURLMode::kUTF8| is used because "UTF-8 decode without BOM" should
+  // be performed (see https://url.spec.whatwg.org/#concept-urlencoded-parser).
   return DecodeURLEscapeSequences(input.Replace('+', ' '),
-                                  DecodeURLMode::kUTF8OrIsomorphic);
+                                  DecodeURLMode::kUTF8);
 }
 
 void URLSearchParams::SetInputWithoutUpdate(const String& query_string) {

@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_AURA_H_
 #define UI_VIEWS_CONTROLS_NATIVE_NATIVE_VIEW_HOST_AURA_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "ui/aura/window_observer.h"
@@ -35,6 +37,7 @@ class NativeViewHostAura : public NativeViewHostWrapper,
   void RemovedFromWidget() override;
   bool SetCustomMask(std::unique_ptr<ui::LayerOwner> mask) override;
   void SetHitTestTopInset(int top_inset) override;
+  int GetHitTestTopInset() const override;
   void InstallClip(int x, int y, int w, int h) override;
   bool HasInstalledClip() override;
   void UninstallClip() override;

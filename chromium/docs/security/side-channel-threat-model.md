@@ -167,8 +167,7 @@ features](https://developers.google.com/web/updates/2018/02/meltdown-spectre).
 (There is [an open bug to add a CORB evaluator to
 Lighthouse](https://bugs.chromium.org/p/chromium/issues/detail?id=806070).)
 
-<a name="multiple-origins-within-a-siteinstance"></a>
-##### Multiple Origins Within A `SiteInstance`
+##### Multiple Origins Within A `SiteInstance` {#multiple-origins-within-a-siteinstance}
 
 A *site* is defined as the effective TLD + 1 DNS label (“eTLD+1”) and the URL
 scheme. This is a broader category than the origin, which is the scheme, entire
@@ -210,9 +209,9 @@ tracked this as [Issue
 
 Click To Play greatly reduces the risk that Flash-borne Spectre (and other)
 exploits will be effective at scale.  Additionally, the enterprise policies
-[PluginsBlockedForUrls](https://www.chromium.org/administrators/policy-list-3#PluginsBlockedForUrls)
+[PluginsBlockedForUrls](https://cloud.google.com/docs/chrome-enterprise/policies/?policy=PluginsBlockedForUrls)
 and
-[PluginsAllowedForUrls](https://www.chromium.org/administrators/policy-list-3#PluginsAllowedForUrls)
+[PluginsAllowedForUrls](https://cloud.google.com/docs/chrome-enterprise/policies/?policy=PluginsAllowedForUrls)
 can be combined to restrict Flash to specific websites.
 Even so,
 [we might want to consider teaching CORB about Flash flavour of CORS](https://crbug.com/816318).
@@ -314,8 +313,7 @@ Additionally, the mitigations typically come with a performance cost, and we may
 ultimately roll some or all of them back. Some potential mitigations are so
 expensive that it is impractical to deploy them.
 
-<a name="attenuating-clocks"></a>
-### Attenuating Clocks
+### Attenuating Clocks {#attenuating-clocks}
 
 Exploiting Spectre requires a clock. We don’t believe it’s possible to
 eliminate, coarsen, or jitter all explicit and implicit clocks in the Open Web

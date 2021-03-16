@@ -10,21 +10,21 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_RENDERTARGETVK_H_
 #define LIBANGLE_RENDERER_VULKAN_RENDERTARGETVK_H_
 
-#include <vulkan/vulkan.h>
+#include "volk.h"
 
 #include "libANGLE/FramebufferAttachment.h"
 #include "libANGLE/renderer/renderer_utils.h"
+#include "libANGLE/renderer/vulkan/vk_helpers.h"
 
 namespace rx
 {
 namespace vk
 {
-class CommandBuffer;
 struct Format;
 class FramebufferHelper;
 class ImageHelper;
 class ImageView;
-class CommandGraphResource;
+class Resource;
 class RenderPassDesc;
 }  // namespace vk
 
@@ -37,56 +37,55 @@ class TextureVk;
 class RenderTargetVk final : public FramebufferAttachmentRenderTarget
 {
   public:
-    RenderTargetVk(vk::ImageHelper *image,
-                   vk::ImageView *imageView,
-                   size_t layerIndex,
-                   TextureVk *ownwer);
+    RenderTargetVk();
     ~RenderTargetVk() override;
 
     // Used in std::vector initialization.
     RenderTargetVk(RenderTargetVk &&other);
 
+    void init(vk::ImageHelper *image,
+              vk::ImageViewHelper *imageViews,
+              uint32_t levelIndex,
+              uint32_t layerIndex);
+    void reset();
+    // This returns the serial from underlying ImageHelper, first assigning one if required
+    vk::AttachmentSerial getAssignSerial(ContextVk *contextVk);
+
     // Note: RenderTargets should be called in order, with the depth/stencil onRender last.
-    void onColorDraw(vk::FramebufferHelper *framebufferVk,
-                     vk::CommandBuffer *commandBuffer,
-                     vk::RenderPassDesc *renderPassDesc);
-    void onDepthStencilDraw(vk::FramebufferHelper *framebufferVk,
-                            vk::CommandBuffer *commandBuffer,
-                            vk::RenderPassDesc *renderPassDesc);
+    angle::Result onColorDraw(ContextVk *contextVk);
+    angle::Result onDepthStencilDraw(ContextVk *contextVk);
 
     vk::ImageHelper &getImage();
     const vk::ImageHelper &getImage() const;
 
     // getImageForRead will also transition the resource to the given layout.
-    vk::ImageHelper *getImageForRead(vk::CommandGraphResource *readingResource,
-                                     VkImageLayout layout,
-                                     vk::CommandBuffer *commandBuffer);
-    vk::ImageHelper *getImageForWrite(vk::CommandGraphResource *writingResource) const;
+    vk::ImageHelper *getImageForWrite(ContextVk *contextVk) const;
 
-    vk::ImageView *getDrawImageView() const;
-    vk::ImageView *getReadImageView() const;
+    // For cube maps we use single-level single-layer 2D array views.
+    angle::Result getImageView(ContextVk *contextVk, const vk::ImageView **imageViewOut) const;
 
     const vk::Format &getImageFormat() const;
-    const gl::Extents &getImageExtents() const;
-    size_t getLayerIndex() const { return mLayerIndex; }
+    gl::Extents getExtents() const;
+    uint32_t getLevelIndex() const { return mLevelIndex; }
+    uint32_t getLayerIndex() const { return mLayerIndex; }
 
     // Special mutator for Surface RenderTargets. Allows the Framebuffer to keep a single
     // RenderTargetVk pointer.
-    void updateSwapchainImage(vk::ImageHelper *image, vk::ImageView *imageView);
+    void updateSwapchainImage(vk::ImageHelper *image, vk::ImageViewHelper *imageViews);
 
-    angle::Result ensureImageInitialized(ContextVk *contextVk);
+    angle::Result flushStagedUpdates(ContextVk *contextVk);
+
+    void retainImageViews(ContextVk *contextVk) const;
 
   private:
     vk::ImageHelper *mImage;
-    // Note that the draw and read image views are the same, given the requirements of a render
-    // target.
-    vk::ImageView *mImageView;
-    size_t mLayerIndex;
-
-    // If owned by the texture, this will be non-nullptr, and is used to ensure texture changes
-    // are flushed.
-    TextureVk *mOwner;
+    vk::ImageViewHelper *mImageViews;
+    uint32_t mLevelIndex;
+    uint32_t mLayerIndex;
 };
+
+// A vector of rendertargets
+using RenderTargetVector = std::vector<RenderTargetVk>;
 
 }  // namespace rx
 

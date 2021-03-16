@@ -4,6 +4,7 @@
 
 #include "chrome/browser/printing/print_error_dialog.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -27,6 +28,6 @@ void ShowPrintErrorDialogTask() {
 
 void ShowPrintErrorDialog() {
   // Nested loop may destroy caller.
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::BindOnce(&ShowPrintErrorDialogTask));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(&ShowPrintErrorDialogTask));
 }

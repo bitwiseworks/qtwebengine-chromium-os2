@@ -43,8 +43,6 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate
 
 #if BUILDFLAG(USE_ZYGOTE_HANDLE)
   // Returns the zygote used to launch the process.
-  // NOTE: For now Chrome always uses the same zygote for performance reasons.
-  // http://crbug.com/569191
   virtual service_manager::ZygoteHandle GetZygote();
 #endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
 
@@ -52,6 +50,12 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate
   // Override this if the process needs a non-empty environment map.
   virtual base::EnvironmentMap GetEnvironment();
 #endif  // defined(OS_POSIX)
+
+#if defined(OS_MACOSX)
+  // Whether or not to disclaim TCC responsibility for the process, defaults to
+  // false. See base::LaunchOptions::disclaim_responsibility.
+  virtual bool DisclaimResponsibility();
+#endif
 };
 
 }  // namespace content

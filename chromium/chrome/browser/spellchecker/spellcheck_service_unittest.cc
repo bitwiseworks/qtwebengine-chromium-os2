@@ -14,11 +14,12 @@
 #include "base/supports_user_data.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/language/core/browser/pref_names.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/user_prefs/user_prefs.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 struct TestCase {
@@ -44,7 +45,7 @@ struct TestCase {
     for (const auto& language : languages) {
       dictionary.language = language;
       dictionary.used_for_spellcheck =
-          base::ContainsValue(used_for_spellcheck, language);
+          base::Contains(used_for_spellcheck, language);
       expected_dictionaries.push_back(dictionary);
     }
   }
@@ -70,7 +71,7 @@ std::ostream& operator<<(std::ostream& out,
 }
 
 std::ostream& operator<<(std::ostream& out, const TestCase& test_case) {
-  out << "prefs::kAcceptLanguages=[" << test_case.accept_languages
+  out << "language::prefs::kAcceptLanguages=[" << test_case.accept_languages
       << "], prefs::kSpellCheckDictionaries=["
       << base::JoinString(test_case.spellcheck_dictionaries, ",")
       << "], expected=[";
@@ -91,7 +92,7 @@ class SpellcheckServiceUnitTest : public testing::TestWithParam<TestCase> {
   void SetUp() override {
     prefs()->registry()->RegisterListPref(
         spellcheck::prefs::kSpellCheckDictionaries);
-    prefs()->registry()->RegisterStringPref(prefs::kAcceptLanguages,
+    prefs()->registry()->RegisterStringPref(language::prefs::kAcceptLanguages,
                                             std::string());
   }
 
@@ -102,12 +103,12 @@ class SpellcheckServiceUnitTest : public testing::TestWithParam<TestCase> {
   struct : public base::SupportsUserData {
   } context_;
   TestingPrefServiceSimple prefs_;
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(SpellcheckServiceUnitTest);
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     TestCases,
     SpellcheckServiceUnitTest,
     testing::Values(
@@ -124,7 +125,8 @@ INSTANTIATE_TEST_CASE_P(
         TestCase("hu-HU,hr-HR", "hr", "hu,hr", "hr")));
 
 TEST_P(SpellcheckServiceUnitTest, GetDictionaries) {
-  prefs()->SetString(prefs::kAcceptLanguages, GetParam().accept_languages);
+  prefs()->SetString(language::prefs::kAcceptLanguages,
+                     GetParam().accept_languages);
   base::ListValue spellcheck_dictionaries;
   spellcheck_dictionaries.AppendStrings(GetParam().spellcheck_dictionaries);
   prefs()->Set(spellcheck::prefs::kSpellCheckDictionaries,

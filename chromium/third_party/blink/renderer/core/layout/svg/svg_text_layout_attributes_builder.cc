@@ -106,8 +106,7 @@ static SVGTextPositioningElement* PositioningElementFromLayoutObject(
   DCHECK(node);
   DCHECK(node->IsSVGElement());
 
-  return IsSVGTextPositioningElement(*node) ? ToSVGTextPositioningElement(node)
-                                            : nullptr;
+  return DynamicTo<SVGTextPositioningElement>(node);
 }
 
 void SVGTextLayoutAttributesBuilder::CollectTextPositioningElements(
@@ -173,15 +172,15 @@ class AttributeListsIterator {
 
  private:
   SVGLengthContext length_context_;
-  Member<SVGLengthList> x_list_;
+  SVGLengthList* x_list_;
   unsigned x_list_remaining_;
-  Member<SVGLengthList> y_list_;
+  SVGLengthList* y_list_;
   unsigned y_list_remaining_;
-  Member<SVGLengthList> dx_list_;
+  SVGLengthList* dx_list_;
   unsigned dx_list_remaining_;
-  Member<SVGLengthList> dy_list_;
+  SVGLengthList* dy_list_;
   unsigned dy_list_remaining_;
-  Member<SVGNumberList> rotate_list_;
+  SVGNumberList* rotate_list_;
   unsigned rotate_list_remaining_;
 };
 

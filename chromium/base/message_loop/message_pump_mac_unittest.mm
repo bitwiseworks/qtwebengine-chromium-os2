@@ -4,13 +4,14 @@
 
 #include "base/message_loop/message_pump_mac.h"
 
+#include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/mac/scoped_cftyperef.h"
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_current.h"
 #include "base/test/bind_test_util.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -144,7 +145,8 @@ void RunTaskInMode(CFRunLoopMode mode, OnceClosure task) {
 
 // Tests the correct behavior of ScopedPumpMessagesInPrivateModes.
 TEST(MessagePumpMacTest, ScopedPumpMessagesInPrivateModes) {
-  MessageLoopForUI message_loop;
+  test::SingleThreadTaskEnvironment task_environment(
+      test::SingleThreadTaskEnvironment::MainThreadType::UI);
 
   CFRunLoopMode kRegular = kCFRunLoopDefaultMode;
   CFRunLoopMode kPrivate = CFSTR("NSUnhighlightMenuRunLoopMode");
@@ -192,7 +194,8 @@ TEST(MessagePumpMacTest, ScopedPumpMessagesInPrivateModes) {
 // Tests that private message loop modes are not pumped while a modal dialog is
 // present.
 TEST(MessagePumpMacTest, ScopedPumpMessagesAttemptWithModalDialog) {
-  MessageLoopForUI message_loop;
+  test::SingleThreadTaskEnvironment task_environment(
+      test::SingleThreadTaskEnvironment::MainThreadType::UI);
 
   {
     base::ScopedPumpMessagesInPrivateModes allow_private;
@@ -238,7 +241,8 @@ TEST(MessagePumpMacTest, ScopedPumpMessagesAttemptWithModalDialog) {
 // terminal such as SSH (as opposed to Chromoting) to investigate the issue.
 //
 TEST(MessagePumpMacTest, DontInvalidateTimerInNativeRunLoop) {
-  MessageLoopForUI message_loop;
+  test::SingleThreadTaskEnvironment task_environment(
+      test::SingleThreadTaskEnvironment::MainThreadType::UI);
   NSWindow* window =
       [[[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 100, 100)
                                    styleMask:NSBorderlessWindowMask
@@ -290,7 +294,8 @@ TEST(MessagePumpMacTest, DontInvalidateTimerInNativeRunLoop) {
 }
 
 TEST(MessagePumpMacTest, QuitWithModalWindow) {
-  MessageLoopForUI message_loop;
+  test::SingleThreadTaskEnvironment task_environment(
+      test::SingleThreadTaskEnvironment::MainThreadType::UI);
   NSWindow* window =
       [[[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 100, 100)
                                    styleMask:NSBorderlessWindowMask

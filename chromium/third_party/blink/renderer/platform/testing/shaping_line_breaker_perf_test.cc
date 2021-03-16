@@ -5,8 +5,9 @@
 #include "third_party/blink/renderer/platform/fonts/shaping/shaping_line_breaker.h"
 
 #include <unicode/uscript.h>
+
 #include "base/time/time.h"
-#include "cc/base/lap_timer.h"
+#include "base/timer/lap_timer.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_test_utilities.h"
@@ -16,7 +17,7 @@
 #include "third_party/blink/renderer/platform/text/text_run.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/perf/perf_test.h"
+#include "testing/perf/perf_result_reporter.h"
 
 namespace blink {
 namespace {
@@ -24,6 +25,16 @@ namespace {
 static const int kTimeLimitMillis = 2000;
 static const int kWarmupRuns = 5;
 static const int kTimeCheckInterval = 10;
+
+constexpr char kMetricPrefixShapingLineBreaker[] = "ShapingLineBreaker.";
+constexpr char kMetricThroughput[] = "throughput";
+
+perf_test::PerfResultReporter SetUpReporter(const std::string& story) {
+  perf_test::PerfResultReporter reporter(kMetricPrefixShapingLineBreaker,
+                                         story);
+  reporter.RegisterImportantMetric(kMetricThroughput, "runs/s");
+  return reporter;
+}
 
 struct HarfBuzzShaperCallbackContext {
   const HarfBuzzShaper* shaper;
@@ -66,7 +77,6 @@ class ShapingLineBreakerPerfTest : public testing::Test {
   void SetUp() override {
     font_description.SetComputedSize(12.0);
     font = Font(font_description);
-    font.Update(nullptr);
   }
 
   void TearDown() override {}
@@ -77,7 +87,7 @@ class ShapingLineBreakerPerfTest : public testing::Test {
   unsigned start_index = 0;
   unsigned num_glyphs = 0;
   hb_script_t script = HB_SCRIPT_INVALID;
-  cc::LapTimer timer_;
+  base::LapTimer timer_;
 };
 
 TEST_F(ShapingLineBreakerPerfTest, ShapeLatinText) {
@@ -163,8 +173,8 @@ TEST_F(ShapingLineBreakerPerfTest, ShapeLatinText) {
     timer_.NextLap();
   } while (!timer_.HasTimeLimitExpired());
 
-  perf_test::PrintResult("ShapingLineBreakerPerfTest", "shape latin text", "",
-                         timer_.LapsPerSecond(), "runs/s", true);
+  SetUpReporter("latin_text")
+      .AddResult(kMetricThroughput, timer_.LapsPerSecond());
 }
 
 }  // namespace blink

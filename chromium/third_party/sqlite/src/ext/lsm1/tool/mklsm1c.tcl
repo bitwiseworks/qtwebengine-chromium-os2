@@ -24,9 +24,9 @@ set G(src) [string map [list %dir% $srcdir] {
 
 set G(hdr) {
 
-#if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_LSM1)
+#if !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_LSM1) 
 
-#if !defined(NDEBUG) && !defined(SQLITE_DEBUG)
+#if !defined(NDEBUG) && !defined(SQLITE_DEBUG) 
 # define NDEBUG 1
 #endif
 #if defined(NDEBUG) && defined(SQLITE_DEBUG)
@@ -36,7 +36,7 @@ set G(hdr) {
 }
 
 set G(footer) {
-
+    
 #endif /* !defined(SQLITE_CORE) || defined(SQLITE_ENABLE_LSM1) */
 }
 

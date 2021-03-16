@@ -23,6 +23,7 @@
 #include "third_party/blink/renderer/core/dom/id_target_observer.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_text_path.h"
 #include "third_party/blink/renderer/core/svg/svg_enumeration_map.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -45,32 +46,32 @@ const SVGEnumerationMap& GetEnumerationMap<SVGTextPathSpacingType>() {
   return entries;
 }
 
-inline SVGTextPathElement::SVGTextPathElement(Document& document)
+SVGTextPathElement::SVGTextPathElement(Document& document)
     : SVGTextContentElement(svg_names::kTextPathTag, document),
       SVGURIReference(this),
-      start_offset_(
-          SVGAnimatedLength::Create(this,
-                                    svg_names::kStartOffsetAttr,
-                                    SVGLengthMode::kWidth,
-                                    SVGLength::Initial::kUnitlessZero)),
-      method_(SVGAnimatedEnumeration<SVGTextPathMethodType>::Create(
+      start_offset_(MakeGarbageCollected<SVGAnimatedLength>(
           this,
-          svg_names::kMethodAttr,
-          kSVGTextPathMethodAlign)),
-      spacing_(SVGAnimatedEnumeration<SVGTextPathSpacingType>::Create(
-          this,
-          svg_names::kSpacingAttr,
-          kSVGTextPathSpacingExact)) {
+          svg_names::kStartOffsetAttr,
+          SVGLengthMode::kWidth,
+          SVGLength::Initial::kUnitlessZero)),
+      method_(
+          MakeGarbageCollected<SVGAnimatedEnumeration<SVGTextPathMethodType>>(
+              this,
+              svg_names::kMethodAttr,
+              kSVGTextPathMethodAlign)),
+      spacing_(
+          MakeGarbageCollected<SVGAnimatedEnumeration<SVGTextPathSpacingType>>(
+              this,
+              svg_names::kSpacingAttr,
+              kSVGTextPathSpacingExact)) {
   AddToPropertyMap(start_offset_);
   AddToPropertyMap(method_);
   AddToPropertyMap(spacing_);
 }
 
-DEFINE_NODE_FACTORY(SVGTextPathElement)
-
 SVGTextPathElement::~SVGTextPathElement() = default;
 
-void SVGTextPathElement::Trace(blink::Visitor* visitor) {
+void SVGTextPathElement::Trace(Visitor* visitor) {
   visitor->Trace(start_offset_);
   visitor->Trace(method_);
   visitor->Trace(spacing_);
@@ -107,14 +108,15 @@ void SVGTextPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
   SVGTextContentElement::SvgAttributeChanged(attr_name);
 }
 
-LayoutObject* SVGTextPathElement::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* SVGTextPathElement::CreateLayoutObject(const ComputedStyle&,
+                                                     LegacyLayout) {
   return new LayoutSVGTextPath(this);
 }
 
 bool SVGTextPathElement::LayoutObjectIsNeeded(
     const ComputedStyle& style) const {
   if (parentNode() &&
-      (IsSVGAElement(*parentNode()) || IsSVGTextElement(*parentNode())))
+      (IsA<SVGAElement>(*parentNode()) || IsA<SVGTextElement>(*parentNode())))
     return SVGElement::LayoutObjectIsNeeded(style);
 
   return false;
@@ -125,11 +127,11 @@ void SVGTextPathElement::BuildPendingResource() {
   if (!isConnected())
     return;
   Element* target = ObserveTarget(target_id_observer_, *this);
-  if (IsSVGPathElement(target)) {
+  if (IsA<SVGPathElement>(target)) {
     // Register us with the target in the dependencies map. Any change of
     // hrefElement that leads to relayout/repainting now informs us, so we can
     // react to it.
-    AddReferenceTo(ToSVGElement(target));
+    AddReferenceTo(To<SVGElement>(target));
   }
 
   if (LayoutObject* layout_object = GetLayoutObject())

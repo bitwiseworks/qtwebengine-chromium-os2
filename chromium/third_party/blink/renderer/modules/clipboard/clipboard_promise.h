@@ -5,89 +5,94 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CLIPBOARD_CLIPBOARD_PROMISE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CLIPBOARD_CLIPBOARD_PROMISE_H_
 
+#include <utility>
+
+#include "base/macros.h"
 #include "base/sequence_checker.h"
-#include "third_party/blink/public/mojom/clipboard/clipboard.mojom-blink.h"
-#include "third_party/blink/public/platform/modules/permissions/permission.mojom-blink.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
-#include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
-#include "third_party/blink/renderer/modules/clipboard/clipboard_file_reader.h"
-#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/blink/renderer/modules/clipboard/clipboard_item.h"
+#include "third_party/blink/renderer/modules/clipboard/clipboard_writer.h"
 
 namespace blink {
 
-class DataTransfer;
 class ScriptPromiseResolver;
+class LocalFrame;
+class ExecutionContext;
 
-class ClipboardPromise final
-    : public GarbageCollectedFinalized<ClipboardPromise>,
-      public ContextLifecycleObserver {
+class ClipboardPromise final : public GarbageCollected<ClipboardPromise>,
+                               public ExecutionContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(ClipboardPromise);
-  WTF_MAKE_NONCOPYABLE(ClipboardPromise);
 
  public:
-  ClipboardPromise(ScriptState*);
+  // Creates promise to execute Clipboard API functions off the main thread.
+  static ScriptPromise CreateForRead(ExecutionContext*, ScriptState*);
+  static ScriptPromise CreateForReadText(ExecutionContext*, ScriptState*);
+  static ScriptPromise CreateForWrite(ExecutionContext*,
+                                      ScriptState*,
+                                      const HeapVector<Member<ClipboardItem>>&);
+  static ScriptPromise CreateForWriteText(ExecutionContext*,
+                                          ScriptState*,
+                                          const String&);
+
+  ClipboardPromise(ExecutionContext*, ScriptState*);
   virtual ~ClipboardPromise();
 
-  static ScriptPromise CreateForRead(ScriptState*);
-  static ScriptPromise CreateForReadText(ScriptState*);
-  // TODO (crbug.com/916823): Move ReadImage and WriteImage into Read/Write
-  // functions, so that the API surface doesn't change.
-  static ScriptPromise CreateForReadImage(ScriptState*);
-  static ScriptPromise CreateForWrite(ScriptState*, DataTransfer*);
-  static ScriptPromise CreateForWriteText(ScriptState*, const String&);
-  static ScriptPromise CreateForWriteImage(ScriptState*, Blob*);
+  // Completes current write and starts next write.
+  void CompleteWriteRepresentation();
+  // For rejections originating from ClipboardWriter.
+  void RejectFromReadOrDecodeFailure();
 
-  void OnLoadComplete(DOMArrayBuffer*);
-  void Reject();
-
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
-  mojom::blink::PermissionService* GetPermissionService();
+  // Called to begin writing a type.
+  void StartWriteRepresentation();
 
-  void DecodeImageOnBackgroundThread(
-      scoped_refptr<base::SingleThreadTaskRunner>,
-      DOMArrayBuffer*);
-  void ResolveAndWriteImage(sk_sp<SkImage>);
-
-  bool IsFocusedDocument(ExecutionContext*);
-
-  void RequestReadPermission(
-      mojom::blink::PermissionService::RequestPermissionCallback);
-  void CheckWritePermission(
-      mojom::blink::PermissionService::HasPermissionCallback);
-
+  // Checks Read/Write permission (interacting with PermissionService).
   void HandleRead();
-  void HandleReadWithPermission(mojom::blink::PermissionStatus);
-
   void HandleReadText();
-  void HandleReadTextWithPermission(mojom::blink::PermissionStatus);
-
-  void HandleReadImage();
-  void HandleReadImageWithPermission(mojom::blink::PermissionStatus);
-
-  void HandleWrite(DataTransfer*);
-  void HandleWriteWithPermission(mojom::blink::PermissionStatus);
-
+  void HandleWrite(HeapVector<Member<ClipboardItem>>*);
   void HandleWriteText(const String&);
+
+  // Reads/Writes after permission check.
+  void HandleReadWithPermission(mojom::blink::PermissionStatus);
+  void HandleReadTextWithPermission(mojom::blink::PermissionStatus);
+  void HandleWriteWithPermission(mojom::blink::PermissionStatus);
   void HandleWriteTextWithPermission(mojom::blink::PermissionStatus);
 
-  void HandleWriteImage(Blob*);
-  void HandleWriteImageWithPermission(mojom::blink::PermissionStatus);
+  // Checks for permissions (interacting with PermissionService).
+  mojom::blink::PermissionService* GetPermissionService();
+  void RequestPermission(
+      mojom::blink::PermissionName permission,
+      bool allow_without_sanitization,
+      base::OnceCallback<void(::blink::mojom::PermissionStatus)> callback);
+
+  LocalFrame* GetLocalFrame() const;
+  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
 
   Member<ScriptState> script_state_;
   Member<ScriptPromiseResolver> script_promise_resolver_;
-  std::unique_ptr<ClipboardFileReader> file_reader_;
-  mojom::blink::PermissionServicePtr permission_service_;
-  mojom::ClipboardBuffer buffer_;
 
-  String write_data_;
-  Member<Blob> write_image_data_;
+  Member<ClipboardWriter> clipboard_writer_;
+  // Checks for Read and Write permission.
+  mojo::Remote<mojom::blink::PermissionService> permission_service_;
 
-  SEQUENCE_CHECKER(async_clipboard_sequence_checker);
+  // Only for use in writeText().
+  String plain_text_;
+  HeapVector<std::pair<String, Member<Blob>>> clipboard_item_data_;
+  bool is_raw_;  // Corresponds to allowWithoutSanitization in ClipboardItem.
+  // Index of clipboard representation currently being processed.
+  wtf_size_t clipboard_representation_index_;
+
+  // Because v8 is thread-hostile, ensures that all interactions with
+  // ScriptState and ScriptPromiseResolver occur on the main thread.
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  DISALLOW_COPY_AND_ASSIGN(ClipboardPromise);
 };
 
 }  // namespace blink

@@ -53,8 +53,11 @@ void CompositorFilterOperations::AppendOpacityFilter(float amount) {
   filter_operations_.Append(cc::FilterOperation::CreateOpacityFilter(amount));
 }
 
-void CompositorFilterOperations::AppendBlurFilter(float amount) {
-  filter_operations_.Append(cc::FilterOperation::CreateBlurFilter(amount));
+void CompositorFilterOperations::AppendBlurFilter(
+    float amount,
+    SkBlurImageFilter::TileMode tile_mode) {
+  filter_operations_.Append(
+      cc::FilterOperation::CreateBlurFilter(amount, tile_mode));
 }
 
 void CompositorFilterOperations::AppendDropShadowFilter(IntPoint offset,
@@ -107,6 +110,10 @@ bool CompositorFilterOperations::HasFilterThatMovesPixels() const {
   return filter_operations_.HasFilterThatMovesPixels();
 }
 
+bool CompositorFilterOperations::HasReferenceFilter() const {
+  return filter_operations_.HasReferenceFilter();
+}
+
 bool CompositorFilterOperations::operator==(
     const CompositorFilterOperations& o) const {
   return reference_box_ == o.reference_box_ &&
@@ -114,7 +121,8 @@ bool CompositorFilterOperations::operator==(
 }
 
 String CompositorFilterOperations::ToString() const {
-  return filter_operations_.ToString().c_str();
+  return String(filter_operations_.ToString().c_str()) + " at " +
+         reference_box_.ToString();
 }
 
 }  // namespace blink

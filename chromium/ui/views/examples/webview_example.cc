@@ -4,6 +4,8 @@
 
 #include "ui/views/examples/webview_example.h"
 
+#include <memory>
+
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/views/controls/webview/webview.h"
@@ -14,12 +16,10 @@ namespace examples {
 
 WebViewExample::WebViewExample(content::BrowserContext* browser_context)
     : ExampleBase("WebView"),
-      webview_(NULL),
-      browser_context_(browser_context) {
-}
+      webview_(nullptr),
+      browser_context_(browser_context) {}
 
-WebViewExample::~WebViewExample() {
-}
+WebViewExample::~WebViewExample() = default;
 
 void WebViewExample::CreateExampleView(View* container) {
   webview_ = new WebView(browser_context_);

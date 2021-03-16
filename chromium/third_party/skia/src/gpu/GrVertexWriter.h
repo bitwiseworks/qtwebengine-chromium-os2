@@ -8,8 +8,9 @@
 #ifndef GrVertexWriter_DEFINED
 #define GrVertexWriter_DEFINED
 
-#include "GrQuad.h"
-#include "SkTemplates.h"
+#include "include/private/SkTemplates.h"
+#include "src/gpu/GrColor.h"
+#include "src/gpu/geometry/GrQuad.h"
 #include <type_traits>
 
 /**
@@ -70,6 +71,8 @@ struct GrVertexWriter {
         this->write(color.fColor[0]);
         if (color.fWideColor) {
             this->write(color.fColor[1]);
+            this->write(color.fColor[2]);
+            this->write(color.fColor[3]);
         }
         this->write(remainder...);
     }
@@ -94,6 +97,11 @@ struct GrVertexWriter {
         vector.store(buffer);
         this->write<float, 4>(buffer);
         this->write(remainder...);
+    }
+
+    void writeRaw(const void* data, size_t size) {
+        memcpy(fPtr, data, size);
+        fPtr = SkTAddOffset<void>(fPtr, size);
     }
 
     void write() {}

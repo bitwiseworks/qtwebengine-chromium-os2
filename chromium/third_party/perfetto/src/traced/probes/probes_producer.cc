@@ -24,27 +24,30 @@
 #include <string>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/utils.h"
-#include "perfetto/base/weak_ptr.h"
-#include "perfetto/traced/traced.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/base/watchdog.h"
+#include "perfetto/ext/base/weak_ptr.h"
+#include "perfetto/ext/traced/traced.h"
+#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "perfetto/tracing/core/ftrace_config.h"
 #include "perfetto/tracing/core/trace_config.h"
-#include "perfetto/tracing/core/trace_packet.h"
-#include "perfetto/tracing/ipc/producer_ipc_client.h"
 #include "src/traced/probes/android_log/android_log_data_source.h"
 #include "src/traced/probes/filesystem/inode_file_data_source.h"
 #include "src/traced/probes/ftrace/ftrace_data_source.h"
+#include "src/traced/probes/metatrace/metatrace_data_source.h"
+#include "src/traced/probes/packages_list/packages_list_data_source.h"
 #include "src/traced/probes/power/android_power_data_source.h"
 #include "src/traced/probes/probes_data_source.h"
 #include "src/traced/probes/ps/process_stats_data_source.h"
 #include "src/traced/probes/sys_stats/sys_stats_data_source.h"
 
-#include "perfetto/trace/filesystem/inode_file_map.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace_stats.pbzero.h"
-#include "perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/config/ftrace/ftrace_config.gen.h"
+#include "protos/perfetto/trace/filesystem/inode_file_map.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_stats.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 namespace {
@@ -52,17 +55,23 @@ namespace {
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
 
-// Should be larger than FtraceController::kFlushTimeoutMs.
+// Should be larger than FtraceController::kControllerFlushTimeoutMs.
 constexpr uint32_t kFlushTimeoutMs = 1000;
 
-constexpr char kFtraceSourceName[] = "linux.ftrace";
-constexpr char kProcessStatsSourceName[] = "linux.process_stats";
-constexpr char kInodeMapSourceName[] = "linux.inode_file_map";
-constexpr char kSysStatsSourceName[] = "linux.sys_stats";
-constexpr char kAndroidPowerSourceName[] = "android.power";
-constexpr char kAndroidLogSourceName[] = "android.log";
+constexpr size_t kTracingSharedMemSizeHintBytes = 1024 * 1024;
+constexpr size_t kTracingSharedMemPageSizeHintBytes = 32 * 1024;
 
-}  // namespace.
+ProbesDataSource::Descriptor const* const kAllDataSources[]{
+    &FtraceDataSource::descriptor,        //
+    &ProcessStatsDataSource::descriptor,  //
+    &InodeFileDataSource::descriptor,     //
+    &SysStatsDataSource::descriptor,      //
+    &AndroidPowerDataSource::descriptor,  //
+    &AndroidLogDataSource::descriptor,    //
+    &PackagesListDataSource::descriptor,  //
+    &MetatraceDataSource::descriptor,     //
+};
+}  // namespace
 
 // State transition diagram:
 //                    +----------------------------+
@@ -85,40 +94,19 @@ void ProbesProducer::OnConnect() {
   ResetConnectionBackoff();
   PERFETTO_LOG("Connected to the service");
 
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kFtraceSourceName);
-    endpoint_->RegisterDataSource(desc);
-  }
+  // Register all the data sources.
+  for (const FtraceDataSource::Descriptor* desc : kAllDataSources) {
+    DataSourceDescriptor proto_desc;
+    proto_desc.set_name(desc->name);
 
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kProcessStatsSourceName);
-    endpoint_->RegisterDataSource(desc);
-  }
+    // TODO(primiano): remove in next CL.
+    if (desc == &MetatraceDataSource::descriptor)
+      proto_desc.set_will_notify_on_stop(true);
 
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kInodeMapSourceName);
-    endpoint_->RegisterDataSource(desc);
-  }
-
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kSysStatsSourceName);
-    endpoint_->RegisterDataSource(desc);
-  }
-
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kAndroidPowerSourceName);
-    endpoint_->RegisterDataSource(desc);
-  }
-
-  {
-    DataSourceDescriptor desc;
-    desc.set_name(kAndroidLogSourceName);
-    endpoint_->RegisterDataSource(desc);
+    using Flags = ProbesDataSource::Descriptor::Flags;
+    if (desc->flags & Flags::kHandlesIncrementalState)
+      proto_desc.set_handles_incremental_state_clear(true);
+    endpoint_->RegisterDataSource(proto_desc);
   }
 }
 
@@ -137,7 +125,7 @@ void ProbesProducer::OnDisconnect() {
 void ProbesProducer::Restart() {
   // We lost the connection with the tracing service. At this point we need
   // to reset all the data sources. Trying to handle that manually is going to
-  // be error prone. What we do here is simply desroying the instance and
+  // be error prone. What we do here is simply destroying the instance and
   // recreating it again.
   // TODO(hjd): Add e2e test for this.
 
@@ -160,18 +148,22 @@ void ProbesProducer::SetupDataSource(DataSourceInstanceID instance_id,
   PERFETTO_CHECK(session_id > 0);
 
   std::unique_ptr<ProbesDataSource> data_source;
-  if (config.name() == kFtraceSourceName) {
+  if (config.name() == FtraceDataSource::descriptor.name) {
     data_source = CreateFtraceDataSource(session_id, config);
-  } else if (config.name() == kInodeMapSourceName) {
+  } else if (config.name() == InodeFileDataSource::descriptor.name) {
     data_source = CreateInodeFileDataSource(session_id, config);
-  } else if (config.name() == kProcessStatsSourceName) {
+  } else if (config.name() == ProcessStatsDataSource::descriptor.name) {
     data_source = CreateProcessStatsDataSource(session_id, config);
-  } else if (config.name() == kSysStatsSourceName) {
+  } else if (config.name() == SysStatsDataSource::descriptor.name) {
     data_source = CreateSysStatsDataSource(session_id, config);
-  } else if (config.name() == kAndroidPowerSourceName) {
+  } else if (config.name() == AndroidPowerDataSource::descriptor.name) {
     data_source = CreateAndroidPowerDataSource(session_id, config);
-  } else if (config.name() == kAndroidLogSourceName) {
+  } else if (config.name() == AndroidLogDataSource::descriptor.name) {
     data_source = CreateAndroidLogDataSource(session_id, config);
+  } else if (config.name() == PackagesListDataSource::descriptor.name) {
+    data_source = CreatePackagesListDataSource(session_id, config);
+  } else if (config.name() == MetatraceDataSource::descriptor.name) {
+    data_source = CreateMetatraceDataSource(session_id, config);
   }
 
   if (!data_source) {
@@ -230,16 +222,16 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateFtraceDataSource(
 
   PERFETTO_LOG("Ftrace setup (target_buf=%" PRIu32 ")", config.target_buffer());
   const BufferID buffer_id = static_cast<BufferID>(config.target_buffer());
+  FtraceConfig ftrace_config;
+  ftrace_config.ParseFromString(config.ftrace_config_raw());
   std::unique_ptr<FtraceDataSource> data_source(new FtraceDataSource(
-      ftrace_->GetWeakPtr(), session_id, config.ftrace_config(),
+      ftrace_->GetWeakPtr(), session_id, std::move(ftrace_config),
       endpoint_->CreateTraceWriter(buffer_id)));
   if (!ftrace_->AddDataSource(data_source.get())) {
-    PERFETTO_ELOG(
-        "Failed to setup tracing (too many concurrent sessions or ftrace is "
-        "already in use)");
+    PERFETTO_ELOG("Failed to setup ftrace");
     return nullptr;
   }
-  return std::move(data_source);
+  return std::unique_ptr<ProbesDataSource>(std::move(data_source));
 }
 
 std::unique_ptr<ProbesDataSource> ProbesProducer::CreateInodeFileDataSource(
@@ -282,6 +274,14 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateAndroidLogDataSource(
                                endpoint_->CreateTraceWriter(buffer_id)));
 }
 
+std::unique_ptr<ProbesDataSource> ProbesProducer::CreatePackagesListDataSource(
+    TracingSessionID session_id,
+    const DataSourceConfig& config) {
+  auto buffer_id = static_cast<BufferID>(config.target_buffer());
+  return std::unique_ptr<ProbesDataSource>(new PackagesListDataSource(
+      config, session_id, endpoint_->CreateTraceWriter(buffer_id)));
+}
+
 std::unique_ptr<ProbesDataSource> ProbesProducer::CreateSysStatsDataSource(
     TracingSessionID session_id,
     const DataSourceConfig& config) {
@@ -289,6 +289,14 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateSysStatsDataSource(
   return std::unique_ptr<SysStatsDataSource>(
       new SysStatsDataSource(task_runner_, session_id,
                              endpoint_->CreateTraceWriter(buffer_id), config));
+}
+
+std::unique_ptr<ProbesDataSource> ProbesProducer::CreateMetatraceDataSource(
+    TracingSessionID session_id,
+    const DataSourceConfig& config) {
+  auto buffer_id = static_cast<BufferID>(config.target_buffer());
+  return std::unique_ptr<ProbesDataSource>(new MetatraceDataSource(
+      task_runner_, session_id, endpoint_->CreateTraceWriter(buffer_id)));
 }
 
 void ProbesProducer::StopDataSource(DataSourceInstanceID id) {
@@ -300,6 +308,14 @@ void ProbesProducer::StopDataSource(DataSourceInstanceID id) {
     return;
   }
   ProbesDataSource* data_source = it->second.get();
+
+  // MetatraceDataSource special case: re-flush and ack the stop (to record the
+  // flushes of other data sources).
+  if (data_source->descriptor == &MetatraceDataSource::descriptor) {
+    data_source->Flush(FlushRequestID{0}, [] {});
+    endpoint_->NotifyDataSourceStopped(id);
+  }
+
   TracingSessionID session_id = data_source->tracing_session_id;
   auto range = session_data_sources_.equal_range(session_id);
   for (auto kv = range.first; kv != range.second; kv++) {
@@ -312,7 +328,14 @@ void ProbesProducer::StopDataSource(DataSourceInstanceID id) {
   watchdogs_.erase(id);
 }
 
-void ProbesProducer::OnTracingSetup() {}
+void ProbesProducer::OnTracingSetup() {
+  // shared_memory() can be null in test environments when running in-process.
+  if (endpoint_->shared_memory()) {
+    base::Watchdog::GetInstance()->SetMemoryLimit(
+        endpoint_->shared_memory()->size() + base::kWatchdogDefaultMemorySlack,
+        base::kWatchdogDefaultMemoryWindow);
+  }
+}
 
 void ProbesProducer::Flush(FlushRequestID flush_request_id,
                            const DataSourceInstanceID* data_source_ids,
@@ -378,6 +401,19 @@ void ProbesProducer::OnFlushTimeout(FlushRequestID flush_request_id) {
   endpoint_->NotifyFlushComplete(flush_request_id);
 }
 
+void ProbesProducer::ClearIncrementalState(
+    const DataSourceInstanceID* data_source_ids,
+    size_t num_data_sources) {
+  for (size_t i = 0; i < num_data_sources; i++) {
+    DataSourceInstanceID ds_id = data_source_ids[i];
+    auto it = data_sources_.find(ds_id);
+    if (it == data_sources_.end() || !it->second->started)
+      continue;
+
+    it->second->ClearIncrementalState();
+  }
+}
+
 // This function is called by the FtraceController in batches, whenever it has
 // read one or more pages from one or more cpus and written that into the
 // userspace tracing buffer. If more than one ftrace data sources are active,
@@ -396,8 +432,13 @@ void ProbesProducer::OnFtraceDataWrittenIntoDataSourceBuffers() {
     if (it == session_data_sources_.end() || it->first != last_session_id) {
       bool has_inodes = metadata && !metadata->inode_and_device.empty();
       bool has_pids = metadata && !metadata->pids.empty();
+      bool has_rename_pids = metadata && !metadata->rename_pids.empty();
       if (has_inodes && inode_data_source)
         inode_data_source->OnInodes(metadata->inode_and_device);
+      // Ordering the rename pids before the seen pids is important so that any
+      // renamed processes get scraped in the OnPids call.
+      if (has_rename_pids && ps_data_source)
+        ps_data_source->OnRenamePids(metadata->rename_pids);
       if (has_pids && ps_data_source)
         ps_data_source->OnPids(metadata->pids);
       if (metadata)
@@ -412,30 +453,21 @@ void ProbesProducer::OnFtraceDataWrittenIntoDataSourceBuffers() {
     ProbesDataSource* ds = it->second;
     if (!ds->started)
       continue;
-    switch (ds->type_id) {
-      case FtraceDataSource::kTypeId:
-        metadata = static_cast<FtraceDataSource*>(ds)->mutable_metadata();
-        break;
-      case InodeFileDataSource::kTypeId:
-        inode_data_source = static_cast<InodeFileDataSource*>(ds);
-        break;
-      case ProcessStatsDataSource::kTypeId: {
-        // A trace session might have declared more than one ps data source.
-        // In those cases we often use one for a full dump on startup (
-        // targeting a dedicated buffer) and another one for on-demand dumps
-        // targeting the main buffer.
-        // Only use the one that has on-demand dumps enabled, if any.
-        auto ps = static_cast<ProcessStatsDataSource*>(ds);
-        if (ps->on_demand_dumps_enabled())
-          ps_data_source = ps;
-        break;
-      }
-      case SysStatsDataSource::kTypeId:
-      case AndroidLogDataSource::kTypeId:
-        break;
-      default:
-        PERFETTO_DFATAL("Invalid data source.");
-    }  // switch (type_id)
+
+    if (ds->descriptor == &FtraceDataSource::descriptor) {
+      metadata = static_cast<FtraceDataSource*>(ds)->mutable_metadata();
+    } else if (ds->descriptor == &InodeFileDataSource::descriptor) {
+      inode_data_source = static_cast<InodeFileDataSource*>(ds);
+    } else if (ds->descriptor == &ProcessStatsDataSource::descriptor) {
+      // A trace session might have declared more than one ps data source.
+      // In those cases we often use one for a full dump on startup (
+      // targeting a dedicated buffer) and another one for on-demand dumps
+      // targeting the main buffer.
+      // Only use the one that has on-demand dumps enabled, if any.
+      auto ps = static_cast<ProcessStatsDataSource*>(ds);
+      if (ps->on_demand_dumps_enabled())
+        ps_data_source = ps;
+    }
   }    // for (session_data_sources_)
 }
 
@@ -454,7 +486,9 @@ void ProbesProducer::Connect() {
   PERFETTO_DCHECK(state_ == kNotConnected);
   state_ = kConnecting;
   endpoint_ = ProducerIPCClient::Connect(
-      socket_name_, this, "perfetto.traced_probes", task_runner_);
+      socket_name_, this, "perfetto.traced_probes", task_runner_,
+      TracingService::ProducerSMBScrapingMode::kDisabled,
+      kTracingSharedMemSizeHintBytes, kTracingSharedMemPageSizeHintBytes);
 }
 
 void ProbesProducer::IncreaseConnectionBackoff() {

@@ -27,11 +27,13 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
+#include "base/strings/stringprintf.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "net/base/backoff_entry.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/io_buffer.h"
@@ -43,9 +45,13 @@
 #include "net/dns/dns_config.h"
 #include "net/dns/dns_query.h"
 #include "net/dns/dns_response.h"
+#include "net/dns/dns_server_iterator.h"
 #include "net/dns/dns_session.h"
 #include "net/dns/dns_util.h"
+#include "net/dns/public/dns_over_https_server_config.h"
 #include "net/dns/public/dns_protocol.h"
+#include "net/dns/resolve_context.h"
+#include "net/http/http_request_headers.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_event_type.h"
@@ -107,13 +113,10 @@ bool IsIPLiteral(const std::string& hostname) {
   return ip.AssignFromIPLiteral(hostname);
 }
 
-std::unique_ptr<base::Value> NetLogStartCallback(
-    const std::string* hostname,
-    uint16_t qtype,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("hostname", *hostname);
-  dict->SetInteger("query_type", qtype);
+base::Value NetLogStartParams(const std::string& hostname, uint16_t qtype) {
+  base::DictionaryValue dict;
+  dict.SetString("hostname", hostname);
+  dict.SetInteger("query_type", qtype);
   return std::move(dict);
 }
 
@@ -124,7 +127,7 @@ std::unique_ptr<base::Value> NetLogStartCallback(
 // matches. Logging is done in the socket and in the outer DnsTransaction.
 class DnsAttempt {
  public:
-  explicit DnsAttempt(unsigned server_index)
+  explicit DnsAttempt(int server_index)
       : result_(ERR_FAILED), server_index_(server_index) {}
 
   virtual ~DnsAttempt() = default;
@@ -143,19 +146,20 @@ class DnsAttempt {
   virtual const NetLogWithSource& GetSocketNetLog() const = 0;
 
   // Returns the index of the destination server within DnsConfig::nameservers.
-  unsigned server_index() const { return server_index_; }
+  // If the server index is -1, indicates that no request was sent and that the
+  // attempt was resolved synchronously with failure.
+  int server_index() const { return server_index_; }
 
   // Returns a Value representing the received response, along with a reference
   // to the NetLog source source of the UDP socket used.  The request must have
   // completed before this is called.
-  std::unique_ptr<base::Value> NetLogResponseCallback(
-      NetLogCaptureMode capture_mode) const {
+  base::Value NetLogResponseParams() const {
     DCHECK(GetResponse()->IsValid());
 
-    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-    dict->SetInteger("rcode", GetResponse()->rcode());
-    dict->SetInteger("answer_count", GetResponse()->answer_count());
-    GetSocketNetLog().source().AddToEventParameters(dict.get());
+    base::DictionaryValue dict;
+    dict.SetInteger("rcode", GetResponse()->rcode());
+    dict.SetInteger("answer_count", GetResponse()->answer_count());
+    GetSocketNetLog().source().AddToEventParameters(&dict);
     return std::move(dict);
   }
 
@@ -174,12 +178,14 @@ class DnsAttempt {
   // Result of last operation.
   int result_;
 
-  const unsigned server_index_;
+  const int server_index_;
+
+  DISALLOW_COPY_AND_ASSIGN(DnsAttempt);
 };
 
 class DnsUDPAttempt : public DnsAttempt {
  public:
-  DnsUDPAttempt(unsigned server_index,
+  DnsUDPAttempt(size_t server_index,
                 std::unique_ptr<DnsSession::SocketLease> socket_lease,
                 std::unique_ptr<DnsQuery> query)
       : DnsAttempt(server_index),
@@ -201,7 +207,7 @@ class DnsUDPAttempt : public DnsAttempt {
 
   const DnsResponse* GetResponse() const override {
     const DnsResponse* resp = response_.get();
-    return (resp != NULL && resp->IsValid()) ? resp : NULL;
+    return (resp != nullptr && resp->IsValid()) ? resp : nullptr;
   }
 
   const NetLogWithSource& GetSocketNetLog() const override {
@@ -322,16 +328,14 @@ class DnsUDPAttempt : public DnsAttempt {
 
 class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
  public:
-  DnsHTTPAttempt(unsigned server_index,
+  DnsHTTPAttempt(size_t doh_server_index,
                  std::unique_ptr<DnsQuery> query,
                  const string& server_template,
                  const GURL& gurl_without_parameters,
                  bool use_post,
                  URLRequestContext* url_request_context,
                  RequestPriority request_priority_)
-      : DnsAttempt(server_index),
-        query_(std::move(query)),
-        weak_factory_(this) {
+      : DnsAttempt(doh_server_index), query_(std::move(query)) {
     GURL url;
     if (use_post) {
       // Set url for a POST request
@@ -343,7 +347,7 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
       std::string encoded_query;
       base::Base64UrlEncode(base::StringPiece(query_->io_buffer()->data(),
                                               query_->io_buffer()->size()),
-                            base::Base64UrlEncodePolicy::INCLUDE_PADDING,
+                            base::Base64UrlEncodePolicy::OMIT_PADDING,
                             &encoded_query);
       parameters.emplace("dns", encoded_query);
       uri_template::Expand(server_template, parameters, &url_string);
@@ -351,8 +355,13 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
     }
 
     HttpRequestHeaders extra_request_headers;
-    extra_request_headers.SetHeader("Accept", kDnsOverHttpResponseContentType);
+    extra_request_headers.SetHeader(HttpRequestHeaders::kAccept,
+                                    kDnsOverHttpResponseContentType);
+    // Send minimal request headers where possible.
+    extra_request_headers.SetHeader(HttpRequestHeaders::kAcceptLanguage, "*");
+    extra_request_headers.SetHeader(HttpRequestHeaders::kUserAgent, "Chrome");
 
+    DCHECK(url_request_context);
     request_ = url_request_context->CreateRequest(
         url, request_priority_, this,
         net::DefineNetworkTrafficAnnotation("dns_over_https", R"(
@@ -390,6 +399,8 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
     }
 
     request_->SetExtraRequestHeaders(extra_request_headers);
+    // Disable secure DNS for any DoH server hostname lookups to avoid deadlock.
+    request_->SetDisableSecureDns(true);
     request_->SetLoadFlags(request_->load_flags() | LOAD_DISABLE_CACHE |
                            LOAD_BYPASS_PROXY);
     request_->set_allow_credentials(false);
@@ -398,12 +409,6 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
   // DnsAttempt overrides.
 
   int Start(CompletionOnceCallback callback) override {
-    if (DNSDomainToString(query_->qname()).compare(request_->url().host()) ==
-        0) {
-      // Fast failing looking up a server with itself.
-      return ERR_DNS_HTTP_FAILED;
-    }
-
     callback_ = std::move(callback);
     request_->Start();
     return ERR_IO_PENDING;
@@ -414,7 +419,7 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
   const DnsQuery* GetQuery() const override { return query_.get(); }
   const DnsResponse* GetResponse() const override {
     const DnsResponse* resp = response_.get();
-    return (resp != NULL && resp->IsValid()) ? resp : NULL;
+    return (resp != nullptr && resp->IsValid()) ? resp : nullptr;
   }
   const NetLogWithSource& GetSocketNetLog() const override { return net_log_; }
 
@@ -424,6 +429,10 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
     DCHECK_NE(net::ERR_IO_PENDING, net_error);
     std::string content_type;
     if (net_error != OK) {
+      // Update the error code if there was an issue resolving the secure
+      // server hostname.
+      if (IsHostnameResolutionError(net_error))
+        net_error = ERR_DNS_SECURE_RESOLVER_HOSTNAME_RESOLUTION_FAILED;
       ResponseCompleted(net_error);
       return;
     }
@@ -536,14 +545,46 @@ class DnsHTTPAttempt : public DnsAttempt, public URLRequest::Delegate {
   std::unique_ptr<URLRequest> request_;
   NetLogWithSource net_log_;
 
-  base::WeakPtrFactory<DnsHTTPAttempt> weak_factory_;
+  base::WeakPtrFactory<DnsHTTPAttempt> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DnsHTTPAttempt);
 };
 
+void ConstructDnsHTTPAttempt(DnsSession* session,
+                             int doh_server_index,
+                             std::string hostname,
+                             uint16_t qtype,
+                             const OptRecordRdata* opt_rdata,
+                             std::vector<std::unique_ptr<DnsAttempt>>* attempts,
+                             URLRequestContext* url_request_context,
+                             RequestPriority request_priority) {
+  DCHECK(url_request_context);
+
+  uint16_t id = session->NextQueryId();
+  std::unique_ptr<DnsQuery> query;
+  if (attempts->empty()) {
+    query.reset(new DnsQuery(id, hostname, qtype, opt_rdata,
+                             DnsQuery::PaddingStrategy::BLOCK_LENGTH_128));
+  } else {
+    query = attempts->at(0)->GetQuery()->CloneWithNewId(id);
+  }
+
+  DCHECK_GE(doh_server_index, 0);
+  DCHECK_LT(doh_server_index,
+            (int)session->config().dns_over_https_servers.size());
+  const DnsOverHttpsServerConfig& doh_config =
+      session->config().dns_over_https_servers[doh_server_index];
+  GURL gurl_without_parameters(
+      GetURLFromTemplateWithoutParameters(doh_config.server_template));
+  attempts->push_back(std::make_unique<DnsHTTPAttempt>(
+      doh_server_index, std::move(query), doh_config.server_template,
+      gurl_without_parameters, doh_config.use_post, url_request_context,
+      request_priority));
+}
+
 class DnsTCPAttempt : public DnsAttempt {
  public:
-  DnsTCPAttempt(unsigned server_index,
+  DnsTCPAttempt(size_t server_index,
                 std::unique_ptr<StreamSocket> socket,
                 std::unique_ptr<DnsQuery> query)
       : DnsAttempt(server_index),
@@ -573,7 +614,7 @@ class DnsTCPAttempt : public DnsAttempt {
 
   const DnsResponse* GetResponse() const override {
     const DnsResponse* resp = response_.get();
-    return (resp != NULL && resp->IsValid()) ? resp : NULL;
+    return (resp != nullptr && resp->IsValid()) ? resp : nullptr;
   }
 
   const NetLogWithSource& GetSocketNetLog() const override {
@@ -780,12 +821,202 @@ class DnsTCPAttempt : public DnsAttempt {
 
 // ----------------------------------------------------------------------------
 
+const char kDoHProbeHostname[] = "www.gstatic.com";
+
+const net::BackoffEntry::Policy kProbeBackoffPolicy = {
+    // Apply exponential backoff rules after the first error.
+    0,
+    // Begin with a 1s delay between probes.
+    1000,
+    // Increase the delay between consecutive probes by a factor of 1.5.
+    1.5,
+    // Fuzz the delay between consecutive probes between 80%-100% of the
+    // calculated time.
+    0.2,
+    // Cap the maximum delay between consecutive probes at 1 hour.
+    1000 * 60 * 60,
+    // Never expire entries.
+    -1,
+    // Do not apply an initial delay.
+    false,
+};
+
+// Probe runner that continually sends test queries (with backoff) to DoH
+// servers to determine availability.
+//
+// Expected to be contained in request classes owned externally to HostResolver,
+// so no assumptions are made regarding cancellation compared to the DnsSession.
+// Instead, uses WeakPtrs to gracefully clean itself up and stop probing after
+// session destruction.
+class DnsOverHttpsProbeRunner : public DnsProbeRunner {
+ public:
+  DnsOverHttpsProbeRunner(base::WeakPtr<DnsSession> session,
+                          ResolveContext* context)
+      : session_(std::move(session)), context_(context) {
+    DCHECK(session_);
+    DCHECK(!session_->config().dns_over_https_servers.empty());
+
+    DNSDomainFromDot(kDoHProbeHostname, &formatted_probe_hostname_);
+
+    for (size_t i = 0; i < session_->config().dns_over_https_servers.size();
+         i++) {
+      probe_stats_list_.push_back(nullptr);
+    }
+  }
+
+  ~DnsOverHttpsProbeRunner() override = default;
+
+  void Start(bool network_change) override {
+    DCHECK(session_);
+
+    // Start probe sequences for any servers where it is not currently running.
+    for (size_t i = 0; i < session_->config().dns_over_https_servers.size();
+         i++) {
+      if (!probe_stats_list_[i]) {
+        probe_stats_list_[i] = std::make_unique<ProbeStats>();
+        ContinueProbe(i, probe_stats_list_[i]->weak_factory.GetWeakPtr(),
+                      network_change,
+                      base::TimeTicks::Now() /* sequence_start_time */);
+      }
+    }
+  }
+
+  base::TimeDelta GetDelayUntilNextProbeForTest(
+      size_t doh_server_index) const override {
+    if (doh_server_index >= probe_stats_list_.size() ||
+        !probe_stats_list_[doh_server_index])
+      return base::TimeDelta();
+
+    return probe_stats_list_[doh_server_index]
+        ->backoff_entry->GetTimeUntilRelease();
+  }
+
+ private:
+  struct ProbeStats {
+    ProbeStats()
+        : backoff_entry(
+              std::make_unique<net::BackoffEntry>(&kProbeBackoffPolicy)) {}
+
+    std::unique_ptr<net::BackoffEntry> backoff_entry;
+    std::vector<std::unique_ptr<DnsAttempt>> probe_attempts;
+    base::WeakPtrFactory<ProbeStats> weak_factory{this};
+  };
+
+  void ContinueProbe(int doh_server_index,
+                     base::WeakPtr<ProbeStats> probe_stats,
+                     bool network_change,
+                     base::TimeTicks sequence_start_time) {
+    // If the DnsSession has been destroyed, no reason to continue probing.
+    if (!session_) {
+      probe_stats_list_.clear();
+      return;
+    }
+
+    // If the ProbeStats for which this probe was scheduled has been deleted,
+    // don't continue to send probes.
+    if (!probe_stats)
+      return;
+
+    // Cancel the probe sequence for this server if the server is already
+    // available.
+    if (context_->GetDohServerAvailability(doh_server_index, session_.get())) {
+      probe_stats_list_[doh_server_index] = nullptr;
+      return;
+    }
+
+    // Schedule a new probe assuming this one will fail. The newly scheduled
+    // probe will not run if an earlier probe has already succeeded. Probes may
+    // take awhile to fail, which is why we schedule the next one here rather
+    // than on probe completion.
+    DCHECK(probe_stats);
+    DCHECK(probe_stats->backoff_entry);
+    probe_stats->backoff_entry->InformOfRequest(false /* success */);
+    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&DnsOverHttpsProbeRunner::ContinueProbe,
+                       weak_ptr_factory_.GetWeakPtr(), doh_server_index,
+                       probe_stats, network_change, sequence_start_time),
+        probe_stats->backoff_entry->GetTimeUntilRelease());
+
+    unsigned attempt_number = probe_stats->probe_attempts.size();
+    ConstructDnsHTTPAttempt(
+        session_.get(), doh_server_index, formatted_probe_hostname_,
+        dns_protocol::kTypeA, nullptr /* opt_rdata */,
+        &probe_stats->probe_attempts, context_->url_request_context(),
+        RequestPriority::DEFAULT_PRIORITY);
+
+    probe_stats->probe_attempts.back()->Start(base::BindOnce(
+        &DnsOverHttpsProbeRunner::ProbeComplete, weak_ptr_factory_.GetWeakPtr(),
+        attempt_number, doh_server_index, std::move(probe_stats),
+        network_change, sequence_start_time,
+        base::TimeTicks::Now() /* query_start_time */));
+  }
+
+  void ProbeComplete(unsigned attempt_number,
+                     int doh_server_index,
+                     base::WeakPtr<ProbeStats> probe_stats,
+                     bool network_change,
+                     base::TimeTicks sequence_start_time,
+                     base::TimeTicks query_start_time,
+                     int rv) {
+    bool success = false;
+    if (rv == OK && probe_stats && session_) {
+      // Check that the response parses properly before considering it a
+      // success.
+      DCHECK_LT(attempt_number, probe_stats->probe_attempts.size());
+      const DnsAttempt* attempt =
+          probe_stats->probe_attempts[attempt_number].get();
+      const DnsResponse* response = attempt->GetResponse();
+      AddressList addresses;
+      base::TimeDelta ttl;
+      if (response &&
+          attempt->GetResponse()->ParseToAddressList(&addresses, &ttl) ==
+              DnsResponse::DNS_PARSE_OK &&
+          !addresses.empty()) {
+        // The DoH probe queries don't go through the standard DnsAttempt path,
+        // so the ServerStats have not been updated yet.
+        context_->RecordServerSuccess(doh_server_index,
+                                      true /* is_doh_server */, session_.get());
+        context_->RecordRtt(doh_server_index, true /* is_doh_server */,
+                            base::TimeTicks::Now() - query_start_time, rv,
+                            session_.get());
+        success = true;
+
+        // Do not delete the ProbeStats and cancel the probe sequence. It will
+        // cancel itself on the next scheduled ContinueProbe() call if the
+        // server is still available. This way, the backoff schedule will be
+        // maintained if a server quickly becomes unavailable again before that
+        // scheduled call.
+      }
+    }
+
+    base::UmaHistogramLongTimes(
+        base::StringPrintf("Net.DNS.ProbeSequence.%s.%s.AttemptTime",
+                           network_change ? "NetworkChange" : "ConfigChange",
+                           success ? "Success" : "Failure"),
+        base::TimeTicks::Now() - sequence_start_time);
+  }
+
+  base::WeakPtr<DnsSession> session_;
+  // TODO(ericorth@chromium.org): Use base::UnownedPtr once available.
+  ResolveContext* const context_;
+  std::string formatted_probe_hostname_;
+
+  // List of ProbeStats, one for each DoH server, indexed by the DoH server
+  // config index.
+  std::vector<std::unique_ptr<ProbeStats>> probe_stats_list_;
+
+  base::WeakPtrFactory<DnsOverHttpsProbeRunner> weak_ptr_factory_{this};
+};
+
+// ----------------------------------------------------------------------------
+
 // Implements DnsTransaction. Configuration is supplied by DnsSession.
 // The suffix list is built according to the DnsConfig from the session.
-// The timeout for each DnsUDPAttempt is given by DnsSession::NextTimeout.
-// The first server to attempt on each query is given by
-// DnsSession::NextFirstServerIndex, and the order is round-robin afterwards.
-// Each server is attempted DnsConfig::attempts times.
+// The timeout for each DnsUDPAttempt is given by
+// ResolveContext::NextClassicTimeout. The first server to attempt on each query
+// is given by ResolveContext::NextFirstServerIndex, and the order is
+// round-robin afterwards. Each server is attempted DnsConfig::attempts times.
 class DnsTransactionImpl : public DnsTransaction,
                            public base::SupportsWeakPtr<DnsTransactionImpl> {
  public:
@@ -794,19 +1025,22 @@ class DnsTransactionImpl : public DnsTransaction,
                      uint16_t qtype,
                      DnsTransactionFactory::CallbackType callback,
                      const NetLogWithSource& net_log,
-                     const OptRecordRdata* opt_rdata)
+                     const OptRecordRdata* opt_rdata,
+                     bool secure,
+                     DnsConfig::SecureDnsMode secure_dns_mode,
+                     ResolveContext* resolve_context)
       : session_(session),
         hostname_(hostname),
         qtype_(qtype),
         opt_rdata_(opt_rdata),
+        secure_(secure),
+        secure_dns_mode_(secure_dns_mode),
         callback_(std::move(callback)),
         net_log_(net_log),
         qnames_initial_size_(0),
         attempts_count_(0),
-        doh_attempts_(0),
         had_tcp_attempt_(false),
-        doh_attempt_(false),
-        first_server_index_(0),
+        resolve_context_(resolve_context),
         request_priority_(DEFAULT_PRIORITY) {
     DCHECK(session_.get());
     DCHECK(!hostname_.empty());
@@ -836,8 +1070,8 @@ class DnsTransactionImpl : public DnsTransaction,
     DCHECK(!callback_.is_null());
     DCHECK(attempts_.empty());
     net_log_.BeginEvent(NetLogEventType::DNS_TRANSACTION,
-                        base::Bind(&NetLogStartCallback, &hostname_, qtype_));
-    AttemptResult result(PrepareSearch(), NULL);
+                        [&] { return NetLogStartParams(hostname_, qtype_); });
+    AttemptResult result(PrepareSearch(), nullptr);
     if (result.rv == OK) {
       qnames_initial_size_ = qnames_.size();
       result = ProcessAttemptResult(StartQuery());
@@ -852,10 +1086,6 @@ class DnsTransactionImpl : public DnsTransaction,
           FROM_HERE,
           base::BindOnce(&DnsTransactionImpl::DoCallback, AsWeakPtr(), result));
     }
-  }
-
-  void SetRequestContext(URLRequestContext* context) override {
-    url_request_context_ = context;
   }
 
   void SetRequestPriority(RequestPriority priority) override {
@@ -929,8 +1159,8 @@ class DnsTransactionImpl : public DnsTransaction,
       return;
 
     const DnsResponse* response =
-        result.attempt ? result.attempt->GetResponse() : NULL;
-    CHECK(result.rv != OK || response != NULL);
+        result.attempt ? result.attempt->GetResponse() : nullptr;
+    CHECK(result.rv != OK || response != nullptr);
 
     timer_.Stop();
 
@@ -941,12 +1171,12 @@ class DnsTransactionImpl : public DnsTransaction,
   }
 
   AttemptResult MakeAttempt() {
-    // Make an HTTP attempt unless we have already made more attempts
-    // than we have configured servers. Otherwise make a UDP attempt
-    // as long as we have configured nameservers.
     DnsConfig config = session_->config();
-    if (doh_attempts_ < config.dns_over_https_servers.size())
-      return MakeHTTPAttempt(config.dns_over_https_servers);
+    if (secure_) {
+      DCHECK_GT(config.dns_over_https_servers.size(), 0u);
+      return MakeHTTPAttempt();
+    }
+
     DCHECK_GT(config.nameservers.size(), 0u);
     return MakeUDPAttempt();
   }
@@ -954,8 +1184,8 @@ class DnsTransactionImpl : public DnsTransaction,
   // Makes another attempt at the current name, |qnames_.front()|, using the
   // next nameserver.
   AttemptResult MakeUDPAttempt() {
-    doh_attempt_ = false;
-    unsigned attempt_number = attempts_.size();
+    DCHECK(!secure_);
+    size_t attempt_number = attempts_.size();
 
     uint16_t id = session_->NextQueryId();
     std::unique_ptr<DnsQuery> query;
@@ -964,14 +1194,8 @@ class DnsTransactionImpl : public DnsTransaction,
     } else {
       query = attempts_[0]->GetQuery()->CloneWithNewId(id);
     }
-
-    const DnsConfig& config = session_->config();
-
-    unsigned non_doh_server_index =
-        (first_server_index_ + attempt_number - doh_attempts_) %
-        config.nameservers.size();
-    // Skip over known failed servers.
-    non_doh_server_index = session_->NextGoodServerIndex(non_doh_server_index);
+    DCHECK(dns_server_iterator_->AttemptAvailable());
+    size_t non_doh_server_index = dns_server_iterator_->GetNextAttemptIndex();
 
     std::unique_ptr<DnsSession::SocketLease> lease =
         session_->AllocateSocket(non_doh_server_index, net_log_.source());
@@ -985,71 +1209,49 @@ class DnsTransactionImpl : public DnsTransaction,
     ++attempts_count_;
 
     if (!got_socket)
-      return AttemptResult(ERR_CONNECTION_REFUSED, NULL);
+      return AttemptResult(ERR_CONNECTION_REFUSED, nullptr);
 
-    net_log_.AddEvent(
-        NetLogEventType::DNS_TRANSACTION_ATTEMPT,
-        attempt->GetSocketNetLog().source().ToEventParametersCallback());
+    net_log_.AddEventReferencingSource(NetLogEventType::DNS_TRANSACTION_ATTEMPT,
+                                       attempt->GetSocketNetLog().source());
 
-    int rv = attempt->Start(base::Bind(
-        &DnsTransactionImpl::OnUdpAttemptComplete, base::Unretained(this),
-        attempt_number, base::TimeTicks::Now()));
+    int rv = attempt->Start(base::BindOnce(
+        &DnsTransactionImpl::OnAttemptComplete, base::Unretained(this),
+        attempt_number, true /* record_rtt */, base::TimeTicks::Now()));
     if (rv == ERR_IO_PENDING) {
-      base::TimeDelta timeout =
-          session_->NextTimeout(non_doh_server_index, attempt_number);
+      base::TimeDelta timeout = resolve_context_->NextClassicTimeout(
+          non_doh_server_index, attempt_number, session_.get());
       timer_.Start(FROM_HERE, timeout, this, &DnsTransactionImpl::OnTimeout);
     }
     return AttemptResult(rv, attempt);
   }
 
-  AttemptResult MakeHTTPAttempt(
-      const std::vector<DnsConfig::DnsOverHttpsServerConfig>& servers) {
-    doh_attempt_ = true;
-    unsigned attempt_number = attempts_.size();
-    uint16_t id = session_->NextQueryId();
-    std::unique_ptr<DnsQuery> query;
-    if (attempts_.empty()) {
-      query.reset(new DnsQuery(id, qnames_.front(), qtype_, opt_rdata_));
-    } else {
-      query = attempts_[0]->GetQuery()->CloneWithNewId(id);
-    }
-    // doh_attempts_ counts the number of attempts made via HTTPS. To
-    // get a server index cap that by the number of DoH servers we
-    // have configured and then offset it by the number of non-doh
-    // servers we have configured since they come first in the server
-    // stats list.
-    unsigned server_index = session_->NextGoodDnsOverHttpsServerIndex(
-        (doh_attempts_ % session_->config().dns_over_https_servers.size()) +
-        session_->config().nameservers.size());
+  AttemptResult MakeHTTPAttempt() {
+    DCHECK(secure_);
 
-    std::string server_template =
-        servers[server_index - session_->config().nameservers.size()]
-            .server_template;
-    GURL gurl_without_parameters(
-        GetURLFromTemplateWithoutParameters(server_template));
-    attempts_.push_back(std::make_unique<DnsHTTPAttempt>(
-        server_index, std::move(query), server_template,
-        gurl_without_parameters,
-        servers[server_index - session_->config().nameservers.size()].use_post,
-        url_request_context_, request_priority_));
-    ++doh_attempts_;
+    size_t doh_server_index = dns_server_iterator_->GetNextAttemptIndex();
+
+    unsigned attempt_number = attempts_.size();
+    ConstructDnsHTTPAttempt(
+        session_.get(), doh_server_index, qnames_.front(), qtype_, opt_rdata_,
+        &attempts_, resolve_context_->url_request_context(), request_priority_);
     ++attempts_count_;
-    // Check that we're not using the DoH server to resolve itself.
-    if (DNSDomainToString(qnames_.front()) == gurl_without_parameters.host()) {
-      static_cast<DnsHTTPAttempt*>(attempts_.back().get())->Cancel();
-      return AttemptResult(ERR_CONNECTION_REFUSED, attempts_.back().get());
+    int rv = attempts_.back()->Start(base::BindOnce(
+        &DnsTransactionImpl::OnAttemptComplete, base::Unretained(this),
+        attempt_number, true /* record_rtt */, base::TimeTicks::Now()));
+    if (rv == ERR_IO_PENDING) {
+      base::TimeDelta timeout =
+          resolve_context_->NextDohTimeout(doh_server_index, session_.get());
+      timer_.Start(FROM_HERE, timeout, this, &DnsTransactionImpl::OnTimeout);
     }
-    int rv = attempts_.back()->Start(
-        base::Bind(&DnsTransactionImpl::OnAttemptComplete,
-                   base::Unretained(this), attempt_number));
     return AttemptResult(rv, attempts_.back().get());
   }
 
   AttemptResult MakeTCPAttempt(const DnsAttempt* previous_attempt) {
+    DCHECK(!secure_);
     DCHECK(previous_attempt);
     DCHECK(!had_tcp_attempt_);
 
-    unsigned server_index = previous_attempt->server_index();
+    size_t server_index = previous_attempt->server_index();
 
     std::unique_ptr<StreamSocket> socket(
         session_->CreateTCPSocket(server_index, net_log_.source()));
@@ -1072,12 +1274,13 @@ class DnsTransactionImpl : public DnsTransaction,
     ++attempts_count_;
     had_tcp_attempt_ = true;
 
-    net_log_.AddEvent(
+    net_log_.AddEventReferencingSource(
         NetLogEventType::DNS_TRANSACTION_TCP_ATTEMPT,
-        attempt->GetSocketNetLog().source().ToEventParametersCallback());
+        attempt->GetSocketNetLog().source());
 
-    int rv = attempt->Start(base::Bind(&DnsTransactionImpl::OnAttemptComplete,
-                                       base::Unretained(this), attempt_number));
+    int rv = attempt->Start(base::BindOnce(
+        &DnsTransactionImpl::OnAttemptComplete, base::Unretained(this),
+        attempt_number, false /* record_rtt */, base::TimeTicks::Now()));
     if (rv == ERR_IO_PENDING) {
       // Custom timeout for TCP attempt.
       base::TimeDelta timeout = timer_.GetCurrentDelay() * 2;
@@ -1089,34 +1292,40 @@ class DnsTransactionImpl : public DnsTransaction,
   // Begins query for the current name. Makes the first attempt.
   AttemptResult StartQuery() {
     std::string dotted_qname = DNSDomainToString(qnames_.front());
-    net_log_.BeginEvent(NetLogEventType::DNS_TRANSACTION_QUERY,
-                        NetLog::StringCallback("qname", &dotted_qname));
+    net_log_.BeginEventWithStringParams(NetLogEventType::DNS_TRANSACTION_QUERY,
+                                        "qname", dotted_qname);
 
-    first_server_index_ = session_->config().nameservers.empty()
-                              ? 0
-                              : session_->NextFirstServerIndex();
     attempts_.clear();
     had_tcp_attempt_ = false;
+    if (secure_) {
+      dns_server_iterator_ = resolve_context_->GetDohIterator(
+          session_->config(), secure_dns_mode_, session_.get());
+    } else {
+      dns_server_iterator_ = resolve_context_->GetClassicDnsIterator(
+          session_->config(), session_.get());
+    }
+    DCHECK(dns_server_iterator_);
+    // Check for available server before starting as DoH servers might be
+    // unavailable.
+    if (!dns_server_iterator_->AttemptAvailable())
+      return AttemptResult(ERR_BLOCKED_BY_CLIENT, nullptr);
+
     return MakeAttempt();
   }
 
-  void OnUdpAttemptComplete(unsigned attempt_number,
-                            base::TimeTicks start,
-                            int rv) {
+  void OnAttemptComplete(unsigned attempt_number,
+                         bool record_rtt,
+                         base::TimeTicks start,
+                         int rv) {
     DCHECK_LT(attempt_number, attempts_.size());
     const DnsAttempt* attempt = attempts_[attempt_number].get();
-    if (attempt->GetResponse()) {
-      session_->RecordRTT(attempt->server_index(),
-                          base::TimeTicks::Now() - start);
+    if (record_rtt && attempt->GetResponse()) {
+      resolve_context_->RecordRtt(
+          attempt->server_index(), secure_ /* is_doh_server */,
+          base::TimeTicks::Now() - start, rv, session_.get());
     }
-    OnAttemptComplete(attempt_number, rv);
-  }
-
-  void OnAttemptComplete(unsigned attempt_number, int rv) {
     if (callback_.is_null())
       return;
-    DCHECK_LT(attempt_number, attempts_.size());
-    const DnsAttempt* attempt = attempts_[attempt_number].get();
     AttemptResult result = ProcessAttemptResult(AttemptResult(rv, attempt));
     if (result.rv != ERR_IO_PENDING)
       DoCallback(result);
@@ -1125,17 +1334,15 @@ class DnsTransactionImpl : public DnsTransaction,
   void LogResponse(const DnsAttempt* attempt) {
     if (attempt && attempt->GetResponse()) {
       net_log_.AddEvent(NetLogEventType::DNS_TRANSACTION_RESPONSE,
-                        base::Bind(&DnsAttempt::NetLogResponseCallback,
-                                   base::Unretained(attempt)));
+                        [&] { return attempt->NetLogResponseParams(); });
     }
   }
 
   bool MoreAttemptsAllowed() const {
     if (had_tcp_attempt_)
       return false;
-    const DnsConfig& config = session_->config();
-    return attempts_.size() < config.attempts * config.nameservers.size() +
-                                  config.dns_over_https_servers.size();
+
+    return dns_server_iterator_->AttemptAvailable();
   }
 
   // Resolves the result of a DnsAttempt until a terminal result is reached
@@ -1146,15 +1353,18 @@ class DnsTransactionImpl : public DnsTransaction,
 
       switch (result.rv) {
         case OK:
-          if (!doh_attempt_)
-            session_->RecordServerSuccess(result.attempt->server_index());
+          resolve_context_->RecordServerSuccess(result.attempt->server_index(),
+                                                secure_ /* is_doh_server */,
+                                                session_.get());
           net_log_.EndEventWithNetErrorCode(
               NetLogEventType::DNS_TRANSACTION_QUERY, result.rv);
           DCHECK(result.attempt);
           DCHECK(result.attempt->GetResponse());
           return result;
         case ERR_NAME_NOT_RESOLVED:
-          session_->RecordServerSuccess(result.attempt->server_index());
+          resolve_context_->RecordServerSuccess(result.attempt->server_index(),
+                                                secure_ /* is_doh_server */,
+                                                session_.get());
           net_log_.EndEventWithNetErrorCode(
               NetLogEventType::DNS_TRANSACTION_QUERY, result.rv);
           // Try next suffix. Check that qnames_ isn't already empty first,
@@ -1171,8 +1381,11 @@ class DnsTransactionImpl : public DnsTransaction,
           break;
         case ERR_CONNECTION_REFUSED:
         case ERR_DNS_TIMED_OUT:
-          if (result.attempt)
-            session_->RecordServerFailure(result.attempt->server_index());
+          if (result.attempt) {
+            resolve_context_->RecordServerFailure(
+                result.attempt->server_index(), secure_ /* is_doh_server */,
+                session_.get());
+          }
           if (MoreAttemptsAllowed()) {
             result = MakeAttempt();
           } else {
@@ -1182,13 +1395,20 @@ class DnsTransactionImpl : public DnsTransaction,
         case ERR_DNS_SERVER_REQUIRES_TCP:
           result = MakeTCPAttempt(result.attempt);
           break;
+        case ERR_BLOCKED_BY_CLIENT:
+          net_log_.EndEventWithNetErrorCode(
+              NetLogEventType::DNS_TRANSACTION_QUERY, result.rv);
+          return result;
         default:
           // Server failure.
           DCHECK(result.attempt);
           if (result.attempt != attempts_.back().get()) {
             // This attempt already timed out. Ignore it.
-            session_->RecordServerFailure(result.attempt->server_index());
-            return AttemptResult(ERR_IO_PENDING, NULL);
+            DCHECK_GE(result.attempt->server_index(), 0);
+            resolve_context_->RecordServerFailure(
+                result.attempt->server_index(), secure_ /* is_doh_server */,
+                session_.get());
+            return AttemptResult(ERR_IO_PENDING, nullptr);
           }
           if (!MoreAttemptsAllowed()) {
             return result;
@@ -1226,6 +1446,8 @@ class DnsTransactionImpl : public DnsTransaction,
   std::string hostname_;
   uint16_t qtype_;
   const OptRecordRdata* opt_rdata_;
+  const bool secure_;
+  const DnsConfig::SecureDnsMode secure_dns_mode_;
   // Cleared in DoCallback.
   DnsTransactionFactory::CallbackType callback_;
 
@@ -1239,16 +1461,15 @@ class DnsTransactionImpl : public DnsTransaction,
   std::vector<std::unique_ptr<DnsAttempt>> attempts_;
   // Count of attempts, not reset when |attempts_| vector is cleared.
   int attempts_count_;
-  uint16_t doh_attempts_;
   bool had_tcp_attempt_;
-  bool doh_attempt_;
 
-  // Index of the first server to try on each search query.
-  int first_server_index_;
+  // Iterator to get the index of the DNS server for each search query.
+  std::unique_ptr<DnsServerIterator> dns_server_iterator_;
 
   base::OneShotTimer timer_;
 
-  URLRequestContext* url_request_context_;
+  // TODO(ericorth@chromium.org): Use base::UnownedPtr once available.
+  ResolveContext* resolve_context_;
   RequestPriority request_priority_;
 
   THREAD_CHECKER(thread_checker_);
@@ -1270,10 +1491,19 @@ class DnsTransactionFactoryImpl : public DnsTransactionFactory {
       const std::string& hostname,
       uint16_t qtype,
       CallbackType callback,
-      const NetLogWithSource& net_log) override {
-    return std::make_unique<DnsTransactionImpl>(session_.get(), hostname, qtype,
-                                                std::move(callback), net_log,
-                                                opt_rdata_.get());
+      const NetLogWithSource& net_log,
+      bool secure,
+      DnsConfig::SecureDnsMode secure_dns_mode,
+      ResolveContext* resolve_context) override {
+    return std::make_unique<DnsTransactionImpl>(
+        session_.get(), hostname, qtype, std::move(callback), net_log,
+        opt_rdata_.get(), secure, secure_dns_mode, resolve_context);
+  }
+
+  std::unique_ptr<DnsProbeRunner> CreateDohProbeRunner(
+      ResolveContext* resolve_context) override {
+    return std::make_unique<DnsOverHttpsProbeRunner>(session_->GetWeakPtr(),
+                                                     resolve_context);
   }
 
   void AddEDNSOption(const OptRecordRdata::Opt& opt) override {
@@ -1283,12 +1513,19 @@ class DnsTransactionFactoryImpl : public DnsTransactionFactory {
     opt_rdata_->AddOpt(opt);
   }
 
+  DnsConfig::SecureDnsMode GetSecureDnsModeForTest() override {
+    return session_->config().secure_dns_mode;
+  }
+
  private:
   scoped_refptr<DnsSession> session_;
   std::unique_ptr<OptRecordRdata> opt_rdata_;
 };
 
 }  // namespace
+
+DnsTransactionFactory::DnsTransactionFactory() = default;
+DnsTransactionFactory::~DnsTransactionFactory() = default;
 
 // static
 std::unique_ptr<DnsTransactionFactory> DnsTransactionFactory::CreateFactory(

@@ -10,34 +10,44 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/containers/queue.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
-#include "base/message_loop/message_loop_current.h"
 #include "base/no_destructor.h"
 #include "base/optional.h"
 // Necessary to convert async media::VideoDecoder to sync CdmVideoDecoder.
 // Typically not recommended for production code, but is ok here since
 // ClearKeyCdm is only for testing.
 #include "base/run_loop.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "media/base/decode_status.h"
+#include "media/base/media_switches.h"
 #include "media/base/media_util.h"
 #include "media/cdm/cdm_type_conversion.h"
 #include "media/cdm/library_cdm/cdm_host_proxy.h"
 #include "media/media_buildflags.h"
-#include "third_party/libaom/av1_buildflags.h"
+#include "third_party/libaom/libaom_buildflags.h"
 #include "third_party/libyuv/include/libyuv/planar_functions.h"
 
 #if BUILDFLAG(ENABLE_LIBVPX)
 #include "media/filters/vpx_video_decoder.h"
 #endif
 
-#if BUILDFLAG(ENABLE_AV1_DECODER)
+#if BUILDFLAG(ENABLE_LIBAOM)
 #include "media/filters/aom_video_decoder.h"
+#endif
+
+#if BUILDFLAG(ENABLE_DAV1D_DECODER)
+#include "media/filters/dav1d_video_decoder.h"
 #endif
 
 #if BUILDFLAG(ENABLE_FFMPEG)
 #include "media/filters/ffmpeg_video_decoder.h"
+#endif
+
+#if BUILDFLAG(ENABLE_LIBGAV1_DECODER)
+#include "media/filters/gav1_video_decoder.h"
 #endif
 
 namespace media {
@@ -50,12 +60,12 @@ media::VideoDecoderConfig ToClearMediaVideoDecoderConfig(
 
   VideoDecoderConfig media_config(
       ToMediaVideoCodec(config.codec), ToMediaVideoCodecProfile(config.profile),
-      ToMediaVideoFormat(config.format), ToMediaColorSpace(config.color_space),
-      VideoRotation::VIDEO_ROTATION_0, coded_size, gfx::Rect(coded_size),
-      coded_size,
+      VideoDecoderConfig::AlphaMode::kIsOpaque,
+      ToMediaColorSpace(config.color_space), kNoTransformation, coded_size,
+      gfx::Rect(coded_size), coded_size,
       std::vector<uint8_t>(config.extra_data,
                            config.extra_data + config.extra_data_size),
-      Unencrypted());
+      EncryptionScheme::kUnencrypted);
 
   return media_config;
 }
@@ -137,9 +147,10 @@ bool ToCdmVideoFrame(const VideoFrame& video_frame,
 // the CDM and the host is depending on the same base/ target. In static build,
 // they will not be available and we have to setup it by ourselves.
 void SetupGlobalEnvironmentIfNeeded() {
-  // Creating a base::MessageLoop to setup base::ThreadTaskRunnerHandle.
-  if (!base::MessageLoopCurrent::IsSet()) {
-    static base::NoDestructor<base::MessageLoop> message_loop;
+  // Creating a base::SingleThreadTaskExecutor to setup
+  // base::ThreadTaskRunnerHandle.
+  if (!base::ThreadTaskRunnerHandle::IsSet()) {
+    static base::NoDestructor<base::SingleThreadTaskExecutor> task_executor;
   }
 
   if (!base::CommandLine::InitializedForCurrentProcess())
@@ -159,15 +170,14 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
   VideoDecoderAdapter(CdmHostProxy* cdm_host_proxy,
                       std::unique_ptr<VideoDecoder> video_decoder)
       : cdm_host_proxy_(cdm_host_proxy),
-        video_decoder_(std::move(video_decoder)),
-        weak_factory_(this) {
+        video_decoder_(std::move(video_decoder)) {
     DCHECK(cdm_host_proxy_);
   }
 
   ~VideoDecoderAdapter() final = default;
 
   // CdmVideoDecoder implementation.
-  bool Initialize(const cdm::VideoDecoderConfig_3& config) final {
+  Status Initialize(const cdm::VideoDecoderConfig_3& config) final {
     auto clear_config = ToClearMediaVideoDecoderConfig(config);
     DVLOG(1) << __func__ << ": " << clear_config.AsHumanReadableString();
     DCHECK(!last_init_result_.has_value());
@@ -178,14 +188,14 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
         clear_config,
         /* low_delay = */ false,
         /* cdm_context = */ nullptr,
-        base::BindRepeating(&VideoDecoderAdapter::OnInitialized,
-                            weak_factory_.GetWeakPtr(), run_loop.QuitClosure()),
+        base::BindOnce(&VideoDecoderAdapter::OnInitialized,
+                       weak_factory_.GetWeakPtr(), run_loop.QuitClosure()),
         base::BindRepeating(&VideoDecoderAdapter::OnVideoFrameReady,
                             weak_factory_.GetWeakPtr()),
         /* waiting_cb = */ base::DoNothing());
     run_loop.Run();
 
-    auto result = last_init_result_.value();
+    auto result = std::move(last_init_result_.value());
     last_init_result_.reset();
 
     return result;
@@ -201,9 +211,9 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
 
     // Reset |video_decoder_| and wait for completion.
     base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-    video_decoder_->Reset(base::BindRepeating(&VideoDecoderAdapter::OnReset,
-                                              weak_factory_.GetWeakPtr(),
-                                              run_loop.QuitClosure()));
+    video_decoder_->Reset(base::BindOnce(&VideoDecoderAdapter::OnReset,
+                                         weak_factory_.GetWeakPtr(),
+                                         run_loop.QuitClosure()));
     run_loop.Run();
   }
 
@@ -214,10 +224,10 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
 
     // Call |video_decoder_| Decode() and wait for completion.
     base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
-    video_decoder_->Decode(std::move(buffer),
-                           base::BindRepeating(&VideoDecoderAdapter::OnDecoded,
-                                               weak_factory_.GetWeakPtr(),
-                                               run_loop.QuitClosure()));
+    video_decoder_->Decode(
+        std::move(buffer),
+        base::BindOnce(&VideoDecoderAdapter::OnDecoded,
+                       weak_factory_.GetWeakPtr(), run_loop.QuitClosure()));
     run_loop.Run();
 
     auto decode_status = last_decode_status_.value();
@@ -241,19 +251,19 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
   }
 
  private:
-  void OnInitialized(base::OnceClosure quit_closure, bool success) {
-    DVLOG(1) << __func__ << " success = " << success;
+  void OnInitialized(base::OnceClosure quit_closure, Status status) {
+    DVLOG(1) << __func__ << " success = " << status.is_ok();
     DCHECK(!last_init_result_.has_value());
-    last_init_result_ = success;
+    last_init_result_ = std::move(status);
     std::move(quit_closure).Run();
   }
 
-  void OnVideoFrameReady(const scoped_refptr<VideoFrame>& video_frame) {
+  void OnVideoFrameReady(scoped_refptr<VideoFrame> video_frame) {
     // Do not queue EOS frames, which is not needed.
     if (video_frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM))
       return;
 
-    decoded_video_frames_.push(video_frame);
+    decoded_video_frames_.push(std::move(video_frame));
   }
 
   void OnReset(base::OnceClosure quit_closure) {
@@ -273,14 +283,14 @@ class VideoDecoderAdapter : public CdmVideoDecoder {
 
   // Results of |video_decoder_| operations. Set iff the callback of the
   // operation has been called.
-  base::Optional<bool> last_init_result_;
+  base::Optional<Status> last_init_result_;
   base::Optional<DecodeStatus> last_decode_status_;
 
   // Queue of decoded video frames.
   using VideoFrameQueue = base::queue<scoped_refptr<VideoFrame>>;
   VideoFrameQueue decoded_video_frames_;
 
-  base::WeakPtrFactory<VideoDecoderAdapter> weak_factory_;
+  base::WeakPtrFactory<VideoDecoderAdapter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VideoDecoderAdapter);
 };
@@ -300,10 +310,21 @@ std::unique_ptr<CdmVideoDecoder> CreateVideoDecoder(
     video_decoder.reset(new VpxVideoDecoder());
 #endif
 
-#if BUILDFLAG(ENABLE_AV1_DECODER)
-  if (config.codec == cdm::kCodecAv1)
-    video_decoder.reset(new AomVideoDecoder(null_media_log.get()));
+#if BUILDFLAG(ENABLE_LIBGAV1_DECODER)
+  if (base::FeatureList::IsEnabled(kGav1VideoDecoder)) {
+    if (config.codec == cdm::kCodecAv1)
+      video_decoder.reset(new Gav1VideoDecoder(null_media_log.get()));
+  } else
+#endif  // BUILDFLAG(ENABLE_LIBGAV1_DECODER)
+  {
+#if BUILDFLAG(ENABLE_DAV1D_DECODER)
+    if (config.codec == cdm::kCodecAv1)
+      video_decoder.reset(new Dav1dVideoDecoder(null_media_log.get()));
+#elif BUILDFLAG(ENABLE_LIBAOM)
+    if (config.codec == cdm::kCodecAv1)
+      video_decoder.reset(new AomVideoDecoder(null_media_log.get()));
 #endif
+  }
 
 #if BUILDFLAG(ENABLE_FFMPEG)
   if (!video_decoder)

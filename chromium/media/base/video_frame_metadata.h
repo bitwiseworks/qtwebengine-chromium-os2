@@ -11,10 +11,15 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "media/base/media_export.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
+
+namespace gfx {
+class Rect;
+}
 
 namespace media {
 
@@ -32,6 +37,24 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // these keys.
     CAPTURE_BEGIN_TIME,
     CAPTURE_END_TIME,
+
+    // A counter that is increased by the producer of video frames each time
+    // it pushes out a new frame. By looking for gaps in this counter, clients
+    // can determine whether or not any frames have been dropped on the way from
+    // the producer between two consecutively received frames. Note that the
+    // counter may start at arbitrary values, so the absolute value of it has no
+    // meaning.
+    CAPTURE_COUNTER,
+
+    // A base::ListValue containing 4 integers representing x, y, width, height
+    // of the rectangular region of the frame that has changed since the frame
+    // with the directly preceding CAPTURE_COUNTER. If that frame was not
+    // received, typically because it was dropped during transport from the
+    // producer, clients must assume that the entire frame has changed.
+    // The rectangle is relative to the full frame data, i.e. [0, 0,
+    // coded_size().width(), coded_size().height()]. It does not have to be
+    // fully contained within visible_rect().
+    CAPTURE_UPDATE_RECT,
 
     // Indicates that this frame must be copied to a new texture before use,
     // rather than being used directly. Specifically this is required for
@@ -118,6 +141,11 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // PROTECTED_VIDEO is also set to true.
     HW_PROTECTED,
 
+    // An UnguessableToken that identifies VideoOverlayFactory that created
+    // this VideoFrame. It's used by Cast to help with video hole punch.
+    // Use Get/SetUnguessableToken() for this key.
+    OVERLAY_PLANE_ID,
+
     // Whether this frame was decoded in a power efficient way.
     POWER_EFFICIENT,
 
@@ -130,8 +158,36 @@ class MEDIA_EXPORT VideoFrameMetadata {
     PAGE_SCALE_FACTOR,
     ROOT_SCROLL_OFFSET_X,
     ROOT_SCROLL_OFFSET_Y,
-    TOP_CONTROLS_HEIGHT,
-    TOP_CONTROLS_SHOWN_RATIO,
+    TOP_CONTROLS_VISIBLE_HEIGHT,
+
+    // If present, this field represents the local time at which the VideoFrame
+    // was decoded from whichever format it was encoded in. Sometimes only
+    // DECODE_END_TIME will be present. Use Get/SetTimeTicks() for this key.
+    DECODE_BEGIN_TIME,
+    DECODE_END_TIME,
+
+    // If present, this field represents the elapsed time from the submission of
+    // the encoded packet with the same PTS as this frame to the decoder until
+    // the decoded frame was ready for presentation. Stored as base::TimeDelta.
+    PROCESSING_TIME,
+
+    // The RTP timestamp associated with this video frame. Stored as a double
+    // since base::DictionaryValue doesn't have a uint32_t type.
+    //
+    // https://w3c.github.io/webrtc-pc/#dom-rtcrtpcontributingsource
+    RTP_TIMESTAMP,
+
+    // For video frames coming from a remote source, this is the time the
+    // encoded frame was received by the platform, i.e., the time at
+    // which the last packet belonging to this frame was received over the
+    // network.
+    RECEIVE_TIME,
+
+    // If present, this field represents the duration this frame is ideally
+    // expected to spend on the screen during playback. Unlike FRAME_DURATION
+    // this field takes into account current playback rate.
+    // Use Get/SetTimeDelta() for this key.
+    WALLCLOCK_FRAME_DURATION,
 
     NUM_KEYS
   };
@@ -151,7 +207,8 @@ class MEDIA_EXPORT VideoFrameMetadata {
   void SetString(Key key, const std::string& value);
   void SetTimeDelta(Key key, const base::TimeDelta& value);
   void SetTimeTicks(Key key, const base::TimeTicks& value);
-  void SetValue(Key key, std::unique_ptr<base::Value> value);
+  void SetUnguessableToken(Key key, const base::UnguessableToken& value);
+  void SetRect(Key key, const gfx::Rect& value);
 
   // Getters.  Returns true if |key| is present, and its value has been set.
   bool GetBoolean(Key key, bool* value) const WARN_UNUSED_RESULT;
@@ -161,24 +218,21 @@ class MEDIA_EXPORT VideoFrameMetadata {
   bool GetString(Key key, std::string* value) const WARN_UNUSED_RESULT;
   bool GetTimeDelta(Key key, base::TimeDelta* value) const WARN_UNUSED_RESULT;
   bool GetTimeTicks(Key key, base::TimeTicks* value) const WARN_UNUSED_RESULT;
-
-  // Returns null if |key| was not present.
-  const base::Value* GetValue(Key key) const WARN_UNUSED_RESULT;
+  bool GetUnguessableToken(Key key, base::UnguessableToken* value) const
+      WARN_UNUSED_RESULT;
+  bool GetRect(Key key, gfx::Rect* value) const WARN_UNUSED_RESULT;
 
   // Convenience method that returns true if |key| exists and is set to true.
   bool IsTrue(Key key) const WARN_UNUSED_RESULT;
 
   // For serialization.
-  std::unique_ptr<base::DictionaryValue> CopyInternalValues() const;
   void MergeInternalValuesFrom(const base::Value& in);
-  const base::Value& GetInternalValues() const { return dictionary_; };
+  const base::Value& GetInternalValues() const { return dictionary_; }
 
   // Merges internal values from |metadata_source|.
   void MergeMetadataFrom(const VideoFrameMetadata* metadata_source);
 
  private:
-  const base::Value* GetBinaryValue(Key key) const;
-
   base::DictionaryValue dictionary_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoFrameMetadata);

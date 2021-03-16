@@ -21,6 +21,7 @@
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_themetext.h"
 #include "xfa/fwl/cfwl_widgetmgr.h"
+#include "xfa/fwl/fwl_widgetdef.h"
 #include "xfa/fwl/ifwl_themeprovider.h"
 
 namespace {
@@ -115,9 +116,9 @@ void CFWL_CheckBox::SetCheckState(int32_t iCheck) {
 
 void CFWL_CheckBox::Layout() {
   m_pProperties->m_rtWidget.width =
-      FXSYS_round(m_pProperties->m_rtWidget.width);
+      FXSYS_roundf(m_pProperties->m_rtWidget.width);
   m_pProperties->m_rtWidget.height =
-      FXSYS_round(m_pProperties->m_rtWidget.height);
+      FXSYS_roundf(m_pProperties->m_rtWidget.height);
   m_rtClient = GetClientRect();
 
   float fTextLeft = m_rtClient.left + m_fBoxHeight;
@@ -126,9 +127,7 @@ void CFWL_CheckBox::Layout() {
                           m_rtClient.right() - fTextLeft, m_rtClient.height);
   m_rtCaption.Inflate(-kCaptionMargin, -kCaptionMargin);
 
-  CFX_RectF rtFocus(m_rtCaption.left, m_rtCaption.top, m_rtCaption.width,
-                    m_rtCaption.height);
-
+  CFX_RectF rtFocus = m_rtCaption;
   CalcTextRect(L"Check box", m_pProperties->m_pThemeProvider.Get(), m_TTOStyles,
                m_iTTOAlign, &rtFocus);
 
@@ -238,8 +237,9 @@ void CFWL_CheckBox::OnProcessMessage(CFWL_Message* pMessage) {
     default:
       break;
   }
-
-  CFWL_Widget::OnProcessMessage(pMessage);
+  // Dst target could be |this|, continue only if not destroyed by above.
+  if (pMessage->GetDstTarget())
+    CFWL_Widget::OnProcessMessage(pMessage);
 }
 
 void CFWL_CheckBox::OnDrawWidget(CXFA_Graphics* pGraphics,
@@ -326,10 +326,10 @@ void CFWL_CheckBox::OnMouseLeave() {
 }
 
 void CFWL_CheckBox::OnKeyDown(CFWL_MessageKey* pMsg) {
-  if (pMsg->m_dwKeyCode == FWL_VKEY_Tab)
+  if (pMsg->m_dwKeyCode == XFA_FWL_VKEY_Tab)
     return;
-  if (pMsg->m_dwKeyCode == FWL_VKEY_Return ||
-      pMsg->m_dwKeyCode == FWL_VKEY_Space) {
+  if (pMsg->m_dwKeyCode == XFA_FWL_VKEY_Return ||
+      pMsg->m_dwKeyCode == XFA_FWL_VKEY_Space) {
     NextStates();
   }
 }

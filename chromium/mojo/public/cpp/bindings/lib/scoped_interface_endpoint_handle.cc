@@ -108,13 +108,13 @@ class ScopedInterfaceEndpointHandle::State
     if (!pending_association_) {
       runner_->PostTask(
           FROM_HERE,
-          base::Bind(
+          base::BindOnce(
               &ScopedInterfaceEndpointHandle::State::RunAssociationEventHandler,
               this, runner_, ASSOCIATED));
     } else if (!peer_state_) {
       runner_->PostTask(
           FROM_HERE,
-          base::Bind(
+          base::BindOnce(
               &ScopedInterfaceEndpointHandle::State::RunAssociationEventHandler,
               this, runner_, PEER_CLOSED_BEFORE_ASSOCIATION));
     }
@@ -196,10 +196,10 @@ class ScopedInterfaceEndpointHandle::State
           handler = std::move(association_event_handler_);
           runner_ = nullptr;
         } else {
-          runner_->PostTask(FROM_HERE,
-                            base::Bind(&ScopedInterfaceEndpointHandle::State::
-                                           RunAssociationEventHandler,
-                                       this, runner_, ASSOCIATED));
+          runner_->PostTask(
+              FROM_HERE, base::BindOnce(&ScopedInterfaceEndpointHandle::State::
+                                            RunAssociationEventHandler,
+                                        this, runner_, ASSOCIATED));
         }
       }
     }
@@ -234,9 +234,9 @@ class ScopedInterfaceEndpointHandle::State
         } else {
           runner_->PostTask(
               FROM_HERE,
-              base::Bind(&ScopedInterfaceEndpointHandle::State::
-                             RunAssociationEventHandler,
-                         this, runner_, PEER_CLOSED_BEFORE_ASSOCIATION));
+              base::BindOnce(&ScopedInterfaceEndpointHandle::State::
+                                 RunAssociationEventHandler,
+                             this, runner_, PEER_CLOSED_BEFORE_ASSOCIATION));
         }
       }
     }
@@ -372,12 +372,12 @@ void ScopedInterfaceEndpointHandle::ResetInternal(
   state_.swap(new_state);
 }
 
-base::Callback<AssociatedGroupController*()>
+base::RepeatingCallback<AssociatedGroupController*()>
 ScopedInterfaceEndpointHandle::CreateGroupControllerGetter() const {
   // We allow this callback to be run on any sequence. If this handle is created
   // in non-pending state, we don't have a lock but it should still be safe
   // because the group controller never changes.
-  return base::Bind(&State::group_controller, state_);
+  return base::BindRepeating(&State::group_controller, state_);
 }
 
 }  // namespace mojo

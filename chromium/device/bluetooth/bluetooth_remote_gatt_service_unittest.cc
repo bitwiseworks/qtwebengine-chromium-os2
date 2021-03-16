@@ -597,8 +597,8 @@ TEST_F(BluetoothRemoteGattServiceTest, ExtraDidDiscoverCharacteristicsCall) {
 #endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN)
-INSTANTIATE_TEST_CASE_P(
-    /* no prefix */,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     BluetoothRemoteGattServiceTestWinrt,
     ::testing::Bool());
 #endif  // defined(OS_WIN)

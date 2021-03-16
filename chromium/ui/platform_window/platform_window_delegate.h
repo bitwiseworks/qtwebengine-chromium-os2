@@ -1,31 +1,35 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef UI_PLATFORM_WINDOW_PLATFORM_WINDOW_DELEGATE_H_
 #define UI_PLATFORM_WINDOW_PLATFORM_WINDOW_DELEGATE_H_
 
+#include "base/component_export.h"
+#include "base/optional.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace gfx {
 class Rect;
-}
+class Size;
+}  // namespace gfx
 
 namespace ui {
 
 class Event;
 
-enum PlatformWindowState {
-  PLATFORM_WINDOW_STATE_UNKNOWN,
-  PLATFORM_WINDOW_STATE_MAXIMIZED,
-  PLATFORM_WINDOW_STATE_MINIMIZED,
-  PLATFORM_WINDOW_STATE_NORMAL,
-  PLATFORM_WINDOW_STATE_FULLSCREEN,
+enum class PlatformWindowState {
+  kUnknown,
+  kMaximized,
+  kMinimized,
+  kNormal,
+  kFullScreen,
 };
 
-class PlatformWindowDelegate {
+class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindowDelegate {
  public:
-  virtual ~PlatformWindowDelegate() {}
+  PlatformWindowDelegate();
+  virtual ~PlatformWindowDelegate();
 
   // Note that |new_bounds| is in physical screen coordinates.
   virtual void OnBoundsChanged(const gfx::Rect& new_bounds) = 0;
@@ -51,6 +55,15 @@ class PlatformWindowDelegate {
   virtual void OnAcceleratedWidgetDestroyed() = 0;
 
   virtual void OnActivationChanged(bool active) = 0;
+
+  // Requests size constraints for the PlatformWindow.
+  virtual base::Optional<gfx::Size> GetMinimumSizeForWindow();
+  virtual base::Optional<gfx::Size> GetMaximumSizeForWindow();
+
+  // Called when the location of mouse pointer entered the window.  This is
+  // different from ui::ET_MOUSE_ENTERED which may not be generated when mouse
+  // is captured either by implicitly or explicitly.
+  virtual void OnMouseEnter() = 0;
 };
 
 }  // namespace ui

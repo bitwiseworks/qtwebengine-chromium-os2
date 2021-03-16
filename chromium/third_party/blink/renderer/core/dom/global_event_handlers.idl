@@ -27,12 +27,11 @@
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://html.spec.whatwg.org/#globaleventhandlers
+// https://html.spec.whatwg.org/C/#globaleventhandlers
 
 [
-    LegacyTreatAsPartialInterface,
-    NoInterfaceObject // Always used on target of 'implements'
-] interface GlobalEventHandlers {
+    LegacyTreatAsPartialInterface
+] interface mixin GlobalEventHandlers {
     attribute EventHandler onabort;
     [RuntimeEnabled=InvisibleDOM] attribute EventHandler onactivateinvisible;
     attribute EventHandler onblur;
@@ -59,7 +58,7 @@
     // FIXME: onerror should be an OnErrorEventHandler.
     attribute EventHandler onerror;
     attribute EventHandler onfocus;
-    [RuntimeEnabled=FormDataEvent] attribute EventHandler onformdata;
+    attribute EventHandler onformdata;
     attribute EventHandler oninput;
     attribute EventHandler oninvalid;
     attribute EventHandler onkeydown;
@@ -83,6 +82,7 @@
     attribute EventHandler onplaying;
     attribute EventHandler onprogress;
     attribute EventHandler onratechange;
+    [RuntimeEnabled=CSSSubtreeVisibilityActivationEvent] attribute EventHandler onrendersubtreeactivation;
     attribute EventHandler onreset;
     attribute EventHandler onresize;
     attribute EventHandler onscroll;
@@ -98,6 +98,10 @@
     attribute EventHandler ontoggle;
     attribute EventHandler onvolumechange;
     attribute EventHandler onwaiting;
+    attribute EventHandler onwebkitanimationend;
+    attribute EventHandler onwebkitanimationiteration;
+    attribute EventHandler onwebkitanimationstart;
+    attribute EventHandler onwebkittransitionend;
     attribute EventHandler onwheel;
 
     // auxclick
@@ -110,7 +114,7 @@
     attribute EventHandler onlostpointercapture;
     attribute EventHandler onpointerdown;
     attribute EventHandler onpointermove;
-    [RuntimeEnabled=PointerRawMove] attribute EventHandler onpointerrawmove;
+    [RuntimeEnabled=PointerRawUpdate] attribute EventHandler onpointerrawupdate;
     attribute EventHandler onpointerup;
     attribute EventHandler onpointercancel;
     attribute EventHandler onpointerover;
@@ -120,13 +124,23 @@
 
     // Touch Events
     // https://w3c.github.io/touch-events/#extensions-to-the-globaleventhandlers-interface
-    [OriginTrialEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchcancel;
-    [OriginTrialEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchend;
-    [OriginTrialEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchmove;
-    [OriginTrialEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchstart;
+    [RuntimeEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchcancel;
+    [RuntimeEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchend;
+    [RuntimeEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchmove;
+    [RuntimeEnabled=TouchEventFeatureDetection] attribute EventHandler ontouchstart;
 
     // Selection API
     // https://w3c.github.io/selection-api/#extensions-to-globaleventhandlers
     attribute EventHandler onselectstart;
     attribute EventHandler onselectionchange;
+
+    // CSS Animations
+    // https://drafts.csswg.org/css-animations/#interface-globaleventhandlers-idl
+    attribute EventHandler onanimationend;
+    attribute EventHandler onanimationiteration;
+    attribute EventHandler onanimationstart;
+
+    // CSS Transitions
+    // https://drafts.csswg.org/css-transitions/#interface-globaleventhandlers-idl
+    attribute EventHandler ontransitionend;
 };

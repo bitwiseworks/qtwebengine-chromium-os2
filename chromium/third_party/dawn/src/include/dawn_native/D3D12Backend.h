@@ -15,19 +15,37 @@
 #ifndef DAWNNATIVE_D3D12BACKEND_H_
 #define DAWNNATIVE_D3D12BACKEND_H_
 
-#include <dawn/dawn.h>
 #include <dawn/dawn_wsi.h>
-#include <dawn_native/dawn_native_export.h>
+#include <dawn_native/DawnNative.h>
 
 #include <windows.h>
+#include <wrl/client.h>
+
+struct ID3D12Device;
 
 namespace dawn_native { namespace d3d12 {
-    DAWN_NATIVE_EXPORT dawnDevice CreateDevice();
-
-    DAWN_NATIVE_EXPORT dawnSwapChainImplementation CreateNativeSwapChainImpl(dawnDevice device,
+    DAWN_NATIVE_EXPORT Microsoft::WRL::ComPtr<ID3D12Device> GetD3D12Device(WGPUDevice device);
+    DAWN_NATIVE_EXPORT DawnSwapChainImplementation CreateNativeSwapChainImpl(WGPUDevice device,
                                                                              HWND window);
-    DAWN_NATIVE_EXPORT dawnTextureFormat
-    GetNativeSwapChainPreferredFormat(const dawnSwapChainImplementation* swapChain);
+    DAWN_NATIVE_EXPORT WGPUTextureFormat
+    GetNativeSwapChainPreferredFormat(const DawnSwapChainImplementation* swapChain);
+
+    struct DAWN_NATIVE_EXPORT ExternalImageDescriptorDXGISharedHandle : ExternalImageDescriptor {
+      public:
+        ExternalImageDescriptorDXGISharedHandle();
+
+        HANDLE sharedHandle;
+        uint64_t acquireMutexKey;
+        bool isSwapChainTexture = false;
+    };
+
+    DAWN_NATIVE_EXPORT uint64_t SetExternalMemoryReservation(WGPUDevice device,
+                                                             uint64_t requestedReservationSize);
+
+    // Note: SharedHandle must be a handle to a texture object.
+    DAWN_NATIVE_EXPORT WGPUTexture
+    WrapSharedHandle(WGPUDevice device, const ExternalImageDescriptorDXGISharedHandle* descriptor);
+
 }}  // namespace dawn_native::d3d12
 
 #endif  // DAWNNATIVE_D3D12BACKEND_H_

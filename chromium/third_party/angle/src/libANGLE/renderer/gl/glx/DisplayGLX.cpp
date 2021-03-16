@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -23,6 +23,17 @@
 #include "libANGLE/renderer/gl/glx/RendererGLX.h"
 #include "libANGLE/renderer/gl/glx/WindowSurfaceGLX.h"
 #include "libANGLE/renderer/gl/renderergl_utils.h"
+
+namespace
+{
+
+bool HasParallelShaderCompileExtension(const rx::FunctionsGL *functions)
+{
+    return functions->maxShaderCompilerThreadsKHR != nullptr ||
+           functions->maxShaderCompilerThreadsARB != nullptr;
+}
+
+}  // anonymous namespace
 
 namespace rx
 {
@@ -289,14 +300,23 @@ egl::Error DisplayGLX::initialize(egl::Display *display)
 
     if (mSharedContext)
     {
-        for (unsigned int i = 0; i < RendererGL::getMaxWorkerContexts(); ++i)
+        if (HasParallelShaderCompileExtension(functionsGL.get()))
         {
-            glx::Pbuffer workerPbuffer = mGLX.createPbuffer(mContextConfig, dummyPbufferAttribs);
-            if (!workerPbuffer)
+            mGLX.destroyContext(mSharedContext);
+            mSharedContext = nullptr;
+        }
+        else
+        {
+            for (unsigned int i = 0; i < RendererGL::getMaxWorkerContexts(); ++i)
             {
-                return egl::EglNotInitialized() << "Could not create the worker pbuffers.";
+                glx::Pbuffer workerPbuffer =
+                    mGLX.createPbuffer(mContextConfig, dummyPbufferAttribs);
+                if (!workerPbuffer)
+                {
+                    return egl::EglNotInitialized() << "Could not create the worker pbuffers.";
+                }
+                mWorkerPbufferPool.push_back(workerPbuffer);
             }
-            mWorkerPbufferPool.push_back(workerPbuffer);
         }
     }
 
@@ -360,17 +380,15 @@ egl::Error DisplayGLX::makeCurrent(egl::Surface *drawSurface,
                                    egl::Surface *readSurface,
                                    gl::Context *context)
 {
-    if (drawSurface)
+    glx::Drawable drawable =
+        (drawSurface ? GetImplAs<SurfaceGLX>(drawSurface)->getDrawable() : mDummyPbuffer);
+    if (drawable != mCurrentDrawable)
     {
-        glx::Drawable drawable = GetImplAs<SurfaceGLX>(drawSurface)->getDrawable();
-        if (drawable != mCurrentDrawable)
+        if (mGLX.makeCurrent(drawable, mContext) != True)
         {
-            if (mGLX.makeCurrent(drawable, mContext) != True)
-            {
-                return egl::EglContextLost() << "Failed to make the GLX context current";
-            }
-            mCurrentDrawable = drawable;
+            return egl::EglContextLost() << "Failed to make the GLX context current";
         }
+        mCurrentDrawable = drawable;
     }
 
     return DisplayGL::makeCurrent(drawSurface, readSurface, context);
@@ -677,7 +695,7 @@ bool DisplayGLX::testDeviceLost()
 {
     if (mHasARBCreateContextRobustness)
     {
-        return mRenderer->getResetStatus() != GL_NO_ERROR;
+        return mRenderer->getResetStatus() != gl::GraphicsResetStatus::NoError;
     }
 
     return false;
@@ -690,23 +708,16 @@ egl::Error DisplayGLX::restoreLostDevice(const egl::Display *display)
 
 bool DisplayGLX::isValidNativeWindow(EGLNativeWindowType window) const
 {
-    // There is no function in Xlib to check the validity of a Window directly.
-    // However a small number of functions used to obtain window information
-    // return a status code (0 meaning failure) and guarantee that they will
-    // fail if the window doesn't exist (the rational is that these function
-    // are used by window managers). Out of these function we use XQueryTree
-    // as it seems to be the simplest; a drawback is that it will allocate
-    // memory for the list of children, because we use a child window for
-    // WindowSurface.
-    Window root;
-    Window parent;
-    Window *children = nullptr;
-    unsigned nChildren;
-    int status = XQueryTree(mGLX.getDisplay(), window, &root, &parent, &children, &nChildren);
-    if (children)
-    {
-        XFree(children);
-    }
+
+    // Check the validity of the window by calling a getter function on the window that
+    // returns a status code. If the window is bad the call return a status of zero. We
+    // need to set a temporary X11 error handler while doing this because the default
+    // X11 error handler exits the program on any error.
+    auto oldErrorHandler = XSetErrorHandler(IgnoreX11Errors);
+    XWindowAttributes attributes;
+    int status = XGetWindowAttributes(mXDisplay, window, &attributes);
+    XSetErrorHandler(oldErrorHandler);
+
     return status != 0;
 }
 
@@ -818,6 +829,10 @@ void DisplayGLX::generateExtensions(egl::DisplayExtensions *outExtensions) const
     outExtensions->displayTextureShareGroup = true;
 
     outExtensions->surfacelessContext = true;
+
+    const bool hasSyncControlOML        = mGLX.hasExtension("GLX_OML_sync_control");
+    outExtensions->syncControlCHROMIUM  = hasSyncControlOML;
+    outExtensions->syncControlRateANGLE = hasSyncControlOML;
 
     DisplayGL::generateExtensions(outExtensions);
 }
@@ -969,6 +984,16 @@ WorkerContext *DisplayGLX::createWorkerContext(std::string *infoLog)
     mWorkerPbufferPool.pop_back();
 
     return new WorkerContextGLX(context, &mGLX, workerPbuffer);
+}
+
+void DisplayGLX::initializeFrontendFeatures(angle::FrontendFeatures *features) const
+{
+    mRenderer->initializeFrontendFeatures(features);
+}
+
+void DisplayGLX::populateFeatureList(angle::FeatureList *features)
+{
+    mRenderer->getFeatures().populateFeatureList(features);
 }
 
 }  // namespace rx

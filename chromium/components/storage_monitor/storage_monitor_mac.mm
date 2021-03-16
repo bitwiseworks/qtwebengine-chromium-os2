@@ -6,12 +6,14 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/task/task_traits.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "components/storage_monitor/image_capture_device_manager.h"
 #include "components/storage_monitor/media_storage_util.h"
@@ -53,7 +55,8 @@ StorageInfo::Type GetDeviceType(bool is_removable, bool has_dcim) {
 
 StorageInfo BuildStorageInfo(
     CFDictionaryRef dict, std::string* bsd_name) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
 
   CFStringRef device_bsd_name = base::mac::GetValueFromDictionary<CFStringRef>(
       dict, kDADiskDescriptionMediaBSDNameKey);
@@ -113,7 +116,7 @@ StorageInfo BuildStorageInfo(
 
 struct EjectDiskOptions {
   std::string bsd_name;
-  base::Callback<void(StorageMonitor::EjectStatus)> callback;
+  base::OnceCallback<void(StorageMonitor::EjectStatus)> callback;
   base::ScopedCFTypeRef<DADiskRef> disk;
 };
 
@@ -123,11 +126,11 @@ void PostEjectCallback(DADiskRef disk,
   std::unique_ptr<EjectDiskOptions> options_deleter(
       static_cast<EjectDiskOptions*>(context));
   if (dissenter) {
-    options_deleter->callback.Run(StorageMonitor::EJECT_IN_USE);
+    std::move(options_deleter->callback).Run(StorageMonitor::EJECT_IN_USE);
     return;
   }
 
-  options_deleter->callback.Run(StorageMonitor::EJECT_OK);
+  std::move(options_deleter->callback).Run(StorageMonitor::EJECT_OK);
 }
 
 void PostUnmountCallback(DADiskRef disk,
@@ -136,7 +139,7 @@ void PostUnmountCallback(DADiskRef disk,
   std::unique_ptr<EjectDiskOptions> options_deleter(
       static_cast<EjectDiskOptions*>(context));
   if (dissenter) {
-    options_deleter->callback.Run(StorageMonitor::EJECT_IN_USE);
+    std::move(options_deleter->callback).Run(StorageMonitor::EJECT_IN_USE);
     return;
   }
 
@@ -255,18 +258,18 @@ bool StorageMonitorMac::GetStorageInfoForPath(const base::FilePath& path,
 }
 
 void StorageMonitorMac::EjectDevice(
-      const std::string& device_id,
-      base::Callback<void(EjectStatus)> callback) {
+    const std::string& device_id,
+    base::OnceCallback<void(EjectStatus)> callback) {
   StorageInfo::Type type;
   std::string uuid;
   if (!StorageInfo::CrackDeviceId(device_id, &type, &uuid)) {
-    callback.Run(EJECT_FAILURE);
+    std::move(callback).Run(EJECT_FAILURE);
     return;
   }
 
   if (type == StorageInfo::MAC_IMAGE_CAPTURE &&
       image_capture_device_manager_.get()) {
-    image_capture_device_manager_->EjectDevice(uuid, callback);
+    image_capture_device_manager_->EjectDevice(uuid, std::move(callback));
     return;
   }
 
@@ -281,7 +284,7 @@ void StorageMonitorMac::EjectDevice(
   }
 
   if (bsd_name.empty()) {
-    callback.Run(EJECT_NO_SUCH_DEVICE);
+    std::move(callback).Run(EJECT_NO_SUCH_DEVICE);
     return;
   }
 
@@ -290,22 +293,22 @@ void StorageMonitorMac::EjectDevice(
   base::ScopedCFTypeRef<DADiskRef> disk(
       DADiskCreateFromBSDName(NULL, session_, bsd_name.c_str()));
   if (!disk.get()) {
-    callback.Run(StorageMonitor::EJECT_FAILURE);
+    std::move(callback).Run(StorageMonitor::EJECT_FAILURE);
     return;
   }
   // Get the reference to the full disk for ejecting.
   disk.reset(DADiskCopyWholeDisk(disk));
   if (!disk.get()) {
-    callback.Run(StorageMonitor::EJECT_FAILURE);
+    std::move(callback).Run(StorageMonitor::EJECT_FAILURE);
     return;
   }
 
   EjectDiskOptions* options = new EjectDiskOptions;
   options->bsd_name = bsd_name;
-  options->callback = callback;
+  options->callback = std::move(callback);
   options->disk = std::move(disk);
-  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
-                           base::Bind(EjectDisk, options));
+  base::PostTask(FROM_HERE, {content::BrowserThread::UI},
+                 base::BindOnce(EjectDisk, options));
 }
 
 // static
@@ -337,7 +340,7 @@ void StorageMonitorMac::GetDiskInfoAndUpdate(
 
   base::ScopedCFTypeRef<CFDictionaryRef> dict(DADiskCopyDescription(disk));
   std::string* bsd_name = new std::string;
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&BuildStorageInfo, dict, bsd_name),
       base::BindOnce(&StorageMonitorMac::UpdateDisk, AsWeakPtr(), update_type,

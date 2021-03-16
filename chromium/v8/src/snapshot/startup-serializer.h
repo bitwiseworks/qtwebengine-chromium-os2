@@ -16,7 +16,7 @@ class HeapObject;
 class SnapshotByteSink;
 class ReadOnlySerializer;
 
-class StartupSerializer : public RootsSerializer {
+class V8_EXPORT_PRIVATE StartupSerializer : public RootsSerializer {
  public:
   StartupSerializer(Isolate* isolate, ReadOnlySerializer* read_only_serializer);
   ~StartupSerializer() override;
@@ -33,20 +33,20 @@ class StartupSerializer : public RootsSerializer {
   // read-only object cache if not already present and emits a
   // ReadOnlyObjectCache bytecode into |sink|. Returns whether this was
   // successful.
-  bool SerializeUsingReadOnlyObjectCache(SnapshotByteSink* sink, HeapObject obj,
-                                         HowToCode how_to_code,
-                                         WhereToPoint where_to_point, int skip);
+  bool SerializeUsingReadOnlyObjectCache(SnapshotByteSink* sink,
+                                         HeapObject obj);
 
   // Adds |obj| to the partial snapshot object cache if not already present and
   // emits a PartialSnapshotCache bytecode into |sink|.
   void SerializeUsingPartialSnapshotCache(SnapshotByteSink* sink,
-                                          HeapObject obj, HowToCode how_to_code,
-                                          WhereToPoint where_to_point,
-                                          int skip);
+                                          HeapObject obj);
+
+  // The per-heap dirty FinalizationRegistry list is weak and not serialized. No
+  // JSFinalizationRegistries should be used during startup.
+  void CheckNoDirtyFinalizationRegistries();
 
  private:
-  void SerializeObject(HeapObject o, HowToCode how_to_code,
-                       WhereToPoint where_to_point, int skip) override;
+  void SerializeObject(HeapObject o) override;
 
   ReadOnlySerializer* read_only_serializer_;
   std::vector<AccessorInfo> accessor_infos_;

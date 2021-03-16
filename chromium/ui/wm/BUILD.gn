@@ -66,11 +66,12 @@ jumbo_component("wm") {
 
   deps = [
     "//base",
-    "//services/ws/public/mojom",
     "//skia",
     "//ui/aura",
     "//ui/base",
+    "//ui/base/cursor",
     "//ui/base/ime",
+    "//ui/base/mojom:cursor_type",
     "//ui/compositor",
     "//ui/compositor_extra",
     "//ui/display",
@@ -107,13 +108,10 @@ jumbo_static_library("test_support") {
     "test/wm_test_helper.h",
   ]
 
+  public_deps = [ "//ui/base/cursor" ]
+
   deps = [
     ":wm",
-    "//services/service_manager/public/cpp",
-    "//services/ws/public/cpp",
-    "//services/ws/public/cpp/input_devices",
-    "//services/ws/public/mojom",
-    "//services/ws/test_ws:mojom",
     "//skia",
     "//ui/aura",
     "//ui/aura:test_support",
@@ -151,7 +149,9 @@ test("wm_unittests") {
     "//testing/gtest",
     "//ui/aura:test_support",
     "//ui/base:test_support",
+    "//ui/base/cursor",
     "//ui/base/ime",
+    "//ui/base/mojom:cursor_type",
     "//ui/compositor:test_support",
     "//ui/compositor_extra",
     "//ui/events:test_support",
@@ -165,9 +165,7 @@ test("wm_unittests") {
     "//ui/wm/public",
   ]
 
-  data_deps = [
-    "//ui/resources:ui_test_pak_data",
-  ]
+  data_deps = [ "//ui/resources:ui_test_pak_data" ]
 
   if (is_chromeos) {
     sources += [ "core/ime_util_chromeos_unittest.cc" ]

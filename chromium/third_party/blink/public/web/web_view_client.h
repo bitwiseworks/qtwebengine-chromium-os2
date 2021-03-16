@@ -33,24 +33,24 @@
 
 #include "base/strings/string_piece.h"
 #include "third_party/blink/public/common/dom_storage/session_storage_namespace_id.h"
+#include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_ax_enums.h"
 #include "third_party/blink/public/web/web_frame.h"
-#include "third_party/blink/public/web/web_text_direction.h"
 #include "third_party/blink/public/web/web_widget_client.h"
 
 namespace blink {
 
-class WebDateTimeChooserCompletion;
-class WebNode;
 class WebPagePopup;
 class WebURL;
 class WebURLRequest;
 class WebView;
+namespace mojom {
 enum class WebSandboxFlags;
-struct WebDateTimeChooserParams;
+}
 struct WebRect;
 struct WebSize;
+struct WebTextAutosizerPageInfo;
 struct WebWindowFeatures;
 
 class WebViewClient {
@@ -64,15 +64,15 @@ class WebViewClient {
   // The request parameter is only for the client to check if the request
   // could be fulfilled.  The client should not load the request.
   // The policy parameter indicates how the new view will be displayed in
-  // WebWidgetClient::show.
+  // WebWidgetClient::Show.
   virtual WebView* CreateView(
       WebLocalFrame* creator,
       const WebURLRequest& request,
       const WebWindowFeatures& features,
       const WebString& name,
       WebNavigationPolicy policy,
-      bool suppress_opener,
-      WebSandboxFlags,
+      mojom::WebSandboxFlags,
+      const FeaturePolicy::FeatureState&,
       const SessionStorageNamespaceId& session_storage_namespace_id) {
     return nullptr;
   }
@@ -87,30 +87,22 @@ class WebViewClient {
 
   // Misc ----------------------------------------------------------------
 
+  // Called when the window for this WebView should be closed. The WebView
+  // and its frame tree will be closed asynchronously as a result of this
+  // request.
+  virtual void CloseWindowSoon() {}
+
+  // Called when a region of the WebView needs to be re-painted. This is only
+  // for non-composited WebViews that exist to contribute to a "parent" WebView
+  // painting. Otherwise invalidations are transmitted to the compositor through
+  // the layers.
+  virtual void DidInvalidateRect(const WebRect&) {}
+
   // Called when script in the page calls window.print().  If frame is
   // non-null, then it selects a particular frame, including its
   // children, to print.  Otherwise, the main frame and its children
   // should be printed.
   virtual void PrintPage(WebLocalFrame*) {}
-
-  // Called when PageImportanceSignals for the WebView is updated.
-  virtual void PageImportanceSignalsChanged() {}
-
-  // Called to get the position of the root window containing the widget
-  // in screen coordinates.
-  virtual WebRect RootWindowRect() { return WebRect(); }
-
-  // Dialogs -------------------------------------------------------------
-
-  // Ask users to choose date/time for the specified parameters. When a user
-  // chooses a value, an implementation of this function should call
-  // WebDateTimeChooserCompletion::didChooseValue or didCancelChooser. If the
-  // implementation opened date/time chooser UI successfully, it should return
-  // true. This function is used only if ExternalDateTimeChooser is used.
-  virtual bool OpenDateTimeChooser(const WebDateTimeChooserParams&,
-                                   WebDateTimeChooserCompletion*) {
-    return false;
-  }
 
   // UI ------------------------------------------------------------------
 
@@ -128,11 +120,6 @@ class WebViewClient {
   // in the containing window.
   virtual void FocusNext() {}
   virtual void FocusPrevious() {}
-
-  // Called when a new node gets focused. |fromNode| is the previously focused
-  // node, |toNode| is the newly focused node. Either can be null.
-  virtual void FocusedNodeChanged(const WebNode& from_node,
-                                  const WebNode& to_node) {}
 
   // Called to check if layout update should be processed.
   virtual bool CanUpdateLayout() { return false; }
@@ -161,17 +148,7 @@ class WebViewClient {
   // Called when the View acquires focus.
   virtual void DidFocus(WebLocalFrame* calling_frame) {}
 
-  // Returns information about the screen where this view's widgets are being
-  // displayed.
-  virtual WebScreenInfo GetScreenInfo() = 0;
-
   // Session history -----------------------------------------------------
-
-  // Tells the embedder to navigate back or forward in session history by
-  // the given offset (relative to the current position in session
-  // history). |has_user_gesture| tells whether or not this is the consequence
-  // of a user action.
-  virtual void NavigateBackForwardSoon(int offset, bool has_user_gesture) {}
 
   // Returns the number of history items before/after the current
   // history item.
@@ -189,16 +166,20 @@ class WebViewClient {
 
   // Zoom ----------------------------------------------------------------
 
-  // Informs the browser that the zoom levels for this frame have changed from
-  // the default values.
-  virtual void ZoomLimitsChanged(double minimum_level, double maximum_level) {}
-
-  // Informs the browser that the page scale has changed.
-  virtual void PageScaleFactorChanged() {}
+  // Informs the browser that page metrics relevant to Blink's TextAutosizer
+  // have changed, so that they can be shared with other renderers. Only called
+  // in the renderer hosting the local main frame. The browser will share this
+  // information with other renderers that have frames in the page.
+  virtual void DidUpdateTextAutosizerPageInfo(const WebTextAutosizerPageInfo&) {
+  }
 
   // Gestures -------------------------------------------------------------
 
   virtual bool CanHandleGestureEvent() { return false; }
+
+  // Policies -------------------------------------------------------------
+
+  virtual bool AllowPopupsDuringPageUnload() { return false; }
 };
 
 }  // namespace blink

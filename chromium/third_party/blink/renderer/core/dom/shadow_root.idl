@@ -24,13 +24,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://w3c.github.io/webcomponents/spec/shadow/#the-shadowroot-interface
+// https://dom.spec.whatwg.org/#interface-shadowroot
 
+[Exposed=Window]
 interface ShadowRoot : DocumentFragment {
     readonly attribute ShadowRootMode mode;
     readonly attribute Element host;
-    [CEReactions, CustomElementCallbacks, Custom=Setter] attribute HTMLString innerHTML;
+    // TODO(lyf): Change the type to `[TreatNullAs=xxx] HTMLString` after
+    // https://crbug.com/1058762 has been fixed.
+    [CEReactions, CustomElementCallbacks, RaisesException=Setter] attribute [TreatNullAs=EmptyString, StringContext=TrustedHTML] DOMString innerHTML;
     readonly attribute boolean delegatesFocus;
+    [RuntimeEnabled=ManualSlotting] readonly attribute SlotAssignmentMode slotAssignment;
 };
 
-ShadowRoot implements DocumentOrShadowRoot;
+ShadowRoot includes DocumentOrShadowRoot;

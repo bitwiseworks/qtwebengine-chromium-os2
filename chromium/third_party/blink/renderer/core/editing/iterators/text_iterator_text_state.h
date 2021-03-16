@@ -28,14 +28,12 @@
 
 #include "base/optional.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/editing/iterators/forwards_text_buffer.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator_behavior.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
-class BackwardsTextBuffer;
 class ContainerNode;
 class HTMLElement;
 class Text;
@@ -49,16 +47,11 @@ class CORE_EXPORT TextIteratorTextState {
   // Return properties of the current text.
   unsigned length() const { return text_length_; }
   UChar CharacterAt(unsigned index) const;
+  // TODO(xiaochengh): Rename to |GetText()| as it's used in production code.
   String GetTextForTesting() const;
   void AppendTextToStringBuilder(StringBuilder&,
                                  unsigned position = 0,
                                  unsigned max_length = UINT_MAX) const;
-  void AppendTextTo(ForwardsTextBuffer* output,
-                    unsigned position,
-                    unsigned length_to_append) const;
-  void PrependTextTo(BackwardsTextBuffer* output,
-                     unsigned position,
-                     unsigned length_to_prepend) const;
 
   // Emits code unit relative to |node|.
   void EmitChar16AfterNode(UChar code_unit, const Node& node);
@@ -152,9 +145,9 @@ class CORE_EXPORT TextIteratorTextState {
   unsigned text_start_offset_ = 0;
 
   // Position of the current text, in the form to be returned from the iterator.
-  Member<const Node> position_node_;
+  const Node* position_node_ = nullptr;
   // |Text| node when |position_node_type_ == kInText| or |ContainerNode|.
-  mutable Member<const Node> position_container_node_;
+  mutable const Node* position_container_node_ = nullptr;
   mutable base::Optional<unsigned> position_start_offset_;
   mutable base::Optional<unsigned> position_end_offset_;
   PositionNodeType position_node_type_ = PositionNodeType::kNone;

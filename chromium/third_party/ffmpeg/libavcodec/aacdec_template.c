@@ -975,7 +975,7 @@ static int decode_audio_specific_config_gb(AACContext *ac,
     int i, ret;
     GetBitContext gbc = *gb;
 
-    if ((i = ff_mpeg4audio_get_config_gb(m4ac, &gbc, sync_extension)) < 0)
+    if ((i = ff_mpeg4audio_get_config_gb(m4ac, &gbc, sync_extension, avctx)) < 0)
         return AVERROR_INVALIDDATA;
 
     if (m4ac->sampling_index > 12) {
@@ -1156,6 +1156,9 @@ static av_cold int aac_decode_init(AVCodecContext *avctx)
 {
     AACContext *ac = avctx->priv_data;
     int ret;
+
+    if (avctx->sample_rate > 96000)
+        return AVERROR_INVALIDDATA;
 
     ret = ff_thread_once(&aac_table_init, &aac_static_table_init);
     if (ret != 0)
@@ -1673,25 +1676,24 @@ static int decode_spectrum_and_dequant(AACContext *ac, INTFLOAT coef[1024],
                 }
             } else if (cbt_m1 == NOISE_BT - 1) {
                 for (group = 0; group < (AAC_SIGNE)g_len; group++, cfo+=128) {
-#if !USE_FIXED
-                    float scale;
-#endif /* !USE_FIXED */
                     INTFLOAT band_energy;
-
+#if USE_FIXED
                     for (k = 0; k < off_len; k++) {
                         ac->random_state  = lcg_random(ac->random_state);
-#if USE_FIXED
                         cfo[k] = ac->random_state >> 3;
-#else
-                        cfo[k] = ac->random_state;
-#endif /* USE_FIXED */
                     }
 
-#if USE_FIXED
                     band_energy = ac->fdsp->scalarproduct_fixed(cfo, cfo, off_len);
                     band_energy = fixed_sqrt(band_energy, 31);
                     noise_scale(cfo, sf[idx], band_energy, off_len);
 #else
+                    float scale;
+
+                    for (k = 0; k < off_len; k++) {
+                        ac->random_state  = lcg_random(ac->random_state);
+                        cfo[k] = ac->random_state;
+                    }
+
                     band_energy = ac->fdsp->scalarproduct_float(cfo, cfo, off_len);
                     scale = sf[idx] / sqrtf(band_energy);
                     ac->fdsp->vector_fmul_scalar(cfo, cfo, scale, off_len);
@@ -1927,7 +1929,7 @@ static int decode_spectrum_and_dequant(AACContext *ac, INTFLOAT coef[1024],
             if (cbt_m1 < NOISE_BT - 1) {
                 for (group = 0; group < (int)g_len; group++, cfo+=128) {
                     ac->vector_pow43(cfo, off_len);
-                    ac->subband_scale(cfo, cfo, sf[idx], 34, off_len);
+                    ac->subband_scale(cfo, cfo, sf[idx], 34, off_len, ac->avctx);
                 }
             }
         }
@@ -2158,7 +2160,7 @@ static void apply_intensity_stereo(AACContext *ac,
                                       coef0 + group * 128 + offsets[i],
                                       scale,
                                       23,
-                                      offsets[i + 1] - offsets[i]);
+                                      offsets[i + 1] - offsets[i] ,ac->avctx);
 #else
                         ac->fdsp->vector_fmul_scalar(coef1 + group * 128 + offsets[i],
                                                     coef0 + group * 128 + offsets[i],
@@ -2493,6 +2495,9 @@ static void apply_tns(INTFLOAT coef_param[1024], TemporalNoiseShaping *tns,
     INTFLOAT tmp[TNS_MAX_ORDER+1];
     UINTFLOAT *coef = coef_param;
 
+    if(!mmm)
+        return;
+
     for (w = 0; w < ics->num_windows; w++) {
         bottom = ics->num_swb;
         for (filt = 0; filt < tns->n_filt[w]; filt++) {
@@ -2657,7 +2662,7 @@ static void imdct_and_windowing(AACContext *ac, SingleChannelElement *sce)
         ac->mdct.imdct_half(&ac->mdct, buf, in);
 #if USE_FIXED
         for (i=0; i<1024; i++)
-          buf[i] = (buf[i] + 4) >> 3;
+          buf[i] = (buf[i] + 4LL) >> 3;
 #endif /* USE_FIXED */
     }
 
@@ -3244,9 +3249,15 @@ static int aac_decode_frame_int(AVCodecContext *avctx, void *data,
                     err = AVERROR_INVALIDDATA;
                     goto fail;
             }
-            while (elem_id > 0)
-                elem_id -= decode_extension_payload(ac, gb, elem_id, che_prev, che_prev_type);
-            err = 0; /* FIXME */
+            err = 0;
+            while (elem_id > 0) {
+                int ret = decode_extension_payload(ac, gb, elem_id, che_prev, che_prev_type);
+                if (ret < 0) {
+                    err = ret;
+                    break;
+                }
+                elem_id -= ret;
+            }
             break;
 
         default:

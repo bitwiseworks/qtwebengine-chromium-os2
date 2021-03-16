@@ -12,7 +12,7 @@
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -27,7 +27,7 @@ class SpellcheckHostMetricsTest : public testing::Test {
   void RecordWordCountsForTesting() { metrics_->RecordWordCounts(); }
 
  private:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<SpellCheckHostMetrics> metrics_;
 };
 
@@ -102,3 +102,43 @@ TEST_F(SpellcheckHostMetricsTest, RecordSpellingServiceStats) {
   histogram_tester2.ExpectBucketCount(kMetricName, 0, 0);
   histogram_tester2.ExpectBucketCount(kMetricName, 1, 1);
 }
+
+#if defined(OS_WIN)
+TEST_F(SpellcheckHostMetricsTest, RecordAcceptLanguageStats) {
+  const char* const histogram_names[] = {
+      "Spellcheck.Windows.ChromeLocalesSupport.Both",
+      "Spellcheck.Windows.ChromeLocalesSupport.HunspellOnly",
+      "Spellcheck.Windows.ChromeLocalesSupport.NativeOnly",
+      "Spellcheck.Windows.ChromeLocalesSupport.NoSupport"};
+  const int expected_counts[] = {1, 2, 3, 4};
+  base::HistogramTester histogram_tester;
+
+  metrics()->RecordAcceptLanguageStats({expected_counts[0], expected_counts[1],
+                                        expected_counts[2],
+                                        expected_counts[3]});
+
+  for (size_t i = 0; i < base::size(histogram_names); ++i) {
+    histogram_tester.ExpectTotalCount(histogram_names[i], 1);
+    histogram_tester.ExpectBucketCount(histogram_names[i], expected_counts[i],
+                                       1);
+  }
+}
+
+TEST_F(SpellcheckHostMetricsTest, RecordSpellcheckLanguageStats) {
+  const char* const histogram_names[] = {
+      "Spellcheck.Windows.SpellcheckLocalesSupport.Both",
+      "Spellcheck.Windows.SpellcheckLocalesSupport.HunspellOnly",
+      "Spellcheck.Windows.SpellcheckLocalesSupport.NativeOnly"};
+  const int expected_counts[] = {1, 2, 3};
+  base::HistogramTester histogram_tester;
+
+  metrics()->RecordSpellcheckLanguageStats(
+      {expected_counts[0], expected_counts[1], expected_counts[2], 0});
+
+  for (size_t i = 0; i < base::size(histogram_names); ++i) {
+    histogram_tester.ExpectTotalCount(histogram_names[i], 1);
+    histogram_tester.ExpectBucketCount(histogram_names[i], expected_counts[i],
+                                       1);
+  }
+}
+#endif  // defined(OS_WIN)

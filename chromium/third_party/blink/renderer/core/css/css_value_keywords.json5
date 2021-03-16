@@ -131,9 +131,10 @@
     "large",
     "x-large",
     "xx-large",
-    "-webkit-xxx-large",
+    "xxx-large",
     "smaller",
     "larger",
+    "-webkit-xxx-large",
 
     //
     // font-family (<generic-family> in CSS 2.1)
@@ -144,7 +145,6 @@
     "fantasy",
     "monospace",
     "-webkit-body",
-    "-webkit-pictograph",
 
     //
     // font-display
@@ -181,13 +181,18 @@
     "-webkit-activelink",
     "activeborder",
     "activecaption",
+    "activetext",
     "appworkspace",
     "background",
     "buttonface",
     "buttonhighlight",
     "buttonshadow",
     "buttontext",
+    "canvas",
+    "canvastext",
     "captiontext",
+    "field",
+    "fieldtext",
     "graytext",
     "highlight",
     "highlighttext",
@@ -196,6 +201,7 @@
     "inactivecaptiontext",
     "infobackground",
     "infotext",
+    "linktext",
     "menutext",
     "scrollbar",
     "threeddarkshadow",
@@ -203,6 +209,7 @@
     "threedhighlight",
     "threedlightshadow",
     "threedshadow",
+    "visitedtext",
     "window",
     "windowframe",
     "windowtext",
@@ -371,6 +378,8 @@
     "inline-flex",
     "grid",
     "inline-grid",
+    "math",
+    "inline-math",
     "contents",
     //none
     "-webkit-flex",
@@ -467,6 +476,8 @@
     "-webkit-isolate",
     "-webkit-isolate-override",
     "-webkit-plaintext",
+    "jis-b5",
+    "jis-b4",
     "landscape",
     "ledger",
     "legal",
@@ -493,6 +504,12 @@
     "underline",
     "wavy",
     "-webkit-nowrap",
+
+    //
+    // math-style
+    //
+    // inline
+    "display",
 
     // CSS3 Values
     // box-align
@@ -606,12 +623,12 @@
     // auto
     // none
 
-    //
-    // -webkit-margin-collapse
-    //
-    // collapse
-    // separate
-    "discard",
+    // text-underline-position
+    // auto
+    "from-font",
+    // under
+    // left
+    // right
 
     //
     // word-break
@@ -637,64 +654,40 @@
     // normal
     "strict",
     "after-white-space",
+    "anywhere",
 
     // hyphens
     "manual",
 
     // -webkit-appearance
-    // The order here must match the order in the ControlPart enum in ThemeTypes.h.
-    // All appearance values that should be accepted by the parser should be listed between 'checkbox' and 'textarea':
+    // The order here must match the order in the ControlPart enum in
+    // theme_types.h.
+    // All appearance values that should be accepted by the parser should be
+    // listed between 'checkbox' and 'textarea'.
     "checkbox",
     "radio",
     "push-button",
     "square-button",
     "button",
-    "button-bevel",
     "inner-spin-button",
     "listbox",
-    "listitem",
-    "media-enter-fullscreen-button",
-    "media-exit-fullscreen-button",
-    "media-mute-button",
-    "media-play-button",
-    "media-overlay-play-button",
-    "media-toggle-closed-captions-button",
     "media-slider",
     "media-sliderthumb",
-    "media-volume-slider-container",
     "media-volume-slider",
     "media-volume-sliderthumb",
-    "media-controls-background",
-    "media-controls-fullscreen-background",
-    "media-current-time-display",
-    "media-time-remaining-display",
-    "-internal-media-cast-off-button",
-    "-internal-media-overlay-cast-off-button",
-    "-internal-media-track-selection-checkmark",
-    "-internal-media-closed-captions-icon",
-    "-internal-media-subtitles-icon",
-    "-internal-media-overflow-button",
-    "-internal-media-download-button",
-    "-internal-media-remoting-cast-icon",
     "-internal-media-control",
     "menulist",
     "menulist-button",
-    "menulist-text",
-    "menulist-textfield",
     "meter",
     "progress-bar",
-    "progress-bar-value",
     "slider-horizontal",
     "slider-vertical",
     "sliderthumb-horizontal",
     "sliderthumb-vertical",
-    "caret",
     "searchfield",
     "searchfield-cancel-button",
     "textfield",
     "textarea",
-    // An appearance value that should not be accepted by the parser:
-    "caps-lock-indicator",
 
     //
     // border-image
@@ -776,8 +769,11 @@
     "ease-in",
     "ease-out",
     "ease-in-out",
+    "jump-both",
+    "jump-end",
+    "jump-none",
+    "jump-start",
     "step-start",
-    "step-middle",
     "step-end",
     "steps",
     "frames",
@@ -956,10 +952,6 @@
     // column-fill
     "balance",
 
-    // overflow
-    "-webkit-paged-x",
-    "-webkit-paged-y",
-
     // -webkit-app-region
     "drag",
     "no-drag",
@@ -1095,6 +1087,7 @@
     "rgba",
     "hsl",
     "hsla",
+    "-internal-light-dark-color",
 
     // transform
     "matrix",
@@ -1129,8 +1122,13 @@
     "ray",
     "sides",
 
+    // math functions
+    // https://drafts.csswg.org/css-values-4/#math
     "calc",
     "-webkit-calc",
+    "min",
+    "max",
+    "clamp",
 
     // scroll-snap-type
     // none
@@ -1198,6 +1196,10 @@
     // pan-down
     // none
 
+    // @property
+    "true",
+    "false",
+
     // (prefers-*:) media features
     "no-preference",
 
@@ -1205,7 +1207,29 @@
     "dark",
     "light",
 
+    // color-scheme
+    "only",
+
     // (prefers-reduced-motion:) media feature
     "reduce",
+
+    // (forced-colors:) media feature
+    // none
+    "active",
+
+    // (navigation-controls) media feature
+    // none
+    "back-button",
+
+    // subtree-visibility
+    "hidden-matchable",
+
+    // -internal-empty-line-height
+    // none
+    "fabricated",
+
+    // @supports selector(...)
+    // https://drafts.csswg.org/css-conditional-4/#typedef-supports-selector-fn
+    "selector",
   ],
 }

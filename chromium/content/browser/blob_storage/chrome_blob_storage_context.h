@@ -15,6 +15,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/common/content_export.h"
+#include "content/public/browser/browser_thread.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "third_party/blink/public/mojom/blob/blob_url_store.mojom.h"
@@ -23,19 +25,17 @@ namespace base {
 class TaskRunner;
 }
 
-namespace network {
-class ResourceRequestBody;
-}
-
 namespace storage {
 class BlobStorageContext;
+class BlobUrlRegistry;
+namespace mojom {
+class BlobStorageContext;
+}
 }
 
 namespace content {
 class BlobHandle;
 class BrowserContext;
-struct ChromeBlobStorageContextDeleter;
-class ResourceContext;
 
 // A context class that keeps track of BlobStorageController used by the chrome.
 // There is an instance associated with each BrowserContext. There could be
@@ -46,7 +46,7 @@ class ResourceContext;
 // the IO thread (unless specifically called out in doc comments).
 class CONTENT_EXPORT ChromeBlobStorageContext
     : public base::RefCountedThreadSafe<ChromeBlobStorageContext,
-                                        ChromeBlobStorageContextDeleter> {
+                                        BrowserThread::DeleteOnIOThread> {
  public:
   ChromeBlobStorageContext();
 
@@ -54,15 +54,25 @@ class CONTENT_EXPORT ChromeBlobStorageContext
   static ChromeBlobStorageContext* GetFor(
       BrowserContext* browser_context);
 
-  void InitializeOnIOThread(base::FilePath blob_storage_dir,
+  // Must be called on the UI thread.
+  static mojo::PendingRemote<storage::mojom::BlobStorageContext> GetRemoteFor(
+      BrowserContext* browser_context);
+
+  void InitializeOnIOThread(const base::FilePath& profile_dir,
+                            const base::FilePath& blob_storage_dir,
                             scoped_refptr<base::TaskRunner> file_task_runner);
 
-  storage::BlobStorageContext* context() const { return context_.get(); }
+  storage::BlobStorageContext* context() const;
+  storage::BlobUrlRegistry* url_registry() const;
+
+  // Bind a BlobStorageContext mojo interface to be used by storage apis.
+  // This interface should not be exposed to renderers.
+  void BindMojoContext(
+      mojo::PendingReceiver<storage::mojom::BlobStorageContext> receiver);
 
   // Returns a NULL scoped_ptr on failure.
   std::unique_ptr<BlobHandle> CreateMemoryBackedBlob(
-      const char* data,
-      size_t length,
+      base::span<const uint8_t> data,
       const std::string& content_type);
 
   // Returns a SharedURLLoaderFactory capable of creating URLLoaders for exactly
@@ -71,8 +81,9 @@ class CONTENT_EXPORT ChromeBlobStorageContext
   // itself is invalid all requests will result in errors.
   // Must be called on the UI thread.
   static scoped_refptr<network::SharedURLLoaderFactory>
-  URLLoaderFactoryForToken(BrowserContext* browser_context,
-                           blink::mojom::BlobURLTokenPtr token);
+  URLLoaderFactoryForToken(
+      BrowserContext* browser_context,
+      mojo::PendingRemote<blink::mojom::BlobURLToken> token);
 
   // Similar to the above method this also returns a factory capable of loading
   // a single (blob) URL. If the |url| isn't a valid/registered blob URL at the
@@ -88,42 +99,25 @@ class CONTENT_EXPORT ChromeBlobStorageContext
       const GURL& url);
 
   // Must be called on the UI thread.
-  static blink::mojom::BlobPtr GetBlobPtr(BrowserContext* browser_context,
-                                          const std::string& uuid);
+  static mojo::PendingRemote<blink::mojom::Blob> GetBlobRemote(
+      BrowserContext* browser_context,
+      const std::string& uuid);
 
  protected:
   virtual ~ChromeBlobStorageContext();
 
  private:
+  friend struct BrowserThread::DeleteOnThread<BrowserThread::IO>;
   friend class base::DeleteHelper<ChromeBlobStorageContext>;
-  friend class base::RefCountedThreadSafe<ChromeBlobStorageContext,
-                                          ChromeBlobStorageContextDeleter>;
-  friend struct ChromeBlobStorageContextDeleter;
-
-  void DeleteOnCorrectThread() const;
 
   std::unique_ptr<storage::BlobStorageContext> context_;
-};
-
-struct ChromeBlobStorageContextDeleter {
-  static void Destruct(const ChromeBlobStorageContext* context) {
-    context->DeleteOnCorrectThread();
-  }
+  std::unique_ptr<storage::BlobUrlRegistry> url_registry_;
 };
 
 // Returns the BlobStorageContext associated with the
 // ChromeBlobStorageContext instance passed in.
 storage::BlobStorageContext* GetBlobStorageContext(
     ChromeBlobStorageContext* blob_storage_context);
-
-using BlobHandles = std::vector<std::unique_ptr<storage::BlobDataHandle>>;
-
-// Attempts to create a vector of BlobDataHandles that ensure any blob data
-// associated with |body| isn't cleaned up until the handles are destroyed.
-// Returns false on failure. This is used for POST and PUT requests.
-bool GetBodyBlobDataHandles(network::ResourceRequestBody* body,
-                            ResourceContext* resource_context,
-                            BlobHandles* blob_handles);
 
 extern const char kBlobStorageContextKeyName[];
 

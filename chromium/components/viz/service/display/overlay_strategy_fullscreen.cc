@@ -6,14 +6,13 @@
 
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
-#include "components/viz/service/display/overlay_candidate_validator.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
 namespace viz {
 
 OverlayStrategyFullscreen::OverlayStrategyFullscreen(
-    OverlayCandidateValidator* capability_checker)
+    OverlayProcessorUsingStrategy* capability_checker)
     : capability_checker_(capability_checker) {
   DCHECK(capability_checker);
 }
@@ -22,11 +21,15 @@ OverlayStrategyFullscreen::~OverlayStrategyFullscreen() {}
 
 bool OverlayStrategyFullscreen::Attempt(
     const SkMatrix44& output_color_matrix,
-    const OverlayProcessor::FilterOperationsMap& render_pass_backdrop_filters,
+    const OverlayProcessorInterface::FilterOperationsMap&
+        render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
     RenderPassList* render_pass_list,
+    const PrimaryPlane* primary_plane,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
+  // Before we attempt an overlay strategy, the candidate list should be empty.
+  DCHECK(candidate_list->empty());
   RenderPass* render_pass = render_pass_list->back().get();
   QuadList* quad_list = &render_pass->quad_list;
   // First quad of quad_list is the top most quad.
@@ -59,7 +62,7 @@ bool OverlayStrategyFullscreen::Attempt(
   candidate.plane_z_order = 0;
   OverlayCandidateList new_candidate_list;
   new_candidate_list.push_back(candidate);
-  capability_checker_->CheckOverlaySupport(&new_candidate_list);
+  capability_checker_->CheckOverlaySupport(primary_plane, &new_candidate_list);
   if (!new_candidate_list.front().overlay_handled)
     return false;
 
@@ -69,8 +72,15 @@ bool OverlayStrategyFullscreen::Attempt(
   return true;
 }
 
-OverlayProcessor::StrategyType OverlayStrategyFullscreen::GetUMAEnum() const {
-  return OverlayProcessor::StrategyType::kFullscreen;
+OverlayStrategy OverlayStrategyFullscreen::GetUMAEnum() const {
+  return OverlayStrategy::kFullscreen;
+}
+
+bool OverlayStrategyFullscreen::RemoveOutputSurfaceAsOverlay() {
+  // This is called when the strategy is successful. In this case the entire
+  // screen is covered by the overlay candidate and there is no need to overlay
+  // the output surface.
+  return true;
 }
 
 }  // namespace viz

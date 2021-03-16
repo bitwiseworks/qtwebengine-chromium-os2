@@ -18,7 +18,10 @@
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "media/base/audio_parameters.h"
-#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/audio/public/mojom/audio_processing.mojom.h"
 #include "services/audio/snoopable.h"
 #include "services/audio/stream_monitor.h"
@@ -62,6 +65,26 @@ class InputController final : public StreamMonitor {
     // platforms.
     STREAM_ERROR,  // = 3
   };
+
+#if defined(AUDIO_POWER_MONITORING)
+  // Used to log a silence report (see OnData).
+  // Elements in this enum should not be deleted or rearranged; the only
+  // permitted operation is to add new elements before SILENCE_STATE_MAX and
+  // update SILENCE_STATE_MAX.
+  // Possible silence state transitions:
+  //           SILENCE_STATE_AUDIO_AND_SILENCE
+  //               ^                  ^
+  // SILENCE_STATE_ONLY_AUDIO   SILENCE_STATE_ONLY_SILENCE
+  //               ^                  ^
+  //            SILENCE_STATE_NO_MEASUREMENT
+  enum SilenceState {
+    SILENCE_STATE_NO_MEASUREMENT = 0,
+    SILENCE_STATE_ONLY_AUDIO = 1,
+    SILENCE_STATE_ONLY_SILENCE = 2,
+    SILENCE_STATE_AUDIO_AND_SILENCE = 3,
+    SILENCE_STATE_MAX = SILENCE_STATE_AUDIO_AND_SILENCE
+  };
+#endif
 
   // An event handler that receives events from the InputController. The
   // following methods are all called on the audio thread.
@@ -162,33 +185,14 @@ class InputController final : public StreamMonitor {
     CAPTURE_STARTUP_RESULT_MAX = CAPTURE_STARTUP_STOPPED_EARLY,
   };
 
-#if defined(AUDIO_POWER_MONITORING)
-  // Used to log a silence report (see OnData).
-  // Elements in this enum should not be deleted or rearranged; the only
-  // permitted operation is to add new elements before SILENCE_STATE_MAX and
-  // update SILENCE_STATE_MAX.
-  // Possible silence state transitions:
-  //           SILENCE_STATE_AUDIO_AND_SILENCE
-  //               ^                  ^
-  // SILENCE_STATE_ONLY_AUDIO   SILENCE_STATE_ONLY_SILENCE
-  //               ^                  ^
-  //            SILENCE_STATE_NO_MEASUREMENT
-  enum SilenceState {
-    SILENCE_STATE_NO_MEASUREMENT = 0,
-    SILENCE_STATE_ONLY_AUDIO = 1,
-    SILENCE_STATE_ONLY_SILENCE = 2,
-    SILENCE_STATE_AUDIO_AND_SILENCE = 3,
-    SILENCE_STATE_MAX = SILENCE_STATE_AUDIO_AND_SILENCE
-  };
-#endif
-
 #if defined(AUDIO_PROCESSING_IN_AUDIO_SERVICE)
   class ProcessingHelper final : public mojom::AudioProcessorControls,
                                  public Snoopable::Snooper {
    public:
-    ProcessingHelper(const media::AudioParameters& params,
-                     media::AudioProcessingSettings processing_settings,
-                     mojom::AudioProcessorControlsRequest controls_request);
+    ProcessingHelper(
+        const media::AudioParameters& params,
+        media::AudioProcessingSettings processing_settings,
+        mojo::PendingReceiver<mojom::AudioProcessorControls> controls_receiver);
     ~ProcessingHelper() final;
 
     // Snoopable::Snooper implementation
@@ -221,11 +225,12 @@ class InputController final : public StreamMonitor {
 
     THREAD_CHECKER(owning_thread_);
 
-    const mojo::Binding<mojom::AudioProcessorControls> binding_;
+    const mojo::Receiver<mojom::AudioProcessorControls> receiver_;
     const media::AudioParameters params_;
     const std::unique_ptr<media::AudioProcessor> audio_processor_;
     media::AudioParameters output_params_;
     Snoopable* monitored_output_stream_ = nullptr;
+    std::unique_ptr<media::AudioBus> clamped_bus_;
   };
 #endif  // defined(AUDIO_PROCESSING_IN_AUDIO_SERVICE)
 
@@ -278,6 +283,9 @@ class InputController final : public StreamMonitor {
                        int* mic_volume_percent);
 
   void CheckMutedState();
+
+  // Called once at first audio callback.
+  void ReportIsAlive();
 
   static StreamType ParamsToStreamType(const media::AudioParameters& params);
 
@@ -353,7 +361,7 @@ class InputController final : public StreamMonitor {
   // the error notification is pending and then make a callback from an
   // InputController that has already been closed.
   // All outstanding weak pointers, are invalidated at the end of DoClose.
-  base::WeakPtrFactory<InputController> weak_ptr_factory_;
+  base::WeakPtrFactory<InputController> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(InputController);
 };

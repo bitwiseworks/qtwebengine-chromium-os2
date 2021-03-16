@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "media/base/gmock_callback_support.h"
+#include "base/test/gmock_callback_support.h"
 #include "media/base/media_util.h"
 #include "media/base/mock_filters.h"
 #include "media/base/mock_media_log.h"
@@ -20,58 +20,56 @@
 
 namespace media {
 
+using base::test::RunClosure;
 using testing::_;
+using testing::InvokeWithoutArgs;
 using testing::SaveArg;
-using testing::Values;
 
 namespace {
 
 AudioDecoderConfig CreateAudioConfig(AudioCodec codec) {
   return AudioDecoderConfig(codec, kSampleFormatPlanarF32,
                             CHANNEL_LAYOUT_STEREO, 1000, EmptyExtraData(),
-                            Unencrypted());
+                            EncryptionScheme::kUnencrypted);
 }
 
 VideoDecoderConfig CreateVideoConfig(VideoCodec codec, int w, int h) {
   gfx::Size size(w, h);
   gfx::Rect visible_rect(size);
   return VideoDecoderConfig(codec, VIDEO_CODEC_PROFILE_UNKNOWN,
-                            PIXEL_FORMAT_I420, VideoColorSpace::REC709(),
-                            VIDEO_ROTATION_0, size, visible_rect, size,
-                            EmptyExtraData(), Unencrypted());
+                            VideoDecoderConfig::AlphaMode::kIsOpaque,
+                            VideoColorSpace::REC709(), kNoTransformation, size,
+                            visible_rect, size, EmptyExtraData(),
+                            EncryptionScheme::kUnencrypted);
 }
 
 void AddAudioTrack(std::unique_ptr<MediaTracks>& t, AudioCodec codec, int id) {
-  t->AddAudioTrack(CreateAudioConfig(codec), id, "", "", "");
+  t->AddAudioTrack(CreateAudioConfig(codec), id, MediaTrack::Kind(),
+                   MediaTrack::Label(), MediaTrack::Language());
 }
 
 void AddVideoTrack(std::unique_ptr<MediaTracks>& t, VideoCodec codec, int id) {
-  t->AddVideoTrack(CreateVideoConfig(codec, 16, 16), id, "", "", "");
+  t->AddVideoTrack(CreateVideoConfig(codec, 16, 16), id, MediaTrack::Kind(),
+                   MediaTrack::Label(), MediaTrack::Language());
 }
 
-void InvokeCbAndSaveResult(const base::Callback<bool()>& cb, bool* result) {
-  DCHECK(result);
-  *result = cb.Run();
-}
-}
+}  // namespace
 
-class SourceBufferStateTest
-    : public ::testing::TestWithParam<ChunkDemuxerStream::RangeApi> {
+class SourceBufferStateTest : public ::testing::Test {
  public:
-  SourceBufferStateTest() : mock_stream_parser_(nullptr) {
-    range_api_ = GetParam();
-  }
+  SourceBufferStateTest() : mock_stream_parser_(nullptr) {}
 
   std::unique_ptr<SourceBufferState> CreateSourceBufferState() {
-    std::unique_ptr<FrameProcessor> frame_processor = base::WrapUnique(
-        new FrameProcessor(base::Bind(&SourceBufferStateTest::OnUpdateDuration,
-                                      base::Unretained(this)),
-                           &media_log_, range_api_));
+    std::unique_ptr<FrameProcessor> frame_processor =
+        std::make_unique<FrameProcessor>(
+            base::BindRepeating(&SourceBufferStateTest::OnUpdateDuration,
+                                base::Unretained(this)),
+            &media_log_);
     mock_stream_parser_ = new testing::StrictMock<MockStreamParser>();
     return base::WrapUnique(new SourceBufferState(
         base::WrapUnique(mock_stream_parser_), std::move(frame_processor),
-        base::Bind(&SourceBufferStateTest::CreateDemuxerStream,
-                   base::Unretained(this)),
+        base::BindRepeating(&SourceBufferStateTest::CreateDemuxerStream,
+                            base::Unretained(this)),
         &media_log_));
   }
 
@@ -101,7 +99,7 @@ class SourceBufferStateTest
     // These tests are not expected to issue any parse warnings.
     EXPECT_CALL(*this, OnParseWarningMock(_)).Times(0);
 
-    sbs->SetParseWarningCallback(base::Bind(
+    sbs->SetParseWarningCallback(base::BindRepeating(
         &SourceBufferStateTest::OnParseWarningMock, base::Unretained(this)));
 
     return sbs;
@@ -117,14 +115,12 @@ class SourceBufferStateTest
     StreamParser::TextTrackConfigMap text_track_config_map;
 
     bool new_configs_result = false;
-    base::Closure new_configs_closure =
-        base::Bind(InvokeCbAndSaveResult,
-                   base::Bind(new_config_cb_, base::Passed(std::move(tracks)),
-                              text_track_config_map),
-                   &new_configs_result);
     EXPECT_CALL(*mock_stream_parser_, Parse(stream_data, data_size))
-        .WillOnce(testing::DoAll(RunClosure(new_configs_closure),
-                                 testing::Return(true)));
+        .WillOnce(InvokeWithoutArgs([&] {
+          new_configs_result =
+              new_config_cb_.Run(std::move(tracks), text_track_config_map);
+          return true;
+        }));
     sbs->Append(stream_data, data_size, t, t, &t);
     return new_configs_result;
   }
@@ -146,7 +142,7 @@ class SourceBufferStateTest
   ChunkDemuxerStream* CreateDemuxerStream(DemuxerStream::Type type) {
     static unsigned track_id = 0;
     demuxer_streams_.push_back(base::WrapUnique(new ChunkDemuxerStream(
-        type, base::UintToString(++track_id), range_api_)));
+        type, MediaTrack::Id(base::NumberToString(++track_id)))));
     return demuxer_streams_.back().get();
   }
 
@@ -154,36 +150,33 @@ class SourceBufferStateTest
   std::vector<std::unique_ptr<ChunkDemuxerStream>> demuxer_streams_;
   MockStreamParser* mock_stream_parser_;
   StreamParser::NewConfigCB new_config_cb_;
-  ChunkDemuxerStream::RangeApi range_api_;
 };
 
-TEST_P(SourceBufferStateTest, InitSingleAudioTrack) {
+TEST_F(SourceBufferStateTest, InitSingleAudioTrack) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vorbis");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddAudioTrack(tracks, kCodecVorbis, 1);
 
-  EXPECT_MEDIA_LOG(FoundStream("audio"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "vorbis"));
+  EXPECT_FOUND_CODEC_NAME(Audio, "vorbis");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   EXPECT_TRUE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, InitSingleVideoTrack) {
+TEST_F(SourceBufferStateTest, InitSingleVideoTrack) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vp8");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddVideoTrack(tracks, kCodecVP8, 1);
 
-  EXPECT_MEDIA_LOG(FoundStream("video"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp8"));
+  EXPECT_FOUND_CODEC_NAME(Video, "vp8");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   EXPECT_TRUE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, InitMultipleTracks) {
+TEST_F(SourceBufferStateTest, InitMultipleTracks) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vorbis,vp8,opus,vp9");
 
@@ -193,17 +186,15 @@ TEST_P(SourceBufferStateTest, InitMultipleTracks) {
   AddVideoTrack(tracks, kCodecVP8, 3);
   AddVideoTrack(tracks, kCodecVP9, 4);
 
-  EXPECT_MEDIA_LOG(FoundStream("audio")).Times(2);
-  EXPECT_MEDIA_LOG(CodecName("audio", "vorbis"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "opus"));
-  EXPECT_MEDIA_LOG(FoundStream("video")).Times(2);
-  EXPECT_MEDIA_LOG(CodecName("video", "vp8"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp9"));
+  EXPECT_FOUND_CODEC_NAME(Audio, "vorbis");
+  EXPECT_FOUND_CODEC_NAME(Audio, "opus");
+  EXPECT_FOUND_CODEC_NAME(Video, "vp9");
+  EXPECT_FOUND_CODEC_NAME(Video, "vp8");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   EXPECT_TRUE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, AudioStreamMismatchesExpectedCodecs) {
+TEST_F(SourceBufferStateTest, AudioStreamMismatchesExpectedCodecs) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus");
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
@@ -212,7 +203,7 @@ TEST_P(SourceBufferStateTest, AudioStreamMismatchesExpectedCodecs) {
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, VideoStreamMismatchesExpectedCodecs) {
+TEST_F(SourceBufferStateTest, VideoStreamMismatchesExpectedCodecs) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vp9");
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
@@ -221,39 +212,36 @@ TEST_P(SourceBufferStateTest, VideoStreamMismatchesExpectedCodecs) {
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, MissingExpectedAudioStream) {
+TEST_F(SourceBufferStateTest, MissingExpectedAudioStream) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus,vp9");
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddVideoTrack(tracks, kCodecVP9, 1);
-  EXPECT_MEDIA_LOG(FoundStream("video"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp9"));
+  EXPECT_FOUND_CODEC_NAME(Video, "vp9");
   EXPECT_MEDIA_LOG(InitSegmentMissesExpectedTrack("opus"));
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, MissingExpectedVideoStream) {
+TEST_F(SourceBufferStateTest, MissingExpectedVideoStream) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus,vp9");
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
-  tracks->AddAudioTrack(CreateAudioConfig(kCodecOpus), 1, "", "", "");
-  EXPECT_MEDIA_LOG(FoundStream("audio"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "opus"));
+  tracks->AddAudioTrack(CreateAudioConfig(kCodecOpus), 1, MediaTrack::Kind(),
+                        MediaTrack::Label(), MediaTrack::Language());
+  EXPECT_FOUND_CODEC_NAME(Audio, "opus");
   EXPECT_MEDIA_LOG(InitSegmentMissesExpectedTrack("vp9"));
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 }
 
-TEST_P(SourceBufferStateTest, TrackIdsChangeInSecondInitSegment) {
+TEST_F(SourceBufferStateTest, TrackIdsChangeInSecondInitSegment) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus,vp9");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddAudioTrack(tracks, kCodecOpus, 1);
   AddVideoTrack(tracks, kCodecVP9, 2);
-  EXPECT_MEDIA_LOG(FoundStream("audio"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "opus"));
-  EXPECT_MEDIA_LOG(FoundStream("video"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp9"));
+  EXPECT_FOUND_CODEC_NAME(Audio, "opus");
+  EXPECT_FOUND_CODEC_NAME(Video, "vp9");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   AppendDataAndReportTracks(sbs, std::move(tracks));
 
@@ -268,16 +256,15 @@ TEST_P(SourceBufferStateTest, TrackIdsChangeInSecondInitSegment) {
   AppendDataAndReportTracks(sbs, std::move(tracks2));
 }
 
-TEST_P(SourceBufferStateTest, TrackIdChangeWithTwoAudioTracks) {
+TEST_F(SourceBufferStateTest, TrackIdChangeWithTwoAudioTracks) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vorbis,opus");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddAudioTrack(tracks, kCodecVorbis, 1);
   AddAudioTrack(tracks, kCodecOpus, 2);
-  EXPECT_MEDIA_LOG(FoundStream("audio")).Times(2);
-  EXPECT_MEDIA_LOG(CodecName("audio", "vorbis"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "opus"));
+  EXPECT_FOUND_CODEC_NAME(Audio, "vorbis");
+  EXPECT_FOUND_CODEC_NAME(Audio, "opus");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   EXPECT_TRUE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 
@@ -298,16 +285,15 @@ TEST_P(SourceBufferStateTest, TrackIdChangeWithTwoAudioTracks) {
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks3)));
 }
 
-TEST_P(SourceBufferStateTest, TrackIdChangeWithTwoVideoTracks) {
+TEST_F(SourceBufferStateTest, TrackIdChangeWithTwoVideoTracks) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("vp8,vp9");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddVideoTrack(tracks, kCodecVP8, 1);
   AddVideoTrack(tracks, kCodecVP9, 2);
-  EXPECT_MEDIA_LOG(FoundStream("video")).Times(2);
-  EXPECT_MEDIA_LOG(CodecName("video", "vp8"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp9"));
+  EXPECT_FOUND_CODEC_NAME(Video, "vp8");
+  EXPECT_FOUND_CODEC_NAME(Video, "vp9");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   EXPECT_TRUE(AppendDataAndReportTracks(sbs, std::move(tracks)));
 
@@ -328,17 +314,15 @@ TEST_P(SourceBufferStateTest, TrackIdChangeWithTwoVideoTracks) {
   EXPECT_FALSE(AppendDataAndReportTracks(sbs, std::move(tracks3)));
 }
 
-TEST_P(SourceBufferStateTest, TrackIdsSwappedInSecondInitSegment) {
+TEST_F(SourceBufferStateTest, TrackIdsSwappedInSecondInitSegment) {
   std::unique_ptr<SourceBufferState> sbs =
       CreateAndInitSourceBufferState("opus,vp9");
 
   std::unique_ptr<MediaTracks> tracks(new MediaTracks());
   AddAudioTrack(tracks, kCodecOpus, 1);
   AddVideoTrack(tracks, kCodecVP9, 2);
-  EXPECT_MEDIA_LOG(FoundStream("audio"));
-  EXPECT_MEDIA_LOG(CodecName("audio", "opus"));
-  EXPECT_MEDIA_LOG(FoundStream("video"));
-  EXPECT_MEDIA_LOG(CodecName("video", "vp9"));
+  EXPECT_FOUND_CODEC_NAME(Audio, "opus");
+  EXPECT_FOUND_CODEC_NAME(Video, "vp9");
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   AppendDataAndReportTracks(sbs, std::move(tracks));
 
@@ -349,12 +333,5 @@ TEST_P(SourceBufferStateTest, TrackIdsSwappedInSecondInitSegment) {
   EXPECT_CALL(*this, MediaTracksUpdatedMock(_));
   AppendDataAndReportTracks(sbs, std::move(tracks2));
 }
-
-INSTANTIATE_TEST_CASE_P(LegacyByDts,
-                        SourceBufferStateTest,
-                        Values(ChunkDemuxerStream::RangeApi::kLegacyByDts));
-INSTANTIATE_TEST_CASE_P(NewByPts,
-                        SourceBufferStateTest,
-                        Values(ChunkDemuxerStream::RangeApi::kNewByPts));
 
 }  // namespace media

@@ -4,15 +4,17 @@
 
 #include "third_party/blink/renderer/core/paint/object_painter_base.h"
 
+#include "base/optional.h"
 #include "third_party/blink/renderer/core/paint/box_border_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/style/border_edge.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
-#include "third_party/blink/renderer/platform/geometry/layout_point.h"
 #include "third_party/blink/renderer/platform/graphics/color.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace blink {
 
@@ -96,7 +98,7 @@ void PaintComplexOutline(GraphicsContext& graphics_context,
 
   // Construct a clockwise path along the outer edge of the outline.
   SkRegion region;
-  int width = style.OutlineWidth();
+  uint16_t width = style.OutlineWidth();
   int outset = style.OutlineOffset() + style.OutlineWidth();
   for (auto& r : rects) {
     IntRect rect = r;
@@ -112,8 +114,8 @@ void PaintComplexOutline(GraphicsContext& graphics_context,
   SkPath::Iter iter(path, false);
   SkPoint points[4];
   wtf_size_t count = 0;
-  for (SkPath::Verb verb = iter.next(points, false); verb != SkPath::kDone_Verb;
-       verb = iter.next(points, false)) {
+  for (SkPath::Verb verb = iter.next(points); verb != SkPath::kDone_Verb;
+       verb = iter.next(points)) {
     if (verb != SkPath::kLine_Verb)
       continue;
 
@@ -189,10 +191,10 @@ void PaintSingleRectangleOutline(const PaintInfo& paint_info,
                                  const Color& color) {
   DCHECK(!style.OutlineStyleIsAuto());
 
-  LayoutRect inner(rect);
-  inner.Inflate(style.OutlineOffset());
-  LayoutRect outer(inner);
-  outer.Inflate(style.OutlineWidth());
+  PhysicalRect inner(rect);
+  inner.Inflate(LayoutUnit(style.OutlineOffset()));
+  PhysicalRect outer(inner);
+  outer.Inflate(LayoutUnit(style.OutlineWidth()));
   const BorderEdge common_edge_info(style.OutlineWidth(), color,
                                     style.OutlineStyle());
   BoxBorderPainter(style, outer, inner, common_edge_info)
@@ -487,11 +489,51 @@ void DrawSolidBoxSide(GraphicsContext& graphics_context,
   FillQuad(graphics_context, quad, color, antialias);
 }
 
+float GetFocusRingBorderRadius(const ComputedStyle& style) {
+  // Default style is border-radius equal to outline width.
+  float border_radius = style.GetOutlineStrokeWidthForFocusRing();
+
+  if (::features::IsFormControlsRefreshEnabled() && !style.HasAuthorBorder() &&
+      style.HasEffectiveAppearance()) {
+    // For the elements that have not been styled and that have an appearance,
+    // the focus ring should use the same border radius as the one used for
+    // drawing the element.
+    base::Optional<ui::NativeTheme::Part> part;
+    switch (style.EffectiveAppearance()) {
+      case kCheckboxPart:
+        part = ui::NativeTheme::kCheckbox;
+        break;
+      case kRadioPart:
+        part = ui::NativeTheme::kRadio;
+        break;
+      case kPushButtonPart:
+      case kSquareButtonPart:
+      case kButtonPart:
+        part = ui::NativeTheme::kPushButton;
+        break;
+      case kTextFieldPart:
+      case kTextAreaPart:
+      case kSearchFieldPart:
+        part = ui::NativeTheme::kTextField;
+        break;
+      default:
+        break;
+    }
+    if (part) {
+      return ui::NativeTheme::GetInstanceForWeb()->GetBorderRadiusForPart(
+          part.value(), style.Width().GetFloatValue(),
+          style.Height().GetFloatValue(), style.EffectiveZoom());
+    }
+  }
+
+  return border_radius;
+}
+
 }  // anonymous namespace
 
 void ObjectPainterBase::PaintOutlineRects(
     const PaintInfo& paint_info,
-    const Vector<LayoutRect>& outline_rects,
+    const Vector<PhysicalRect>& outline_rects,
     const ComputedStyle& style) {
   Vector<IntRect> pixel_snapped_outline_rects;
   for (auto& r : outline_rects)
@@ -499,9 +541,18 @@ void ObjectPainterBase::PaintOutlineRects(
 
   Color color = style.VisitedDependentColor(GetCSSPropertyOutlineColor());
   if (style.OutlineStyleIsAuto()) {
-    paint_info.context.DrawFocusRing(pixel_snapped_outline_rects,
-                                     style.GetOutlineStrokeWidthForFocusRing(),
-                                     style.OutlineOffset(), color);
+    // Logic in draw focus ring is dependent on whether the border is large
+    // enough to have an inset outline. Use the smallest border edge for that
+    // test.
+    float min_border_width =
+        std::min(std::min(style.BorderTopWidth(), style.BorderBottomWidth()),
+                 std::min(style.BorderLeftWidth(), style.BorderRightWidth()));
+    float border_radius = GetFocusRingBorderRadius(style);
+    paint_info.context.DrawFocusRing(
+        pixel_snapped_outline_rects, style.GetOutlineStrokeWidthForFocusRing(),
+        style.OutlineOffset(), style.GetDefaultOffsetForFocusRing(),
+        border_radius, min_border_width, color,
+        LayoutTheme::GetTheme().IsFocusRingOutset());
     return;
   }
 

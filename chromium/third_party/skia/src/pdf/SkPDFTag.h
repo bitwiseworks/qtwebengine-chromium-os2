@@ -8,24 +8,31 @@
 #ifndef SkPDFTag_DEFINED
 #define SkPDFTag_DEFINED
 
-#include "SkPDFDocument.h"
-#include "SkTArray.h"
-#include "SkArenaAlloc.h"
-#include "SkTHash.h"
+#include "include/docs/SkPDFDocument.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTHash.h"
+#include "src/core/SkArenaAlloc.h"
 
 class SkPDFDocument;
+struct SkPDFIndirectReference;
 struct SkPDFTagNode;
 
 class SkPDFTagTree {
 public:
     SkPDFTagTree();
     ~SkPDFTagTree();
-    void init(const SkPDF::StructureElementNode*);
+    void init(SkPDF::StructureElementNode*);
     void reset();
     int getMarkIdForNodeId(int nodeId, unsigned pageIndex);
+    void addNodeAnnotation(int nodeId, SkPDFIndirectReference annotationRef);
     SkPDFIndirectReference makeStructTreeRoot(SkPDFDocument* doc);
 
 private:
+    static void Copy(SkPDF::StructureElementNode& node,
+                     SkPDFTagNode* dst,
+                     SkArenaAlloc* arena,
+                     SkTHashMap<int, SkPDFTagNode*>* nodeMap);
+
     SkArenaAlloc fArena;
     SkTHashMap<int, SkPDFTagNode*> fNodeMap;
     SkPDFTagNode* fRoot = nullptr;

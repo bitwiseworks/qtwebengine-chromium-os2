@@ -18,7 +18,6 @@ IdlTypes are picklable because we store them in interfaces_info.
 
 from collections import defaultdict
 
-
 ################################################################################
 # IDL types
 ################################################################################
@@ -35,25 +34,26 @@ INTEGER_TYPES = frozenset([
     'long long',
     'unsigned long long',
 ])
-NUMERIC_TYPES = (INTEGER_TYPES | frozenset([
-    # http://www.w3.org/TR/WebIDL/#dfn-numeric-type
-    'float',
-    'unrestricted float',
-    'double',
-    'unrestricted double',
-]))
+NUMERIC_TYPES = (
+    INTEGER_TYPES | frozenset([
+        # http://www.w3.org/TR/WebIDL/#dfn-numeric-type
+        'float',
+        'unrestricted float',
+        'double',
+        'unrestricted double',
+    ]))
 # http://www.w3.org/TR/WebIDL/#dfn-primitive-type
 PRIMITIVE_TYPES = (frozenset(['boolean']) | NUMERIC_TYPES)
-BASIC_TYPES = (PRIMITIVE_TYPES | frozenset([
-    # Built-in, non-composite, non-object data types
-    # http://heycam.github.io/webidl/#idl-types
-    'DOMString',
-    'ByteString',
-    'USVString',
-    'Date',
-    # http://heycam.github.io/webidl/#idl-types
-    'void',
-]))
+BASIC_TYPES = (
+    PRIMITIVE_TYPES | frozenset([
+        # Built-in, non-composite, non-object data types
+        # http://heycam.github.io/webidl/#idl-types
+        'DOMString',
+        'ByteString',
+        'USVString',
+        # http://heycam.github.io/webidl/#idl-types
+        'void',
+    ]))
 TYPE_NAMES = {
     # http://heycam.github.io/webidl/#dfn-type-name
     'any': 'Any',
@@ -74,7 +74,6 @@ TYPE_NAMES = {
     'ByteString': 'ByteString',
     'USVString': 'USVString',
     'object': 'Object',
-    'Date': 'Date',
 }
 
 STRING_TYPES = frozenset([
@@ -85,16 +84,11 @@ STRING_TYPES = frozenset([
     'USVString',
 ])
 
-NON_STANDARD_CALLBACK_FUNCTIONS = frozenset([
-    # |CallbackFunctionTreatedAsScriptValue| is interpreted as a callback
-    # function type, but converted to |ScriptValue| instead of a subclass of
-    # |CallbackFunctionBase|.
-    'CallbackFunctionTreatedAsScriptValue',
-])
-
 EXTENDED_ATTRIBUTES_APPLICABLE_TO_TYPES = frozenset([
+    'AllowShared',
     'Clamp',
     'EnforceRange',
+    'StringContext',
     'TreatNullAs',
 ])
 
@@ -104,9 +98,10 @@ EXTENDED_ATTRIBUTES_APPLICABLE_TO_TYPES = frozenset([
 
 ancestors = defaultdict(list)  # interface_name -> ancestors
 
+
 def inherits_interface(interface_name, ancestor_name):
-    return (interface_name == ancestor_name or
-            ancestor_name in ancestors[interface_name])
+    return (interface_name == ancestor_name
+            or ancestor_name in ancestors[interface_name])
 
 
 def set_ancestors(new_ancestors):
@@ -114,11 +109,12 @@ def set_ancestors(new_ancestors):
 
 
 class IdlTypeBase(object):
-    """Base class for IdlType, IdlUnionType, IdlArrayOrSequenceType and IdlNullableType."""
+    """Base class for IdlType, IdlUnionType, IdlArrayOrSequenceType
+    and IdlNullableType.
+    """
 
     def __str__(self):
-        raise NotImplementedError(
-            '__str__() should be defined in subclasses')
+        raise NotImplementedError('__str__() should be defined in subclasses')
 
     def __getattr__(self, name):
         # Default undefined attributes to None (analogous to Jinja variables).
@@ -139,6 +135,7 @@ class IdlTypeBase(object):
 ################################################################################
 # IdlType
 ################################################################################
+
 
 class IdlType(IdlTypeBase):
     # FIXME: incorporate Nullable, etc.
@@ -173,14 +170,10 @@ class IdlType(IdlTypeBase):
 
     @property
     def is_callback_function(self):  # pylint: disable=C0103
-        return self.base_type in IdlType.callback_functions or self.base_type in NON_STANDARD_CALLBACK_FUNCTIONS
+        return self.base_type in IdlType.callback_functions
 
     @property
     def is_custom_callback_function(self):
-        # Treat non standard callback functions as custom as they have different
-        # cpp_type, etc.
-        if self.base_type in NON_STANDARD_CALLBACK_FUNCTIONS:
-            return True
         entry = IdlType.callback_functions.get(self.base_type)
         callback_function = entry.get('callback_function')
         if not callback_function:
@@ -197,8 +190,8 @@ class IdlType(IdlTypeBase):
 
     @property
     def is_enum(self):
-        # FIXME: add an IdlEnumType class and a resolve_enums step at end of
-        # IdlDefinitions constructor
+        # FIXME: add an IdlEnumType class and a resolve_enums step
+        # at end of IdlDefinitions constructor
         return self.name in IdlType.enums
 
     @property
@@ -231,13 +224,10 @@ class IdlType(IdlTypeBase):
         # http://www.w3.org/TR/WebIDL/#idl-types
         # http://www.w3.org/TR/WebIDL/#idl-interface
         # In C++ these are RefPtr types.
-        return not(self.is_basic_type or
-                   self.is_callback_function or
-                   self.is_dictionary or
-                   self.is_enum or
-                   self.name == 'Any' or
-                   self.name == 'Object' or
-                   self.name == 'Promise')  # Promise will be basic in future
+        return not (self.is_basic_type or self.is_callback_function
+                    or self.is_dictionary or self.is_enum or self.name == 'Any'
+                    or self.name == 'Object' or self.name == 'Promise'
+                    )  # Promise will be basic in future
 
     @property
     def is_string_type(self):
@@ -269,14 +259,21 @@ class IdlType(IdlTypeBase):
         cls.enums.update(new_enums)
 
     def resolve_typedefs(self, typedefs):
-        # This function either returns |self| or a different object.
-        # FIXME: Rename typedefs_resolved().
-        return typedefs.get(self.base_type, self)
+        base_type = self.base_type
+        if base_type in typedefs:
+            resolved_type = typedefs[base_type]
+            if resolved_type.base_type in typedefs:
+                raise ValueError("We can't typedef a typedef'ed type.")
+            # For the case that the resolved type contains other typedef'ed
+            # type(s).
+            return resolved_type.resolve_typedefs(typedefs)
+        return self
 
 
 ################################################################################
 # IdlUnionType
 ################################################################################
+
 
 class IdlUnionType(IdlTypeBase):
     # http://heycam.github.io/webidl/#idl-union
@@ -287,7 +284,8 @@ class IdlUnionType(IdlTypeBase):
         self.member_types = member_types
 
     def __str__(self):
-        return '(' + ' or '.join(str(member_type) for member_type in self.member_types) + ')'
+        return '(' + ' or '.join(
+            str(member_type) for member_type in self.member_types) + ')'
 
     def __hash__(self):
         return hash(self.name)
@@ -309,14 +307,16 @@ class IdlUnionType(IdlTypeBase):
 
         https://heycam.github.io/webidl/#dfn-flattened-union-member-types
         """
-        # We cannot use a set directly because each member is an IdlTypeBase-derived class, and
-        # comparing two objects of the same type is not the same as comparing their names. In
-        # other words:
+        # We cannot use a set directly because each member is an
+        # IdlTypeBase-derived class, and comparing two objects of the
+        # same type is not the same as comparing their names.
+        # In other words:
         #   x = IdlType('ByteString')
         #   y = IdlType('ByteString')
         #   x == y  # False
         #   x.name == y.name  # True
-        # |flattened_members|'s keys are type names, the values are type |objects.
+        # |flattened_members|'s keys are type names, the values are type
+        # |objects|.
         # We assume we can use two IDL objects of the same type interchangeably.
         flattened_members = {}
         for member in self.member_types:
@@ -357,8 +357,8 @@ class IdlUnionType(IdlTypeBase):
     @property
     def string_member_type(self):
         return self.single_matching_member_type(
-            lambda member_type: (member_type.is_string_type or
-                                 member_type.is_enum))
+            lambda member_type: (member_type.is_string_type or member_type.is_enum)
+        )
 
     @property
     def numeric_member_type(self):
@@ -376,6 +376,11 @@ class IdlUnionType(IdlTypeBase):
             lambda member_type: member_type.is_sequence_type)
 
     @property
+    def dictionary_member_type(self):
+        return self.single_matching_member_type(
+            lambda member_type: member_type.is_dictionary)
+
+    @property
     def as_union_type(self):
         # Note: Use this to "look through" a possible IdlNullableType wrapper.
         return self
@@ -391,7 +396,8 @@ class IdlUnionType(IdlTypeBase):
     def resolve_typedefs(self, typedefs):
         self.member_types = [
             member_type.resolve_typedefs(typedefs)
-            for member_type in self.member_types]
+            for member_type in self.member_types
+        ]
         return self
 
     def idl_types(self):
@@ -404,6 +410,7 @@ class IdlUnionType(IdlTypeBase):
 ################################################################################
 # IdlArrayOrSequenceType, IdlSequenceType, IdlFrozenArrayType
 ################################################################################
+
 
 # TODO(bashi): Rename this like "IdlArrayTypeBase" or something.
 class IdlArrayOrSequenceType(IdlTypeBase):
@@ -487,6 +494,7 @@ class IdlFrozenArrayType(IdlArrayOrSequenceType):
 # IdlRecordType
 ################################################################################
 
+
 class IdlRecordType(IdlTypeBase):
     def __init__(self, key_type, value_type):
         super(IdlRecordType, self).__init__()
@@ -531,9 +539,30 @@ class IdlRecordType(IdlTypeBase):
 # IdlNullableType
 ################################################################################
 
+
+# https://heycam.github.io/webidl/#idl-nullable-type
 class IdlNullableType(IdlTypeBase):
     def __init__(self, inner_type):
         super(IdlNullableType, self).__init__()
+        if inner_type.name == 'Any':
+            raise ValueError('Inner type of nullable type must not be any.')
+        if inner_type.name == 'Promise':
+            raise ValueError(
+                'Inner type of nullable type must not be a promise.')
+        if inner_type.is_nullable:
+            raise ValueError(
+                'Inner type of nullable type must not be a nullable type.')
+        if inner_type.is_union_type:
+            if inner_type.number_of_nullable_member_types > 0:
+                raise ValueError(
+                    'Inner type of nullable type must not be a union type that '
+                    'itself includes a nullable type.')
+            if any(member.is_dictionary
+                   for member in inner_type.flattened_member_types):
+                raise ValueError(
+                    'Inner type of nullable type must not be a union type that '
+                    'has a dictionary type as its members.')
+
         self.inner_type = inner_type
 
     def __str__(self):
@@ -587,9 +616,11 @@ class IdlNullableType(IdlTypeBase):
 # IdlAnnotatedType
 ################################################################################
 
+
 class IdlAnnotatedType(IdlTypeBase):
     """IdlAnnoatedType represents an IDL type with extended attributes.
-    [Clamp], [EnforceRange], and [TreatNullAs] are applicable to types.
+    [Clamp], [EnforceRange], [StringContext], and [TreatNullAs] are applicable
+    to types.
     https://heycam.github.io/webidl/#idl-annotated-types
     """
 
@@ -600,11 +631,18 @@ class IdlAnnotatedType(IdlTypeBase):
 
         if any(key not in EXTENDED_ATTRIBUTES_APPLICABLE_TO_TYPES
                for key in extended_attributes):
-            raise ValueError('Extended attributes not applicable to types: %s' % self)
+            raise ValueError(
+                'Extended attributes not applicable to types: %s' % self)
+
+        if ('StringContext' in extended_attributes
+                and inner_type.base_type not in ['DOMString', 'USVString']):
+            raise ValueError(
+                'StringContext is only applicable to string types.')
 
     def __str__(self):
-        annotation = ', '.join((key + ('' if val is None else '=' + val))
-                               for key, val in self.extended_attributes.iteritems())
+        annotation = ', '.join(
+            (key + ('' if val is None else '=' + val))
+            for key, val in self.extended_attributes.items())
         return '[%s] %s' % (annotation, str(self.inner_type))
 
     def __getattr__(self, name):
@@ -625,9 +663,14 @@ class IdlAnnotatedType(IdlTypeBase):
         return True
 
     @property
+    def has_string_context(self):
+        return 'StringContext' in self.extended_attributes
+
+    @property
     def name(self):
-        annotation = ''.join((key + ('' if val is None else val))
-                             for key, val in sorted(self.extended_attributes.iteritems()))
+        annotation = ''.join(
+            (key + ('' if val is None else val))
+            for key, val in sorted(self.extended_attributes.items()))
         return self.inner_type.name + annotation
 
     def resolve_typedefs(self, typedefs):

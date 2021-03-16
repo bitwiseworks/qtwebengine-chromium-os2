@@ -41,11 +41,6 @@ set pragma_def {
   ARG:  SQLITE_NullCallback
   IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 
-  NAME: legacy_file_format
-  TYPE: FLAG
-  ARG:  SQLITE_LegacyFileFmt
-  IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
-
   NAME: fullfsync
   TYPE: FLAG
   ARG:  SQLITE_FullFSync
@@ -131,6 +126,11 @@ set pragma_def {
   NAME: recursive_triggers
   TYPE: FLAG
   ARG:  SQLITE_RecTriggers
+  IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
+
+  NAME: trusted_schema
+  TYPE: FLAG
+  ARG:  SQLITE_TrustedSchema
   IF:   !defined(SQLITE_OMIT_FLAG_PRAGMAS)
 
   NAME: foreign_keys
@@ -262,21 +262,21 @@ set pragma_def {
 
   NAME: function_list
   FLAG: Result0
-  COLS: name builtin
+  COLS: name builtin type enc narg flags
   IF:   !defined(SQLITE_OMIT_SCHEMA_PRAGMAS)
-  IF:   defined(SQLITE_INTROSPECTION_PRAGMAS)
+  IF:   !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
 
   NAME: module_list
   FLAG: Result0
   COLS: name
   IF:   !defined(SQLITE_OMIT_SCHEMA_PRAGMAS)
   IF:   !defined(SQLITE_OMIT_VIRTUALTABLE)
-  IF:   defined(SQLITE_INTROSPECTION_PRAGMAS)
+  IF:   !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
 
   NAME: pragma_list
   FLAG: Result0
   COLS: name
-  IF:   defined(SQLITE_INTROSPECTION_PRAGMAS)
+  IF:   !defined(SQLITE_OMIT_INTROSPECTION_PRAGMAS)
 
   NAME: collation_list
   FLAG: Result0
@@ -301,6 +301,7 @@ set pragma_def {
 
   NAME: case_sensitive_like
   FLAG: NoColumns
+  IF:   !defined(SQLITE_OMIT_CASE_SENSITIVE_LIKE_PRAGMA)
 
   NAME: integrity_check
   FLAG: NeedSchema Result0 Result1
@@ -380,12 +381,12 @@ set pragma_def {
   IF:   defined(SQLITE_HAS_CODEC)
 
   NAME: hexkey
-  TYPE: HEXKEY
+  TYPE: KEY
   ARG:  2
   IF:   defined(SQLITE_HAS_CODEC)
 
   NAME: hexrekey
-  TYPE: HEXKEY
+  TYPE: KEY
   ARG:  3
   IF:   defined(SQLITE_HAS_CODEC)
 
@@ -403,6 +404,9 @@ set pragma_def {
   IF:   defined(SQLITE_HAS_CODEC) || defined(SQLITE_ENABLE_CEROD)
 
   NAME: soft_heap_limit
+  FLAG: Result0
+
+  NAME: hard_heap_limit
   FLAG: Result0
 
   NAME: threads
@@ -465,7 +469,7 @@ foreach line [split $pragma_def \n] {
   foreach {id val} [split $line :] break
   set val [string trim $val]
   if {$id=="NAME"} {
-    record_one
+    record_one    
     set name $val
     set type [string toupper $val]
   } elseif {$id=="TYPE"} {

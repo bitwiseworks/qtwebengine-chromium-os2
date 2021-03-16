@@ -15,22 +15,27 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "content/browser/web_contents/web_contents_impl.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
+#include "ui/gfx/animation/animation.h"
 
 namespace content {
 
 namespace {
 
-// Enables accessibility based on three possible clues that indicate
-// accessibility API usage.
-//
-// TODO(dmazzoni): Rename IAccessible2UsageObserver to something more general.
-class WindowsAccessibilityEnabler : public ui::IAccessible2UsageObserver {
+static bool g_jaws = false;
+static bool g_nvda = false;
+static bool g_supernova = false;
+static bool g_zoomtext = false;
+
+// Enables accessibility based on clues that indicate accessibility API usage.
+class WindowsAccessibilityEnabler
+    : public ui::WinAccessibilityAPIUsageObserver {
  public:
   WindowsAccessibilityEnabler() {}
 
  private:
-  // IAccessible2UsageObserver
+  // WinAccessibilityAPIUsageObserver
   void OnIAccessible2Used() override {
     // When IAccessible2 APIs have been used elsewhere in the codebase,
     // enable basic web accessibility support. (Full screen reader support is
@@ -63,21 +68,47 @@ class WindowsAccessibilityEnabler : public ui::IAccessible2UsageObserver {
     }
   }
 
+  void OnUIAutomationUsed() override {
+    // UI Automation insulates providers from knowing about the client(s) asking
+    // for information. When UI Automation is requested, assume the presence of
+    // a full-fledged accessibility technology and enable full support.
+    BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
+        ui::kAXModeComplete);
+  }
+
   bool screen_reader_honeypot_queried_ = false;
   bool acc_name_called_ = false;
 };
 
+void OnWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (message == WM_SETTINGCHANGE && wparam == SPI_SETCLIENTAREAANIMATION) {
+    gfx::Animation::UpdatePrefersReducedMotion();
+    for (WebContentsImpl* wc : WebContentsImpl::GetAllWebContents()) {
+      wc->GetRenderViewHost()->OnWebkitPreferencesChanged();
+    }
+  }
+}
+
 }  // namespace
 
 void BrowserAccessibilityStateImpl::PlatformInitialize() {
-  ui::GetIAccessible2UsageObserverList().AddObserver(
+  ui::GetWinAccessibilityAPIUsageObserverList().AddObserver(
       new WindowsAccessibilityEnabler());
+
+  singleton_hwnd_observer_.reset(
+      new gfx::SingletonHwndObserver(base::BindRepeating(&OnWndProc)));
 }
 
-void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
-  // NOTE: this method is run from the file thread to reduce jank, since
-  // there's no guarantee these system calls will return quickly. Be careful
-  // not to add any code that isn't safe to run from a non-main thread!
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnUIThread() {}
+
+void BrowserAccessibilityStateImpl::
+    UpdatePlatformSpecificHistogramsOnOtherThread() {
+  // NOTE: this method is run from another thread to reduce jank, since
+  // there's no guarantee these system calls will return quickly. Code that
+  // needs to run in the UI thread can be run in
+  // UpdatePlatformSpecificHistogramsOnUIThread instead.
 
   AUDIODESCRIPTION audio_description = {0};
   audio_description.cbSize = sizeof(AUDIODESCRIPTION);
@@ -85,10 +116,18 @@ void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinAudioDescription",
                         !!audio_description.Enabled);
 
+  // This screen reader flag is nearly meaningless, it is set very often
+  // when there is no screen reader, and is not set for Narrator.
   BOOL win_screen_reader = FALSE;
   SystemParametersInfo(SPI_GETSCREENREADER, 0, &win_screen_reader, 0);
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinScreenReader",
-                        !!win_screen_reader);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinScreenReader", !!win_screen_reader);
+
+  // Better all-encompassing screen reader metric.
+  // See also specific screen reader metrics below, e.g. WinJAWS, WinNVDA.
+  ui::AXMode mode =
+      BrowserAccessibilityStateImpl::GetInstance()->GetAccessibilityMode();
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinScreenReader2",
+                        mode.has_mode(ui::AXMode::kScreenReader));
 
   STICKYKEYS sticky_keys = {0};
   sticky_keys.cbSize = sizeof(STICKYKEYS);
@@ -118,29 +157,41 @@ void BrowserAccessibilityStateImpl::UpdatePlatformSpecificHistograms() {
     return;
 
   // Look for DLLs of assistive technology known to work with Chrome.
-  bool jaws = false;
-  bool nvda = false;
-  bool satogo = false;
-  bool zoomtext = false;
   size_t module_count = bytes_required / sizeof(HMODULE);
+  bool satogo = false;  // Very few users -- do not need uniques
   for (size_t i = 0; i < module_count; i++) {
     TCHAR filename[MAX_PATH];
     GetModuleFileName(modules[i], filename, base::size(filename));
     base::string16 module_name(base::FilePath(filename).BaseName().value());
     if (base::LowerCaseEqualsASCII(module_name, "fsdomsrv.dll"))
-      jaws = true;
-    if (base::LowerCaseEqualsASCII(module_name, "vbufbackend_gecko_ia2.dll"))
-      nvda = true;
+      g_jaws = true;
+    if (base::LowerCaseEqualsASCII(module_name, "vbufbackend_gecko_ia2.dll") ||
+        base::LowerCaseEqualsASCII(module_name, "nvdahelperremote.dll"))
+      g_nvda = true;
     if (base::LowerCaseEqualsASCII(module_name, "stsaw32.dll"))
       satogo = true;
-    if (base::LowerCaseEqualsASCII(module_name, "zslhook.dll"))
-      zoomtext = true;
+    if (base::LowerCaseEqualsASCII(module_name, "dolwinhk.dll"))
+      g_supernova = true;
+    if (base::LowerCaseEqualsASCII(module_name, "zslhook.dll") ||
+        base::LowerCaseEqualsASCII(module_name, "zslhook64.dll"))
+      g_zoomtext = true;
   }
 
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinJAWS", jaws);
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinNVDA", nvda);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinJAWS", g_jaws);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinNVDA", g_nvda);
   UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSAToGo", satogo);
-  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinZoomText", zoomtext);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSupernova", g_supernova);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinZoomText", g_zoomtext);
+}
+
+void BrowserAccessibilityStateImpl::UpdateUniqueUserHistograms() {
+  ui::AXMode mode = GetAccessibilityMode();
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinScreenReader2.EveryReport",
+                        mode.has_mode(ui::AXMode::kScreenReader));
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinJAWS.EveryReport", g_jaws);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinNVDA.EveryReport", g_nvda);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinSupernova.EveryReport", g_supernova);
+  UMA_HISTOGRAM_BOOLEAN("Accessibility.WinZoomText.EveryReport", g_zoomtext);
 }
 
 }  // namespace content

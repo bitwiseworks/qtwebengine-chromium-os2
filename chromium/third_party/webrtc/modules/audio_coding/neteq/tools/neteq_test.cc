@@ -13,27 +13,36 @@
 #include <iomanip>
 #include <iostream>
 
+#include "modules/audio_coding/neteq/default_neteq_factory.h"
 #include "modules/rtp_rtcp/source/byte_io.h"
+#include "system_wrappers/include/clock.h"
 
 namespace webrtc {
 namespace test {
 namespace {
 
-absl::optional<Operations> ActionToOperations(
+absl::optional<NetEq::Operation> ActionToOperations(
     absl::optional<NetEqSimulator::Action> a) {
   if (!a) {
     return absl::nullopt;
   }
   switch (*a) {
     case NetEqSimulator::Action::kAccelerate:
-      return absl::make_optional(kAccelerate);
+      return absl::make_optional(NetEq::Operation::kAccelerate);
     case NetEqSimulator::Action::kExpand:
-      return absl::make_optional(kExpand);
+      return absl::make_optional(NetEq::Operation::kExpand);
     case NetEqSimulator::Action::kNormal:
-      return absl::make_optional(kNormal);
+      return absl::make_optional(NetEq::Operation::kNormal);
     case NetEqSimulator::Action::kPreemptiveExpand:
-      return absl::make_optional(kPreemptiveExpand);
+      return absl::make_optional(NetEq::Operation::kPreemptiveExpand);
   }
+}
+
+std::unique_ptr<NetEq> CreateNetEq(
+    const NetEq::Config& config,
+    Clock* clock,
+    const rtc::scoped_refptr<AudioDecoderFactory>& decoder_factory) {
+  return DefaultNetEqFactory().CreateNetEq(config, decoder_factory, clock);
 }
 
 }  // namespace
@@ -54,10 +63,14 @@ NetEqTest::NetEqTest(const NetEq::Config& config,
                      rtc::scoped_refptr<AudioDecoderFactory> decoder_factory,
                      const DecoderMap& codecs,
                      std::unique_ptr<std::ofstream> text_log,
+                     NetEqFactory* neteq_factory,
                      std::unique_ptr<NetEqInput> input,
                      std::unique_ptr<AudioSink> output,
                      Callbacks callbacks)
-    : neteq_(NetEq::Create(config, decoder_factory)),
+    : clock_(0),
+      neteq_(neteq_factory
+                 ? neteq_factory->CreateNetEq(config, decoder_factory, &clock_)
+                 : CreateNetEq(config, &clock_, decoder_factory)),
       input_(std::move(input)),
       output_(std::move(output)),
       callbacks_(callbacks),
@@ -92,6 +105,7 @@ NetEqTest::SimulationStepResult NetEqTest::RunToNextGetAudio() {
   while (!input_->ended()) {
     // Advance time to next event.
     RTC_DCHECK(input_->NextEventTime());
+    clock_.AdvanceTimeMilliseconds(*input_->NextEventTime() - time_now_ms);
     time_now_ms = *input_->NextEventTime();
     // Check if it is time to insert packet.
     if (input_->NextPacketTime() && time_now_ms >= *input_->NextPacketTime()) {
@@ -102,9 +116,7 @@ NetEqTest::SimulationStepResult NetEqTest::RunToNextGetAudio() {
       if (payload_data_length != 0) {
         int error = neteq_->InsertPacket(
             packet_data->header,
-            rtc::ArrayView<const uint8_t>(packet_data->payload),
-            static_cast<uint32_t>(packet_data->time_ms * sample_rate_hz_ /
-                                  1000));
+            rtc::ArrayView<const uint8_t>(packet_data->payload));
         if (error != NetEq::kOK && callbacks_.error_callback) {
           callbacks_.error_callback->OnInsertPacketError(*packet_data);
         }
@@ -224,8 +236,10 @@ NetEqTest::SimulationStepResult NetEqTest::RunToNextGetAudio() {
             (out_frame.speech_type_ == AudioFrame::SpeechType::kPLCCNG);
         const bool cng = out_frame.speech_type_ == AudioFrame::SpeechType::kCNG;
         const bool voice_concealed =
-            lifetime_stats.voice_concealed_samples >
-            prev_lifetime_stats_.voice_concealed_samples;
+            (lifetime_stats.concealed_samples -
+             lifetime_stats.silent_concealed_samples) >
+            (prev_lifetime_stats_.concealed_samples -
+             prev_lifetime_stats_.silent_concealed_samples);
         *text_log_ << "GetAudio - wallclock: " << std::setw(5) << time_now_ms
                    << ", delta wc: " << std::setw(4)
                    << (input_->NextEventTime().value_or(time_now_ms) -
@@ -250,7 +264,10 @@ NetEqTest::SimulationStepResult NetEqTest::RunToNextGetAudio() {
         }
       }
       prev_lifetime_stats_ = lifetime_stats;
-      result.is_simulation_finished = input_->ended();
+      const bool no_more_packets_to_decode =
+          !input_->NextPacketTime() && !operations_state.next_packet_available;
+      result.is_simulation_finished =
+          no_more_packets_to_decode || input_->ended();
       prev_ops_state_ = operations_state;
       return result;
     }

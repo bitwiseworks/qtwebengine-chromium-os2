@@ -14,11 +14,12 @@
 #include <memory>
 #include <vector>
 
-#include "absl/memory/memory.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/helpers.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/string_encode.h"
 #include "rtc_base/time_utils.h"  // For TimeMillis
+#include "system_wrappers/include/field_trial.h"
 
 namespace cricket {
 
@@ -33,13 +34,18 @@ const int STUN_INITIAL_RTO = 250;  // milliseconds
 // The timeout doubles each retransmission, up to this many times
 // RFC 5389 says SHOULD retransmit 7 times.
 // This has been 8 for years (not sure why).
-const int STUN_MAX_RETRANSMISSIONS = 8;  // Total sends: 9
+const int STUN_MAX_RETRANSMISSIONS = 8;           // Total sends: 9
+const int STUN_MAX_RETRANSMISSIONS_RFC_5389 = 6;  // Total sends: 7
 
 // We also cap the doubling, even though the standard doesn't say to.
 // This has been 1.6 seconds for years, but for networks that
 // experience moments of high RTT (such as 2G networks), this doesn't
 // work well.
 const int STUN_MAX_RTO = 8000;  // milliseconds, or 5 doublings
+
+namespace {
+const char kRfc5389StunRetransmissions[] = "WebRTC-Rfc5389StunRetransmissions";
+}  // namespace
 
 StunRequestManager::StunRequestManager(rtc::Thread* thread) : thread_(thread) {}
 
@@ -69,7 +75,7 @@ void StunRequestManager::SendDelayed(StunRequest* request, int delay) {
 }
 
 void StunRequestManager::Flush(int msg_type) {
-  for (const auto kv : requests_) {
+  for (const auto& kv : requests_) {
     StunRequest* request = kv.second;
     if (msg_type == kAllRequests || msg_type == request->type()) {
       thread_->Clear(request, MSG_STUN_SEND);
@@ -79,7 +85,7 @@ void StunRequestManager::Flush(int msg_type) {
 }
 
 bool StunRequestManager::HasRequest(int msg_type) {
-  for (const auto kv : requests_) {
+  for (const auto& kv : requests_) {
     StunRequest* request = kv.second;
     if (msg_type == kAllRequests || msg_type == request->type()) {
       return true;
@@ -119,7 +125,15 @@ bool StunRequestManager::CheckResponse(StunMessage* msg) {
   }
 
   StunRequest* request = iter->second;
-  if (msg->type() == GetStunSuccessResponseType(request->type())) {
+  if (!msg->GetNonComprehendedAttributes().empty()) {
+    // If a response contains unknown comprehension-required attributes, it's
+    // simply discarded and the transaction is considered failed. See RFC5389
+    // sections 7.3.3 and 7.3.4.
+    RTC_LOG(LS_ERROR) << ": Discarding response due to unknown "
+                         "comprehension-required attribute.";
+    delete request;
+    return false;
+  } else if (msg->type() == GetStunSuccessResponseType(request->type())) {
     request->OnResponse(msg);
   } else if (msg->type() == GetStunErrorResponseType(request->type())) {
     request->OnErrorResponse(msg);
@@ -169,12 +183,20 @@ StunRequest::StunRequest()
       timeout_(false),
       manager_(0),
       msg_(new StunMessage()),
-      tstamp_(0) {
+      tstamp_(0),
+      in_rfc5389_retransmission_experiment_(
+          webrtc::field_trial::IsEnabled(kRfc5389StunRetransmissions)) {
   msg_->SetTransactionID(rtc::CreateRandomString(kStunTransactionIdLength));
 }
 
 StunRequest::StunRequest(StunMessage* request)
-    : count_(0), timeout_(false), manager_(0), msg_(request), tstamp_(0) {
+    : count_(0),
+      timeout_(false),
+      manager_(0),
+      msg_(request),
+      tstamp_(0),
+      in_rfc5389_retransmission_experiment_(
+          webrtc::field_trial::IsEnabled(kRfc5389StunRetransmissions)) {
   msg_->SetTransactionID(rtc::CreateRandomString(kStunTransactionIdLength));
 }
 
@@ -190,8 +212,8 @@ StunRequest::~StunRequest() {
 void StunRequest::Construct() {
   if (msg_->type() == 0) {
     if (!origin_.empty()) {
-      msg_->AddAttribute(absl::make_unique<StunByteStringAttribute>(
-          STUN_ATTR_ORIGIN, origin_));
+      msg_->AddAttribute(
+          std::make_unique<StunByteStringAttribute>(STUN_ATTR_ORIGIN, origin_));
     }
     Prepare(msg_);
     RTC_DCHECK(msg_->type() != 0);
@@ -244,7 +266,9 @@ void StunRequest::OnMessage(rtc::Message* pmsg) {
 void StunRequest::OnSent() {
   count_ += 1;
   int retransmissions = (count_ - 1);
-  if (retransmissions >= STUN_MAX_RETRANSMISSIONS) {
+  if (retransmissions >= STUN_MAX_RETRANSMISSIONS ||
+      (in_rfc5389_retransmission_experiment_ &&
+       retransmissions >= STUN_MAX_RETRANSMISSIONS_RFC_5389)) {
     timeout_ = true;
   }
   RTC_LOG(LS_VERBOSE) << "Sent STUN request " << count_

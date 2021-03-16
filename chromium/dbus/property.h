@@ -83,9 +83,9 @@
 //
 //       Properties* properties = new Properties(
 //           object_proxy,
-//           base::Bind(&PropertyChanged,
-//                      weak_ptr_factory_.GetWeakPtr(),
-//                      object_path));
+//           base::BindRepeating(&PropertyChanged,
+//                               weak_ptr_factory_.GetWeakPtr(),
+//                               object_path));
 //       properties->ConnectSignals();
 //       properties->GetAll();
 //
@@ -109,14 +109,14 @@
 // successful. The updated value can be obtained in the callback using the
 // value() method.
 //
-//   p->children.Get(base::Bind(&OnGetChildren));
+//   p->children.Get(base::BindOnce(&OnGetChildren));
 //
 // A new value can be set using the Set() method, the callback indicates
 // success only; it is up to the remote object when (and indeed if) it updates
 // the property value, and whether it emits a signal or a Get() call is
 // required to obtain it.
 //
-//   p->version.Set(20, base::Bind(&OnSetVersion))
+//   p->version.Set(20, base::BindOnce(&OnSetVersion))
 
 namespace dbus {
 
@@ -213,7 +213,8 @@ class CHROME_DBUS_EXPORT PropertySet {
   // Callback for changes to cached values of properties, either notified
   // via signal, or as a result of calls to Get() and GetAll(). The |name|
   // argument specifies the name of the property changed.
-  typedef base::Callback<void(const std::string& name)> PropertyChangedCallback;
+  using PropertyChangedCallback =
+      base::RepeatingCallback<void(const std::string& name)>;
 
   // Constructs a property set, where |object_proxy| specifies the proxy for
   // the/ remote object that these properties are for, care should be taken to
@@ -250,7 +251,7 @@ class CHROME_DBUS_EXPORT PropertySet {
   // Callback for Get() method, |success| indicates whether or not the
   // value could be retrived, if true the new value can be obtained by
   // calling value() on the property.
-  typedef base::Callback<void(bool success)> GetCallback;
+  using GetCallback = base::OnceCallback<void(bool success)>;
 
   // Requests an updated value from the remote object for |property|
   // incurring a round-trip. |callback| will be called when the new
@@ -274,7 +275,7 @@ class CHROME_DBUS_EXPORT PropertySet {
 
   // Callback for Set() method, |success| indicates whether or not the
   // new property value was accepted by the remote object.
-  typedef base::Callback<void(bool success)> SetCallback;
+  using SetCallback = base::OnceCallback<void(bool success)>;
 
   // Requests that the remote object for |property| change the property to
   // its new value. |callback| will be called to indicate the success or
@@ -346,7 +347,7 @@ class CHROME_DBUS_EXPORT PropertySet {
 
   // Weak pointer factory as D-Bus callbacks may last longer than these
   // objects.
-  base::WeakPtrFactory<PropertySet> weak_ptr_factory_;
+  base::WeakPtrFactory<PropertySet> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PropertySet);
 };
@@ -387,7 +388,7 @@ class CHROME_DBUS_EXPORT Property : public PropertyBase {
   // round-trip. |callback| will be called when the new value is available.
   // This may not be implemented by some interfaces.
   virtual void Get(dbus::PropertySet::GetCallback callback) {
-    property_set()->Get(this, callback);
+    property_set()->Get(this, std::move(callback));
   }
 
   // The synchronous version of Get().
@@ -402,7 +403,7 @@ class CHROME_DBUS_EXPORT Property : public PropertyBase {
   // remote object.
   virtual void Set(const T& value, dbus::PropertySet::SetCallback callback) {
     set_value_ = value;
-    property_set()->Set(this, callback);
+    property_set()->Set(this, std::move(callback));
   }
 
   // The synchronous version of Set().

@@ -31,11 +31,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_WORKERS_ABSTRACT_WORKER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_WORKERS_ABSTRACT_WORKER_H_
 
-#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_state_observer.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -46,23 +46,26 @@ class KURL;
 class ExecutionContext;
 
 // Implementation of the AbstractWorker interface defined in the WebWorker HTML
-// spec: https://html.spec.whatwg.org/multipage/workers.html#abstractworker
-class CORE_EXPORT AbstractWorker : public EventTargetWithInlineData,
-                                   public ContextLifecycleObserver {
+// spec: https://html.spec.whatwg.org/C/#abstractworker
+class CORE_EXPORT AbstractWorker
+    : public EventTargetWithInlineData,
+      public ExecutionContextLifecycleStateObserver {
   USING_GARBAGE_COLLECTED_MIXIN(AbstractWorker);
 
  public:
   // EventTarget APIs
   ExecutionContext* GetExecutionContext() const final {
-    return ContextLifecycleObserver::GetExecutionContext();
+    return ExecutionContextLifecycleObserver::GetExecutionContext();
   }
 
-  DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(error, kError);
+  void ContextDestroyed() override {}
+
+  DEFINE_STATIC_ATTRIBUTE_EVENT_LISTENER(error, kError)
 
   AbstractWorker(ExecutionContext*);
   ~AbstractWorker() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   // Helper function that converts a URL to an absolute URL and checks the

@@ -8,6 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include <assert.h>
 #include <limits.h>
 #include "./vpx_config.h"
 #include "vpx_dsp/vpx_dsp_common.h"
@@ -92,7 +93,7 @@ static INLINE void thread_loop_filter_rows(
     int y_only, VP9LfSync *const lf_sync) {
   const int num_planes = y_only ? 1 : MAX_MB_PLANE;
   const int sb_cols = mi_cols_aligned_to_sb(cm->mi_cols) >> MI_BLOCK_SIZE_LOG2;
-  const int num_active_workers = VPXMIN(lf_sync->num_workers, lf_sync->rows);
+  const int num_active_workers = lf_sync->num_active_workers;
   int mi_row, mi_col;
   enum lf_path path;
   if (y_only)
@@ -103,6 +104,8 @@ static INLINE void thread_loop_filter_rows(
     path = LF_PATH_444;
   else
     path = LF_PATH_SLOW;
+
+  assert(num_active_workers > 0);
 
   for (mi_row = start; mi_row < stop;
        mi_row += num_active_workers * MI_BLOCK_SIZE) {
@@ -172,6 +175,7 @@ static void loop_filter_rows_mt(YV12_BUFFER_CONFIG *frame, VP9_COMMON *cm,
     vp9_loop_filter_dealloc(lf_sync);
     vp9_loop_filter_alloc(lf_sync, cm, sb_rows, cm->width, num_workers);
   }
+  lf_sync->num_active_workers = num_workers;
 
   // Initialize cur_sb_col to -1 for all SB rows.
   memset(lf_sync->cur_sb_col, -1, sizeof(*lf_sync->cur_sb_col) * sb_rows);
@@ -294,7 +298,10 @@ void vp9_loop_filter_alloc(VP9LfSync *lf_sync, VP9_COMMON *cm, int rows,
         pthread_cond_init(&lf_sync->cond[i], NULL);
       }
     }
-    pthread_mutex_init(&lf_sync->lf_mutex, NULL);
+
+    CHECK_MEM_ERROR(cm, lf_sync->lf_mutex,
+                    vpx_malloc(sizeof(*lf_sync->lf_mutex)));
+    pthread_mutex_init(lf_sync->lf_mutex, NULL);
 
     CHECK_MEM_ERROR(cm, lf_sync->recon_done_mutex,
                     vpx_malloc(sizeof(*lf_sync->recon_done_mutex) * rows));
@@ -319,6 +326,7 @@ void vp9_loop_filter_alloc(VP9LfSync *lf_sync, VP9_COMMON *cm, int rows,
   CHECK_MEM_ERROR(cm, lf_sync->lfdata,
                   vpx_malloc(num_workers * sizeof(*lf_sync->lfdata)));
   lf_sync->num_workers = num_workers;
+  lf_sync->num_active_workers = lf_sync->num_workers;
 
   CHECK_MEM_ERROR(cm, lf_sync->cur_sb_col,
                   vpx_malloc(sizeof(*lf_sync->cur_sb_col) * rows));
@@ -334,47 +342,50 @@ void vp9_loop_filter_alloc(VP9LfSync *lf_sync, VP9_COMMON *cm, int rows,
 
 // Deallocate lf synchronization related mutex and data
 void vp9_loop_filter_dealloc(VP9LfSync *lf_sync) {
-  if (lf_sync != NULL) {
+  assert(lf_sync != NULL);
+
 #if CONFIG_MULTITHREAD
+  if (lf_sync->mutex != NULL) {
     int i;
+    for (i = 0; i < lf_sync->rows; ++i) {
+      pthread_mutex_destroy(&lf_sync->mutex[i]);
+    }
+    vpx_free(lf_sync->mutex);
+  }
+  if (lf_sync->cond != NULL) {
+    int i;
+    for (i = 0; i < lf_sync->rows; ++i) {
+      pthread_cond_destroy(&lf_sync->cond[i]);
+    }
+    vpx_free(lf_sync->cond);
+  }
+  if (lf_sync->recon_done_mutex != NULL) {
+    int i;
+    for (i = 0; i < lf_sync->rows; ++i) {
+      pthread_mutex_destroy(&lf_sync->recon_done_mutex[i]);
+    }
+    vpx_free(lf_sync->recon_done_mutex);
+  }
 
-    if (lf_sync->mutex != NULL) {
-      for (i = 0; i < lf_sync->rows; ++i) {
-        pthread_mutex_destroy(&lf_sync->mutex[i]);
-      }
-      vpx_free(lf_sync->mutex);
+  if (lf_sync->lf_mutex != NULL) {
+    pthread_mutex_destroy(lf_sync->lf_mutex);
+    vpx_free(lf_sync->lf_mutex);
+  }
+  if (lf_sync->recon_done_cond != NULL) {
+    int i;
+    for (i = 0; i < lf_sync->rows; ++i) {
+      pthread_cond_destroy(&lf_sync->recon_done_cond[i]);
     }
-    if (lf_sync->cond != NULL) {
-      for (i = 0; i < lf_sync->rows; ++i) {
-        pthread_cond_destroy(&lf_sync->cond[i]);
-      }
-      vpx_free(lf_sync->cond);
-    }
-    if (lf_sync->recon_done_mutex != NULL) {
-      int i;
-      for (i = 0; i < lf_sync->rows; ++i) {
-        pthread_mutex_destroy(&lf_sync->recon_done_mutex[i]);
-      }
-      vpx_free(lf_sync->recon_done_mutex);
-    }
-
-    pthread_mutex_destroy(&lf_sync->lf_mutex);
-    if (lf_sync->recon_done_cond != NULL) {
-      int i;
-      for (i = 0; i < lf_sync->rows; ++i) {
-        pthread_cond_destroy(&lf_sync->recon_done_cond[i]);
-      }
-      vpx_free(lf_sync->recon_done_cond);
-    }
+    vpx_free(lf_sync->recon_done_cond);
+  }
 #endif  // CONFIG_MULTITHREAD
 
-    vpx_free(lf_sync->lfdata);
-    vpx_free(lf_sync->cur_sb_col);
-    vpx_free(lf_sync->num_tiles_done);
-    // clear the structure as the source of this call may be a resize in which
-    // case this call will be followed by an _alloc() which may fail.
-    vp9_zero(*lf_sync);
-  }
+  vpx_free(lf_sync->lfdata);
+  vpx_free(lf_sync->cur_sb_col);
+  vpx_free(lf_sync->num_tiles_done);
+  // clear the structure as the source of this call may be a resize in which
+  // case this call will be followed by an _alloc() which may fail.
+  vp9_zero(*lf_sync);
 }
 
 static int get_next_row(VP9_COMMON *cm, VP9LfSync *lf_sync) {
@@ -385,7 +396,7 @@ static int get_next_row(VP9_COMMON *cm, VP9LfSync *lf_sync) {
 #if CONFIG_MULTITHREAD
   const int tile_cols = 1 << cm->log2_tile_cols;
 
-  pthread_mutex_lock(&lf_sync->lf_mutex);
+  pthread_mutex_lock(lf_sync->lf_mutex);
   if (cm->lf_row < max_rows) {
     cur_row = cm->lf_row >> MI_BLOCK_SIZE_LOG2;
     return_val = cm->lf_row;
@@ -396,7 +407,7 @@ static int get_next_row(VP9_COMMON *cm, VP9LfSync *lf_sync) {
       cur_row += 1;
     }
   }
-  pthread_mutex_unlock(&lf_sync->lf_mutex);
+  pthread_mutex_unlock(lf_sync->lf_mutex);
 
   if (return_val == -1) return return_val;
 
@@ -406,7 +417,7 @@ static int get_next_row(VP9_COMMON *cm, VP9LfSync *lf_sync) {
                       &lf_sync->recon_done_mutex[cur_row]);
   }
   pthread_mutex_unlock(&lf_sync->recon_done_mutex[cur_row]);
-  pthread_mutex_lock(&lf_sync->lf_mutex);
+  pthread_mutex_lock(lf_sync->lf_mutex);
   if (lf_sync->corrupted) {
     int row = return_val >> MI_BLOCK_SIZE_LOG2;
     pthread_mutex_lock(&lf_sync->mutex[row]);
@@ -415,7 +426,7 @@ static int get_next_row(VP9_COMMON *cm, VP9LfSync *lf_sync) {
     pthread_mutex_unlock(&lf_sync->mutex[row]);
     return_val = -1;
   }
-  pthread_mutex_unlock(&lf_sync->lf_mutex);
+  pthread_mutex_unlock(lf_sync->lf_mutex);
 #else
   (void)lf_sync;
   if (cm->lf_row < max_rows) {
@@ -450,9 +461,9 @@ void vp9_loopfilter_rows(LFWorkerData *lf_data, VP9LfSync *lf_sync) {
 void vp9_set_row(VP9LfSync *lf_sync, int num_tiles, int row, int is_last_row,
                  int corrupted) {
 #if CONFIG_MULTITHREAD
-  pthread_mutex_lock(&lf_sync->lf_mutex);
+  pthread_mutex_lock(lf_sync->lf_mutex);
   lf_sync->corrupted |= corrupted;
-  pthread_mutex_unlock(&lf_sync->lf_mutex);
+  pthread_mutex_unlock(lf_sync->lf_mutex);
   pthread_mutex_lock(&lf_sync->recon_done_mutex[row]);
   lf_sync->num_tiles_done[row] += 1;
   if (num_tiles == lf_sync->num_tiles_done[row]) {
@@ -473,6 +484,12 @@ void vp9_set_row(VP9LfSync *lf_sync, int num_tiles, int row, int is_last_row,
   (void)is_last_row;
   (void)corrupted;
 #endif  // CONFIG_MULTITHREAD
+}
+
+void vp9_loopfilter_job(LFWorkerData *lf_data, VP9LfSync *lf_sync) {
+  thread_loop_filter_rows(lf_data->frame_buffer, lf_data->cm, lf_data->planes,
+                          lf_data->start, lf_data->stop, lf_data->y_only,
+                          lf_sync);
 }
 
 // Accumulate frame counts.

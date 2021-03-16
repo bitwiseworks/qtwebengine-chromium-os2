@@ -33,13 +33,10 @@ void FlingScheduler::ScheduleFlingProgress(
     return;
 
   ui::Compositor* compositor = GetCompositor();
-  // If a ui::Compositor can't be obtained, ask the host for BeginFrames.
-  if (!compositor) {
-    host_->SetNeedsBeginFrameForFlingProgress();
-    return;
+  if (compositor) {
+    compositor->AddAnimationObserver(this);
+    observed_compositor_ = compositor;
   }
-  compositor->AddAnimationObserver(this);
-  observed_compositor_ = compositor;
 }
 
 void FlingScheduler::DidStopFlingingOnBrowser(
@@ -71,6 +68,10 @@ void FlingScheduler::ProgressFlingOnBeginFrameIfneeded(
 }
 
 ui::Compositor* FlingScheduler::GetCompositor() {
+#if defined(TOOLKIT_QT)
+  if (host_->GetView())
+    return host_->GetView()->GetCompositor();
+#endif
 #if defined(USE_AURA)
   if (host_->GetView() && host_->GetView()->GetNativeView() &&
       host_->GetView()->GetNativeView()->GetHost() &&

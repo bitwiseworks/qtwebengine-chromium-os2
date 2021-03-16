@@ -42,7 +42,7 @@ namespace blink {
 PerformanceNavigation::PerformanceNavigation(LocalFrame* frame)
     : DOMWindowClient(frame) {}
 
-unsigned short PerformanceNavigation::type() const {
+uint8_t PerformanceNavigation::type() const {
   if (!GetFrame())
     return kTypeNavigate;
 
@@ -60,7 +60,7 @@ unsigned short PerformanceNavigation::type() const {
   }
 }
 
-unsigned short PerformanceNavigation::redirectCount() const {
+uint16_t PerformanceNavigation::redirectCount() const {
   if (!GetFrame())
     return 0;
 
@@ -83,7 +83,7 @@ ScriptValue PerformanceNavigation::toJSONForBinding(
   return result.GetScriptValue();
 }
 
-void PerformanceNavigation::Trace(blink::Visitor* visitor) {
+void PerformanceNavigation::Trace(Visitor* visitor) {
   ScriptWrappable::Trace(visitor);
   DOMWindowClient::Trace(visitor);
 }

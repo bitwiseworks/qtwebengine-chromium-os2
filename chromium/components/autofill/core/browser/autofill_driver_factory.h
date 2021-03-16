@@ -34,7 +34,7 @@ class AutofillDriverFactory {
   // Handles hiding of the corresponding tab.
   void TabHidden();
 
-  AutofillClient* client() { return client_; };
+  AutofillClient* client() { return client_; }
 
  protected:
   // The API manipulating the drivers map is protected to guarantee subclasses
@@ -45,7 +45,8 @@ class AutofillDriverFactory {
   // end up notifying the driver that a user gesture has been observed.
   void AddForKey(
       void* key,
-      base::Callback<std::unique_ptr<AutofillDriver>()> factory_method);
+      const base::RepeatingCallback<std::unique_ptr<AutofillDriver>()>&
+          factory_method);
 
   // Deletes the AutofillDriver for |key|.
   void DeleteForKey(void* key);

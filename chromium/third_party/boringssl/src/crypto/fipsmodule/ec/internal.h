@@ -140,16 +140,15 @@ struct ec_method_st {
   // dbl sets |r| to |a| + |a|.
   void (*dbl)(const EC_GROUP *group, EC_RAW_POINT *r, const EC_RAW_POINT *a);
 
-  // Computes |r = g_scalar*generator + p_scalar*p| if |g_scalar| and |p_scalar|
-  // are both non-null. Computes |r = g_scalar*generator| if |p_scalar| is null.
-  // Computes |r = p_scalar*p| if g_scalar is null. At least one of |g_scalar|
-  // and |p_scalar| must be non-null, and |p| must be non-null if |p_scalar| is
-  // non-null.
-  void (*mul)(const EC_GROUP *group, EC_RAW_POINT *r, const EC_SCALAR *g_scalar,
-              const EC_RAW_POINT *p, const EC_SCALAR *p_scalar);
-  // mul_public performs the same computation as mul. It further assumes that
-  // the inputs are public so there is no concern about leaking their values
-  // through timing.
+  // mul sets |r| to |scalar|*|p|.
+  void (*mul)(const EC_GROUP *group, EC_RAW_POINT *r, const EC_RAW_POINT *p,
+              const EC_SCALAR *scalar);
+  // mul_base sets |r| to |scalar|*generator.
+  void (*mul_base)(const EC_GROUP *group, EC_RAW_POINT *r,
+                   const EC_SCALAR *scalar);
+  // mul_public sets |r| to |g_scalar|*generator + |p_scalar|*|p|. It assumes
+  // that the inputs are public so there is no concern about leaking their
+  // values through timing.
   void (*mul_public)(const EC_GROUP *group, EC_RAW_POINT *r,
                      const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
                      const EC_SCALAR *p_scalar);
@@ -285,6 +284,18 @@ int ec_felem_equal(const EC_GROUP *group, const EC_FELEM *a, const EC_FELEM *b);
 OPENSSL_EXPORT int ec_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
                                        const BIGNUM *in);
 
+// ec_scalar_to_bytes serializes |in| as a big-endian bytestring to |out| and
+// sets |*out_len| to the number of bytes written. The number of bytes written
+// is |BN_num_bytes(&group->order)|, which is at most |EC_MAX_BYTES|.
+void ec_scalar_to_bytes(const EC_GROUP *group, uint8_t *out, size_t *out_len,
+                        const EC_SCALAR *in);
+
+// ec_scalar_from_bytes deserializes |in| and stores the resulting scalar over
+// group |group| to |out|. It returns one on success and zero if |in| is
+// invalid.
+int ec_scalar_from_bytes(const EC_GROUP *group, EC_SCALAR *out,
+                         const uint8_t *in, size_t len);
+
 // ec_random_nonzero_scalar sets |out| to a uniformly selected random value from
 // 1 to |group->order| - 1. It returns one on success and zero on error.
 int ec_random_nonzero_scalar(const EC_GROUP *group, EC_SCALAR *out,
@@ -325,17 +336,19 @@ void ec_scalar_inv_montgomery(const EC_GROUP *group, EC_SCALAR *r,
 int ec_scalar_inv_montgomery_vartime(const EC_GROUP *group, EC_SCALAR *r,
                                      const EC_SCALAR *a);
 
-// ec_point_mul_scalar sets |r| to generator * |g_scalar| + |p| *
-// |p_scalar|. Unlike other functions which take |EC_SCALAR|, |g_scalar| and
-// |p_scalar| need not be fully reduced. They need only contain as many bits as
-// the order.
+// ec_point_mul_scalar sets |r| to |p| * |scalar|. Both inputs are considered
+// secret.
 int ec_point_mul_scalar(const EC_GROUP *group, EC_RAW_POINT *r,
-                        const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
-                        const EC_SCALAR *p_scalar);
+                        const EC_RAW_POINT *p, const EC_SCALAR *scalar);
 
-// ec_point_mul_scalar_public performs the same computation as
-// ec_point_mul_scalar.  It further assumes that the inputs are public so
-// there is no concern about leaking their values through timing.
+// ec_point_mul_scalar_base sets |r| to generator * |scalar|. |scalar| is
+// treated as secret.
+int ec_point_mul_scalar_base(const EC_GROUP *group, EC_RAW_POINT *r,
+                             const EC_SCALAR *scalar);
+
+// ec_point_mul_scalar_public sets |r| to
+// generator * |g_scalar| + |p| * |p_scalar|. It assumes that the inputs are
+// public so there is no concern about leaking their values through timing.
 OPENSSL_EXPORT int ec_point_mul_scalar_public(const EC_GROUP *group,
                                               EC_RAW_POINT *r,
                                               const EC_SCALAR *g_scalar,
@@ -370,8 +383,9 @@ int ec_point_get_affine_coordinate_bytes(const EC_GROUP *group, uint8_t *out_x,
 int ec_field_element_to_scalar(const EC_GROUP *group, BIGNUM *r);
 
 void ec_GFp_mont_mul(const EC_GROUP *group, EC_RAW_POINT *r,
-                     const EC_SCALAR *g_scalar, const EC_RAW_POINT *p,
-                     const EC_SCALAR *p_scalar);
+                     const EC_RAW_POINT *p, const EC_SCALAR *scalar);
+void ec_GFp_mont_mul_base(const EC_GROUP *group, EC_RAW_POINT *r,
+                          const EC_SCALAR *scalar);
 
 // ec_compute_wNAF writes the modified width-(w+1) Non-Adjacent Form (wNAF) of
 // |scalar| to |out|. |out| must have room for |bits| + 1 elements, each of

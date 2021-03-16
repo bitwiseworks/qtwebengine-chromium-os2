@@ -32,25 +32,28 @@
 
 #include <memory>
 
+#include "third_party/blink/public/mojom/frame/frame_owner_properties.mojom-blink.h"
 #include "third_party/blink/public/web/web_local_frame_client.h"
 #include "third_party/blink/public/web/web_remote_frame_client.h"
 #include "third_party/blink/renderer/bindings/core/v8/window_proxy_manager.h"
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
-#include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
+#include "third_party/blink/renderer/core/execution_context/window_agent_factory.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/frame/remote_frame_owner.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/html_frame_element_base.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
 #include "third_party/blink/renderer/core/loader/empty_clients.h"
-#include "third_party/blink/renderer/core/loader/navigation_scheduler.h"
+#include "third_party/blink/renderer/core/loader/form_submission.h"
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
-#include "third_party/blink/renderer/platform/instance_counters.h"
+#include "third_party/blink/renderer/core/xmlhttprequest/main_thread_disallow_synchronous_xhr_scope.h"
+#include "third_party/blink/renderer/platform/instrumentation/instance_counters.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_error.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 
@@ -62,7 +65,7 @@ Frame::~Frame() {
   DCHECK(IsDetached());
 }
 
-void Frame::Trace(blink::Visitor* visitor) {
+void Frame::Trace(Visitor* visitor) {
   visitor->Trace(tree_node_);
   visitor->Trace(page_);
   visitor->Trace(owner_);
@@ -70,6 +73,7 @@ void Frame::Trace(blink::Visitor* visitor) {
   visitor->Trace(dom_window_);
   visitor->Trace(client_);
   visitor->Trace(navigation_rate_limiter_);
+  visitor->Trace(window_agent_factory_);
 }
 
 void Frame::Detach(FrameDetachType type) {
@@ -77,6 +81,7 @@ void Frame::Detach(FrameDetachType type) {
   // Detach() can be re-entered, so this can't simply DCHECK(IsAttached()).
   DCHECK(!IsDetached());
   lifecycle_.AdvanceTo(FrameLifecycle::kDetaching);
+  MainThreadDisallowSynchronousXHRScope disallow_synchronous_xhr;
 
   DetachImpl(type);
 
@@ -89,7 +94,6 @@ void Frame::Detach(FrameDetachType type) {
   if (!client_)
     return;
 
-  detach_stack_ = base::debug::StackTrace();
   client_->SetOpener(nullptr);
   // After this, we must no longer talk to the client since this clears
   // its owning reference back to our owning LocalFrame.
@@ -129,14 +133,33 @@ bool Frame::IsMainFrame() const {
   return !Tree().Parent();
 }
 
+bool Frame::IsCrossOriginToMainFrame() const {
+  DCHECK(GetSecurityContext());
+  const SecurityOrigin* security_origin =
+      GetSecurityContext()->GetSecurityOrigin();
+  return !security_origin->CanAccess(
+      Tree().Top().GetSecurityContext()->GetSecurityOrigin());
+}
+
+bool Frame::IsCrossOriginToParentFrame() const {
+  DCHECK(GetSecurityContext());
+  if (IsMainFrame())
+    return false;
+  Frame* parent = Tree().Parent();
+  const SecurityOrigin* parent_security_origin =
+      parent->GetSecurityContext()->GetSecurityOrigin();
+  const SecurityOrigin* security_origin =
+      GetSecurityContext()->GetSecurityOrigin();
+  return !security_origin->CanAccess(parent_security_origin);
+}
+
 HTMLFrameOwnerElement* Frame::DeprecatedLocalOwner() const {
-  return owner_ && owner_->IsLocal() ? ToHTMLFrameOwnerElement(owner_)
-                                     : nullptr;
+  return DynamicTo<HTMLFrameOwnerElement>(owner_.Get());
 }
 
 static ChromeClient& GetEmptyChromeClient() {
   DEFINE_STATIC_LOCAL(Persistent<EmptyChromeClient>, client,
-                      (EmptyChromeClient::Create()));
+                      (MakeGarbageCollected<EmptyChromeClient>()));
   return *client;
 }
 
@@ -189,17 +212,20 @@ void Frame::NotifyUserActivationInLocalTree() {
   for (Frame* node = this; node; node = node->Tree().Parent())
     node->user_activation_state_.Activate();
 
-  // See FrameTreeNode::NotifyUserActivation() for details about this block.
-  if (IsLocalFrame() && RuntimeEnabledFeatures::UserActivationV2Enabled() &&
+  // See the "Same-origin Visibility" section in |UserActivationState| class
+  // doc.
+  auto* local_frame = DynamicTo<LocalFrame>(this);
+  if (local_frame &&
       RuntimeEnabledFeatures::UserActivationSameOriginVisibilityEnabled()) {
     const SecurityOrigin* security_origin =
-        ToLocalFrame(this)->GetSecurityContext()->GetSecurityOrigin();
+        local_frame->GetSecurityContext()->GetSecurityOrigin();
 
     Frame& root = Tree().Top();
     for (Frame* node = &root; node; node = node->Tree().TraverseNext(&root)) {
-      if (node->IsLocalFrame() &&
+      auto* local_frame_node = DynamicTo<LocalFrame>(node);
+      if (local_frame_node &&
           security_origin->CanAccess(
-              ToLocalFrame(node)->GetSecurityContext()->GetSecurityOrigin())) {
+              local_frame_node->GetSecurityContext()->GetSecurityOrigin())) {
         node->user_activation_state_.Activate();
       }
     }
@@ -209,9 +235,6 @@ void Frame::NotifyUserActivationInLocalTree() {
 bool Frame::ConsumeTransientUserActivationInLocalTree() {
   bool was_active = user_activation_state_.IsActive();
 
-  // Note that consumption "touches" the whole frame tree, to guarantee that a
-  // malicious subframe can't embed sub-subframes in a way that could allow
-  // multiple consumptions per user activation.
   Frame& root = Tree().Top();
   for (Frame* node = &root; node; node = node->Tree().TraverseNext(&root))
     node->user_activation_state_.ConsumeIfActive();
@@ -224,6 +247,11 @@ void Frame::ClearUserActivationInLocalTree() {
     node->user_activation_state_.Clear();
 }
 
+void Frame::TransferUserActivationFrom(Frame* other) {
+  if (other)
+    user_activation_state_.TransferFrom(other->user_activation_state_);
+}
+
 void Frame::SetOwner(FrameOwner* owner) {
   owner_ = owner;
   UpdateInertIfPossible();
@@ -231,9 +259,10 @@ void Frame::SetOwner(FrameOwner* owner) {
 }
 
 void Frame::UpdateInertIfPossible() {
-  if (owner_ && owner_->IsLocal()) {
-    ToHTMLFrameOwnerElement(owner_)->UpdateDistributionForFlatTreeTraversal();
-    if (ToHTMLFrameOwnerElement(owner_)->IsInert())
+  if (auto* frame_owner_element =
+          DynamicTo<HTMLFrameOwnerElement>(owner_.Get())) {
+    frame_owner_element->UpdateDistributionForFlatTreeTraversal();
+    if (frame_owner_element->IsInert())
       SetIsInert(true);
   }
 }
@@ -248,32 +277,100 @@ void Frame::UpdateInheritedEffectiveTouchActionIfPossible() {
   }
 }
 
-const CString& Frame::ToTraceValue() {
+void Frame::UpdateVisibleToHitTesting() {
+  bool parent_visible_to_hit_testing = true;
+  if (auto* parent = Tree().Parent())
+    parent_visible_to_hit_testing = parent->GetVisibleToHitTesting();
+
+  bool self_visible_to_hit_testing = true;
+  if (auto* local_owner = DynamicTo<HTMLFrameOwnerElement>(owner_.Get())) {
+    self_visible_to_hit_testing =
+        local_owner->GetLayoutObject()
+            ? local_owner->GetLayoutObject()->Style()->VisibleToHitTesting()
+            : true;
+  }
+
+  bool visible_to_hit_testing =
+      parent_visible_to_hit_testing && self_visible_to_hit_testing;
+  bool changed = visible_to_hit_testing_ != visible_to_hit_testing;
+  visible_to_hit_testing_ = visible_to_hit_testing;
+  if (changed)
+    DidChangeVisibleToHitTesting();
+}
+
+const std::string& Frame::ToTraceValue() {
   // token's ToString() is latin1.
   if (!trace_value_)
-    trace_value_ = CString(devtools_frame_token_.ToString().c_str());
+    trace_value_ = devtools_frame_token_.ToString();
   return trace_value_.value();
 }
 
 Frame::Frame(FrameClient* client,
              Page& page,
              FrameOwner* owner,
-             WindowProxyManager* window_proxy_manager)
+             WindowProxyManager* window_proxy_manager,
+             WindowAgentFactory* inheriting_agent_factory)
     : tree_node_(this),
       page_(&page),
       owner_(owner),
+      ad_frame_type_(mojom::blink::AdFrameType::kNonAd),
       client_(client),
       window_proxy_manager_(window_proxy_manager),
       navigation_rate_limiter_(*this),
+      window_agent_factory_(inheriting_agent_factory
+                                ? inheriting_agent_factory
+                                : MakeGarbageCollected<WindowAgentFactory>()),
       is_loading_(false),
-      devtools_frame_token_(client->GetDevToolsFrameToken()),
-      create_stack_(base::debug::StackTrace()) {
+      devtools_frame_token_(client->GetDevToolsFrameToken()) {
   InstanceCounters::IncrementCounter(InstanceCounters::kFrameCounter);
+}
+
+void Frame::Initialize() {
+  // This frame must either be local or remote.
+  DCHECK_NE(IsLocalFrame(), IsRemoteFrame());
 
   if (owner_)
     owner_->SetContentFrame(*this);
   else
     page_->SetMainFrame(this);
+}
+
+void Frame::FocusImpl() {
+  // This uses FocusDocumentView rather than SetFocusedFrame so that blur
+  // events are properly dispatched on any currently focused elements.
+  // It is currently only used when replicating focus changes for
+  // cross-process frames so |notify_embedder| is false to avoid sending
+  // DidFocus updates from FocusController to the browser process,
+  // which already knows the latest focused frame.
+  GetPage()->GetFocusController().FocusDocumentView(
+      this, false /* notify_embedder */);
+}
+
+void Frame::ApplyFrameOwnerProperties(
+    mojom::blink::FrameOwnerPropertiesPtr properties) {
+  // At the moment, this is only used to replicate frame owner properties
+  // for frames with a remote owner.
+  auto* owner = To<RemoteFrameOwner>(Owner());
+
+  owner->SetBrowsingContextContainerName(properties->name);
+  owner->SetScrollbarMode(properties->scrollbar_mode);
+  owner->SetMarginWidth(properties->margin_width);
+  owner->SetMarginHeight(properties->margin_height);
+  owner->SetAllowFullscreen(properties->allow_fullscreen);
+  owner->SetAllowPaymentRequest(properties->allow_payment_request);
+  owner->SetIsDisplayNone(properties->is_display_none);
+  owner->SetRequiredCsp(properties->required_csp);
+}
+
+void Frame::ScheduleFormSubmission(FrameScheduler* scheduler,
+                                   FormSubmission* form_submission) {
+  form_submit_navigation_task_ = PostCancellableTask(
+      *scheduler->GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
+      WTF::Bind(&FormSubmission::Navigate, WrapPersistent(form_submission)));
+}
+
+void Frame::CancelFormSubmission() {
+  form_submit_navigation_task_.Cancel();
 }
 
 STATIC_ASSERT_ENUM(FrameDetachType::kRemove,

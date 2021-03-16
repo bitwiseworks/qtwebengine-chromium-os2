@@ -20,10 +20,9 @@ class GetRequestsTask : public Task {
                   RequestQueueStore::GetRequestsCallback callback);
   ~GetRequestsTask() override;
 
+ private:
   // Task implementation:
   void Run() override;
-
- private:
   // Step 1: Read the requests from he store.
   void ReadRequest();
   // Step 2: Calls the callback with result, completes the task.
@@ -36,7 +35,7 @@ class GetRequestsTask : public Task {
   // Callback used to return the read results.
   RequestQueueStore::GetRequestsCallback callback_;
 
-  base::WeakPtrFactory<GetRequestsTask> weak_ptr_factory_;
+  base::WeakPtrFactory<GetRequestsTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(GetRequestsTask);
 };
 

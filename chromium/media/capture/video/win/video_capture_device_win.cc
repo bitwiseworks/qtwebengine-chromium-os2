@@ -17,6 +17,7 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_variant.h"
+#include "base/win/win_util.h"
 #include "media/base/media_switches.h"
 #include "media/base/timestamp_constants.h"
 #include "media/capture/mojom/image_capture_types.h"
@@ -27,6 +28,19 @@
 using base::win::ScopedCoMem;
 using base::win::ScopedVariant;
 using Microsoft::WRL::ComPtr;
+
+namespace {
+const int kSecondsTo100MicroSeconds = 10000;
+
+// Windows platform stores exposure time (min, max and current) in log base 2
+// seconds. If value is n, exposure time is 2^n seconds. Spec expects exposure
+// times in 100 micro seconds.
+// https://docs.microsoft.com/en-us/previous-versions/ms784800(v%3Dvs.85)
+// spec: https://w3c.github.io/mediacapture-image/#exposure-time
+long ConvertWindowsTimeToSpec(long seconds) {
+  return (std::exp2(seconds) * kSecondsTo100MicroSeconds);
+}
+}  // namespace
 
 namespace media {
 
@@ -112,8 +126,8 @@ void VideoCaptureDeviceWin::GetDeviceCapabilityList(
     bool query_detailed_frame_rates,
     CapabilityList* out_capability_list) {
   ComPtr<IBaseFilter> capture_filter;
-  HRESULT hr = VideoCaptureDeviceWin::GetDeviceFilter(
-      device_id, capture_filter.GetAddressOf());
+  HRESULT hr =
+      VideoCaptureDeviceWin::GetDeviceFilter(device_id, &capture_filter);
   if (!capture_filter.Get()) {
     DLOG(ERROR) << "Failed to create capture filter: "
                 << logging::SystemErrorCodeToString(hr);
@@ -138,7 +152,7 @@ void VideoCaptureDeviceWin::GetPinCapabilityList(
     bool query_detailed_frame_rates,
     CapabilityList* out_capability_list) {
   ComPtr<IAMStreamConfig> stream_config;
-  HRESULT hr = output_capture_pin.CopyTo(stream_config.GetAddressOf());
+  HRESULT hr = output_capture_pin.As(&stream_config);
   if (FAILED(hr)) {
     DLOG(ERROR) << "Failed to get IAMStreamConfig interface from "
                    "capture device: "
@@ -148,7 +162,7 @@ void VideoCaptureDeviceWin::GetPinCapabilityList(
 
   // Get interface used for getting the frame rate.
   ComPtr<IAMVideoControl> video_control;
-  hr = capture_filter.CopyTo(video_control.GetAddressOf());
+  hr = capture_filter.As(&video_control);
 
   int count = 0, size = 0;
   hr = stream_config->GetNumberOfCapabilities(&count, &size);
@@ -236,15 +250,14 @@ HRESULT VideoCaptureDeviceWin::GetDeviceFilter(const std::string& device_id,
 
   ComPtr<IEnumMoniker> enum_moniker;
   hr = dev_enum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
-                                       enum_moniker.GetAddressOf(), 0);
+                                       &enum_moniker, 0);
   // CreateClassEnumerator returns S_FALSE on some Windows OS
   // when no camera exist. Therefore the FAILED macro can't be used.
   if (hr != S_OK)
     return hr;
 
   ComPtr<IBaseFilter> capture_filter;
-  for (ComPtr<IMoniker> moniker;
-       enum_moniker->Next(1, moniker.GetAddressOf(), NULL) == S_OK;
+  for (ComPtr<IMoniker> moniker; enum_moniker->Next(1, &moniker, NULL) == S_OK;
        moniker.Reset()) {
     ComPtr<IPropertyBag> prop_bag;
     hr = moniker->BindToStorage(0, 0, IID_PPV_ARGS(&prop_bag));
@@ -291,13 +304,13 @@ ComPtr<IPin> VideoCaptureDeviceWin::GetPin(IBaseFilter* filter,
                                            REFGUID major_type) {
   ComPtr<IPin> pin;
   ComPtr<IEnumPins> pin_enum;
-  HRESULT hr = filter->EnumPins(pin_enum.GetAddressOf());
+  HRESULT hr = filter->EnumPins(&pin_enum);
   if (pin_enum.Get() == NULL)
     return pin;
 
   // Get first unconnected pin.
   hr = pin_enum->Reset();  // set to first pin
-  while ((hr = pin_enum->Next(1, pin.GetAddressOf(), NULL)) == S_OK) {
+  while ((hr = pin_enum->Next(1, &pin, NULL)) == S_OK) {
     PIN_DIRECTION this_pin_dir = static_cast<PIN_DIRECTION>(-1);
     hr = pin->QueryDirection(&this_pin_dir);
     if (pin_dir == this_pin_dir) {
@@ -324,7 +337,7 @@ VideoPixelFormat VideoCaptureDeviceWin::TranslateMediaSubtypeToPixelFormat(
       {kMediaSubTypeI420, PIXEL_FORMAT_I420},
       {MEDIASUBTYPE_IYUV, PIXEL_FORMAT_I420},
       {MEDIASUBTYPE_RGB24, PIXEL_FORMAT_RGB24},
-      {MEDIASUBTYPE_RGB32, PIXEL_FORMAT_RGB32},
+      {MEDIASUBTYPE_RGB32, PIXEL_FORMAT_ARGB},
       {MEDIASUBTYPE_YUY2, PIXEL_FORMAT_YUY2},
       {MEDIASUBTYPE_MJPG, PIXEL_FORMAT_MJPEG},
       {MEDIASUBTYPE_UYVY, PIXEL_FORMAT_UYVY},
@@ -338,11 +351,8 @@ VideoPixelFormat VideoCaptureDeviceWin::TranslateMediaSubtypeToPixelFormat(
     if (sub_type == pixel_format.sub_type)
       return pixel_format.format;
   }
-#ifndef NDEBUG
-  WCHAR guid_str[128];
-  StringFromGUID2(sub_type, guid_str, base::size(guid_str));
-  DVLOG(2) << "Device (also) supports an unknown media type " << guid_str;
-#endif
+  DVLOG(2) << "Device (also) supports an unknown media type "
+           << base::win::String16FromGUID(sub_type);
   return PIXEL_FORMAT_UNKNOWN;
 }
 
@@ -391,6 +401,7 @@ VideoCaptureDeviceWin::VideoCaptureDeviceWin(
       state_(kIdle),
       white_balance_mode_manual_(false),
       exposure_mode_manual_(false),
+      focus_mode_manual_(false),
       enable_get_photo_state_(
           base::FeatureList::IsEnabled(media::kDirectShowGetPhotoState)) {
   // TODO(mcasas): Check that CoInitializeEx() has been called with the
@@ -405,7 +416,7 @@ VideoCaptureDeviceWin::~VideoCaptureDeviceWin() {
   if (graph_builder_.Get()) {
     if (sink_filter_.get()) {
       graph_builder_->RemoveFilter(sink_filter_.get());
-      sink_filter_ = NULL;
+      sink_filter_.reset();
     }
 
     if (capture_filter_.Get())
@@ -427,8 +438,7 @@ VideoCaptureDeviceWin::~VideoCaptureDeviceWin() {
 
 bool VideoCaptureDeviceWin::Init() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  HRESULT hr = GetDeviceFilter(device_descriptor_.device_id,
-                               capture_filter_.GetAddressOf());
+  HRESULT hr = GetDeviceFilter(device_descriptor_.device_id, &capture_filter_);
   DLOG_IF_FAILED_WITH_HRESULT("Failed to create capture filter", hr);
   if (!capture_filter_.Get())
     return false;
@@ -467,7 +477,7 @@ bool VideoCaptureDeviceWin::Init() {
   if (FAILED(hr))
     return false;
 
-  hr = graph_builder_.CopyTo(media_control_.GetAddressOf());
+  hr = graph_builder_.As(&media_control_);
   DLOG_IF_FAILED_WITH_HRESULT("Failed to create media control builder", hr);
   if (FAILED(hr))
     return false;
@@ -492,11 +502,11 @@ bool VideoCaptureDeviceWin::Init() {
 
   hr = capture_graph_builder_->FindInterface(
       &PIN_CATEGORY_CAPTURE, &MEDIATYPE_Interleaved, capture_filter_.Get(),
-      IID_IAMStreamConfig, (void**)stream_config.GetAddressOf());
+      IID_IAMStreamConfig, (void**)&stream_config);
   if (FAILED(hr)) {
     hr = capture_graph_builder_->FindInterface(
         &PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, capture_filter_.Get(),
-        IID_IAMStreamConfig, (void**)stream_config.GetAddressOf());
+        IID_IAMStreamConfig, (void**)&stream_config);
     DLOG_IF_FAILED_WITH_HRESULT("Failed to find CapFilter:IAMStreamConfig", hr);
   }
 
@@ -523,7 +533,7 @@ void VideoCaptureDeviceWin::AllocateAndStart(
                found_capability.supported_format.frame_rate);
 
   ComPtr<IAMStreamConfig> stream_config;
-  HRESULT hr = output_capture_pin_.CopyTo(stream_config.GetAddressOf());
+  HRESULT hr = output_capture_pin_.As(&stream_config);
   if (FAILED(hr)) {
     SetErrorState(
         media::VideoCaptureError::kWinDirectShowCantGetCaptureFormatSettings,
@@ -656,7 +666,7 @@ void VideoCaptureDeviceWin::GetPhotoState(GetPhotoStateCallback callback) {
 
   auto photo_capabilities = mojo::CreateEmptyPhotoState();
 
-  photo_capabilities->exposure_compensation = RetrieveControlRangeAndCurrent(
+  photo_capabilities->exposure_time = RetrieveControlRangeAndCurrent(
       [this](auto... args) {
         return this->camera_control_->getRange_Exposure(args...);
       },
@@ -665,6 +675,17 @@ void VideoCaptureDeviceWin::GetPhotoState(GetPhotoStateCallback callback) {
       },
       &photo_capabilities->supported_exposure_modes,
       &photo_capabilities->current_exposure_mode);
+
+  // Windows returns the exposure time in log base 2 seconds.
+  // If value is n, exposure time is 2^n seconds.
+  photo_capabilities->exposure_time->min =
+      ConvertWindowsTimeToSpec(photo_capabilities->exposure_time->min);
+  photo_capabilities->exposure_time->max =
+      ConvertWindowsTimeToSpec(photo_capabilities->exposure_time->max);
+  photo_capabilities->exposure_time->step =
+      std::exp2(photo_capabilities->exposure_time->step);
+  photo_capabilities->exposure_time->current =
+      ConvertWindowsTimeToSpec(photo_capabilities->exposure_time->current);
 
   photo_capabilities->color_temperature = RetrieveControlRangeAndCurrent(
       [this](auto... args) {
@@ -676,8 +697,7 @@ void VideoCaptureDeviceWin::GetPhotoState(GetPhotoStateCallback callback) {
       &photo_capabilities->supported_white_balance_modes,
       &photo_capabilities->current_white_balance_mode);
 
-  // Ignore the returned Focus control range and status.
-  RetrieveControlRangeAndCurrent(
+  photo_capabilities->focus_distance = RetrieveControlRangeAndCurrent(
       [this](auto... args) {
         return this->camera_control_->getRange_Focus(args...);
       },
@@ -777,6 +797,26 @@ void VideoCaptureDeviceWin::SetPhotoOptions(
       return;
   }
 
+  if (settings->has_focus_mode) {
+    if (settings->focus_mode == mojom::MeteringMode::CONTINUOUS) {
+      hr = camera_control_->put_Focus(0L, VideoProcAmp_Flags_Auto);
+      DLOG_IF_FAILED_WITH_HRESULT("Auto focus config failed", hr);
+      if (FAILED(hr))
+        return;
+
+      focus_mode_manual_ = false;
+    } else {
+      focus_mode_manual_ = true;
+    }
+  }
+  if (focus_mode_manual_ && settings->has_focus_distance) {
+    hr = camera_control_->put_Focus(settings->focus_distance,
+                                    CameraControl_Flags_Manual);
+    DLOG_IF_FAILED_WITH_HRESULT("Focus Distance config failed", hr);
+    if (FAILED(hr))
+      return;
+  }
+
   if (settings->has_exposure_mode) {
     if (settings->exposure_mode == mojom::MeteringMode::CONTINUOUS) {
       hr = camera_control_->put_Exposure(0L, VideoProcAmp_Flags_Auto);
@@ -789,14 +829,15 @@ void VideoCaptureDeviceWin::SetPhotoOptions(
       exposure_mode_manual_ = true;
     }
   }
-  if (exposure_mode_manual_ && settings->has_exposure_compensation) {
-    hr = camera_control_->put_Exposure(settings->exposure_compensation,
-                                       CameraControl_Flags_Manual);
-    DLOG_IF_FAILED_WITH_HRESULT("Exposure Compensation config failed", hr);
+  if (exposure_mode_manual_ && settings->has_exposure_time) {
+    // Windows expects the exposure time in log base 2 seconds.
+    hr = camera_control_->put_Exposure(
+        std::log2(settings->exposure_time / kSecondsTo100MicroSeconds),
+        CameraControl_Flags_Manual);
+    DLOG_IF_FAILED_WITH_HRESULT("Exposure Time config failed", hr);
     if (FAILED(hr))
       return;
   }
-
   if (settings->has_brightness) {
     hr = video_control_->put_Brightness(settings->brightness,
                                         CameraControl_Flags_Manual);
@@ -831,7 +872,7 @@ void VideoCaptureDeviceWin::SetPhotoOptions(
 
 bool VideoCaptureDeviceWin::InitializeVideoAndCameraControls() {
   ComPtr<IKsTopologyInfo> info;
-  HRESULT hr = capture_filter_.CopyTo(info.GetAddressOf());
+  HRESULT hr = capture_filter_.As(&info);
   if (FAILED(hr)) {
     DLOG_IF_FAILED_WITH_HRESULT("Failed to obtain the topology info.", hr);
     return false;
@@ -874,7 +915,8 @@ bool VideoCaptureDeviceWin::InitializeVideoAndCameraControls() {
 void VideoCaptureDeviceWin::FrameReceived(const uint8_t* buffer,
                                           int length,
                                           const VideoCaptureFormat& format,
-                                          base::TimeDelta timestamp) {
+                                          base::TimeDelta timestamp,
+                                          bool flip_y) {
   if (first_ref_time_.is_null())
     first_ref_time_ = base::TimeTicks::Now();
 
@@ -883,9 +925,15 @@ void VideoCaptureDeviceWin::FrameReceived(const uint8_t* buffer,
   if (timestamp == kNoTimestamp)
     timestamp = base::TimeTicks::Now() - first_ref_time_;
 
-  client_->OnIncomingCapturedData(buffer, length, format,
+  // TODO(julien.isorce): retrieve the color space information using the
+  // DirectShow api, AM_MEDIA_TYPE::VIDEOINFOHEADER2::dwControlFlags. If
+  // AMCONTROL_COLORINFO_PRESENT, then reinterpret dwControlFlags as a
+  // DXVA_ExtendedFormat. Then use its fields DXVA_VideoPrimaries,
+  // DXVA_VideoTransferMatrix, DXVA_VideoTransferFunction and
+  // DXVA_NominalRangeto build a gfx::ColorSpace. See http://crbug.com/959992.
+  client_->OnIncomingCapturedData(buffer, length, format, gfx::ColorSpace(),
                                   GetCameraRotation(device_descriptor_.facing),
-                                  base::TimeTicks::Now(), timestamp);
+                                  flip_y, base::TimeTicks::Now(), timestamp);
 
   while (!take_photo_callbacks_.empty()) {
     TakePhotoCallback cb = std::move(take_photo_callbacks_.front());
@@ -929,7 +977,7 @@ void VideoCaptureDeviceWin::SetAntiFlickerInCaptureFilter(
   ComPtr<IKsPropertySet> ks_propset;
   DWORD type_support = 0;
   HRESULT hr;
-  if (SUCCEEDED(hr = capture_filter_.CopyTo(ks_propset.GetAddressOf())) &&
+  if (SUCCEEDED(hr = capture_filter_.As(&ks_propset)) &&
       SUCCEEDED(hr = ks_propset->QuerySupported(
                     PROPSETID_VIDCAP_VIDEOPROCAMP,
                     KSPROPERTY_VIDEOPROCAMP_POWERLINE_FREQUENCY,

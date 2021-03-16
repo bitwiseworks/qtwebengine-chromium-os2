@@ -27,7 +27,6 @@
 #include "xfa/fwl/cfwl_themetext.h"
 #include "xfa/fwl/cfwl_widgetmgr.h"
 #include "xfa/fwl/ifwl_themeprovider.h"
-#include "xfa/fxfa/cxfa_ffapp.h"
 
 #define FWL_WGT_CalcHeight 2048
 #define FWL_WGT_CalcWidth 2048
@@ -39,25 +38,14 @@ CFWL_Widget::CFWL_Widget(const CFWL_App* app,
     : m_pOwnerApp(app),
       m_pWidgetMgr(app->GetWidgetMgr()),
       m_pProperties(std::move(properties)),
-      m_pOuter(pOuter),
-      m_iLock(0),
-      m_pLayoutItem(nullptr),
-      m_nEventKey(0),
-      m_pDelegate(nullptr) {
+      m_pOuter(pOuter) {
   ASSERT(m_pWidgetMgr);
   ASSERT(m_pProperties);
-
-  CFWL_Widget* pParent = m_pProperties->m_pParent;
-  m_pWidgetMgr->InsertWidget(pParent, this);
-  if (IsChild())
-    return;
-
-  CFWL_Widget* pOwner = m_pProperties->m_pOwner;
-  if (pOwner)
-    m_pWidgetMgr->SetOwner(pOwner, this);
+  m_pWidgetMgr->InsertWidget(m_pProperties->m_pParent, this);
 }
 
 CFWL_Widget::~CFWL_Widget() {
+  CHECK(!IsLocked());  // Prefer hard stop to UaF.
   NotifyDriver();
   m_pWidgetMgr->RemoveWidget(this);
 }
@@ -93,10 +81,6 @@ CFX_RectF CFWL_Widget::GetClientRect() {
 void CFWL_Widget::SetParent(CFWL_Widget* pParent) {
   m_pProperties->m_pParent = pParent;
   m_pWidgetMgr->SetParent(pParent, this);
-}
-
-uint32_t CFWL_Widget::GetStyles() const {
-  return m_pProperties->m_dwStyles;
 }
 
 void CFWL_Widget::ModifyStyles(uint32_t dwStylesAdded,
@@ -215,6 +199,13 @@ bool CFWL_Widget::IsPopup() const {
 
 bool CFWL_Widget::IsChild() const {
   return !!(m_pProperties->m_dwStyles & FWL_WGTSTYLE_Child);
+}
+
+CFWL_Widget* CFWL_Widget::GetOutmost() const {
+  CFWL_Widget* pOuter = const_cast<CFWL_Widget*>(this);
+  while (pOuter->GetOuter())
+    pOuter = pOuter->GetOuter();
+  return pOuter;
 }
 
 CFX_RectF CFWL_Widget::GetEdgeRect() const {
@@ -400,3 +391,12 @@ void CFWL_Widget::OnProcessEvent(CFWL_Event* pEvent) {}
 
 void CFWL_Widget::OnDrawWidget(CXFA_Graphics* pGraphics,
                                const CFX_Matrix& matrix) {}
+
+CFWL_Widget::ScopedUpdateLock::ScopedUpdateLock(CFWL_Widget* widget)
+    : widget_(widget) {
+  widget_->LockUpdate();
+}
+
+CFWL_Widget::ScopedUpdateLock::~ScopedUpdateLock() {
+  widget_->UnlockUpdate();
+}

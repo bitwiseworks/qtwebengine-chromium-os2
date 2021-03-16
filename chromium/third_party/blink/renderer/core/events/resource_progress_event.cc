@@ -32,8 +32,8 @@ namespace blink {
 
 ResourceProgressEvent::ResourceProgressEvent(const AtomicString& type,
                                              bool length_computable,
-                                             unsigned long long loaded,
-                                             unsigned long long total,
+                                             uint64_t loaded,
+                                             uint64_t total,
                                              const String& url)
     : ProgressEvent(type, length_computable, loaded, total), url_(url) {}
 
@@ -45,7 +45,7 @@ const AtomicString& ResourceProgressEvent::InterfaceName() const {
   return event_interface_names::kResourceProgressEvent;
 }
 
-void ResourceProgressEvent::Trace(blink::Visitor* visitor) {
+void ResourceProgressEvent::Trace(Visitor* visitor) {
   ProgressEvent::Trace(visitor);
 }
 

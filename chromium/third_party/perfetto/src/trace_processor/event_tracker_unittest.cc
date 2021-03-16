@@ -15,9 +15,13 @@
  */
 
 #include "src/trace_processor/event_tracker.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+
+#include "perfetto/base/logging.h"
+#include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/process_tracker.h"
+#include "src/trace_processor/track_tracker.h"
+#include "test/gtest_and_gmock.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -31,12 +35,17 @@ class EventTrackerTest : public ::testing::Test {
  public:
   EventTrackerTest() {
     context.storage.reset(new TraceStorage());
+    context.global_args_tracker.reset(new GlobalArgsTracker(&context));
+    context.args_tracker.reset(new ArgsTracker(&context));
     context.process_tracker.reset(new ProcessTracker(&context));
     context.event_tracker.reset(new EventTracker(&context));
+    context.track_tracker.reset(new TrackTracker(&context));
+    sched_tracker = SchedEventTracker::GetOrCreate(&context);
   }
 
  protected:
   TraceProcessorContext context;
+  SchedEventTracker* sched_tracker;
 };
 
 TEST_F(EventTrackerTest, InsertSecondSched) {
@@ -47,24 +56,26 @@ TEST_F(EventTrackerTest, InsertSecondSched) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
   uint32_t pid_2 = 4;
-  int32_t next_prio = 1024;
+  int32_t prio = 1024;
 
-  const auto& timestamps = context.storage->slices().start_ns();
-  context.event_tracker->PushSchedSwitch(cpu, timestamp, pid_1, prev_state,
-                                         pid_2, kCommProc1, next_prio);
-  ASSERT_EQ(timestamps.size(), 1);
+  sched_tracker->PushSchedSwitch(cpu, timestamp, pid_1, kCommProc2, prio,
+                                 prev_state, pid_2, kCommProc1, prio);
+  ASSERT_EQ(context.storage->sched_slice_table().row_count(), 1ul);
 
-  context.event_tracker->PushSchedSwitch(cpu, timestamp + 1, pid_2, prev_state,
-                                         pid_1, kCommProc2, next_prio);
+  sched_tracker->PushSchedSwitch(cpu, timestamp + 1, pid_2, kCommProc1, prio,
+                                 prev_state, pid_1, kCommProc2, prio);
 
-  ASSERT_EQ(timestamps.size(), 2ul);
+  ASSERT_EQ(context.storage->sched_slice_table().row_count(), 2ul);
+
+  const auto& timestamps = context.storage->sched_slice_table().ts();
   ASSERT_EQ(timestamps[0], timestamp);
-  ASSERT_EQ(context.storage->GetThread(1).start_ns, timestamp);
-  ASSERT_EQ(std::string(context.storage->GetString(
-                context.storage->GetThread(1).name_id)),
-            kCommProc1);
-  ASSERT_EQ(context.storage->slices().utids().front(), 1);
-  ASSERT_EQ(context.storage->slices().durations().front(), 1);
+  ASSERT_EQ(context.storage->thread_table().start_ts()[1], base::nullopt);
+
+  auto name =
+      context.storage->GetString(context.storage->thread_table().name()[1]);
+  ASSERT_STREQ(name.c_str(), kCommProc1);
+  ASSERT_EQ(context.storage->sched_slice_table().utid()[0], 1u);
+  ASSERT_EQ(context.storage->sched_slice_table().dur()[0], 1);
 }
 
 TEST_F(EventTrackerTest, InsertThirdSched_SameThread) {
@@ -73,58 +84,56 @@ TEST_F(EventTrackerTest, InsertThirdSched_SameThread) {
   int64_t prev_state = 32;
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  int32_t next_prio = 1024;
+  int32_t prio = 1024;
 
-  const auto& timestamps = context.storage->slices().start_ns();
-  context.event_tracker->PushSchedSwitch(cpu, timestamp, /*tid=*/4, prev_state,
-                                         /*tid=*/2, kCommProc1, next_prio);
-  ASSERT_EQ(timestamps.size(), 1);
+  sched_tracker->PushSchedSwitch(cpu, timestamp, /*tid=*/4, kCommProc2, prio,
+                                 prev_state,
+                                 /*tid=*/2, kCommProc1, prio);
+  ASSERT_EQ(context.storage->sched_slice_table().row_count(), 1u);
 
-  context.event_tracker->PushSchedSwitch(cpu, timestamp + 1, /*tid=*/2,
-                                         prev_state,
-                                         /*tid=*/4, kCommProc1, next_prio);
-  context.event_tracker->PushSchedSwitch(cpu, timestamp + 11, /*tid=*/4,
-                                         prev_state,
-                                         /*tid=*/2, kCommProc2, next_prio);
-  context.event_tracker->PushSchedSwitch(cpu, timestamp + 31, /*tid=*/4,
-                                         prev_state,
-                                         /*tid=*/2, kCommProc1, next_prio);
+  sched_tracker->PushSchedSwitch(cpu, timestamp + 1, /*tid=*/2, kCommProc1,
+                                 prio, prev_state,
+                                 /*tid=*/4, kCommProc2, prio);
+  sched_tracker->PushSchedSwitch(cpu, timestamp + 11, /*tid=*/4, kCommProc2,
+                                 prio, prev_state,
+                                 /*tid=*/2, kCommProc1, prio);
+  sched_tracker->PushSchedSwitch(cpu, timestamp + 31, /*tid=*/2, kCommProc1,
+                                 prio, prev_state,
+                                 /*tid=*/4, kCommProc2, prio);
+  ASSERT_EQ(context.storage->sched_slice_table().row_count(), 4ul);
 
-  ASSERT_EQ(timestamps.size(), 4ul);
+  const auto& timestamps = context.storage->sched_slice_table().ts();
   ASSERT_EQ(timestamps[0], timestamp);
-  ASSERT_EQ(context.storage->GetThread(1).start_ns, timestamp);
-  ASSERT_EQ(context.storage->slices().durations().at(0), 1u);
-  ASSERT_EQ(context.storage->slices().durations().at(1), 11u - 1u);
-  ASSERT_EQ(context.storage->slices().durations().at(2), 31u - 11u);
-  ASSERT_EQ(context.storage->slices().utids().at(0),
-            context.storage->slices().utids().at(2));
+  ASSERT_EQ(context.storage->thread_table().start_ts()[1], base::nullopt);
+  ASSERT_EQ(context.storage->sched_slice_table().dur()[0], 1u);
+  ASSERT_EQ(context.storage->sched_slice_table().dur()[1], 11u - 1u);
+  ASSERT_EQ(context.storage->sched_slice_table().dur()[2], 31u - 11u);
+  ASSERT_EQ(context.storage->sched_slice_table().utid()[0],
+            context.storage->sched_slice_table().utid()[2]);
 }
 
 TEST_F(EventTrackerTest, CounterDuration) {
   uint32_t cpu = 3;
   int64_t timestamp = 100;
-  StringId name_id = 0;
-  context.event_tracker->PushCounter(timestamp, 1000, name_id, cpu,
-                                     RefType::kRefCpuId);
-  context.event_tracker->PushCounter(timestamp + 1, 4000, name_id, cpu,
-                                     RefType::kRefCpuId);
-  context.event_tracker->PushCounter(timestamp + 3, 5000, name_id, cpu,
-                                     RefType::kRefCpuId);
-  context.event_tracker->PushCounter(timestamp + 9, 1000, name_id, cpu,
-                                     RefType::kRefCpuId);
+  StringId name_id = kNullStringId;
 
-  ASSERT_EQ(context.storage->counters().counter_count(), 4ul);
-  ASSERT_EQ(context.storage->counters().timestamps().at(0), timestamp);
-  ASSERT_EQ(context.storage->counters().durations().at(0), 1);
-  ASSERT_EQ(context.storage->counters().values().at(0), 1000);
+  TrackId track = context.track_tracker->InternCpuCounterTrack(name_id, cpu);
+  context.event_tracker->PushCounter(timestamp, 1000, track);
+  context.event_tracker->PushCounter(timestamp + 1, 4000, track);
+  context.event_tracker->PushCounter(timestamp + 3, 5000, track);
+  context.event_tracker->PushCounter(timestamp + 9, 1000, track);
 
-  ASSERT_EQ(context.storage->counters().timestamps().at(1), timestamp + 1);
-  ASSERT_EQ(context.storage->counters().durations().at(1), 2);
-  ASSERT_EQ(context.storage->counters().values().at(1), 4000);
+  ASSERT_EQ(context.storage->counter_track_table().row_count(), 1ul);
 
-  ASSERT_EQ(context.storage->counters().timestamps().at(2), timestamp + 3);
-  ASSERT_EQ(context.storage->counters().durations().at(2), 6);
-  ASSERT_EQ(context.storage->counters().values().at(2), 5000);
+  ASSERT_EQ(context.storage->counter_table().row_count(), 4ul);
+  ASSERT_EQ(context.storage->counter_table().ts()[0], timestamp);
+  ASSERT_DOUBLE_EQ(context.storage->counter_table().value()[0], 1000);
+
+  ASSERT_EQ(context.storage->counter_table().ts()[1], timestamp + 1);
+  ASSERT_DOUBLE_EQ(context.storage->counter_table().value()[1], 4000);
+
+  ASSERT_EQ(context.storage->counter_table().ts()[2], timestamp + 3);
+  ASSERT_DOUBLE_EQ(context.storage->counter_table().value()[2], 5000);
 }
 
 }  // namespace

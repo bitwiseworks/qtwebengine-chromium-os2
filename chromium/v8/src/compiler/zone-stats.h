@@ -9,7 +9,7 @@
 #include <set>
 #include <vector>
 
-#include "src/globals.h"
+#include "src/common/globals.h"
 #include "src/zone/zone.h"
 
 namespace v8 {
@@ -33,6 +33,8 @@ class V8_EXPORT_PRIVATE ZoneStats final {
       zone_ = nullptr;
     }
 
+    ZoneStats* zone_stats() const { return zone_stats_; }
+
    private:
     const char* zone_name_;
     ZoneStats* const zone_stats_;
@@ -53,7 +55,7 @@ class V8_EXPORT_PRIVATE ZoneStats final {
     friend class ZoneStats;
     void ZoneReturned(Zone* zone);
 
-    typedef std::map<Zone*, size_t> InitialValues;
+    using InitialValues = std::map<Zone*, size_t>;
 
     ZoneStats* const zone_stats_;
     InitialValues initial_values_;
@@ -75,8 +77,8 @@ class V8_EXPORT_PRIVATE ZoneStats final {
   void ReturnZone(Zone* zone);
 
   static const size_t kMaxUnusedSize = 3;
-  typedef std::vector<Zone*> Zones;
-  typedef std::vector<StatsScope*> Stats;
+  using Zones = std::vector<Zone*>;
+  using Stats = std::vector<StatsScope*>;
 
   Zones zones_;
   Stats stats_;

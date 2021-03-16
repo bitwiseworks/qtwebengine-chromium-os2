@@ -29,7 +29,7 @@ BluetoothLocalGattDescriptor::Create(
   return descriptor->weak_ptr_factory_.GetWeakPtr();
 }
 
-}  // device
+}  // namespace device
 
 namespace bluez {
 
@@ -42,11 +42,10 @@ BluetoothLocalGattDescriptorBlueZ::BluetoothLocalGattDescriptorBlueZ(
               characteristic->object_path().value() + "/descriptor")),
       uuid_(uuid),
       permissions_(permissions),
-      characteristic_(characteristic),
-      weak_ptr_factory_(this) {
+      characteristic_(characteristic) {
   DCHECK(characteristic->GetService());
-  VLOG(1) << "Creating local GATT descriptor with identifier: "
-          << GetIdentifier();
+  DVLOG(1) << "Creating local GATT descriptor with identifier: "
+           << GetIdentifier();
   characteristic->AddDescriptor(base::WrapUnique(this));
 }
 

@@ -41,6 +41,7 @@
 #include "util/win/get_function.h"
 #include "util/win/handle.h"
 #include "util/win/initial_client_data.h"
+#include "util/win/loader_lock.h"
 #include "util/win/nt_internals.h"
 #include "util/win/ntstatus_logging.h"
 #include "util/win/process_info.h"
@@ -96,7 +97,7 @@ CRITICAL_SECTION g_critical_section_with_debug_info;
 
 void SetHandlerStartupState(StartupState state) {
   DCHECK(state == StartupState::kSucceeded || state == StartupState::kFailed);
-  base::subtle::Acquire_Store(&g_handler_startup_state,
+  base::subtle::Release_Store(&g_handler_startup_state,
                               static_cast<base::subtle::AtomicWord>(state));
 }
 
@@ -104,7 +105,7 @@ StartupState BlockUntilHandlerStartedOrFailed() {
   // Wait until we know the handler has either succeeded or failed to start.
   base::subtle::AtomicWord startup_state;
   while (
-      (startup_state = base::subtle::Release_Load(&g_handler_startup_state)) ==
+      (startup_state = base::subtle::Acquire_Load(&g_handler_startup_state)) ==
       static_cast<int>(StartupState::kNotReady)) {
     Sleep(1);
   }
@@ -346,6 +347,8 @@ class ScopedCallSetHandlerStartupState {
 
 bool StartHandlerProcess(
     std::unique_ptr<BackgroundHandlerStartThreadData> data) {
+  CHECK(!IsThreadInLoaderLock());
+
   ScopedCallSetHandlerStartupState scoped_startup_state_caller;
 
   std::wstring command_line;

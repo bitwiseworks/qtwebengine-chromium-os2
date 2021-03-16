@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_RULE_NAMESPACE_H_
 
 #include "third_party/blink/renderer/core/css/style_rule.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -13,10 +14,6 @@ namespace blink {
 // the parser to pass to a stylesheet
 class StyleRuleNamespace final : public StyleRuleBase {
  public:
-  static StyleRuleNamespace* Create(AtomicString prefix, AtomicString uri) {
-    return MakeGarbageCollected<StyleRuleNamespace>(prefix, uri);
-  }
-
   StyleRuleNamespace(AtomicString prefix, AtomicString uri)
       : StyleRuleBase(kNamespace), prefix_(prefix), uri_(uri) {}
 
@@ -27,7 +24,7 @@ class StyleRuleNamespace final : public StyleRuleBase {
   AtomicString Prefix() const { return prefix_; }
   AtomicString Uri() const { return uri_; }
 
-  void TraceAfterDispatch(blink::Visitor* visitor) {
+  void TraceAfterDispatch(blink::Visitor* visitor) const {
     StyleRuleBase::TraceAfterDispatch(visitor);
   }
 
@@ -36,7 +33,12 @@ class StyleRuleNamespace final : public StyleRuleBase {
   AtomicString uri_;
 };
 
-DEFINE_STYLE_RULE_TYPE_CASTS(Namespace);
+template <>
+struct DowncastTraits<StyleRuleNamespace> {
+  static bool AllowFrom(const StyleRuleBase& rule) {
+    return rule.IsNamespaceRule();
+  }
+};
 
 }  // namespace blink
 

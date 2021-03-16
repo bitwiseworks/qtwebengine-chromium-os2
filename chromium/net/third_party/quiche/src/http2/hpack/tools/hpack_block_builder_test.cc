@@ -96,7 +96,7 @@ TEST(HpackBlockBuilderTest, ExamplesFromSpecC3) {
     // 0x0000:  8286 8441 0f77 7777 2e65 7861 6d70 6c65  ...A.www.example
     // 0x0010:  2e63 6f6d                                .com
 
-    const Http2String expected =
+    const std::string expected =
         Http2HexDecode("828684410f7777772e6578616d706c652e636f6d");
     EXPECT_EQ(expected, b.buffer());
   }
@@ -120,14 +120,15 @@ TEST(HpackBlockBuilderTest, ExamplesFromSpecC4) {
                                           '\xab', '\x90', '\xf4', '\xff'};
     b.AppendNameIndexAndLiteralValue(
         HpackEntryType::kIndexedLiteralHeader, 1, kCompressed,
-        Http2StringPiece(kHuffmanWwwExampleCom, sizeof kHuffmanWwwExampleCom));
+        quiche::QuicheStringPiece(kHuffmanWwwExampleCom,
+                                  sizeof kHuffmanWwwExampleCom));
     EXPECT_EQ(17u, b.size());
 
     // Hex dump of encoded data (copied from RFC):
     // 0x0000:  8286 8441 8cf1 e3c2 e5f2 3a6b a0ab 90f4  ...A......:k....
     // 0x0010:  ff                                       .
 
-    const Http2String expected =
+    const std::string expected =
         Http2HexDecode("828684418cf1e3c2e5f23a6ba0ab90f4ff");
     EXPECT_EQ(expected, b.buffer());
   }
@@ -140,7 +141,7 @@ TEST(HpackBlockBuilderTest, DynamicTableSizeUpdate) {
     EXPECT_EQ(1u, b.size());
 
     const char kData[] = {'\x20'};
-    Http2StringPiece expected(kData, sizeof kData);
+    quiche::QuicheStringPiece expected(kData, sizeof kData);
     EXPECT_EQ(expected, b.buffer());
   }
   {
@@ -149,7 +150,7 @@ TEST(HpackBlockBuilderTest, DynamicTableSizeUpdate) {
     EXPECT_EQ(3u, b.size());
 
     const char kData[] = {'\x3f', '\xe1', '\x1f'};
-    Http2StringPiece expected(kData, sizeof kData);
+    quiche::QuicheStringPiece expected(kData, sizeof kData);
     EXPECT_EQ(expected, b.buffer());
   }
   {
@@ -159,7 +160,7 @@ TEST(HpackBlockBuilderTest, DynamicTableSizeUpdate) {
 
     const char kData[] = {'\x3f', '\xe1', '\x9f', '\x94',
                           '\xa5', '\x8d', '\x1d'};
-    Http2StringPiece expected(kData, sizeof kData);
+    quiche::QuicheStringPiece expected(kData, sizeof kData);
     EXPECT_EQ(expected, b.buffer());
   }
 }

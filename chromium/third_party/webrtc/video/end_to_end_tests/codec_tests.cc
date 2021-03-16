@@ -8,7 +8,7 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "absl/memory/memory.h"
+#include <memory>
 #include "absl/types/optional.h"
 #include "api/test/video/function_video_encoder_factory.h"
 #include "api/video/color_space.h"
@@ -27,11 +27,22 @@
 #include "test/gtest.h"
 
 namespace webrtc {
+namespace {
+enum : int {  // The first valid value is 1.
+  kColorSpaceExtensionId = 1,
+  kVideoRotationExtensionId,
+};
+}  // namespace
 
 class CodecEndToEndTest : public test::CallTest,
-                          public testing::WithParamInterface<std::string> {
+                          public ::testing::WithParamInterface<std::string> {
  public:
-  CodecEndToEndTest() : field_trial_(GetParam()) {}
+  CodecEndToEndTest() : field_trial_(GetParam()) {
+    RegisterRtpExtension(
+        RtpExtension(RtpExtension::kColorSpaceUri, kColorSpaceExtensionId));
+    RegisterRtpExtension(RtpExtension(RtpExtension::kVideoRotationUri,
+                                      kVideoRotationExtensionId));
+  }
 
  private:
   test::ScopedFieldTrials field_trial_;
@@ -110,10 +121,11 @@ class CodecObserver : public test::EndToEndTest,
   int frame_counter_;
 };
 
-INSTANTIATE_TEST_CASE_P(GenericDescriptor,
-                        CodecEndToEndTest,
-                        ::testing::Values("WebRTC-GenericDescriptor/Disabled/",
-                                          "WebRTC-GenericDescriptor/Enabled/"));
+INSTANTIATE_TEST_SUITE_P(
+    GenericDescriptor,
+    CodecEndToEndTest,
+    ::testing::Values("WebRTC-GenericDescriptor/Disabled/",
+                      "WebRTC-GenericDescriptor/Enabled/"));
 
 TEST_P(CodecEndToEndTest, SendsAndReceivesVP8) {
   test::FunctionVideoEncoderFactory encoder_factory(
@@ -185,12 +197,12 @@ TEST_P(CodecEndToEndTest, SendsAndReceivesMultiplex) {
   InternalDecoderFactory internal_decoder_factory;
   test::FunctionVideoEncoderFactory encoder_factory(
       [&internal_encoder_factory]() {
-        return absl::make_unique<MultiplexEncoderAdapter>(
+        return std::make_unique<MultiplexEncoderAdapter>(
             &internal_encoder_factory, SdpVideoFormat(cricket::kVp9CodecName));
       });
   test::FunctionVideoDecoderFactory decoder_factory(
       [&internal_decoder_factory]() {
-        return absl::make_unique<MultiplexDecoderAdapter>(
+        return std::make_unique<MultiplexDecoderAdapter>(
             &internal_decoder_factory, SdpVideoFormat(cricket::kVp9CodecName));
       });
 
@@ -204,12 +216,12 @@ TEST_P(CodecEndToEndTest, SendsAndReceivesMultiplexVideoRotation90) {
   InternalDecoderFactory internal_decoder_factory;
   test::FunctionVideoEncoderFactory encoder_factory(
       [&internal_encoder_factory]() {
-        return absl::make_unique<MultiplexEncoderAdapter>(
+        return std::make_unique<MultiplexEncoderAdapter>(
             &internal_encoder_factory, SdpVideoFormat(cricket::kVp9CodecName));
       });
   test::FunctionVideoDecoderFactory decoder_factory(
       [&internal_decoder_factory]() {
-        return absl::make_unique<MultiplexDecoderAdapter>(
+        return std::make_unique<MultiplexDecoderAdapter>(
             &internal_decoder_factory, SdpVideoFormat(cricket::kVp9CodecName));
       });
   CodecObserver test(5, kVideoRotation_90, absl::nullopt, "multiplex",
@@ -221,15 +233,18 @@ TEST_P(CodecEndToEndTest, SendsAndReceivesMultiplexVideoRotation90) {
 
 #if defined(WEBRTC_USE_H264)
 class EndToEndTestH264 : public test::CallTest,
-                         public testing::WithParamInterface<std::string> {
+                         public ::testing::WithParamInterface<std::string> {
  public:
-  EndToEndTestH264() : field_trial_(GetParam()) {}
+  EndToEndTestH264() : field_trial_(GetParam()) {
+    RegisterRtpExtension(RtpExtension(RtpExtension::kVideoRotationUri,
+                                      kVideoRotationExtensionId));
+  }
 
  private:
   test::ScopedFieldTrials field_trial_;
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     SpsPpsIdrIsKeyframe,
     EndToEndTestH264,
     ::testing::Values("WebRTC-SpsPpsIdrIsH264Keyframe/Disabled/",

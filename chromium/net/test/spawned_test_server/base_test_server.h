@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// NOTE: spawned_test_server is deprecated, since it frequently causes test
+// flakiness. Please consider using embedded_test_server if possible.
+
 #ifndef NET_TEST_SPAWNED_TEST_SERVER_BASE_TEST_SERVER_H_
 #define NET_TEST_SPAWNED_TEST_SERVER_BASE_TEST_SERVER_H_
 
@@ -16,14 +19,12 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
+#include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/ssl/ssl_client_cert_type.h"
 
 class GURL;
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace net {
 
@@ -63,10 +64,6 @@ class BaseTestServer {
       // as well. The testserver will include the intermediate cert in the TLS
       // handshake.
       CERT_AUTO_WITH_INTERMEDIATE,
-      // Generate an intermediate cert issued by "Testing CA", and generate a
-      // test certificate issued by that intermediate with an AIA record for
-      // retrieving the intermediate.
-      CERT_AUTO_AIA_INTERMEDIATE,
 
       CERT_MISMATCHED_NAME,
       CERT_EXPIRED,
@@ -79,6 +76,14 @@ class BaseTestServer {
       // Causes the testserver to use a hostname that is a domain
       // instead of an IP.
       CERT_COMMON_NAME_IS_DOMAIN,
+
+      // An RSA certificate with the keyUsage extension specifying that the key
+      // is only for encipherment.
+      CERT_KEY_USAGE_RSA_ENCIPHERMENT,
+
+      // An RSA certificate with the keyUsage extension specifying that the key
+      // is only for digital signatures.
+      CERT_KEY_USAGE_RSA_DIGITAL_SIGNATURE,
 
       // A certificate with invalid notBefore and notAfter times. Windows'
       // certificate library will not parse this certificate.
@@ -396,7 +401,7 @@ class BaseTestServer {
   const HostPortPair& host_port_pair() const;
 
   const base::FilePath& document_root() const { return document_root_; }
-  const base::DictionaryValue& server_data() const;
+  const base::Value& server_data() const;
   std::string GetScheme() const;
   bool GetAddressList(AddressList* address_list) const WARN_UNUSED_RESULT;
 
@@ -502,7 +507,7 @@ class BaseTestServer {
   HostPortPair host_port_pair_;
 
   // Holds the data sent from the server (e.g., port number).
-  std::unique_ptr<base::DictionaryValue> server_data_;
+  base::Optional<base::Value> server_data_;
 
   // If |type_| is TYPE_HTTPS or TYPE_WSS, the TLS settings to use for the test
   // server.

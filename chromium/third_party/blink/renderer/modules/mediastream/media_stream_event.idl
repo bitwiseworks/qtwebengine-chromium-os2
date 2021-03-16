@@ -27,7 +27,8 @@
 // https://www.w3.org/TR/2015/WD-webrtc-20150210/#mediastreamevent
 
 [
-    Constructor(DOMString type, optional MediaStreamEventInit eventInitDict)
+    Exposed=Window
 ] interface MediaStreamEvent : Event {
+    constructor(DOMString type, optional MediaStreamEventInit eventInitDict = {});
     readonly attribute MediaStream? stream;
 };

@@ -30,7 +30,7 @@
 **
 **     1. The checkpoint id MSW.
 **     2. The checkpoint id LSW.
-**     3. The number of integer values in the entire checkpoint, including
+**     3. The number of integer values in the entire checkpoint, including 
 **        the two checksum values.
 **     4. The compression scheme id.
 **     5. The total number of blocks in the database.
@@ -99,7 +99,7 @@
 **     1. Checksum value 1.
 **     2. Checksum value 2.
 **
-** In the above, a segment record consists of the following four 64-bit
+** In the above, a segment record consists of the following four 64-bit 
 ** fields (converted to 2 * u32 by storing the MSW followed by LSW):
 **
 **     1. First page of array,
@@ -115,16 +115,16 @@
 ** file. Defining this limit ensures that all level records fit within
 ** the 4096 byte limit for checkpoint blobs.
 **
-** The number of right-hand-side segments in a database is counted as
+** The number of right-hand-side segments in a database is counted as 
 ** follows:
 **
 **   * For each level in the database not undergoing a merge, add 1.
 **
-**   * For each level in the database that is undergoing a merge, add
+**   * For each level in the database that is undergoing a merge, add 
 **     the number of segments on the rhs of the level.
 **
-** A level record not undergoing a merge is 10 integers. A level record
-** with nRhs rhs segments and (nRhs+1) input segments (i.e. including the
+** A level record not undergoing a merge is 10 integers. A level record 
+** with nRhs rhs segments and (nRhs+1) input segments (i.e. including the 
 ** separators from the next level) is (11*nRhs+20) integers. The maximum
 ** per right-hand-side level is therefore 21 integers. So the maximum
 ** size of all level records in a checkpoint is 21*40=820 integers.
@@ -132,8 +132,8 @@
 ** TODO: Before pointer values were changed from 32 to 64 bits, the above
 ** used to come to 420 bytes - leaving significant space for a free-list
 ** prefix. No more. To fix this, reduce the size of the level records in
-** a db snapshot, and improve management of the free-list tail in
-** lsm_sorted.c.
+** a db snapshot, and improve management of the free-list tail in 
+** lsm_sorted.c. 
 */
 #define LSM_MAX_RHS_SEGMENTS 40
 
@@ -141,8 +141,8 @@
 ** LARGE NUMBERS OF FREELIST ENTRIES:
 **
 ** There is also a limit (LSM_MAX_FREELIST_ENTRIES - defined in lsmInt.h)
-** on the number of free-list entries stored in a checkpoint. Since each
-** free-list entry consists of 3 integers, the maximum free-list size is
+** on the number of free-list entries stored in a checkpoint. Since each 
+** free-list entry consists of 3 integers, the maximum free-list size is 
 ** 3*100=300 integers. Combined with the limit on rhs segments defined
 ** above, this ensures that a checkpoint always fits within a 4096 byte
 ** meta page.
@@ -217,7 +217,7 @@ struct CkptBuffer {
 ** nCkpt. Store the checksum in *piCksum1 and *piCksum2 before returning.
 **
 ** The value of the nCkpt parameter includes the two checksum values at
-** the end of the checkpoint. They are not used as inputs to the checksum
+** the end of the checkpoint. They are not used as inputs to the checksum 
 ** calculation. The checksum is based on the array of (nCkpt-2) integers
 ** at aCkpt[].
 */
@@ -258,7 +258,7 @@ static void ckptSetValue(CkptBuffer *p, int iIdx, u32 iVal, int *pRc){
 }
 
 /*
-** Argument aInt points to an array nInt elements in size. Switch the
+** Argument aInt points to an array nInt elements in size. Switch the 
 ** endian-ness of each element of the array.
 */
 static void ckptChangeEndianness(u32 *aInt, int nInt){
@@ -301,13 +301,13 @@ static i64 ckptGobble64(u32 *a, int *piIn){
 
 
 /*
-** Append a 6-value segment record corresponding to pSeg to the checkpoint
+** Append a 6-value segment record corresponding to pSeg to the checkpoint 
 ** buffer passed as the third argument.
 */
 static void ckptExportSegment(
-  Segment *pSeg,
-  CkptBuffer *p,
-  int *piOut,
+  Segment *pSeg, 
+  CkptBuffer *p, 
+  int *piOut, 
   int *pRc
 ){
   ckptAppend64(p, piOut, pSeg->iFirst, pRc);
@@ -336,8 +336,8 @@ static void ckptExportLevel(
     for(i=0; i<pLevel->nRight; i++){
       ckptExportSegment(&pLevel->aRhs[i], p, &iOut, pRc);
     }
-    assert( pMerge->nInput==pLevel->nRight
-         || pMerge->nInput==pLevel->nRight+1
+    assert( pMerge->nInput==pLevel->nRight 
+         || pMerge->nInput==pLevel->nRight+1 
     );
     ckptSetValue(p, iOut++, pMerge->nInput, pRc);
     ckptSetValue(p, iOut++, pMerge->nSkip, pRc);
@@ -357,10 +357,10 @@ static void ckptExportLevel(
 ** Populate the log offset fields of the checkpoint buffer. 4 values.
 */
 static void ckptExportLog(
-  lsm_db *pDb,
+  lsm_db *pDb, 
   int bFlush,
-  CkptBuffer *p,
-  int *piOut,
+  CkptBuffer *p, 
+  int *piOut, 
   int *pRc
 ){
   int iOut = *piOut;
@@ -396,7 +396,7 @@ static void ckptExportAppendlist(
   }
 };
 
-static int ckptExportSnapshot(
+static int ckptExportSnapshot( 
   lsm_db *pDb,                    /* Connection handle */
   int bLog,                       /* True to update log-offset fields */
   i64 iId,                        /* Checkpoint id */
@@ -458,7 +458,7 @@ static int ckptExportSnapshot(
   /* Write the checkpoint header */
   assert( iId>=0 );
   assert( pSnap->iCmpId==pDb->compress.iId
-       || pSnap->iCmpId==LSM_COMPRESSION_EMPTY
+       || pSnap->iCmpId==LSM_COMPRESSION_EMPTY 
   );
   ckptSetValue(&ckpt, CKPT_HDR_ID_MSW, (u32)(iId>>32), &rc);
   ckptSetValue(&ckpt, CKPT_HDR_ID_LSW, (u32)(iId&0xFFFFFFFF), &rc);
@@ -480,12 +480,12 @@ static int ckptExportSnapshot(
   assert( iOut<=1024 );
 
 #ifdef LSM_LOG_FREELIST
-  lsmLogMessage(pDb, rc,
+  lsmLogMessage(pDb, rc, 
       "ckptExportSnapshot(): id=%lld freelist: %d", iId, pSnap->freelist.nEntry
   );
   for(i=0; i<pSnap->freelist.nEntry; i++){
-  lsmLogMessage(pDb, rc,
-      "ckptExportSnapshot(): iBlk=%d id=%lld",
+  lsmLogMessage(pDb, rc, 
+      "ckptExportSnapshot(): iBlk=%d id=%lld", 
       pSnap->freelist.aEntry[i].iBlk,
       pSnap->freelist.aEntry[i].iId
   );
@@ -550,8 +550,8 @@ static int ckptSetupMerge(lsm_db *pDb, u32 *aInt, int *piIn, Level *pLevel){
 
 static int ckptLoadLevels(
   lsm_db *pDb,
-  u32 *aIn,
-  int *piIn,
+  u32 *aIn, 
+  int *piIn, 
   int nLevel,
   Level **ppLevel
 ){
@@ -702,7 +702,7 @@ static i64 ckptLoadId(MetaPage *pPg){
   if( pPg ){
     int nData;
     u8 *aData = lsmFsMetaPageData(pPg, &nData);
-    ret = (((i64)lsmGetU32(&aData[CKPT_HDR_ID_MSW*4])) << 32) +
+    ret = (((i64)lsmGetU32(&aData[CKPT_HDR_ID_MSW*4])) << 32) + 
           ((i64)lsmGetU32(&aData[CKPT_HDR_ID_LSW*4]));
   }
   return ret;
@@ -732,8 +732,8 @@ static int ckptChecksumOk(u32 *aCkpt){
 ** before returning.
 **
 ** If no error occurs and the checkpoint is successfully loaded, copy it to
-** ShmHeader.aSnap1[] and ShmHeader.aSnap2[], and set ShmHeader.iMetaPage
-** to indicate its origin. In this case return 1. Or, if the checkpoint
+** ShmHeader.aSnap1[] and ShmHeader.aSnap2[], and set ShmHeader.iMetaPage 
+** to indicate its origin. In this case return 1. Or, if the checkpoint 
 ** cannot be loaded (because the checksum does not compute), return 0.
 */
 static int ckptTryLoad(lsm_db *pDb, MetaPage *pPg, u32 iMeta, int *pRc){
@@ -744,7 +744,7 @@ static int ckptTryLoad(lsm_db *pDb, MetaPage *pPg, u32 iMeta, int *pRc){
     u32 nCkpt;                    /* Number of elements in aCkpt[] */
     int nData;                    /* Bytes of data in aData[] */
     u8 *aData;                    /* Meta page data */
-
+   
     aData = lsmFsMetaPageData(pPg, &nData);
     nCkpt = (u32)lsmGetU32(&aData[CKPT_HDR_NCKPT*sizeof(u32)]);
     if( nCkpt<=nData/sizeof(u32) && nCkpt>CKPT_HDR_NCKPT ){
@@ -838,7 +838,7 @@ int lsmCheckpointRecover(lsm_db *pDb){
   return rc;
 }
 
-/*
+/* 
 ** Store the snapshot in pDb->aSnapshot[] in meta-page iMeta.
 */
 int lsmCheckpointStore(lsm_db *pDb, int iMeta){
@@ -858,7 +858,7 @@ int lsmCheckpointStore(lsm_db *pDb, int iMeta){
     ckptChangeEndianness((u32 *)aData, nCkpt);
     rc = lsmFsMetaPageRelease(pPg);
   }
-
+      
   return rc;
 }
 
@@ -914,7 +914,7 @@ int lsmCheckpointLoadOk(lsm_db *pDb, int iSnap){
 }
 
 int lsmCheckpointClientCacheOk(lsm_db *pDb){
-  return ( pDb->pClient
+  return ( pDb->pClient 
         && pDb->pClient->iId==lsmCheckpointId(pDb->aSnapshot, 0)
         && pDb->pClient->iId==lsmCheckpointId(pDb->pShmhdr->aSnap1, 0)
         && pDb->pClient->iId==lsmCheckpointId(pDb->pShmhdr->aSnap2, 0)
@@ -928,9 +928,9 @@ int lsmCheckpointLoadWorker(lsm_db *pDb){
   int nInt2;
 
   /* Must be holding the WORKER lock to do this. Or DMS2. */
-  assert(
-      lsmShmAssertLock(pDb, LSM_LOCK_WORKER, LSM_LOCK_EXCL)
-   || lsmShmAssertLock(pDb, LSM_LOCK_DMS1, LSM_LOCK_EXCL)
+  assert( 
+      lsmShmAssertLock(pDb, LSM_LOCK_WORKER, LSM_LOCK_EXCL) 
+   || lsmShmAssertLock(pDb, LSM_LOCK_DMS1, LSM_LOCK_EXCL) 
   );
 
   /* Check that the two snapshots match. If not, repair them. */
@@ -960,9 +960,9 @@ int lsmCheckpointLoadWorker(lsm_db *pDb){
 }
 
 int lsmCheckpointDeserialize(
-  lsm_db *pDb,
+  lsm_db *pDb, 
   int bInclFreelist,              /* If true, deserialize free-list */
-  u32 *aCkpt,
+  u32 *aCkpt, 
   Snapshot **ppSnap
 ){
   int rc = LSM_OK;
@@ -992,7 +992,7 @@ int lsmCheckpointDeserialize(
     /* Read the block-redirect list */
     pNew->redirect.n = aCkpt[iIn++];
     if( pNew->redirect.n ){
-      pNew->redirect.a = lsmMallocZeroRc(pDb->pEnv,
+      pNew->redirect.a = lsmMallocZeroRc(pDb->pEnv, 
           (sizeof(struct RedirectEntry) * LSM_MAX_BLOCK_REDIRECTS), &rc
       );
       if( rc==LSM_OK ){
@@ -1100,9 +1100,9 @@ int lsmCheckpointSaveWorker(lsm_db *pDb, int bFlush){
 /*
 ** This function is used to determine the snapshot-id of the most recently
 ** checkpointed snapshot. Variable ShmHeader.iMetaPage indicates which of
-** the two meta-pages said snapshot resides on (if any).
+** the two meta-pages said snapshot resides on (if any). 
 **
-** If successful, this function loads the snapshot from the meta-page,
+** If successful, this function loads the snapshot from the meta-page, 
 ** verifies its checksum and sets *piId to the snapshot-id before returning
 ** LSM_OK. Or, if the checksum attempt fails, *piId is set to zero and
 ** LSM_OK returned. If an error occurs, an LSM error code is returned and
@@ -1119,7 +1119,7 @@ int lsmCheckpointSynced(lsm_db *pDb, i64 *piId, i64 *piLog, u32 *pnWrite){
     if( rc==LSM_OK ){
       int nCkpt;
       int nData;
-      u8 *aData;
+      u8 *aData; 
 
       aData = lsmFsMetaPageData(pPg, &nData);
       assert( nData==LSM_META_RW_PAGE_SIZE );
@@ -1190,7 +1190,7 @@ int lsmCheckpointBlksz(u32 *aCkpt){ return (int)aCkpt[CKPT_HDR_BLKSZ]; }
 void lsmCheckpointLogoffset(
   u32 *aCkpt,
   DbLog *pLog
-){
+){ 
   pLog->aRegion[2].iStart = (lsmCheckpointLogOffset(aCkpt) >> 1);
 
   pLog->cksum0 = aCkpt[CKPT_HDR_LO_CKSUM1];
@@ -1209,7 +1209,7 @@ void lsmCheckpointZeroLogoffset(lsm_db *pDb){
 
   pDb->aSnapshot[CKPT_HDR_LO_MSW] = 0;
   pDb->aSnapshot[CKPT_HDR_LO_LSW] = 0;
-  ckptChecksum(pDb->aSnapshot, nCkpt,
+  ckptChecksum(pDb->aSnapshot, nCkpt, 
       &pDb->aSnapshot[nCkpt-2], &pDb->aSnapshot[nCkpt-1]
   );
 
@@ -1225,7 +1225,7 @@ int lsmCheckpointSize(lsm_db *db, int *pnKB){
   int rc = LSM_OK;
   u32 nSynced;
 
-  /* Set nSynced to the number of pages that had been written when the
+  /* Set nSynced to the number of pages that had been written when the 
   ** database was last checkpointed. */
   rc = lsmCheckpointSynced(db, 0, 0, &nSynced);
 

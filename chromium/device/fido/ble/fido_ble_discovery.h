@@ -55,6 +55,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleDiscovery
                             BluetoothDevice* device,
                             const std::string& old_address) override;
 
+  void OnStartDiscoverySessionWithFilter(
+      std::unique_ptr<BluetoothDiscoverySession>);
+
   // Returns true if |device| is a Cable device. If so, add address of |device|
   // to |blacklisted_cable_device_addresses_|.
   bool CheckForExcludedDeviceAndCacheAddress(const BluetoothDevice* device);
@@ -73,7 +76,7 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoBleDiscovery
   // Maps Bluetooth FIDO authenticators that are known to be in pairing mode.
   std::map<std::string, std::unique_ptr<base::OneShotTimer>>
       pairing_mode_device_tracker_;
-  base::WeakPtrFactory<FidoBleDiscovery> weak_factory_;
+  base::WeakPtrFactory<FidoBleDiscovery> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(FidoBleDiscovery);
 };

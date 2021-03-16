@@ -10,7 +10,7 @@
    */
   function isEnabled(radio) {
     return radio.matches(':not([disabled]):not([hidden])') &&
-        radio.style.display != 'none' && radio.style.visibility != 'hidden';
+        radio.style.display !== 'none' && radio.style.visibility !== 'hidden';
   }
 
   Polymer({
@@ -21,14 +21,16 @@
         type: Boolean,
         value: false,
         reflectToAttribute: true,
+        observer: 'update_',
       },
 
       selected: {
         type: String,
         notify: true,
+        observer: 'update_',
       },
 
-      selectable: {
+      selectableElements: {
         type: String,
         value: 'cr-radio-button, controlled-radio-button',
       },
@@ -39,7 +41,7 @@
        */
       selectableRegExp_: {
         value: Object,
-        computed: 'computeSelectableRegExp_(selectable)',
+        computed: 'computeSelectableRegExp_(selectableElements)',
       },
     },
 
@@ -48,15 +50,12 @@
       click: 'onClick_',
     },
 
-    observers: [
-      'update_(disabled, selected)',
-    ],
-
     hostAttributes: {
+      'aria-disabled': 'false',
       role: 'radiogroup',
     },
 
-    /** @private {Array<!Element>} */
+    /** @private {Array<!CrRadioButtonElement>} */
     buttons_: null,
 
     /** @private {EventTracker} */
@@ -75,7 +74,7 @@
     populateBound_: null,
 
     /** @override */
-    attached: function() {
+    attached() {
       this.isRtl_ = this.matches(':host-context([dir=rtl]) cr-radio-group');
       this.deltaKeyMap_ = new Map([
         ['ArrowDown', 1],
@@ -102,7 +101,7 @@
     },
 
     /** @override */
-    detached: function() {
+    detached() {
       if (Polymer.DomIf) {
         this.$$('slot').removeEventListener('slotchange', this.populateBound_);
       } else if (this.observer_) {
@@ -113,13 +112,13 @@
     },
 
     /** @override */
-    focus: function() {
+    focus() {
       if (this.disabled || !this.buttons_) {
         return;
       }
 
       const radio =
-          this.buttons_.find(radio => radio.getAttribute('tabindex') == '0');
+          this.buttons_.find(radio => this.isButtonEnabledAndSelected_(radio));
       if (radio) {
         radio.focus();
       }
@@ -129,7 +128,7 @@
      * @param {!KeyboardEvent} event
      * @private
      */
-    onKeyDown_: function(event) {
+    onKeyDown_(event) {
       if (this.disabled) {
         return;
       }
@@ -138,41 +137,46 @@
         return;
       }
 
-      const targetElement = /** @type {!Element} */ (event.target);
+      const targetElement = /** @type {!CrRadioButtonElement} */ (event.target);
       if (!this.buttons_.includes(targetElement)) {
         return;
       }
 
-      if (event.key == ' ' || event.key == 'Enter') {
+      if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault();
-        this.select_(/** @type {!Element} */ (event.target));
+        this.select_(/** @type {!CrRadioButtonElement} */ (event.target));
         return;
       }
 
       const enabledRadios = this.buttons_.filter(isEnabled);
-      if (enabledRadios.length == 0) {
+      if (enabledRadios.length === 0) {
         return;
       }
 
       let selectedIndex;
       const max = enabledRadios.length - 1;
-      if (event.key == 'Home') {
+      if (event.key === 'Home') {
         selectedIndex = 0;
-      } else if (event.key == 'End') {
+      } else if (event.key === 'End') {
         selectedIndex = max;
       } else if (this.deltaKeyMap_.has(event.key)) {
         const delta = this.deltaKeyMap_.get(event.key);
         // If nothing selected, start from the first radio then add |delta|.
         const lastSelection = enabledRadios.findIndex(radio => radio.checked);
         selectedIndex = Math.max(0, lastSelection) + delta;
-        selectedIndex = Math.min(max, Math.max(0, selectedIndex));
+        // Wrap the selection, if needed.
+        if (selectedIndex > max) {
+          selectedIndex = 0;
+        } else if (selectedIndex < 0) {
+          selectedIndex = max;
+        }
       } else {
         return;
       }
 
       const radio = enabledRadios[selectedIndex];
       const name = `${radio.name}`;
-      if (this.selected != name) {
+      if (this.selected !== name) {
         event.preventDefault();
         this.selected = name;
         radio.focus();
@@ -183,8 +187,8 @@
      * @return {!RegExp}
      * @private
      */
-    computeSelectableRegExp_: function() {
-      const tags = this.selectable.split(', ').join('|');
+    computeSelectableRegExp_() {
+      const tags = this.selectableElements.split(', ').join('|');
       return new RegExp(`^(${tags})$`, 'i');
     },
 
@@ -192,27 +196,27 @@
      * @param {!Event} event
      * @private
      */
-    onClick_: function(event) {
+    onClick_(event) {
       const path = event.composedPath();
       if (path.some(target => /^a$/i.test(target.tagName))) {
         return;
       }
-      const target = /** @type {!Element} */ (
+      const target = /** @type {!CrRadioButtonElement} */ (
           path.find(n => this.selectableRegExp_.test(n.tagName)));
       if (target && this.buttons_.includes(target)) {
-        this.select_(/** @type {!Element} */ (target));
+        this.select_(/** @type {!CrRadioButtonElement} */ (target));
       }
     },
 
     /** @private */
-    populate_: function() {
+    populate_() {
       // TODO(crbug.com/738611): After migration to Polymer 2, remove
       // Polymer 1 references.
       this.buttons_ = Polymer.DomIf ?
           this.$$('slot')
               .assignedNodes({flatten: true})
               .filter(n => this.selectableRegExp_.test(n.tagName)) :
-          this.queryAllEffectiveChildren(this.selectable);
+          this.queryAllEffectiveChildren(this.selectableElements);
       this.buttonEventTracker_.removeAll();
       this.buttons_.forEach(el => {
         this.buttonEventTracker_.add(
@@ -224,38 +228,53 @@
     },
 
     /**
-     * @param {!Element} button
+     * @param {!CrRadioButtonElement} button
      * @private
      */
-    select_: function(button) {
+    select_(button) {
       if (!isEnabled(button)) {
         return;
       }
 
       const name = `${button.name}`;
-      if (this.selected != name) {
+      if (this.selected !== name) {
         this.selected = name;
       }
     },
 
+    /**
+     * @param {!Element} button
+     * @return {boolean}
+     * @private
+     */
+    isButtonEnabledAndSelected_(button) {
+      return !this.disabled && button.checked && isEnabled(button);
+    },
+
     /** @private */
-    update_: function() {
+    update_() {
       if (!this.buttons_) {
         return;
       }
       let noneMadeFocusable = true;
       this.buttons_.forEach(radio => {
-        radio.checked = this.selected != undefined &&
-            radio.name == this.selected;
-        const canBeFocused =
-            radio.checked && !this.disabled && isEnabled(radio);
-        noneMadeFocusable &= !canBeFocused;
-        radio.setAttribute('tabindex', canBeFocused ? '0' : '-1');
+        radio.checked = this.selected !== undefined &&
+            `${radio.name}` === `${this.selected}`;
+        const disabled = this.disabled || !isEnabled(radio);
+        const canBeFocused = radio.checked && !disabled;
+        if (canBeFocused) {
+          radio.focusable = true;
+          noneMadeFocusable = false;
+        } else {
+          radio.focusable = false;
+        }
+        radio.setAttribute('aria-disabled', `${disabled}`);
       });
+      this.setAttribute('aria-disabled', `${this.disabled}`);
       if (noneMadeFocusable && !this.disabled) {
-        const focusable = this.buttons_.find(isEnabled);
-        if (focusable) {
-          focusable.setAttribute('tabindex', '0');
+        const radio = this.buttons_.find(isEnabled);
+        if (radio) {
+          radio.focusable = true;
         }
       }
     },

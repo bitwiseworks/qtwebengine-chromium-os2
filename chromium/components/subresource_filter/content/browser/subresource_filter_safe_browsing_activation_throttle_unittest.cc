@@ -11,14 +11,15 @@
 #include <utility>
 #include <vector>
 
-#include "base/message_loop/message_loop_current.h"
-#include "base/metrics/field_trial.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_mock_time_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "components/safe_browsing/db/test_database_manager.h"
+#include "components/safe_browsing/core/db/test_database_manager.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
 #include "components/subresource_filter/content/browser/fake_safe_browsing_database_manager.h"
 #include "components/subresource_filter/content/browser/subresource_filter_client.h"
@@ -61,7 +62,7 @@ char kRedirectURL[] = "http://redirect.test/";
 const char kSafeBrowsingNavigationDelay[] =
     "SubresourceFilter.PageLoad.SafeBrowsingDelay";
 const char kSafeBrowsingCheckTime[] =
-    "SubresourceFilter.SafeBrowsing.CheckTime";
+    "SubresourceFilter.SafeBrowsing.TotalCheckTime";
 const char kActivationListHistogram[] =
     "SubresourceFilter.PageLoad.ActivationList";
 
@@ -130,7 +131,7 @@ const ActivationListTestData kActivationListTestData[] = {
      ActivationList::BETTER_ADS,
      safe_browsing::SB_THREAT_TYPE_SUBRESOURCE_FILTER,
      safe_browsing::ThreatPatternType::NONE,
-     {{{SBType::BETTER_ADS, SBLevel::ENFORCE}}, base::KEEP_FIRST_OF_DUPES}},
+     {{SBType::BETTER_ADS, SBLevel::ENFORCE}}},
 };
 
 }  //  namespace
@@ -139,8 +140,8 @@ class SubresourceFilterSafeBrowsingActivationThrottleTest
     : public content::RenderViewHostTestHarness,
       public content::WebContentsObserver {
  public:
-  SubresourceFilterSafeBrowsingActivationThrottleTest()
-      : field_trial_list_(nullptr) {}
+  SubresourceFilterSafeBrowsingActivationThrottleTest() {}
+
   ~SubresourceFilterSafeBrowsingActivationThrottleTest() override {}
 
   void SetUp() override {
@@ -153,7 +154,7 @@ class SubresourceFilterSafeBrowsingActivationThrottleTest
     ASSERT_NO_FATAL_FAILURE(test_ruleset_creator_.CreateRulesetWithRules(
         rules, &test_ruleset_pair_));
     ruleset_dealer_ = std::make_unique<VerifiedRulesetDealer::Handle>(
-        base::MessageLoopCurrent::Get()->task_runner());
+        base::ThreadTaskRunnerHandle::Get());
     ruleset_dealer_->TryOpenAndSetRulesetFile(test_ruleset_pair_.indexed.path,
                                               /*expected_checksum=*/0,
                                               base::DoNothing());
@@ -328,7 +329,6 @@ class SubresourceFilterSafeBrowsingActivationThrottleTest
   }
 
  private:
-  base::FieldTrialList field_trial_list_;
   testing::ScopedSubresourceFilterConfigurator scoped_configuration_;
   scoped_refptr<base::TestMockTimeTaskRunner> test_io_task_runner_;
 
@@ -723,7 +723,7 @@ TEST_P(SubresourceFilterSafeBrowsingActivationThrottleScopeTest,
     EXPECT_EQ(mojom::ActivationLevel::kDisabled,
               *observer()->GetPageActivationForLastCommittedLoad());
   }
-};
+}
 
 // Only main frames with http/https schemes should activate.
 TEST_P(SubresourceFilterSafeBrowsingActivationThrottleScopeTest,
@@ -757,7 +757,7 @@ TEST_P(SubresourceFilterSafeBrowsingActivationThrottleScopeTest,
     EXPECT_EQ(test_data.expected_activation_level,
               *observer()->GetPageActivationForLastCommittedLoad());
   }
-};
+}
 
 TEST_F(SubresourceFilterSafeBrowsingActivationThrottleTest,
        ListNotMatched_NoActivation) {
@@ -888,17 +888,13 @@ TEST_P(SubresourceFilterSafeBrowsingActivationThrottleParamTest,
 struct RedirectSamplesAndResults {
   std::vector<GURL> urls;
   bool expected_activation;
-  ActivationPosition expected_position;
+  base::Optional<RedirectPosition> last_enforcement_position;
 };
 
 TEST_F(SubresourceFilterSafeBrowsingActivationThrottleTest,
-       ActivationTriggeredOnRedirect) {
-  // Turn on the feature to perform safebrowsing on redirects.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      kSafeBrowsingSubresourceFilterConsiderRedirects);
+       RedirectPositionLogged) {
   std::string histogram_string =
-      "SubresourceFilter.PageLoad.Activation.RedirectPosition";
+      "SubresourceFilter.PageLoad.Activation.RedirectPosition2.Enforcement";
 
   // Set up the urls for enforcement.
   GURL normal_url("https://example.regular");
@@ -920,15 +916,16 @@ TEST_F(SubresourceFilterSafeBrowsingActivationThrottleTest,
   ConfigureForMatch(bad_url, safe_browsing::SB_THREAT_TYPE_SUBRESOURCE_FILTER);
   ConfigureForMatch(worse_url, safe_browsing::SB_THREAT_TYPE_URL_PHISHING);
 
-  // Check cases where there are multiple redirection.
+  // Check cases where there are multiple redirects. Activation only triggers
+  // on the final url, but redirect position is evaluated based on the worst.
   const RedirectSamplesAndResults kTestCases[] = {
-      {{worse_url, normal_url, normal_url}, true, ActivationPosition::kFirst},
-      {{bad_url, normal_url, worse_url}, true, ActivationPosition::kLast},
-      {{worse_url, normal_url, bad_url}, true, ActivationPosition::kFirst},
-      {{normal_url, worse_url, bad_url}, true, ActivationPosition::kLast},
-      {{normal_url, normal_url}, false, ActivationPosition::kMaxValue},
-      {{normal_url, bad_url, normal_url}, false, ActivationPosition::kMaxValue},
-      {{worse_url}, true, ActivationPosition::kOnly},
+      {{worse_url, normal_url, normal_url}, false, RedirectPosition::kFirst},
+      {{bad_url, normal_url, worse_url}, true, RedirectPosition::kLast},
+      {{worse_url, normal_url, bad_url}, true, RedirectPosition::kLast},
+      {{normal_url, worse_url, bad_url}, true, RedirectPosition::kLast},
+      {{normal_url, normal_url}, false, base::nullopt},
+      {{normal_url, bad_url, normal_url}, false, RedirectPosition::kMiddle},
+      {{worse_url}, true, RedirectPosition::kOnly},
   };
   for (const auto& test_case : kTestCases) {
     const base::HistogramTester histograms;
@@ -941,11 +938,14 @@ TEST_F(SubresourceFilterSafeBrowsingActivationThrottleTest,
     if (test_case.expected_activation) {
       EXPECT_EQ(mojom::ActivationLevel::kEnabled,
                 *observer()->GetPageActivationForLastCommittedLoad());
-      histograms.ExpectUniqueSample(histogram_string,
-                                    test_case.expected_position, 1);
     } else {
       EXPECT_EQ(mojom::ActivationLevel::kDisabled,
                 *observer()->GetPageActivationForLastCommittedLoad());
+    }
+    if (test_case.last_enforcement_position.has_value()) {
+      histograms.ExpectUniqueSample(histogram_string,
+                                    *test_case.last_enforcement_position, 1);
+    } else {
       histograms.ExpectTotalCount(histogram_string, 0);
     }
   }
@@ -967,7 +967,7 @@ TEST_F(SubresourceFilterSafeBrowsingActivationThrottleTest,
     safe_browsing::ThreatMetadata metadata;
     metadata.threat_pattern_type = safe_browsing::ThreatPatternType::NONE;
     metadata.subresource_filter_match = safe_browsing::SubresourceFilterMatch(
-        {{{SBType::ABUSIVE, SBLevel::ENFORCE}}, base::KEEP_FIRST_OF_DUPES});
+        {{SBType::ABUSIVE, SBLevel::ENFORCE}});
     ConfigureForMatch(url, safe_browsing::SB_THREAT_TYPE_SUBRESOURCE_FILTER,
                       metadata);
 
@@ -1034,7 +1034,7 @@ TEST_P(SubresourceFilterSafeBrowsingActivationThrottleTestWithCancelling,
   tester().ExpectTotalCount(kSafeBrowsingNavigationDelay, 0);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CancelMethod,
     SubresourceFilterSafeBrowsingActivationThrottleTestWithCancelling,
     ::testing::Combine(
@@ -1045,12 +1045,12 @@ INSTANTIATE_TEST_CASE_P(
         ::testing::Values(content::TestNavigationThrottle::SYNCHRONOUS,
                           content::TestNavigationThrottle::ASYNCHRONOUS)));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ActivationLevelTest,
     SubresourceFilterSafeBrowsingActivationThrottleParamTest,
     ::testing::ValuesIn(kActivationListTestData));
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     ActivationScopeTest,
     SubresourceFilterSafeBrowsingActivationThrottleScopeTest,
     ::testing::ValuesIn(kActivationScopeTestData));

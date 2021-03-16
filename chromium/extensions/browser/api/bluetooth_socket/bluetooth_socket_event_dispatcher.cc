@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -208,9 +209,9 @@ void BluetoothSocketEventDispatcher::ReceiveCallback(
 
   // Post a task to delay the read until the socket is available, as
   // calling StartReceive at this point would error with ERR_IO_PENDING.
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {params.thread_id},
-      base::Bind(&BluetoothSocketEventDispatcher::StartReceive, params));
+      base::BindOnce(&BluetoothSocketEventDispatcher::StartReceive, params));
 }
 
 // static
@@ -304,9 +305,9 @@ void BluetoothSocketEventDispatcher::AcceptCallback(
 
   // Post a task to delay the accept until the socket is available, as
   // calling StartAccept at this point would error with ERR_IO_PENDING.
-  base::PostTaskWithTraits(
+  base::PostTask(
       FROM_HERE, {params.thread_id},
-      base::Bind(&BluetoothSocketEventDispatcher::StartAccept, params));
+      base::BindOnce(&BluetoothSocketEventDispatcher::StartAccept, params));
 }
 
 // static
@@ -350,10 +351,9 @@ void BluetoothSocketEventDispatcher::PostEvent(const SocketParams& params,
                                                std::unique_ptr<Event> event) {
   DCHECK_CURRENTLY_ON(params.thread_id);
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::Bind(&DispatchEvent, params.browser_context_id, params.extension_id,
-                 base::Passed(std::move(event))));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&DispatchEvent, params.browser_context_id,
+                                params.extension_id, std::move(event)));
 }
 
 // static

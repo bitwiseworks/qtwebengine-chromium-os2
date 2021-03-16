@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/audio_parameters.h"
@@ -97,10 +98,10 @@ void PPB_Audio_Shared::SetStopPlaybackState() {
 void PPB_Audio_Shared::SetStreamInfo(
     PP_Instance instance,
     base::UnsafeSharedMemoryRegion shared_memory_region,
-    base::SyncSocket::Handle socket_handle,
+    base::SyncSocket::ScopedHandle socket_handle,
     PP_AudioSampleRate sample_rate,
     int sample_frame_count) {
-  socket_.reset(new base::CancelableSyncSocket(socket_handle));
+  socket_.reset(new base::CancelableSyncSocket(std::move(socket_handle)));
   shared_memory_size_ = media::ComputeAudioOutputBufferSize(
       kAudioOutputChannels, sample_frame_count);
   DCHECK_GE(shared_memory_region.GetSize(), shared_memory_size_);
@@ -180,8 +181,9 @@ void PPB_Audio_Shared::StopThread() {
   } else {
     if (audio_thread_.get()) {
       auto local_audio_thread(std::move(audio_thread_));
-      CallWhileUnlocked(base::Bind(&base::DelegateSimpleThread::Join,
-                                   base::Unretained(local_audio_thread.get())));
+      CallWhileUnlocked(
+          base::BindOnce(&base::DelegateSimpleThread::Join,
+                         base::Unretained(local_audio_thread.get())));
     }
   }
 }
@@ -235,9 +237,10 @@ void PPB_Audio_Shared::Run() {
     }
 
     // Deinterleave the audio data into the shared memory as floats.
-    audio_bus_->FromInterleaved(client_buffer_.get(),
-                                audio_bus_->frames(),
-                                kBitsPerAudioOutputSample / 8);
+    static_assert(kBitsPerAudioOutputSample == 16,
+                  "FromInterleaved expects 2 bytes.");
+    audio_bus_->FromInterleaved<media::SignedInt16SampleTypeTraits>(
+        reinterpret_cast<int16_t*>(client_buffer_.get()), audio_bus_->frames());
 
     // Let the other end know which buffer we just filled.  The buffer index is
     // used to ensure the other end is getting the buffer it expects.  For more

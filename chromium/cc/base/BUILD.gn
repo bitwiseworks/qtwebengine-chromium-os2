@@ -4,7 +4,7 @@
 
 import("//cc/cc.gni")
 
-component("base") {
+cc_component("base") {
   output_name = "cc_base"
   sources = [
     "base_export.h",
@@ -14,14 +14,14 @@ component("base") {
     "delayed_unique_notifier.h",
     "devtools_instrumentation.cc",
     "devtools_instrumentation.h",
+    "features.cc",
+    "features.h",
     "histograms.cc",
     "histograms.h",
     "index_rect.cc",
     "index_rect.h",
     "invalidation_region.cc",
     "invalidation_region.h",
-    "lap_timer.cc",
-    "lap_timer.h",
     "list_container.h",
     "list_container_helper.cc",
     "list_container_helper.h",

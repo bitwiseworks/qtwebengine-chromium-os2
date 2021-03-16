@@ -14,7 +14,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -30,14 +30,13 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/desktop_capture.h"
 #include "content/public/browser/desktop_media_id.h"
+#include "content/public/browser/device_service.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/service_manager_connection.h"
 #include "media/base/video_util.h"
 #include "media/capture/content/capture_resolution_chooser.h"
-#include "services/device/public/mojom/constants.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 #include "third_party/libyuv/include/libyuv/scale_argb.h"
 #include "third_party/webrtc/modules/desktop_capture/cropped_desktop_frame.h"
 #include "third_party/webrtc/modules/desktop_capture/cropping_window_capturer.h"
@@ -47,6 +46,7 @@
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 #include "third_party/webrtc/modules/desktop_capture/fake_desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/mouse_cursor_monitor.h"
+#include "ui/gfx/icc_profile.h"
 
 namespace content {
 
@@ -73,14 +73,10 @@ bool IsFrameUnpackedOrInverted(webrtc::DesktopFrame* frame) {
       frame->size().width() * webrtc::DesktopFrame::kBytesPerPixel;
 }
 
-std::unique_ptr<service_manager::Connector> GetServiceConnector() {
+void BindWakeLockProvider(
+    mojo::PendingReceiver<device::mojom::WakeLockProvider> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  service_manager::Connector* connector =
-      ServiceManagerConnection::GetForProcess()->GetConnector();
-
-  DCHECK(connector);
-  return connector->Clone();
+  GetDeviceService().BindWakeLockProvider(std::move(receiver));
 }
 
 int GetMaximumCpuConsumptionPercentage() {
@@ -137,7 +133,7 @@ class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
   // Captures a single frame.
   void DoCapture();
 
-  void RequestWakeLock(std::unique_ptr<service_manager::Connector> connector);
+  void RequestWakeLock();
 
   base::TimeTicks NowTicks() const;
 
@@ -197,9 +193,9 @@ class DesktopCaptureDevice::Core : public webrtc::DesktopCapturer::Callback {
 
   // TODO(jiayl): Remove wake_lock_ when there is an API to keep the
   // screen from sleeping for the drive-by web.
-  device::mojom::WakeLockPtr wake_lock_;
+  mojo::Remote<device::mojom::WakeLock> wake_lock_;
 
-  base::WeakPtrFactory<Core> weak_factory_;
+  base::WeakPtrFactory<Core> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Core);
 };
@@ -215,8 +211,7 @@ DesktopCaptureDevice::Core::Core(
       capture_in_progress_(false),
       first_capture_returned_(false),
       first_permanent_error_logged(false),
-      capturer_type_(type),
-      weak_factory_(this) {}
+      capturer_type_(type) {}
 
 DesktopCaptureDevice::Core::~Core() {
   DCHECK(task_runner_->BelongsToCurrentThread());
@@ -252,15 +247,7 @@ void DesktopCaptureDevice::Core::AllocateAndStart(
                                      constraints.fixed_aspect_ratio);
 
   DCHECK(!wake_lock_);
-  // Gets a service_manager::Connector first, then request a wake lock.
-  // TODO(https://crbug.com/823869): Fix DesktopCaptureDeviceTest and remove
-  // this conditional.
-  if (BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
-    base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, {BrowserThread::UI}, base::BindOnce(&GetServiceConnector),
-        base::BindOnce(&DesktopCaptureDevice::Core::RequestWakeLock,
-                       weak_factory_.GetWeakPtr()));
-  }
+  RequestWakeLock();
 
   desktop_capturer_->Start(this);
   // Assume it will be always started successfully for now.
@@ -428,6 +415,13 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
     }
   }
 
+  gfx::ColorSpace frame_color_space;
+  if (!frame->icc_profile().empty()) {
+    gfx::ICCProfile icc_profile = gfx::ICCProfile::FromData(
+        frame->icc_profile().data(), frame->icc_profile().size());
+    frame_color_space = icc_profile.GetColorSpace();
+  }
+
   base::TimeTicks now = NowTicks();
   if (first_ref_time_.is_null())
     first_ref_time_ = now;
@@ -436,7 +430,8 @@ void DesktopCaptureDevice::Core::OnCaptureResult(
       media::VideoCaptureFormat(
           gfx::Size(output_size.width(), output_size.height()),
           requested_frame_rate_, media::PIXEL_FORMAT_ARGB),
-      0, now, now - first_ref_time_);
+      frame_color_space, 0 /* clockwise_rotation */, false /* flip_y */, now,
+      now - first_ref_time_);
 }
 
 void DesktopCaptureDevice::Core::OnCaptureTimer() {
@@ -476,15 +471,20 @@ void DesktopCaptureDevice::Core::DoCapture() {
   DCHECK(!capture_in_progress_);
 }
 
-void DesktopCaptureDevice::Core::RequestWakeLock(
-    std::unique_ptr<service_manager::Connector> connector) {
-  device::mojom::WakeLockProviderPtr wake_lock_provider;
-  connector->BindInterface(device::mojom::kServiceName,
-                           mojo::MakeRequest(&wake_lock_provider));
+void DesktopCaptureDevice::Core::RequestWakeLock() {
+  mojo::Remote<device::mojom::WakeLockProvider> wake_lock_provider;
+  auto receiver = wake_lock_provider.BindNewPipeAndPassReceiver();
+  // TODO(https://crbug.com/823869): Fix DesktopCaptureDeviceTest and remove
+  // this conditional.
+  if (BrowserThread::IsThreadInitialized(BrowserThread::UI)) {
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&BindWakeLockProvider, std::move(receiver)));
+  }
+
   wake_lock_provider->GetWakeLockWithoutContext(
       device::mojom::WakeLockType::kPreventDisplaySleep,
       device::mojom::WakeLockReason::kOther, "Native desktop capture",
-      mojo::MakeRequest(&wake_lock_));
+      wake_lock_.BindNewPipeAndPassReceiver());
 
   wake_lock_->RequestWakeLock();
 }
@@ -582,9 +582,9 @@ DesktopCaptureDevice::DesktopCaptureDevice(
     : thread_("desktopCaptureThread") {
 #if defined(OS_WIN) || defined(OS_MACOSX)
   // On Windows/OSX the thread must be a UI thread.
-  base::MessageLoop::Type thread_type = base::MessageLoop::TYPE_UI;
+  base::MessagePumpType thread_type = base::MessagePumpType::UI;
 #else
-  base::MessageLoop::Type thread_type = base::MessageLoop::TYPE_DEFAULT;
+  base::MessagePumpType thread_type = base::MessagePumpType::DEFAULT;
 #endif
 
   thread_.StartWithOptions(base::Thread::Options(thread_type, 0));

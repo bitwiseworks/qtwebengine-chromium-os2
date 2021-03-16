@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2013-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2013 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -11,6 +11,7 @@
 
 #include "common/mathutil.h"
 #include "common/utilities.h"
+#include "compiler/translator/Common.h"
 
 namespace sh
 {
@@ -32,7 +33,10 @@ class BlockLayoutMapVisitor : public BlockEncoderVisitor
                         const std::string &mappedName) override
     {
         ASSERT(!gl::IsSamplerType(variable.type));
-        (*mInfoOut)[name] = variableInfo;
+        if (!gl::IsOpaqueType(variable.type))
+        {
+            (*mInfoOut)[name] = variableInfo;
+        }
     }
 
   private:
@@ -44,10 +48,18 @@ void GetInterfaceBlockInfo(const std::vector<VarT> &fields,
                            const std::string &prefix,
                            BlockLayoutEncoder *encoder,
                            bool inRowMajorLayout,
+                           bool onlyActiveVariables,
                            BlockLayoutMap *blockInfoOut)
 {
     BlockLayoutMapVisitor visitor(blockInfoOut, prefix, encoder);
-    TraverseShaderVariables(fields, inRowMajorLayout, &visitor);
+    if (onlyActiveVariables)
+    {
+        TraverseActiveShaderVariables(fields, inRowMajorLayout, &visitor);
+    }
+    else
+    {
+        TraverseShaderVariables(fields, inRowMajorLayout, &visitor);
+    }
 }
 
 void TraverseStructVariable(const ShaderVariable &variable,
@@ -132,7 +144,7 @@ void TraverseArrayOfArraysVariable(const ShaderVariable &variable,
 
 std::string CollapseNameStack(const std::vector<std::string> &nameStack)
 {
-    std::stringstream strstr;
+    std::stringstream strstr = sh::InitializeStream<std::stringstream>();
     for (const std::string &part : nameStack)
     {
         strstr << part;
@@ -257,18 +269,19 @@ void Std140BlockEncoder::getBlockLayoutInfo(GLenum type,
     if (gl::IsMatrixType(type))
     {
         baseAlignment = getTypeBaseAlignment(type, isRowMajorMatrix);
-        matrixStride  = getTypeBaseAlignment(type, isRowMajorMatrix);
+        matrixStride  = static_cast<int>(getTypeBaseAlignment(type, isRowMajorMatrix));
 
         if (!arraySizes.empty())
         {
             const int numRegisters = gl::MatrixRegisterCount(type, isRowMajorMatrix);
-            arrayStride            = getTypeBaseAlignment(type, isRowMajorMatrix) * numRegisters;
+            arrayStride =
+                static_cast<int>(getTypeBaseAlignment(type, isRowMajorMatrix) * numRegisters);
         }
     }
     else if (!arraySizes.empty())
     {
-        baseAlignment = getTypeBaseAlignment(type, false);
-        arrayStride   = getTypeBaseAlignment(type, false);
+        baseAlignment = static_cast<int>(getTypeBaseAlignment(type, false));
+        arrayStride   = static_cast<int>(getTypeBaseAlignment(type, false));
     }
     else
     {
@@ -333,24 +346,26 @@ size_t Std430BlockEncoder::getTypeBaseAlignment(GLenum type, bool isRowMajorMatr
     return GetStd430BaseAlignment(type, isRowMajorMatrix);
 }
 
-void GetInterfaceBlockInfo(const std::vector<InterfaceBlockField> &fields,
+void GetInterfaceBlockInfo(const std::vector<ShaderVariable> &fields,
                            const std::string &prefix,
                            BlockLayoutEncoder *encoder,
                            BlockLayoutMap *blockInfoOut)
 {
     // Matrix packing is always recorded in individual fields, so they'll set the row major layout
     // flag to true if needed.
-    GetInterfaceBlockInfo(fields, prefix, encoder, false, blockInfoOut);
+    // Iterates over all variables.
+    GetInterfaceBlockInfo(fields, prefix, encoder, false, false, blockInfoOut);
 }
 
-void GetUniformBlockInfo(const std::vector<Uniform> &uniforms,
-                         const std::string &prefix,
-                         BlockLayoutEncoder *encoder,
-                         BlockLayoutMap *blockInfoOut)
+void GetActiveUniformBlockInfo(const std::vector<ShaderVariable> &uniforms,
+                               const std::string &prefix,
+                               BlockLayoutEncoder *encoder,
+                               BlockLayoutMap *blockInfoOut)
 {
     // Matrix packing is always recorded in individual fields, so they'll set the row major layout
     // flag to true if needed.
-    GetInterfaceBlockInfo(uniforms, prefix, encoder, false, blockInfoOut);
+    // Iterates only over the active variables.
+    GetInterfaceBlockInfo(uniforms, prefix, encoder, false, true, blockInfoOut);
 }
 
 // VariableNameVisitor implementation.
@@ -401,6 +416,7 @@ void VariableNameVisitor::enterArray(const ShaderVariable &arrayVar)
         mNameStack.push_back(arrayVar.name);
         mMappedNameStack.push_back(arrayVar.mappedName);
     }
+    mArraySizeStack.push_back(arrayVar.getOutermostArraySize());
 }
 
 void VariableNameVisitor::exitArray(const ShaderVariable &arrayVar)
@@ -410,12 +426,13 @@ void VariableNameVisitor::exitArray(const ShaderVariable &arrayVar)
         mNameStack.pop_back();
         mMappedNameStack.pop_back();
     }
+    mArraySizeStack.pop_back();
 }
 
 void VariableNameVisitor::enterArrayElement(const ShaderVariable &arrayVar,
                                             unsigned int arrayElement)
 {
-    std::stringstream strstr;
+    std::stringstream strstr = sh::InitializeStream<std::stringstream>();
     strstr << "[" << arrayElement << "]";
     std::string elementString = strstr.str();
     mNameStack.push_back(elementString);
@@ -456,7 +473,7 @@ void VariableNameVisitor::visitSampler(const sh::ShaderVariable &sampler)
         mMappedNameStack.pop_back();
     }
 
-    visitNamedSampler(sampler, name, mappedName);
+    visitNamedSampler(sampler, name, mappedName, mArraySizeStack);
 }
 
 void VariableNameVisitor::visitVariable(const ShaderVariable &variable, bool isRowMajor)
@@ -476,7 +493,7 @@ void VariableNameVisitor::visitVariable(const ShaderVariable &variable, bool isR
         mMappedNameStack.pop_back();
     }
 
-    visitNamedVariable(variable, isRowMajor, name, mappedName);
+    visitNamedVariable(variable, isRowMajor, name, mappedName, mArraySizeStack);
 }
 
 // BlockEncoderVisitor implementation.
@@ -549,7 +566,8 @@ void BlockEncoderVisitor::exitArrayElement(const sh::ShaderVariable &arrayVar,
 void BlockEncoderVisitor::visitNamedVariable(const ShaderVariable &variable,
                                              bool isRowMajor,
                                              const std::string &name,
-                                             const std::string &mappedName)
+                                             const std::string &mappedName,
+                                             const std::vector<unsigned int> &arraySizes)
 {
     std::vector<unsigned int> innermostArraySize;
 

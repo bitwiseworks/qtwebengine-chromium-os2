@@ -33,15 +33,19 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_utf8_adaptor.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
 
+class CSSFontSelector;
+class ChromeClient;
 class Document;
 class Element;
 class Locale;
+class PagePopup;
+class PagePopupController;
 
 class CORE_EXPORT PagePopupClient {
  public:
@@ -52,13 +56,21 @@ class CORE_EXPORT PagePopupClient {
   //  - window.setValueAndClosePopup(number, string).
   virtual void WriteDocument(SharedBuffer*) = 0;
 
-  // This is called after the document is ready to do additionary setup.
-  virtual void SelectFontsFromOwnerDocument(Document&) = 0;
-
   virtual Element& OwnerElement() = 0;
+
+  virtual ChromeClient& GetChromeClient() = 0;
+
+  virtual CSSFontSelector* CreateCSSFontSelector(Document& popup_document);
+
+  virtual PagePopupController* CreatePagePopupController(PagePopup&);
+
   // Returns effective zoom factor of ownerElement, or the page zoom factor if
   // the effective zoom factor is not available.
   virtual float ZoomFactor();
+
+  // Returns the zoom factor, adjusted for the viewport scale.
+  float ScaledZoomFactor();
+
   // Returns a Locale object associated to the client.
   virtual Locale& GetLocale() = 0;
 
@@ -82,7 +94,6 @@ class CORE_EXPORT PagePopupClient {
   // Helper functions to be used in PagePopupClient::writeDocument().
   static void AddString(const String&, SharedBuffer*);
   static void AddJavaScriptString(const String&, SharedBuffer*);
-  static void AddHTMLString(const String&, SharedBuffer*);
   static void AddProperty(const char* name, const String& value, SharedBuffer*);
   static void AddProperty(const char* name, int value, SharedBuffer*);
   static void AddProperty(const char* name, unsigned value, SharedBuffer*);
@@ -95,8 +106,8 @@ class CORE_EXPORT PagePopupClient {
 };
 
 inline void PagePopupClient::AddString(const String& str, SharedBuffer* data) {
-  CString str8 = str.Utf8();
-  data->Append(str8.data(), str8.length());
+  StringUTF8Adaptor utf8(str);
+  data->Append(utf8.data(), utf8.size());
 }
 
 }  // namespace blink

@@ -17,14 +17,13 @@
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
+#include "net/log/net_log_capture_mode.h"
 
 namespace base {
 class Value;
 }
 
 namespace net {
-
-class NetLogCaptureMode;
 
 class NET_EXPORT HttpRequestHeaders {
  public:
@@ -61,8 +60,15 @@ class NET_EXPORT HttpRequestHeaders {
     DISALLOW_COPY_AND_ASSIGN(Iterator);
   };
 
+  static const char kConnectMethod[];
   static const char kGetMethod[];
+  static const char kHeadMethod[];
+  static const char kOptionsMethod[];
+  static const char kPostMethod[];
+  static const char kTraceMethod[];
+  static const char kTrackMethod[];
 
+  static const char kAccept[];
   static const char kAcceptCharset[];
   static const char kAcceptEncoding[];
   static const char kAcceptLanguage[];
@@ -84,7 +90,6 @@ class NET_EXPORT HttpRequestHeaders {
   static const char kProxyConnection[];
   static const char kRange[];
   static const char kReferer[];
-  static const char kSecOriginPolicy[];
   static const char kTransferEncoding[];
   static const char kUserAgent[];
 
@@ -158,13 +163,9 @@ class NET_EXPORT HttpRequestHeaders {
   void MergeFrom(const HttpRequestHeaders& other);
 
   // Copies from |other| to |this|.
-  void CopyFrom(const HttpRequestHeaders& other) {
-    *this = other;
-  }
+  void CopyFrom(const HttpRequestHeaders& other) { *this = other; }
 
-  void Swap(HttpRequestHeaders* other) {
-    headers_.swap(other->headers_);
-  }
+  void Swap(HttpRequestHeaders* other) { headers_.swap(other->headers_); }
 
   // Serializes HttpRequestHeaders to a string representation.  Joins all the
   // header keys and values with ": ", and inserts "\r\n" between each header
@@ -173,9 +174,8 @@ class NET_EXPORT HttpRequestHeaders {
 
   // Takes in the request line and returns a Value for use with the NetLog
   // containing both the request line and all headers fields.
-  std::unique_ptr<base::Value> NetLogCallback(
-      const std::string* request_line,
-      NetLogCaptureMode capture_mode) const;
+  base::Value NetLogParams(const std::string& request_line,
+                           NetLogCaptureMode capture_mode) const;
 
   const HeaderVector& GetHeaderVector() const { return headers_; }
 

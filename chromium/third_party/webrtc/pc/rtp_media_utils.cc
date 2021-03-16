@@ -47,9 +47,10 @@ RtpTransceiverDirection RtpTransceiverDirectionReversed(
       return RtpTransceiverDirection::kRecvOnly;
     case RtpTransceiverDirection::kRecvOnly:
       return RtpTransceiverDirection::kSendOnly;
+    default:
+      RTC_NOTREACHED();
+      return direction;
   }
-  RTC_NOTREACHED();
-  return direction;
 }
 
 RtpTransceiverDirection RtpTransceiverDirectionWithSendSet(
@@ -76,9 +77,21 @@ const char* RtpTransceiverDirectionToString(RtpTransceiverDirection direction) {
       return "kRecvOnly";
     case RtpTransceiverDirection::kInactive:
       return "kInactive";
+    case RtpTransceiverDirection::kStopped:
+      return "kStopped";
   }
   RTC_NOTREACHED();
   return "";
+}
+
+RtpTransceiverDirection RtpTransceiverDirectionIntersection(
+    RtpTransceiverDirection lhs,
+    RtpTransceiverDirection rhs) {
+  return RtpTransceiverDirectionFromSendRecv(
+      RtpTransceiverDirectionHasSend(lhs) &&
+          RtpTransceiverDirectionHasSend(rhs),
+      RtpTransceiverDirectionHasRecv(lhs) &&
+          RtpTransceiverDirectionHasRecv(rhs));
 }
 
 }  // namespace webrtc

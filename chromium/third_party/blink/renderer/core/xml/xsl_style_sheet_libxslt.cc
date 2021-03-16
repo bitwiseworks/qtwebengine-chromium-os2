@@ -23,6 +23,7 @@
 
 #include <libxml/uri.h>
 #include <libxslt/xsltutils.h>
+#include "services/network/public/mojom/fetch_api.mojom-blink.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/transform_source.h"
@@ -33,7 +34,6 @@
 #include "third_party/blink/renderer/core/xml/xslt_processor.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_parameters.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 
 namespace blink {
 
@@ -52,7 +52,9 @@ XSLStyleSheet::XSLStyleSheet(XSLStyleSheet* parent_style_sheet,
       stylesheet_doc_taken_(false),
       compilation_failed_(false),
       parent_style_sheet_(parent_style_sheet),
-      owner_document_(nullptr) {}
+      owner_document_(nullptr) {
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
+}
 
 XSLStyleSheet::XSLStyleSheet(Node* parent_node,
                              const String& original_url,
@@ -68,7 +70,9 @@ XSLStyleSheet::XSLStyleSheet(Node* parent_node,
       stylesheet_doc_taken_(false),
       compilation_failed_(false),
       parent_style_sheet_(nullptr),
-      owner_document_(nullptr) {}
+      owner_document_(nullptr) {
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
+}
 
 XSLStyleSheet::XSLStyleSheet(Document* owner_document,
                              Node* style_sheet_root_node,
@@ -85,7 +89,9 @@ XSLStyleSheet::XSLStyleSheet(Document* owner_document,
       stylesheet_doc_taken_(false),
       compilation_failed_(false),
       parent_style_sheet_(nullptr),
-      owner_document_(owner_document) {}
+      owner_document_(owner_document) {
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
+}
 
 XSLStyleSheet::~XSLStyleSheet() {
   if (!stylesheet_doc_taken_)
@@ -143,7 +149,7 @@ bool XSLStyleSheet::ParseString(const String& source) {
 
   stylesheet_doc_ =
       xmlCtxtReadMemory(ctxt, input.Data(), input.size(),
-                        final_url_.GetString().Utf8().data(), input.Encoding(),
+                        final_url_.GetString().Utf8().c_str(), input.Encoding(),
                         XML_PARSE_NOENT | XML_PARSE_DTDATTR |
                             XML_PARSE_NOWARNING | XML_PARSE_NOCDATA);
 
@@ -167,7 +173,7 @@ void XSLStyleSheet::LoadChildSheets() {
     // We have to locate (by ID) the appropriate embedded stylesheet
     // element, so that we can walk the import/include list.
     xmlAttrPtr id_node = xmlGetID(
-        GetDocument(), (const xmlChar*)(final_url_.GetString().Utf8().data()));
+        GetDocument(), (const xmlChar*)(final_url_.GetString().Utf8().c_str()));
     if (!id_node)
       return;
     stylesheet_root = id_node->parent;
@@ -227,8 +233,8 @@ void XSLStyleSheet::LoadChildSheet(const String& href) {
   fetch_options.initiator_info.name = fetch_initiator_type_names::kXml;
   FetchParameters params(
       ResourceRequest(OwnerDocument()->CompleteURL(url_string)), fetch_options);
-  params.MutableResourceRequest().SetFetchRequestMode(
-      network::mojom::FetchRequestMode::kSameOrigin);
+  params.MutableResourceRequest().SetMode(
+      network::mojom::RequestMode::kSameOrigin);
   XSLStyleSheetResource* resource = XSLStyleSheetResource::FetchSynchronously(
       params, OwnerDocument()->Fetcher());
   if (!resource->Sheet())
@@ -287,10 +293,10 @@ xmlDocPtr XSLStyleSheet::LocateStylesheetSubResource(xmlDocPtr parent_doc,
       // In order to ensure that libxml canonicalized both URLs, we get
       // the original href string from the import rule and canonicalize it
       // using libxml before comparing it with the URI argument.
-      CString import_href = child->href().Utf8();
+      std::string import_href = child->href().Utf8();
       xmlChar* base = xmlNodeGetBase(parent_doc, (xmlNodePtr)parent_doc);
       xmlChar* child_uri =
-          xmlBuildURI((const xmlChar*)import_href.data(), base);
+          xmlBuildURI((const xmlChar*)import_href.c_str(), base);
       bool equal_ur_is = xmlStrEqual(uri, child_uri);
       xmlFree(base);
       xmlFree(child_uri);
@@ -315,7 +321,7 @@ void XSLStyleSheet::MarkAsProcessed() {
   stylesheet_doc_taken_ = true;
 }
 
-void XSLStyleSheet::Trace(blink::Visitor* visitor) {
+void XSLStyleSheet::Trace(Visitor* visitor) {
   visitor->Trace(owner_node_);
   visitor->Trace(children_);
   visitor->Trace(parent_style_sheet_);

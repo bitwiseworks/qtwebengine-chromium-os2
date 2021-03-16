@@ -57,8 +57,7 @@ WebSocketSpdyStreamAdapter::WebSocketSpdyStreamAdapter(
       stream_error_(ERR_CONNECTION_CLOSED),
       delegate_(delegate),
       write_length_(0),
-      net_log_(net_log),
-      weak_factory_(this) {
+      net_log_(net_log) {
   stream_->SetDelegate(this);
 }
 
@@ -181,6 +180,10 @@ void WebSocketSpdyStreamAdapter::OnClose(int status) {
     // Might destroy |this|.
     delegate_->OnClose(status);
   }
+}
+
+bool WebSocketSpdyStreamAdapter::CanGreaseFrameType() const {
+  return false;
 }
 
 NetLogSource WebSocketSpdyStreamAdapter::source_dependency() const {

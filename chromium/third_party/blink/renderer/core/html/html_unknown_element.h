@@ -38,11 +38,6 @@ class HTMLUnknownElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HTMLUnknownElement* Create(const QualifiedName& tag_name,
-                                    Document& document) {
-    return MakeGarbageCollected<HTMLUnknownElement>(tag_name, document);
-  }
-
   HTMLUnknownElement(const QualifiedName&, Document&);
 
  private:
@@ -52,8 +47,6 @@ class HTMLUnknownElement final : public HTMLElement {
 inline bool IsHTMLUnknownElement(const HTMLElement& element) {
   return element.IsHTMLUnknownElement();
 }
-
-DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLUnknownElement);
 
 }  // namespace blink
 

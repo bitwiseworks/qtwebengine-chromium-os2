@@ -17,12 +17,11 @@ namespace url {
 class URLUtilTest : public testing::Test {
  public:
   URLUtilTest() = default;
-  ~URLUtilTest() override {
-    // Reset any added schemes.
-    Shutdown();
-  }
+  ~URLUtilTest() override = default;
 
  private:
+  ScopedSchemeRegistryForTests scoped_registry_;
+
   DISALLOW_COPY_AND_ASSIGN(URLUtilTest);
 };
 
@@ -92,10 +91,25 @@ TEST_F(URLUtilTest, IsReferrerScheme) {
 }
 
 TEST_F(URLUtilTest, AddReferrerScheme) {
-  const char kFooScheme[] = "foo";
+  static const char kFooScheme[] = "foo";
   EXPECT_FALSE(IsReferrerScheme(kFooScheme, Component(0, strlen(kFooScheme))));
+
+  url::ScopedSchemeRegistryForTests scoped_registry;
   AddReferrerScheme(kFooScheme, url::SCHEME_WITH_HOST);
   EXPECT_TRUE(IsReferrerScheme(kFooScheme, Component(0, strlen(kFooScheme))));
+}
+
+TEST_F(URLUtilTest, ShutdownCleansUpSchemes) {
+  static const char kFooScheme[] = "foo";
+  EXPECT_FALSE(IsReferrerScheme(kFooScheme, Component(0, strlen(kFooScheme))));
+
+  {
+    url::ScopedSchemeRegistryForTests scoped_registry;
+    AddReferrerScheme(kFooScheme, url::SCHEME_WITH_HOST);
+    EXPECT_TRUE(IsReferrerScheme(kFooScheme, Component(0, strlen(kFooScheme))));
+  }
+
+  EXPECT_FALSE(IsReferrerScheme(kFooScheme, Component(0, strlen(kFooScheme))));
 }
 
 TEST_F(URLUtilTest, GetStandardSchemeType) {

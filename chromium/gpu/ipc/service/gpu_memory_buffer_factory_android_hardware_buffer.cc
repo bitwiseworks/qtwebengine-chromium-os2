@@ -6,7 +6,6 @@
 
 #include "base/android/android_hardware_buffer_compat.h"
 #include "base/logging.h"
-#include "base/memory/shared_memory_handle.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "gpu/ipc/common/gpu_memory_buffer_impl_android_hardware_buffer.h"
@@ -39,7 +38,7 @@ GpuMemoryBufferFactoryAndroidHardwareBuffer::CreateGpuMemoryBuffer(
   {
     base::AutoLock lock(lock_);
     BufferMapKey key(id, client_id);
-    DLOG_IF(ERROR, base::ContainsKey(buffer_map_, key))
+    DLOG_IF(ERROR, base::Contains(buffer_map_, key))
         << "Created GpuMemoryBuffer with duplicate id";
     buffer_map_[key] = std::move(buffer);
   }

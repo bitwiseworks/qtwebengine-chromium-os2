@@ -8,15 +8,15 @@
 #ifndef GrVkFramebuffer_DEFINED
 #define GrVkFramebuffer_DEFINED
 
-#include "GrTypes.h"
-#include "GrVkResource.h"
-#include "vk/GrVkTypes.h"
+#include "include/gpu/GrTypes.h"
+#include "include/gpu/vk/GrVkTypes.h"
+#include "src/gpu/vk/GrVkManagedResource.h"
 
 class GrVkGpu;
 class GrVkImageView;
 class GrVkRenderPass;
 
-class GrVkFramebuffer : public GrVkResource {
+class GrVkFramebuffer : public GrVkManagedResource {
 public:
     static GrVkFramebuffer* Create(GrVkGpu* gpu,
                                    int width, int height,
@@ -26,23 +26,24 @@ public:
 
     VkFramebuffer framebuffer() const { return fFramebuffer; }
 
-#ifdef SK_TRACE_VK_RESOURCES
+#ifdef SK_TRACE_MANAGED_RESOURCES
     void dumpInfo() const override {
         SkDebugf("GrVkFramebuffer: %d (%d refs)\n", fFramebuffer, this->getRefCnt());
     }
 #endif
 
 private:
-    GrVkFramebuffer(VkFramebuffer framebuffer) : INHERITED(), fFramebuffer(framebuffer) {}
+    GrVkFramebuffer(const GrVkGpu* gpu, VkFramebuffer framebuffer)
+        : INHERITED(gpu), fFramebuffer(framebuffer) {}
 
     GrVkFramebuffer(const GrVkFramebuffer&);
     GrVkFramebuffer& operator=(const GrVkFramebuffer&);
 
-    void freeGPUData(GrVkGpu* gpu) const override;
+    void freeGPUData() const override;
 
     VkFramebuffer  fFramebuffer;
 
-    typedef GrVkResource INHERITED;
+    typedef GrVkManagedResource INHERITED;
 };
 
 #endif

@@ -205,7 +205,7 @@
  * backup register
  */
 #define BACKUP_REG \
-  double temp_backup_reg[8];                                    \
+  LOCAL_ALIGNED_16(double, temp_backup_reg, [8]);               \
   if (_MIPS_SIM == _ABI64)                                      \
     __asm__ volatile (                                          \
       "gssqc1       $f25,      $f24,       0x00(%[temp])  \n\t" \
@@ -249,6 +249,15 @@
       : [temp]"r"(temp_backup_reg)                              \
       : "memory"                                                \
     );
+
+/**
+ * brief: Transpose 2X2 word packaged data.
+ * fr_i0, fr_i1: src
+ * fr_o0, fr_o1: dst
+ */
+#define TRANSPOSE_2W(fr_i0, fr_i1, fr_o0, fr_o1)                          \
+        "punpcklwd  "#fr_o0",   "#fr_i0",   "#fr_i1"                \n\t" \
+        "punpckhwd  "#fr_o1",   "#fr_i0",   "#fr_i1"                \n\t"
 
 /**
  * brief: Transpose 4X4 half word packaged data.
@@ -336,5 +345,20 @@
         PSRAH_4_MMI(fp1, fp2, fp3, fp4, shift)                            \
         PSRAH_4_MMI(fp5, fp6, fp7, fp8, shift)
 
+/**
+ * brief: (((value) + (1 << ((n) - 1))) >> (n))
+ * fr_i0: src & dst
+ * fr_i1: Operand number
+ * fr_t0, fr_t1: temporary FPR
+ * gr_t0: temporary GPR
+ */
+#define ROUND_POWER_OF_TWO_MMI(fr_i0, fr_i1, fr_t0, fr_t1, gr_t0)         \
+        "li         "#gr_t0",     0x01                              \n\t" \
+        "dmtc1      "#gr_t0",     "#fr_t0"                          \n\t" \
+        "punpcklwd  "#fr_t0",     "#fr_t0",    "#fr_t0"             \n\t" \
+        "psubw      "#fr_t1",     "#fr_i1",    "#fr_t0"             \n\t" \
+        "psllw      "#fr_t1",     "#fr_t0",    "#fr_t1"             \n\t" \
+        "paddw      "#fr_i0",     "#fr_i0",    "#fr_t1"             \n\t" \
+        "psraw      "#fr_i0",     "#fr_i0",    "#fr_i1"             \n\t"
 
 #endif /* AVUTILS_MIPS_MMIUTILS_H */

@@ -8,8 +8,8 @@
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/core/html/imports/html_import.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/timer.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -18,8 +18,6 @@ class KURL;
 
 class HTMLImportTreeRoot final : public HTMLImport, public NameClient {
  public:
-  static HTMLImportTreeRoot* Create(Document*);
-
   explicit HTMLImportTreeRoot(Document*);
   ~HTMLImportTreeRoot() final;
   void Dispose();
@@ -43,7 +41,7 @@ class HTMLImportTreeRoot final : public HTMLImport, public NameClient {
  private:
   void RecalcTimerFired(TimerBase*);
 
-  TraceWrapperMember<Document> document_;
+  Member<Document> document_;
   TaskRunnerTimer<HTMLImportTreeRoot> recalc_timer_;
 
   // List of import which has been loaded or being loaded.
@@ -51,11 +49,10 @@ class HTMLImportTreeRoot final : public HTMLImport, public NameClient {
   ImportList imports_;
 };
 
-DEFINE_TYPE_CASTS(HTMLImportTreeRoot,
-                  HTMLImport,
-                  import,
-                  import->IsRoot(),
-                  import.IsRoot());
+template <>
+struct DowncastTraits<HTMLImportTreeRoot> {
+  static bool AllowFrom(const HTMLImport& import) { return import.IsRoot(); }
+};
 
 }  // namespace blink
 

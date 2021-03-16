@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/bind_test_util.h"
 #include "base/time/time.h"
@@ -28,7 +29,7 @@
 #include "net/socket/tcp_client_socket.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/gtest_util.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -98,7 +99,7 @@ class TestSocketPerformanceWatcher : public SocketPerformanceWatcher {
 
 const int kListenBacklog = 5;
 
-class TCPSocketTest : public PlatformTest, public WithScopedTaskEnvironment {
+class TCPSocketTest : public PlatformTest, public WithTaskEnvironment {
  protected:
   TCPSocketTest() : socket_(nullptr, nullptr, NetLogSource()) {}
 
@@ -749,6 +750,67 @@ TEST_F(TCPSocketTest, BeforeConnectCallbackFails) {
   EXPECT_FALSE(accept_callback.have_result());
 }
 
+TEST_F(TCPSocketTest, SetKeepAlive) {
+  ASSERT_NO_FATAL_FAILURE(SetUpListenIPv4());
+
+  TestCompletionCallback accept_callback;
+  std::unique_ptr<TCPSocket> accepted_socket;
+  IPEndPoint accepted_address;
+  EXPECT_THAT(socket_.Accept(&accepted_socket, &accepted_address,
+                             accept_callback.callback()),
+              IsError(ERR_IO_PENDING));
+
+  TestCompletionCallback connect_callback;
+  TCPClientSocket connecting_socket(local_address_list(), nullptr, nullptr,
+                                    NetLogSource());
+
+  // Non-connected sockets should not be able to set KeepAlive.
+  ASSERT_FALSE(connecting_socket.IsConnected());
+  EXPECT_FALSE(
+      connecting_socket.SetKeepAlive(true /* enable */, 14 /* delay */));
+
+  // Connect.
+  int connect_result = connecting_socket.Connect(connect_callback.callback());
+  EXPECT_THAT(accept_callback.WaitForResult(), IsOk());
+  EXPECT_THAT(connect_callback.GetResult(connect_result), IsOk());
+
+  // Connected sockets should be able to enable and disable KeepAlive.
+  ASSERT_TRUE(connecting_socket.IsConnected());
+  EXPECT_TRUE(
+      connecting_socket.SetKeepAlive(true /* enable */, 22 /* delay */));
+  EXPECT_TRUE(
+      connecting_socket.SetKeepAlive(false /* enable */, 3 /* delay */));
+}
+
+TEST_F(TCPSocketTest, SetNoDelay) {
+  ASSERT_NO_FATAL_FAILURE(SetUpListenIPv4());
+
+  TestCompletionCallback accept_callback;
+  std::unique_ptr<TCPSocket> accepted_socket;
+  IPEndPoint accepted_address;
+  EXPECT_THAT(socket_.Accept(&accepted_socket, &accepted_address,
+                             accept_callback.callback()),
+              IsError(ERR_IO_PENDING));
+
+  TestCompletionCallback connect_callback;
+  TCPClientSocket connecting_socket(local_address_list(), nullptr, nullptr,
+                                    NetLogSource());
+
+  // Non-connected sockets should not be able to set NoDelay.
+  ASSERT_FALSE(connecting_socket.IsConnected());
+  EXPECT_FALSE(connecting_socket.SetNoDelay(true /* no_delay */));
+
+  // Connect.
+  int connect_result = connecting_socket.Connect(connect_callback.callback());
+  EXPECT_THAT(accept_callback.WaitForResult(), IsOk());
+  EXPECT_THAT(connect_callback.GetResult(connect_result), IsOk());
+
+  // Connected sockets should be able to enable and disable NoDelay.
+  ASSERT_TRUE(connecting_socket.IsConnected());
+  EXPECT_TRUE(connecting_socket.SetNoDelay(true /* no_delay */));
+  EXPECT_TRUE(connecting_socket.SetNoDelay(false /* no_delay */));
+}
+
 // These tests require kernel support for tcp_info struct, and so they are
 // enabled only on certain platforms.
 #if defined(TCP_INFO) || defined(OS_LINUX)
@@ -769,6 +831,11 @@ TEST_F(TCPSocketTest, SPWNoAdvance) {
 // works as expected.
 #if defined(OS_ANDROID)
 TEST_F(TCPSocketTest, Tag) {
+  if (!CanGetTaggedBytes()) {
+    DVLOG(0) << "Skipping test - GetTaggedBytes unsupported.";
+    return;
+  }
+
   // Start test server.
   EmbeddedTestServer test_server;
   test_server.AddDefaultHandlers(base::FilePath());
@@ -823,6 +890,11 @@ TEST_F(TCPSocketTest, Tag) {
 }
 
 TEST_F(TCPSocketTest, TagAfterConnect) {
+  if (!CanGetTaggedBytes()) {
+    DVLOG(0) << "Skipping test - GetTaggedBytes unsupported.";
+    return;
+  }
+
   // Start test server.
   EmbeddedTestServer test_server;
   test_server.AddDefaultHandlers(base::FilePath());

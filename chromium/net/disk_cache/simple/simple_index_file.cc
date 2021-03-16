@@ -7,18 +7,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
-#include "base/files/memory_mapped_file.h"
-#include "base/hash.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/task_runner_util.h"
 #include "base/threading/thread_restrictions.h"
-#include "net/disk_cache/simple/simple_backend_version.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_histogram_macros.h"
 #include "net/disk_cache/simple/simple_index.h"
@@ -252,9 +248,7 @@ const char SimpleIndexFile::kIndexDirectory[] = "index-dir";
 const char SimpleIndexFile::kTempIndexFileName[] = "temp-index";
 
 SimpleIndexFile::IndexMetadata::IndexMetadata()
-    : magic_number_(kSimpleIndexMagicNumber),
-      version_(kSimpleVersion),
-      reason_(SimpleIndex::INDEX_WRITE_REASON_MAX),
+    : reason_(SimpleIndex::INDEX_WRITE_REASON_MAX),
       entry_count_(0),
       cache_size_(0) {}
 
@@ -262,11 +256,7 @@ SimpleIndexFile::IndexMetadata::IndexMetadata(
     SimpleIndex::IndexWriteToDiskReason reason,
     uint64_t entry_count,
     uint64_t cache_size)
-    : magic_number_(kSimpleIndexMagicNumber),
-      version_(kSimpleVersion),
-      reason_(reason),
-      entry_count_(entry_count),
-      cache_size_(cache_size) {}
+    : reason_(reason), entry_count_(entry_count), cache_size_(cache_size) {}
 
 void SimpleIndexFile::IndexMetadata::Serialize(base::Pickle* pickle) const {
   DCHECK(pickle);
@@ -335,7 +325,7 @@ void SimpleIndexFile::SyncWriteToDisk(net::CacheType cache_type,
   }
 
   // Atomically rename the temporary index file to become the real one.
-  if (!base::ReplaceFile(temp_index_filename, index_filename, NULL))
+  if (!base::ReplaceFile(temp_index_filename, index_filename, nullptr))
     return;
 
   if (app_on_background) {
@@ -380,13 +370,13 @@ SimpleIndexFile::SimpleIndexFile(
 SimpleIndexFile::~SimpleIndexFile() = default;
 
 void SimpleIndexFile::LoadIndexEntries(base::Time cache_last_modified,
-                                       const base::Closure& callback,
+                                       base::OnceClosure callback,
                                        SimpleIndexLoadResult* out_result) {
-  base::Closure task = base::Bind(&SimpleIndexFile::SyncLoadIndexEntries,
-                                  cache_type_,
-                                  cache_last_modified, cache_directory_,
-                                  index_file_, out_result);
-  worker_pool_->PostTaskAndReply(FROM_HERE, task, callback);
+  base::OnceClosure task = base::BindOnce(
+      &SimpleIndexFile::SyncLoadIndexEntries, cache_type_, cache_last_modified,
+      cache_directory_, index_file_, out_result);
+  worker_pool_->PostTaskAndReply(FROM_HERE, std::move(task),
+                                 std::move(callback));
 }
 
 void SimpleIndexFile::WriteToDisk(net::CacheType cache_type,
@@ -395,19 +385,20 @@ void SimpleIndexFile::WriteToDisk(net::CacheType cache_type,
                                   uint64_t cache_size,
                                   const base::TimeTicks& start,
                                   bool app_on_background,
-                                  const base::Closure& callback) {
+                                  base::OnceClosure callback) {
   UmaRecordIndexWriteReason(reason, cache_type_);
   IndexMetadata index_metadata(reason, entry_set.size(), cache_size);
   std::unique_ptr<base::Pickle> pickle =
       Serialize(cache_type, index_metadata, entry_set);
-  base::Closure task =
-      base::Bind(&SimpleIndexFile::SyncWriteToDisk,
-                 cache_type_, cache_directory_, index_file_, temp_index_file_,
-                 base::Passed(&pickle), start, app_on_background);
+  base::OnceClosure task =
+      base::BindOnce(&SimpleIndexFile::SyncWriteToDisk, cache_type_,
+                     cache_directory_, index_file_, temp_index_file_,
+                     std::move(pickle), start, app_on_background);
   if (callback.is_null())
-    cache_runner_->PostTask(FROM_HERE, task);
+    cache_runner_->PostTask(FROM_HERE, std::move(task));
   else
-    cache_runner_->PostTaskAndReply(FROM_HERE, task, callback);
+    cache_runner_->PostTaskAndReply(FROM_HERE, std::move(task),
+                                    std::move(callback));
 }
 
 // static

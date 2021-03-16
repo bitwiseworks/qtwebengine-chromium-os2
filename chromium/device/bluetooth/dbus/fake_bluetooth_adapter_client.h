@@ -54,26 +54,26 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   void StopDiscovery(const dbus::ObjectPath& object_path,
                      ResponseCallback callback) override;
   void PauseDiscovery(const dbus::ObjectPath& object_path,
-                      const base::Closure& callback,
+                      base::OnceClosure callback,
                       ErrorCallback error_callback) override;
   void UnpauseDiscovery(const dbus::ObjectPath& object_path,
-                        const base::Closure& callback,
+                        base::OnceClosure callback,
                         ErrorCallback error_callback) override;
   void RemoveDevice(const dbus::ObjectPath& object_path,
                     const dbus::ObjectPath& device_path,
-                    const base::Closure& callback,
+                    base::OnceClosure callback,
                     ErrorCallback error_callback) override;
   void SetDiscoveryFilter(const dbus::ObjectPath& object_path,
                           const DiscoveryFilter& discovery_filter,
-                          const base::Closure& callback,
+                          base::OnceClosure callback,
                           ErrorCallback error_callback) override;
   void CreateServiceRecord(const dbus::ObjectPath& object_path,
                            const bluez::BluetoothServiceRecordBlueZ& record,
-                           const ServiceRecordCallback& callback,
+                           ServiceRecordCallback callback,
                            ErrorCallback error_callback) override;
   void RemoveServiceRecord(const dbus::ObjectPath& object_path,
                            uint32_t handle,
-                           const base::Closure& callback,
+                           base::OnceClosure callback,
                            ErrorCallback error_callback) override;
 
   // Sets the current simulation timeout interval.
@@ -84,6 +84,9 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
 
   // Make SetDiscoveryFilter fail when called next time.
   void MakeSetDiscoveryFilterFail();
+
+  // Make StartDiscovery fail when called next time.
+  void MakeStartDiscoveryFail();
 
   // Mark the adapter and second adapter as visible or invisible.
   void SetVisible(bool visible);
@@ -104,7 +107,6 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   static const char kSecondAdapterPath[];
   static const char kSecondAdapterName[];
   static const char kSecondAdapterAddress[];
-
  private:
   // Property callback passed when we create Properties* structures.
   void OnPropertyChanged(const std::string& property_name);
@@ -112,6 +114,9 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   // Posts the delayed task represented by |callback| onto the current
   // message loop to be executed after |simulation_interval_ms_| milliseconds.
   void PostDelayedTask(base::OnceClosure callback);
+
+  // Utility function to update the discovering property.
+  void UpdateDiscoveringProperty(bool discovering);
 
   // List of observers interested in event notifications from us.
   base::ObserverList<Observer>::Unchecked observers_;
@@ -139,6 +144,9 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   // When set, next call to SetDiscoveryFilter would fail.
   bool set_discovery_filter_should_fail_;
 
+  // When set, next call to StartDiscovery would fail.
+  bool set_start_discovery_should_fail_ = false;
+
   // Current timeout interval used when posting delayed tasks.
   int simulation_interval_ms_;
 
@@ -147,6 +155,10 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
 
   // Service records manually registered with this adapter by handle.
   std::map<uint32_t, BluetoothServiceRecordBlueZ> records_;
+
+  // Note: This should remain the last member so it'll be destroyed and
+  // invalidate its weak pointers before any other members are destroyed.
+  base::WeakPtrFactory<FakeBluetoothAdapterClient> weak_ptr_factory_{this};
 };
 
 }  // namespace bluez

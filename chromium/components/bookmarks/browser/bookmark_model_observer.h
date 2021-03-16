@@ -17,6 +17,9 @@ class BookmarkNode;
 // Observer for the BookmarkModel.
 class BookmarkModelObserver {
  public:
+  BookmarkModelObserver(const BookmarkModelObserver&) = delete;
+  BookmarkModelObserver& operator=(const BookmarkModelObserver&) = delete;
+
   // Invoked when the model has finished loading. |ids_reassigned| mirrors
   // that of BookmarkLoadDetails::ids_reassigned. See it for details.
   virtual void BookmarkModelLoaded(BookmarkModel* model,
@@ -28,14 +31,14 @@ class BookmarkModelObserver {
   // Invoked when a node has moved.
   virtual void BookmarkNodeMoved(BookmarkModel* model,
                                  const BookmarkNode* old_parent,
-                                 int old_index,
+                                 size_t old_index,
                                  const BookmarkNode* new_parent,
-                                 int new_index) = 0;
+                                 size_t new_index) = 0;
 
   // Invoked when a node has been added.
   virtual void BookmarkNodeAdded(BookmarkModel* model,
                                  const BookmarkNode* parent,
-                                 int index) = 0;
+                                 size_t index) = 0;
 
   // Invoked prior to removing a node from the model. When a node is removed
   // it's descendants are implicitly removed from the model as
@@ -49,7 +52,7 @@ class BookmarkModelObserver {
   // |node| is the node to be removed.
   virtual void OnWillRemoveBookmarks(BookmarkModel* model,
                                      const BookmarkNode* parent,
-                                     int old_index,
+                                     size_t old_index,
                                      const BookmarkNode* node) {}
 
   // Invoked after a node has been removed from the model. Removing a node
@@ -66,7 +69,7 @@ class BookmarkModelObserver {
   virtual void BookmarkNodeRemoved(
       BookmarkModel* model,
       const BookmarkNode* parent,
-      int old_index,
+      size_t old_index,
       const BookmarkNode* node,
       const std::set<GURL>& no_longer_bookmarked) = 0;
 
@@ -135,7 +138,8 @@ class BookmarkModelObserver {
   virtual void GroupedBookmarkChangesEnded(BookmarkModel* model) {}
 
  protected:
-  virtual ~BookmarkModelObserver() {}
+  BookmarkModelObserver() = default;
+  virtual ~BookmarkModelObserver() = default;
 };
 
 }  // namespace bookmarks

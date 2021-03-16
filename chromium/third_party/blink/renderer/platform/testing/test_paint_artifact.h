@@ -11,7 +11,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/display_item_list.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_artifact.h"
 #include "third_party/blink/renderer/platform/testing/fake_display_item_client.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace cc {
@@ -22,9 +22,19 @@ namespace blink {
 
 class ClipPaintPropertyNode;
 class EffectPaintPropertyNode;
-class FloatRect;
 class PaintArtifact;
 class TransformPaintPropertyNode;
+
+class DummyRectClient : public FakeDisplayItemClient {
+ public:
+  IntRect VisualRect() const final { return rect_; }
+  void SetVisualRect(const IntRect& rect) { rect_ = rect; }
+
+  sk_sp<PaintRecord> MakeRecord(const IntRect& rect, Color color);
+
+ private:
+  IntRect rect_;
+};
 
 // Useful for quickly making a paint artifact in unit tests.
 //
@@ -58,7 +68,7 @@ class TestPaintArtifact {
   TestPaintArtifact& Chunk() { return Chunk(NewClient()); }
 
   // Add a chunk with the specified client.
-  TestPaintArtifact& Chunk(FakeDisplayItemClient&,
+  TestPaintArtifact& Chunk(DummyRectClient&,
                            DisplayItem::Type = DisplayItem::kDrawingFirst);
 
   // This is for RasterInvalidatorTest, to create a chunk with specific id and
@@ -71,7 +81,7 @@ class TestPaintArtifact {
   TestPaintArtifact& Properties(const TransformPaintPropertyNode& transform,
                                 const ClipPaintPropertyNode& clip,
                                 const EffectPaintPropertyNode& effect) {
-    return Properties(PropertyTreeState(&transform, &clip, &effect));
+    return Properties(PropertyTreeState(transform, clip, effect));
   }
   TestPaintArtifact& Properties(const RefCountedPropertyTreeState& properties) {
     return Properties(properties.GetPropertyTreeState());
@@ -92,25 +102,31 @@ class TestPaintArtifact {
 
   // Add display item in the chunk. Each display item will have a different
   // automatically created client.
-  TestPaintArtifact& RectDrawing(const FloatRect& bounds, Color color);
+  TestPaintArtifact& RectDrawing(const IntRect& bounds, Color color);
   TestPaintArtifact& ScrollHitTest(
-      const TransformPaintPropertyNode& scroll_offset);
+      const TransformPaintPropertyNode* scroll_offset,
+      const IntRect& scroll_container_bounds);
 
-  TestPaintArtifact& ForeignLayer(scoped_refptr<cc::Layer> layer);
+  TestPaintArtifact& ForeignLayer(scoped_refptr<cc::Layer> layer,
+                                  const FloatPoint& offset);
 
   // Add display item with the specified client in the chunk.
-  TestPaintArtifact& RectDrawing(FakeDisplayItemClient&,
-                                 const FloatRect& bounds,
-                                 Color);
+  TestPaintArtifact& RectDrawing(DummyRectClient&,
+                                 const IntRect& bounds,
+                                 Color color);
   TestPaintArtifact& ScrollHitTest(
-      FakeDisplayItemClient&,
-      const TransformPaintPropertyNode& scroll_offset);
+      DummyRectClient&,
+      const TransformPaintPropertyNode* scroll_offset,
+      const IntRect& scroll_container_bounds);
 
   // Sets fake bounds for the last paint chunk. Note that the bounds will be
   // overwritten when the PaintArtifact is constructed if the chunk has any
-  // display items.
-  TestPaintArtifact& Bounds(const FloatRect&);
+  // display items. Bounds() sets both bounds and drawable_bounds, while
+  // DrawableBounds() sets drawable_bounds only.
+  TestPaintArtifact& Bounds(const IntRect&);
+  TestPaintArtifact& DrawableBounds(const IntRect&);
 
+  TestPaintArtifact& OutsetForRasterEffects(float);
   TestPaintArtifact& KnownToBeOpaque();
   TestPaintArtifact& Uncacheable();
 
@@ -120,12 +136,13 @@ class TestPaintArtifact {
   scoped_refptr<PaintArtifact> Build();
 
   // Create a new display item client which is owned by this TestPaintArtifact.
-  FakeDisplayItemClient& NewClient();
+  DummyRectClient& NewClient();
 
-  FakeDisplayItemClient& Client(wtf_size_t) const;
+  DummyRectClient& Client(wtf_size_t) const;
 
  private:
-  class DummyRectClient;
+  void DidAddDisplayItem();
+
   Vector<std::unique_ptr<DummyRectClient>> dummy_clients_;
 
   DisplayItemList display_item_list_;

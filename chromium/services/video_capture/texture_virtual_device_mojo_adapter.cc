@@ -4,18 +4,18 @@
 
 #include "services/video_capture/texture_virtual_device_mojo_adapter.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "media/base/bind_to_current_loop.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/video_capture/public/mojom/constants.mojom.h"
+#include "services/video_capture/public/mojom/scoped_access_permission.mojom.h"
 
 namespace video_capture {
 
-TextureVirtualDeviceMojoAdapter::TextureVirtualDeviceMojoAdapter(
-    std::unique_ptr<service_manager::ServiceContextRef> service_ref)
-    : service_ref_(std::move(service_ref)) {}
+TextureVirtualDeviceMojoAdapter::TextureVirtualDeviceMojoAdapter() = default;
 
 TextureVirtualDeviceMojoAdapter::~TextureVirtualDeviceMojoAdapter() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -36,61 +36,51 @@ void TextureVirtualDeviceMojoAdapter::OnNewMailboxHolderBufferHandle(
   known_buffer_handles_.insert(
       std::make_pair(buffer_id, mailbox_handles->Clone()));
 
-  if (!receiver_.is_bound())
+  if (!video_frame_handler_.is_bound())
     return;
   media::mojom::VideoBufferHandlePtr buffer_handle =
       media::mojom::VideoBufferHandle::New();
   buffer_handle->set_mailbox_handles(std::move(mailbox_handles));
-  receiver_->OnNewBuffer(buffer_id, std::move(buffer_handle));
+  video_frame_handler_->OnNewBuffer(buffer_id, std::move(buffer_handle));
 }
 
 void TextureVirtualDeviceMojoAdapter::OnFrameReadyInBuffer(
     int32_t buffer_id,
-    mojom::ScopedAccessPermissionPtr access_permission,
+    mojo::PendingRemote<mojom::ScopedAccessPermission> access_permission,
     media::mojom::VideoFrameInfoPtr frame_info) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!receiver_.is_bound())
+  if (!video_frame_handler_.is_bound())
     return;
-  receiver_->OnFrameReadyInBuffer(buffer_id, 0 /* frame_feedback_id */,
-                                  std::move(access_permission),
-                                  std::move(frame_info));
+  video_frame_handler_->OnFrameReadyInBuffer(
+      buffer_id, 0 /* frame_feedback_id */, std::move(access_permission),
+      std::move(frame_info));
 }
 
 void TextureVirtualDeviceMojoAdapter::OnBufferRetired(int buffer_id) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   known_buffer_handles_.erase(buffer_id);
-  if (!receiver_.is_bound())
+  if (!video_frame_handler_.is_bound())
     return;
-  receiver_->OnBufferRetired(buffer_id);
+  video_frame_handler_->OnBufferRetired(buffer_id);
 }
 
 void TextureVirtualDeviceMojoAdapter::Start(
     const media::VideoCaptureParams& requested_settings,
-    mojom::ReceiverPtr receiver) {
+    mojo::PendingRemote<mojom::VideoFrameHandler> handler) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  receiver.set_connection_error_handler(base::BindOnce(
+  video_frame_handler_.Bind(std::move(handler));
+  video_frame_handler_.set_disconnect_handler(base::BindOnce(
       &TextureVirtualDeviceMojoAdapter::OnReceiverConnectionErrorOrClose,
       base::Unretained(this)));
-  receiver_ = std::move(receiver);
-  receiver_->OnStarted();
+  video_frame_handler_->OnStarted();
 
   // Notify receiver of known buffer handles */
   for (auto& entry : known_buffer_handles_) {
     media::mojom::VideoBufferHandlePtr buffer_handle =
         media::mojom::VideoBufferHandle::New();
     buffer_handle->set_mailbox_handles(entry.second->Clone());
-    receiver_->OnNewBuffer(entry.first, std::move(buffer_handle));
+    video_frame_handler_->OnNewBuffer(entry.first, std::move(buffer_handle));
   }
-}
-
-void TextureVirtualDeviceMojoAdapter::OnReceiverReportingUtilization(
-    int32_t frame_feedback_id,
-    double utilization) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-}
-
-void TextureVirtualDeviceMojoAdapter::RequestRefreshFrame() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 void TextureVirtualDeviceMojoAdapter::MaybeSuspend() {
@@ -119,11 +109,15 @@ void TextureVirtualDeviceMojoAdapter::TakePhoto(TakePhotoCallback callback) {
 
 void TextureVirtualDeviceMojoAdapter::Stop() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!receiver_.is_bound())
+  if (!video_frame_handler_.is_bound())
     return;
   // Unsubscribe from connection error callbacks.
-  receiver_.set_connection_error_handler(base::OnceClosure());
-  receiver_.reset();
+  video_frame_handler_.set_disconnect_handler(base::OnceClosure());
+  // Send out OnBufferRetired events and OnStopped.
+  for (const auto& entry : known_buffer_handles_)
+    video_frame_handler_->OnBufferRetired(entry.first);
+  video_frame_handler_->OnStopped();
+  video_frame_handler_.reset();
 }
 
 void TextureVirtualDeviceMojoAdapter::OnReceiverConnectionErrorOrClose() {

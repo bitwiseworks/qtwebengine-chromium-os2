@@ -105,7 +105,7 @@ bool IsCacheableBySharedCache(const SignedExchangeEnvelope::HeaderMap& headers,
       net::HttpUtil::NameValuePairsIterator::Values::NOT_REQUIRED,
       net::HttpUtil::NameValuePairsIterator::Quotes::STRICT_QUOTES);
   while (it.GetNext()) {
-    auto name = it.name();
+    base::StringPiece name = it.name_piece();
     if (name == "no-store" || name == "private") {
       signed_exchange_utils::ReportErrorAndTraceEvent(
           devtools_proxy,
@@ -136,7 +136,7 @@ bool ParseResponseMap(const cbor::Value& value,
     signed_exchange_utils::ReportErrorAndTraceEvent(
         devtools_proxy,
         base::StringPrintf(
-            "Expected request map, got non-map type. Actual type: %d",
+            "Expected response map, got non-map type. Actual type: %d",
             static_cast<int>(value.type())));
     return false;
   }
@@ -232,7 +232,7 @@ bool ParseResponseMap(const cbor::Value& value,
   if (!IsCacheableBySharedCache(out->response_headers(), devtools_proxy))
     return false;
 
-  // https://wicg.github.io/webpackage/loading.html#parsing-b1
+  // https://wicg.github.io/webpackage/loading.html#parsing-a-signed-exchange
   // Step 26. If parsedExchange’s response's status is a redirect status or the
   //          signed exchange version of parsedExchange’s response is not
   //          undefined, return a failure. [spec text]
@@ -245,20 +245,37 @@ bool ParseResponseMap(const cbor::Value& value,
             response_code));
     return false;
   }
+
+  // https://wicg.github.io/webpackage/loading.html#parsing-b2-cbor-headers
+  // 7. If responseHeaders does not contain `Content-Type`, return a failure.
+  // [spec text]
+  // Note: "Parsing b3 CBOR headers" algorithm should have the same step.
+  // See https://github.com/WICG/webpackage/issues/555
+  auto content_type_iter = out->response_headers().find("content-type");
+  if (content_type_iter == out->response_headers().end()) {
+    signed_exchange_utils::ReportErrorAndTraceEvent(
+        devtools_proxy,
+        "Exchange's inner response must have Content-Type header.");
+    return false;
+  }
+  // https://wicg.github.io/webpackage/loading.html#parsing-b2-cbor-headers
+  // 8. Set `X-Content-Type-Options`/`nosniff` in responseHeaders. [spec text]
+  // Note: "Parsing b3 CBOR headers" algorithm should have the same step.
+  // See https://github.com/WICG/webpackage/issues/555
+  out->SetResponseHeader("x-content-type-options", "nosniff");
+
   // Note: This does not reject content-type like "application/signed-exchange"
   // (no "v=" parameter). In that case, SignedExchangeRequestHandler does not
   // handle the inner response and UA just downloads it.
   // See https://github.com/WICG/webpackage/issues/299 for details.
-  auto found = out->response_headers().find("content-type");
-  if (found != out->response_headers().end() &&
-      signed_exchange_utils::GetSignedExchangeVersion(found->second)
+  if (signed_exchange_utils::GetSignedExchangeVersion(content_type_iter->second)
           .has_value()) {
     signed_exchange_utils::ReportErrorAndTraceEvent(
         devtools_proxy,
         base::StringPrintf(
             "Exchange's inner response must not be a signed-exchange. "
             "conetent-type: %s",
-            found->second.c_str()));
+            content_type_iter->second.c_str()));
     return false;
   }
 
@@ -346,6 +363,14 @@ bool SignedExchangeEnvelope::AddResponseHeader(base::StringPiece name,
   return true;
 }
 
+void SignedExchangeEnvelope::SetResponseHeader(base::StringPiece name,
+                                               base::StringPiece value) {
+  std::string name_str = name.as_string();
+  DCHECK_EQ(name_str, base::ToLowerASCII(name))
+      << "Response header names should be always lower-cased.";
+  response_headers_[name_str] = value.as_string();
+}
+
 scoped_refptr<net::HttpResponseHeaders>
 SignedExchangeEnvelope::BuildHttpResponseHeaders() const {
   std::string header_str("HTTP/1.1 ");
@@ -361,11 +386,20 @@ SignedExchangeEnvelope::BuildHttpResponseHeaders() const {
   }
   header_str.append("\r\n");
   return base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(header_str.c_str(), header_str.size()));
+      net::HttpUtil::AssembleRawHeaders(header_str));
 }
 
 void SignedExchangeEnvelope::set_cbor_header(base::span<const uint8_t> data) {
   cbor_header_ = std::vector<uint8_t>(data.begin(), data.end());
+}
+
+net::SHA256HashValue SignedExchangeEnvelope::ComputeHeaderIntegrity() const {
+  net::SHA256HashValue hash;
+  crypto::SHA256HashString(
+      base::StringPiece(reinterpret_cast<const char*>(cbor_header().data()),
+                        cbor_header().size()),
+      &hash, sizeof(net::SHA256HashValue));
+  return hash;
 }
 
 }  // namespace content

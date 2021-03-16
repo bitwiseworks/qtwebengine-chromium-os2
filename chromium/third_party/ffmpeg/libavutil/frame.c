@@ -806,7 +806,7 @@ void av_frame_remove_side_data(AVFrame *frame, enum AVFrameSideDataType type)
 {
     int i;
 
-    for (i = 0; i < frame->nb_side_data; i++) {
+    for (i = frame->nb_side_data - 1; i >= 0; i--) {
         AVFrameSideData *sd = frame->side_data[i];
         if (sd->type == type) {
             free_side_data(&frame->side_data[i]);
@@ -840,6 +840,8 @@ const char *av_frame_side_data_name(enum AVFrameSideDataType type)
     case AV_FRAME_DATA_QP_TABLE_PROPERTIES:         return "QP table properties";
     case AV_FRAME_DATA_QP_TABLE_DATA:               return "QP table data";
 #endif
+    case AV_FRAME_DATA_DYNAMIC_HDR_PLUS: return "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)";
+    case AV_FRAME_DATA_REGIONS_OF_INTEREST: return "Regions Of Interest";
     }
     return NULL;
 }

@@ -8,10 +8,14 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
 #include "third_party/blink/renderer/core/css/parser/at_rule_descriptors.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_mode.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_view.h"
 
 namespace blink {
+
+class ExecutionContext;
+enum class CSSValueID;
 
 enum CSSParserTokenType {
   kIdentToken = 0,
@@ -145,7 +149,9 @@ class CORE_EXPORT CSSParserToken {
 
   bool HasStringBacking() const;
 
-  CSSPropertyID ParseAsUnresolvedCSSPropertyID() const;
+  CSSPropertyID ParseAsUnresolvedCSSPropertyID(
+      const ExecutionContext* execution_context,
+      CSSParserMode mode = kHTMLStandardMode) const;
   AtRuleDescriptorID ParseAsAtRuleDescriptorID() const;
 
   void Serialize(StringBuilder&) const;

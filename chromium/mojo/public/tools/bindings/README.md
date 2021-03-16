@@ -1,18 +1,18 @@
-# Mojom IDL and Bindings Generator
+# Mojom Interface Definition Language (IDL)
 This document is a subset of the [Mojo documentation](/mojo/README.md).
 
 [TOC]
 
 ## Overview
 
-Mojom is the IDL for Mojo bindings interfaces. Given a `.mojom` file, the
+Mojom is the IDL for Mojo interfaces. Given a `.mojom` file, the
 [bindings
-generator](https://cs.chromium.org/chromium/src/mojo/public/tools/bindings/)
-outputs bindings for all supported languages: **C++**, **JavaScript**, and
+generator](https://cs.chromium.org/chromium/src/mojo/public/tools/bindings/) can
+output bindings for any supported language: **C++**, **JavaScript**, or
 **Java**.
 
 For a trivial example consider the following hypothetical Mojom file we write to
-`//services/widget/public/interfaces/frobinator.mojom`:
+`//services/widget/public/mojom/frobinator.mojom`:
 
 ```
 module widget.mojom;
@@ -25,15 +25,15 @@ interface Frobinator {
 This defines a single [interface](#Interfaces) named `Frobinator` in a
 [module](#Modules) named `widget.mojom` (and thus fully qualified in Mojom as
 `widget.mojom.Frobinator`.) Note that many interfaces and/or other types of
-definitions may be included in a single Mojom file.
+definitions (structs, enums, *etc.*) may be included in a single Mojom file.
 
 If we add a corresponding GN target to
-`//services/widget/public/interfaces/BUILD.gn`:
+`//services/widget/public/mojom/BUILD.gn`:
 
 ```
 import("mojo/public/tools/bindings/mojom.gni")
 
-mojom("interfaces") {
+mojom("mojom") {
   sources = [
     "frobinator.mojom",
   ]
@@ -43,22 +43,32 @@ mojom("interfaces") {
 and then build this target:
 
 ```
-ninja -C out/r services/widget/public/interfaces
+ninja -C out/r services/widget/public/mojom
 ```
 
 we'll find several generated sources in our output directory:
 
 ```
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.cc
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.h
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.js
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.srcjar
-...
+out/r/gen/services/widget/public/mojom/frobinator.mojom.cc
+out/r/gen/services/widget/public/mojom/frobinator.mojom.h
+out/r/gen/services/widget/public/mojom/frobinator.mojom-shared.h
+etc...
 ```
 
 Each of these generated source modules includes a set of definitions
-representing the Mojom contents within the target language. For more details
-regarding the generated outputs please see
+representing the Mojom contents in C++. You can also build or depend on suffixed
+target names to get bindings for other languages. For example,
+
+```
+ninja -C out/r services/widget/public/mojom:mojom_js
+ninja -C out/r services/widget/public/mojom:mojom_java
+```
+
+would generate JavaScript and Java bindings respectively, in the same generated
+output directory.
+
+For more details regarding the generated
+outputs please see
 [documentation for individual target languages](#Generated-Code-For-Target-Languages).
 
 ## Mojom Syntax
@@ -92,10 +102,11 @@ for message parameters.
 | `handle<shared_buffer>`       | Shared buffer handle.
 | `handle<data_pipe_producer>`  | Data pipe producer handle.
 | `handle<data_pipe_consumer>`  | Data pipe consumer handle.
-| *`InterfaceType`*             | Any user-defined Mojom interface type. This is sugar for a strongly-typed message pipe handle which should eventually be used to make outgoing calls on the interface.
-| *`InterfaceType&`*            | An interface request for any user-defined Mojom interface type. This is sugar for a more strongly-typed message pipe handle which is expected to receive request messages and should therefore eventually be bound to an implementation of the interface.
-| *`associated InterfaceType`*  | An associated interface handle. See [Associated Interfaces](#Associated-Interfaces)
-| *`associated InterfaceType&`* | An associated interface request. See [Associated Interfaces](#Associated-Interfaces)
+| `handle<platform>`            | A native platform/OS handle.
+| *`pending_remote<InterfaceType>`*             | Any user-defined Mojom interface type. This is sugar for a strongly-typed message pipe handle which should eventually be used to make outgoing calls on the interface.
+| *`pending_receiver<InterfaceType>`*            | A pending receiver for any user-defined Mojom interface type. This is sugar for a more strongly-typed message pipe handle which is expected to receive request messages and should therefore eventually be bound to an implementation of the interface.
+| *`pending_associated_remote<InterfaceType>`*  | An associated interface handle. See [Associated Interfaces](#Associated-Interfaces)
+| *`pending_associated_receiver<InterfaceType>`* | A pending associated receiver. See [Associated Interfaces](#Associated-Interfaces)
 | *T*?                          | An optional (nullable) value. Primitive numeric types (integers, floats, booleans, and enums) are not nullable. All other types are nullable.
 
 ### Modules
@@ -136,7 +147,7 @@ If your Mojom references definitions from other Mojom files, you must **import**
 those files. Import syntax is as follows:
 
 ```
-import "services/widget/public/interfaces/frobinator.mojom";
+import "services/widget/public/mojom/frobinator.mojom";
 ```
 
 Import paths are always relative to the top-level directory.
@@ -244,12 +255,12 @@ struct AllTheThings {
   handle<data_pipe_producer>? maybe_writer;
   handle<shared_buffer> dumping_ground;
   handle<message_pipe> raw_message_pipe;
-  SampleInterface? maybe_a_sample_interface_client_pipe;
-  SampleInterface& non_nullable_sample_interface_request;
-  SampleInterface&? nullable_sample_interface_request;
-  associated SampleInterface associated_interface_client;
-  associated SampleInterface& associated_interface_request;
-  associated SampleInterface&? maybe_another_associated_request;
+  pending_remote<SampleInterface>? maybe_a_sample_interface_client_pipe;
+  pending_receiver<SampleInterface> non_nullable_sample_pending_receiver;
+  pending_receiver<SampleInterface>? nullable_sample_pending_receiver;
+  pending_associated_remote<SampleInterface> associated_interface_client;
+  pending_associated_receiver<SampleInterface> associated_pending_receiver;
+  pending_associated_receiver<SampleInterface>? maybe_another_pending_receiver;
 };
 ```
 
@@ -386,8 +397,9 @@ interesting attributes supported today.
 :   The `Native` attribute may be specified for an empty struct declaration to
     provide a nominal bridge between Mojo IPC and legacy `IPC::ParamTraits` or
     `IPC_STRUCT_TRAITS*` macros.
-    See [Using Legacy IPC Traits](/ipc/README.md#Using-Legacy-IPC-Traits) for
-    more details. Note support for this attribute is strictly limited to C++
+    See
+    [Repurposing Legacy IPC Traits](/docs/mojo_ipc_conversion.md#repurposing-and-invocations)
+    for more details. Note support for this attribute is strictly limited to C++
     bindings generation.
 
 **`[MinVersion=N]`**
@@ -483,8 +495,8 @@ validation failure behavior as the built-in type validation routines.
 
 ## Associated Interfaces
 
-As mentioned in the [Primitive Types](#Primitive-Types) section above, interface
-and interface request fields and parameters may be marked as `associated`. This
+As mentioned in the [Primitive Types](#Primitive-Types) section above, pending_remote
+and pending_receiver fields and parameters may be marked as `associated`. This
 essentially means that they are piggy-backed on some other interface's message
 pipe.
 
@@ -493,7 +505,7 @@ relative ordering guarantees among them. Associated interfaces are useful when
 one interface needs to guarantee strict FIFO ordering with respect to one or
 more other interfaces, as they allow interfaces to share a single pipe.
 
-Currenly associated interfaces are only supported in generated C++ bindings.
+Currently associated interfaces are only supported in generated C++ bindings.
 See the documentation for
 [C++ Associated Interfaces](/mojo/public/cpp/bindings/README.md#Associated-Interfaces).
 
@@ -546,6 +558,12 @@ By default, fields belong to version 0. New fields must be appended to the
 struct definition (*i.e*., existing fields must not change **ordinal value**)
 with the `MinVersion` attribute set to a number greater than any previous
 existing versions.
+
+*** note
+**NOTE:** do not change existing fields in versioned structs, as this is
+not backwards-compatible. Instead, rename the old field to make its
+deprecation clear and add a new field with the new version number.
+***
 
 **Ordinal value** refers to the relative positional layout of a struct's fields
 (and an interface's methods) when encoded in a message. Implicitly, ordinal
@@ -629,7 +647,7 @@ implementation of version 0, the client will be disconnected.
 
 Bindings target languages that support versioning expose means to query or
 assert the remote version from a client handle (*e.g.*, an
-`InterfacePtr<T>` in C++ bindings.)
+`mojo::Remote<T>` in C++ bindings.)
 
 See
 [C++ Versioning Considerations](/mojo/public/cpp/bindings/README.md#Versioning-Considerations)
@@ -688,7 +706,7 @@ ModuleStatement = AttributeSection "module" Identifier ";"
 ImportStatement = "import" StringLiteral ";"
 Definition = Struct Union Interface Enum Const
 
-AttributeSection = "[" AttributeList "]"
+AttributeSection = <empty> | "[" AttributeList "]"
 AttributeList = <empty> | NonEmptyAttributeList
 NonEmptyAttributeList = Attribute
                       | Attribute "," NonEmptyAttributeList
@@ -702,7 +720,7 @@ StructBody = <empty>
            | StructBody Const
            | StructBody Enum
            | StructBody StructField
-StructField = AttributeSection TypeSpec Name Orginal Default ";"
+StructField = AttributeSection TypeSpec Name Ordinal Default ";"
 
 Union = AttributeSection "union" Name "{" UnionBody "}" ";"
 UnionBody = <empty> | UnionBody UnionField
@@ -734,6 +752,7 @@ SpecificHandleType = "message_pipe"
                    | "shared_buffer"
                    | "data_pipe_consumer"
                    | "data_pipe_producer"
+                   | "platform"
 Array = "array" "<" TypeSpec ">"
 FixedArray = "array" "<" TypeSpec "," IntConstDec ">"
 Map = "map" "<" Identifier "," TypeSpec ">"

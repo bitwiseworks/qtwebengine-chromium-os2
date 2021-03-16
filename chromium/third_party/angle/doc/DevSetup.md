@@ -1,36 +1,32 @@
 # ANGLE Development
 
-ANGLE provides OpenGL ES 2.0 and EGL 1.4 libraries and dlls.  You can use these to build and run OpenGL ES 2.0 applications on Windows, Linux, Mac and Android.
+ANGLE provides OpenGL ES 3.1 and EGL 1.5 libraries and tests. You can use these to build and run OpenGL ES applications on Windows, Linux, Mac and Android.
 
 ## Development setup
 
 ### Version Control
-ANGLE uses git for version control. If you are not familiar with git, helpful documentation can be found at [http://git-scm.com/documentation](http://git-scm.com/documentation).
+ANGLE uses git for version control. Helpful documentation can be found at [http://git-scm.com/documentation](http://git-scm.com/documentation).
 
 ### Required Tools
 On all platforms:
 
- * GN is the build system.  GYP support has been removed.
- * Clang will be set up by the build system and used by default.  See below for platform-specific compiler choices.
- * [depot_tools](http://dev.chromium.org/developers/how-tos/install-depot-tools)
-   * Required to generate projects and build files, contribute patches, run the unit tests or build the shader compiler on non-Windows systems.
+ * [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html#_setting_up)
+   * Required to download dependencies (with gclient), generate build files (with GN), and compile ANGLE (with ninja).
+   * Ensure `depot_tools` is in your path as it provides ninja for compilation.
+ * For Googlers, run `download_from_google_storage --config` to login to Google Storage.
 
 On Windows:
 
- * [Visual Studio Community 2017 Update 3.2](https://www.visualstudio.com/en-us/news/releasenotes/vs2017-relnotes)
-   * Put `is_clang = false` in your gn args to compile with the Microsoft Visual C++ compiler instead of clang.
-   * See the [Chromium Windows build instructions](https://chromium.googlesource.com/chromium/src/+/master/docs/windows_build_instructions.md) for more info.
-   * Required for the packaged Windows 10 SDK.
+ * ***IMPORTANT: Set `DEPOT_TOOLS_WIN_TOOLCHAIN=0` in your environment if you are not a Googler.***
+ * [Visual Studio Community 2019](https://visualstudio.microsoft.com/vs/)
  * [Windows 10 Standalone SDK version 10.0.17134 exactly](https://developer.microsoft.com/en-us/windows/downloads/windows-10-sdk).
+   * You should install it through Visual Studio Installer if available.
    * Comes with additional features that aid development, such as the Debug runtime for D3D11. Required for the D3D Compiler DLL.
- * [Cygwin's Bison, flex, and patch](https://cygwin.com/setup-x86_64.exe) (optional)
-   * This is only required if you need to modify GLSL ES grammar files (`glslang.l` and `glslang.y` under `src/compiler/translator`, or `ExpressionParser.y` and `Tokenizer.l` in `src/compiler/preprocessor`).
-     Use the latest versions of bison, flex and patch from the 64-bit cygwin distribution.
- * **IMPORTANT**: Non-googlers need to set `DEPOT_TOOLS_WIN_TOOLCHAIN` environment variable to 0.
+ * (optional) See the [Chromium Windows build instructions](https://chromium.googlesource.com/chromium/src/+/master/docs/windows_build_instructions.md) for more info.
 
 On Linux:
 
- * Development packages for OpenGL, X11 and libpci (all of these dependencies should be installed automatically when running `install-build-deps.sh` later on).
+ * Install package dependencies by running `install-build-deps.sh` later on.
  * Bison and flex are not needed as we only support generating the translator grammar on Windows.
 
 On MacOS:
@@ -58,78 +54,48 @@ After this completes successfully, you are ready to generate the ninja files:
 gn gen out/Debug
 ```
 
-GN will generate ninja files by default.  To change the default build options run `gn args out/Debug`.  Some commonly used options are:
+On Windows only, ensure you **set `DEPOT_TOOLS_WIN_TOOLCHAIN=0` in your environment** (if you are not a Googler).
+
+GN will generate ninja files. To change the default build options run `gn args out/Debug`.  Some commonly used options are:
 ```
-target_cpu = "x64"  (or "x86")
-is_clang = false    (to use system default compiler instead of clang)
-is_debug = true     (enable debugging, true is the default)
+target_cpu = "x86"        (default is "x64")
+is_clang = false          (to use system default compiler instead of clang)
+is_debug = true           (enable debugging, true is the default)
+dcheck_always_on = true   (enable release asserts and debug layers)
 ```
+
 For a release build run `gn args out/Release` and set `is_debug = false`.
+
+On Windows, you can build for the Universal Windows Platform (UWP) by setting `target_os = "winuwp"` in the args.
 
 For more information on GN run `gn help`.
 
 Ninja can be used to compile on all platforms with one of the following commands:
 ```
-ninja -C out/Debug
-ninja -C out/Release
+autoninja -C out/Debug
+autoninja -C out/Release
 ```
 Ninja automatically calls GN to regenerate the build files on any configuration change.
+
 Ensure `depot_tools` is in your path as it provides ninja.
 
 ### Building with Visual Studio
 
-Run `scripts/msvs_projects.py` to generate a Visual Studio solution in `out/sln/ANGLE.sln`.
-This script runs GN and consolidates all the targets in `out` into a single meta-solution.
+To generate the Visual Studio solution in `out/Debug/angle-debug.sln`:
+```
+gn gen out/Debug --sln=angle-debug --ide=vs2019
+```
 
 In Visual Studio:
- 1. Open the ANGLE solution file `out/sln/ANGLE.sln`.
- 2. The configurations found in your `out` directory will be mapped to configurations in the configuration manager.  For compatibility reasons all configurations are listed as 64-bits.
- 3. Right click the "all" solution and select build.  "Build Solution" is not functional with GN; instead build one target at a time."
-Once the build completes the output directory for your selected configuration (e.g. `out/Release_x64`) will contain the required libraries and dlls to build and run an OpenGL ES 2.0 application.  ANGLE executables (tests and samples) are under out/sln.
+ 1. Open the ANGLE solution file `out/Debug/angle-debug.sln`.
+ 2. It is recommended you still use `autoninja` from the command line to build.
+ 3. If you do want to build in the solution, "Build Solution" is not functional with GN. Build one target at a time.
+
+Once the build completes all ANGLE libraries, tests, and samples will be located in `out/Debug`.
 
 ### Building ANGLE for Android
-Building ANGLE for Android is heavily dependent on the Chromium toolchain. It is not currently possible to build ANGLE for Android without a Chromium checkout. See http://anglebug.com/2344 for more details on why.
-Please follow the steps in
-[Checking out and building Chromium for Android](https://chromium.googlesource.com/chromium/src/+/master/docs/android_build_instructions.md).
-This must be done on Linux, the only platform that Chromium for Android supports.
-Name your output directories `out/Debug` and `out/Release`, because Chromium GPU tests look for browser binaries in these folders. Replacing `out` with other names seems to be OK when working with multiple build configurations.
-It's best to use a build configuration of some Android bot on [GPU.FYI waterfall](https://ci.chromium.org/p/chromium/g/chromium.gpu.fyi/console). Look for `generate_build_files` step output of that bot. Remove `goma_dir` flag.
-For example, these are the build flags from Nexus 5X bot:
-```
-build_angle_deqp_tests = true
-dcheck_always_on = true
-ffmpeg_branding = "Chrome"
-is_component_build = false
-is_debug = false
-proprietary_codecs = true
-symbol_level = 1
-target_cpu = "arm64"          # Nexus 5X is 64 bit, remove this on 32 bit devices
-target_os = "android"
-use_goma = true               # Remove this if you don't have goma
-```
-Additional flags to build the Vulkan backend, enable only if running on Android N or higher:
-```
-android32_ndk_api_level = 24
-android64_ndk_api_level = 24
-```
 
-These ANGLE targets are supported:
-`ninja -C out/Release translator libEGL libGLESv2 angle_unittests angle_end2end_tests angle_white_box_tests angle_deqp_gles2_tests angle_deqp_gles3_tests angle_deqp_egl_tests angle_perftests`
-In order to run ANGLE tests, prepend `bin/run_` to the test name, for example: `./out/Release/bin/run_angle_unittests`.
-Additional details are in [Android Test Instructions](https://chromium.googlesource.com/chromium/src/+/master/docs/android_test_instructions.md).
-
-Note: Running the tests not using the test runner is tricky, but is necessary in order to get a complete TestResults.qpa from the dEQP tests (since the runner shards the tests, only the results of the last shard will be available when using the test runner). First, use the runner to install the APK, test data and test expectations on the device. After the tests start running, the test runner can be stopped with Ctrl+C. Then, run
-```
-adb shell am start -a android.intent.action.MAIN -n org.chromium.native_test/.NativeUnitTestNativeActivity -e org.chromium.native_test.NativeTest.StdoutFile /sdcard/chromium_tests_root/out.txt
-```
-After the tests finish, get the results with
-```
-adb pull /sdcard/chromium_tests_root/third_party/deqp/src/data/TestResults.qpa .
-```
-
-In order to run GPU telemetry tests, build `chrome_public_apk` target. Then follow [GPU Testing](http://www.chromium.org/developers/testing/gpu-testing#TOC-Running-the-GPU-Tests-Locally) doc, using `--browser=android-chromium` argument. Make sure to set your `CHROMIUM_OUT_DIR` environment variable, so that your browser is found, otherwise the stock one will run.
-
-Also, follow [How to build ANGLE in Chromium for dev](BuildingAngleForChromiumDevelopment.md) to work with Top of Tree ANGLE in Chromium.
+See the Android specific [documentation](DevSetupAndroid.md#ANGLE-for-Android).
 
 ## Application Development with ANGLE
 This sections describes how to use ANGLE to build an OpenGL ES application.

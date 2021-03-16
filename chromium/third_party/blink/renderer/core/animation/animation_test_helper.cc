@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/animation/css_interpolation_environment.h"
 #include "third_party/blink/renderer/core/animation/css_interpolation_types_map.h"
 #include "third_party/blink/renderer/core/animation/invalidatable_interpolation.h"
+#include "third_party/blink/renderer/core/css/resolver/style_cascade.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
@@ -43,12 +44,24 @@ void EnsureInterpolatedValueCached(const ActiveInterpolations& interpolations,
   // require our callers to propertly register every animation they pass in
   // here, which the current tests do not do.
   auto style = ComputedStyle::Create();
-  StyleResolverState state(document, element, style.get(), style.get());
+  StyleResolverState state(document, *element, style.get(), style.get());
   state.SetStyle(style);
-  CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry(),
-                               state.GetDocument());
-  CSSInterpolationEnvironment environment(map, state, nullptr);
-  InvalidatableInterpolation::ApplyStack(interpolations, environment);
+  if (RuntimeEnabledFeatures::CSSCascadeEnabled()) {
+    // We must apply the animation effects via StyleCascade when the cascade
+    // is enabled.
+    StyleCascade cascade(state);
+
+    ActiveInterpolationsMap map;
+    map.Set(PropertyHandle("--unused"), interpolations);
+
+    cascade.AddInterpolations(&map, CascadeOrigin::kAnimation);
+    cascade.Apply();
+  } else {
+    CSSInterpolationTypesMap map(state.GetDocument().GetPropertyRegistry(),
+                                 state.GetDocument());
+    CSSInterpolationEnvironment environment(map, state, nullptr);
+    InvalidatableInterpolation::ApplyStack(interpolations, environment);
+  }
 }
 
 }  // namespace blink

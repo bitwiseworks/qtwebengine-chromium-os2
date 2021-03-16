@@ -4,7 +4,7 @@
  *
  *   PostScript CFF (Type 2) decoding routines (body).
  *
- * Copyright 2017-2018 by
+ * Copyright (C) 2017-2020 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -330,7 +330,7 @@
     builder->left_bearing.x = 0;
     builder->left_bearing.y = 0;
 
-    builder->pos_x = adx - asb;
+    builder->pos_x = SUB_LONG( adx, asb );
     builder->pos_y = ady;
 
     /* Now load `achar' on top of the base outline. */
@@ -529,6 +529,9 @@
     hinter = (T2_Hints_Funcs)builder->hints_funcs;
 
     builder->path_begun = 0;
+
+    if ( !charstring_base )
+      return FT_Err_Ok;
 
     zone->base           = charstring_base;
     limit = zone->limit  = charstring_base + charstring_len;
@@ -860,7 +863,7 @@
           case cff_op_flex1:
           case cff_op_callsubr:
           case cff_op_callgsubr:
-            /* depracated opcodes */
+            /* deprecated opcodes */
           case cff_op_dotsection:
             /* invalid Type 1 opcodes */
           case cff_op_hsbw:
@@ -1556,9 +1559,9 @@
             }
 
             if ( dx < 0 )
-              dx = -dx;
+              dx = NEG_LONG( dx );
             if ( dy < 0 )
-              dy = -dy;
+              dy = NEG_LONG( dy );
 
             /* strange test, but here it is... */
             horizontal = ( dx > dy );

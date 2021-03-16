@@ -7,10 +7,10 @@
 
 #include "base/optional.h"
 #include "services/network/public/cpp/cors/cors_error_status.h"
-#include "services/network/public/mojom/cors.mojom-shared.h"
-#include "services/network/public/mojom/fetch_api.mojom-shared.h"
-#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
-#include "third_party/blink/public/platform/web_http_header_set.h"
+#include "services/network/public/mojom/cors.mojom-blink-forward.h"
+#include "services/network/public/mojom/fetch_api.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink-forward.h"
+#include "third_party/blink/renderer/platform/network/http_header_set.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -35,31 +35,27 @@ namespace cors {
 // be removed.
 PLATFORM_EXPORT base::Optional<network::CorsErrorStatus> CheckAccess(
     const KURL&,
-    const int response_status_code,
     const HTTPHeaderMap&,
-    network::mojom::FetchCredentialsMode,
+    network::mojom::CredentialsMode,
     const SecurityOrigin&);
 
 PLATFORM_EXPORT base::Optional<network::CorsErrorStatus> CheckPreflightAccess(
     const KURL&,
     const int response_status_code,
     const HTTPHeaderMap&,
-    network::mojom::FetchCredentialsMode,
+    network::mojom::CredentialsMode,
     const SecurityOrigin&);
 
 PLATFORM_EXPORT base::Optional<network::CorsErrorStatus> CheckRedirectLocation(
     const KURL&,
-    network::mojom::FetchRequestMode,
+    network::mojom::RequestMode,
     const SecurityOrigin*,
     CorsFlag);
-
-PLATFORM_EXPORT base::Optional<network::mojom::CorsError> CheckPreflight(
-    const int preflight_response_status_code);
 
 PLATFORM_EXPORT base::Optional<network::CorsErrorStatus> CheckExternalPreflight(
     const HTTPHeaderMap&);
 
-PLATFORM_EXPORT bool IsCorsEnabledRequestMode(network::mojom::FetchRequestMode);
+PLATFORM_EXPORT bool IsCorsEnabledRequestMode(network::mojom::RequestMode);
 
 PLATFORM_EXPORT base::Optional<network::CorsErrorStatus>
 EnsurePreflightResultAndCacheOnSuccess(
@@ -68,12 +64,12 @@ EnsurePreflightResultAndCacheOnSuccess(
     const KURL& request_url,
     const String& request_method,
     const HTTPHeaderMap& request_header_map,
-    network::mojom::FetchCredentialsMode request_credentials_mode);
+    network::mojom::CredentialsMode request_credentials_mode);
 
 PLATFORM_EXPORT bool CheckIfRequestCanSkipPreflight(
     const String& origin,
     const KURL&,
-    network::mojom::FetchCredentialsMode,
+    network::mojom::CredentialsMode,
     const String& method,
     const HTTPHeaderMap& request_header_map);
 
@@ -83,12 +79,13 @@ PLATFORM_EXPORT bool CheckIfRequestCanSkipPreflight(
 // https://fetch.spec.whatwg.org/#main-fetch.
 PLATFORM_EXPORT network::mojom::FetchResponseType CalculateResponseTainting(
     const KURL& url,
-    network::mojom::FetchRequestMode request_mode,
+    network::mojom::RequestMode request_mode,
     const SecurityOrigin* origin,
+    const SecurityOrigin* isolated_world_origin,
     CorsFlag cors_flag);
 
 PLATFORM_EXPORT bool CalculateCredentialsFlag(
-    network::mojom::FetchCredentialsMode credentials_mode,
+    network::mojom::CredentialsMode credentials_mode,
     network::mojom::FetchResponseType response_tainting);
 
 // Thin wrapper functions that will not be removed even after out-of-renderer
@@ -119,14 +116,15 @@ PLATFORM_EXPORT bool IsOkStatus(int status);
 // This function will be removed when out-of-renderer CORS is enabled.
 PLATFORM_EXPORT bool CalculateCorsFlag(
     const KURL& url,
-    const SecurityOrigin* origin,
-    network::mojom::FetchRequestMode request_mode);
+    const SecurityOrigin* initiator_origin,
+    const SecurityOrigin* isolated_world_origin,
+    network::mojom::RequestMode request_mode);
 
-PLATFORM_EXPORT WebHTTPHeaderSet
-ExtractCorsExposedHeaderNamesList(network::mojom::FetchCredentialsMode,
+PLATFORM_EXPORT HTTPHeaderSet
+ExtractCorsExposedHeaderNamesList(network::mojom::CredentialsMode,
                                   const ResourceResponse&);
 
-PLATFORM_EXPORT bool IsOnAccessControlResponseHeaderWhitelist(const String&);
+PLATFORM_EXPORT bool IsCorsSafelistedResponseHeader(const String&);
 
 // Checks whether request mode 'no-cors' is allowed for a certain context.
 PLATFORM_EXPORT bool IsNoCorsAllowedContext(mojom::RequestContextType);

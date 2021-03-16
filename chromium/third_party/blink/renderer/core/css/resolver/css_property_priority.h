@@ -6,7 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_CSS_PROPERTY_PRIORITY_H_
 
 #include "third_party/blink/renderer/core/css/css_property_names.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -29,81 +29,90 @@ class CSSPropertyPriorityData {
   STATIC_ONLY(CSSPropertyPriorityData);
 
  public:
-  static inline CSSPropertyID First();
-  static inline CSSPropertyID Last();
-  static inline bool PropertyHasPriority(CSSPropertyID prop) {
+  static constexpr CSSPropertyID First();
+  static constexpr CSSPropertyID Last();
+  static constexpr bool PropertyHasPriority(CSSPropertyID prop) {
     return First() <= prop && prop <= Last();
   }
 };
 
 template <>
-inline CSSPropertyID CSSPropertyPriorityData<kResolveVariables>::First() {
+constexpr CSSPropertyID CSSPropertyPriorityData<kResolveVariables>::First() {
   static_assert(
-      CSSPropertyVariable == firstCSSProperty - 1,
-      "CSSPropertyVariable should be directly before the first CSS property.");
-  return CSSPropertyVariable;
+      static_cast<int>(CSSPropertyID::kVariable) == kIntFirstCSSProperty - 1,
+      "CSSPropertyID::kVariable should be directly before the first CSS "
+      "property.");
+  return CSSPropertyID::kVariable;
 }
 
 template <>
-inline CSSPropertyID CSSPropertyPriorityData<kResolveVariables>::Last() {
-  return CSSPropertyVariable;
+constexpr CSSPropertyID CSSPropertyPriorityData<kResolveVariables>::Last() {
+  return CSSPropertyID::kVariable;
 }
 
 template <>
-inline CSSPropertyID
+constexpr CSSPropertyID
 CSSPropertyPriorityData<kAnimationPropertyPriority>::First() {
-  static_assert(CSSPropertyAnimationDelay == firstCSSProperty,
-                "CSSPropertyAnimationDelay should be the first animation "
+  static_assert(CSSPropertyID::kAnimationDelay == firstCSSProperty,
+                "CSSPropertyID::kAnimationDelay should be the first animation "
                 "priority property");
-  return CSSPropertyAnimationDelay;
+  return CSSPropertyID::kAnimationDelay;
 }
 
 template <>
-inline CSSPropertyID
+constexpr CSSPropertyID
 CSSPropertyPriorityData<kAnimationPropertyPriority>::Last() {
   static_assert(
-      CSSPropertyTransitionTimingFunction == CSSPropertyAnimationDelay + 11,
-      "CSSPropertyTransitionTimingFunction should be the end of the high "
+      static_cast<int>(CSSPropertyID::kTransitionTimingFunction) ==
+          static_cast<int>(CSSPropertyID::kAnimationDelay) + 11,
+      "CSSPropertyID::kTransitionTimingFunction should be the end of the high "
       "priority property range");
   static_assert(
-      CSSPropertyColor == CSSPropertyTransitionTimingFunction + 1,
-      "CSSPropertyTransitionTimingFunction should be immediately before "
-      "CSSPropertyColor");
-  return CSSPropertyTransitionTimingFunction;
+      static_cast<int>(CSSPropertyID::kColor) ==
+          static_cast<int>(CSSPropertyID::kTransitionTimingFunction) + 1,
+      "CSSPropertyID::kTransitionTimingFunction should be immediately before "
+      "CSSPropertyID::kColor");
+  return CSSPropertyID::kTransitionTimingFunction;
 }
 
 template <>
-inline CSSPropertyID CSSPropertyPriorityData<kHighPropertyPriority>::First() {
-  static_assert(CSSPropertyColor == CSSPropertyTransitionTimingFunction + 1,
-                "CSSPropertyColor should be the first high priority property");
-  return CSSPropertyColor;
-}
-
-template <>
-inline CSSPropertyID CSSPropertyPriorityData<kHighPropertyPriority>::Last() {
+constexpr CSSPropertyID
+CSSPropertyPriorityData<kHighPropertyPriority>::First() {
   static_assert(
-      CSSPropertyZoom == CSSPropertyColor + 22,
-      "CSSPropertyZoom should be the end of the high priority property range");
-  static_assert(CSSPropertyWritingMode == CSSPropertyZoom - 1,
-                "CSSPropertyWritingMode should be immediately before "
-                "CSSPropertyZoom");
-  return CSSPropertyZoom;
+      static_cast<int>(CSSPropertyID::kColor) ==
+          static_cast<int>(CSSPropertyID::kTransitionTimingFunction) + 1,
+      "CSSPropertyID::kColor should be the first high priority property");
+  return CSSPropertyID::kColor;
 }
 
 template <>
-inline CSSPropertyID CSSPropertyPriorityData<kLowPropertyPriority>::First() {
+constexpr CSSPropertyID CSSPropertyPriorityData<kHighPropertyPriority>::Last() {
+  static_assert(static_cast<int>(CSSPropertyID::kZoom) ==
+                    static_cast<int>(CSSPropertyID::kColor) + 27,
+                "CSSPropertyID::kZoom should be the end of the high priority "
+                "property range");
+  static_assert(static_cast<int>(CSSPropertyID::kWritingMode) ==
+                    static_cast<int>(CSSPropertyID::kZoom) - 1,
+                "CSSPropertyID::kWritingMode should be immediately before "
+                "CSSPropertyID::kZoom");
+  return CSSPropertyID::kZoom;
+}
+
+template <>
+constexpr CSSPropertyID CSSPropertyPriorityData<kLowPropertyPriority>::First() {
   static_assert(
-      CSSPropertyAlignContent == CSSPropertyZoom + 1,
-      "CSSPropertyAlignContent should be the first low priority property");
-  return CSSPropertyAlignContent;
+      static_cast<int>(CSSPropertyID::kAlignContent) ==
+          static_cast<int>(CSSPropertyID::kZoom) + 1,
+      "CSSPropertyID::kAlignContent should be the first low priority property");
+  return CSSPropertyID::kAlignContent;
 }
 
 template <>
-inline CSSPropertyID CSSPropertyPriorityData<kLowPropertyPriority>::Last() {
+constexpr CSSPropertyID CSSPropertyPriorityData<kLowPropertyPriority>::Last() {
   return static_cast<CSSPropertyID>(lastCSSProperty);
 }
 
-inline CSSPropertyPriority PriorityForProperty(CSSPropertyID property) {
+constexpr CSSPropertyPriority PriorityForProperty(CSSPropertyID property) {
   if (CSSPropertyPriorityData<kLowPropertyPriority>::PropertyHasPriority(
           property)) {
     return kLowPropertyPriority;

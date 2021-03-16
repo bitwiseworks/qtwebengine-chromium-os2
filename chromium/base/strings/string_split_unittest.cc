@@ -47,7 +47,7 @@ TEST_F(SplitStringIntoKeyValuePairsUsingSubstrTest, MissingKeyValueDelimiter) {
 }
 
 TEST_F(SplitStringIntoKeyValuePairsUsingSubstrTest,
-       MissingKeyValuePairDelimeter) {
+       MissingKeyValuePairDelimiter) {
   EXPECT_TRUE(SplitStringIntoKeyValuePairsUsingSubstr(
       "key1:value1,,key3:value3",
       ':',    // Key-value delimiter
@@ -216,6 +216,13 @@ TEST(SplitStringUsingSubstrTest, EmptyString) {
       std::string(), "DELIMITER", TRIM_WHITESPACE, SPLIT_WANT_ALL);
   ASSERT_EQ(1u, results.size());
   EXPECT_THAT(results, ElementsAre(""));
+}
+
+TEST(SplitStringUsingSubstrTest, EmptyDelimiter) {
+  std::vector<std::string> results = SplitStringUsingSubstr(
+      "TEST", std::string(), TRIM_WHITESPACE, SPLIT_WANT_ALL);
+  ASSERT_EQ(1u, results.size());
+  EXPECT_THAT(results, ElementsAre("TEST"));
 }
 
 TEST(StringUtilTest, SplitString_Basics) {

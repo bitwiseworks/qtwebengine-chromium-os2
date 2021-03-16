@@ -14,9 +14,10 @@ namespace blink {
 
 NavigatorUserMedia::NavigatorUserMedia(Navigator& navigator)
     : Supplement<Navigator>(navigator),
-      media_devices_(MediaDevices::Create(
-          navigator.GetFrame() ? navigator.GetFrame()->GetDocument()
-                               : nullptr)) {}
+      media_devices_(MakeGarbageCollected<MediaDevices>(
+          navigator.GetFrame()
+              ? navigator.GetFrame()->GetDocument()->ToExecutionContext()
+              : nullptr)) {}
 
 const char NavigatorUserMedia::kSupplementName[] = "NavigatorUserMedia";
 
@@ -38,7 +39,7 @@ MediaDevices* NavigatorUserMedia::mediaDevices(Navigator& navigator) {
   return NavigatorUserMedia::From(navigator).GetMediaDevices();
 }
 
-void NavigatorUserMedia::Trace(blink::Visitor* visitor) {
+void NavigatorUserMedia::Trace(Visitor* visitor) {
   visitor->Trace(media_devices_);
   Supplement<Navigator>::Trace(visitor);
 }

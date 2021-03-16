@@ -60,8 +60,7 @@ class FakePacketSender : public PacketTransport {
 
   int64_t GetBytesSent() final { return bytes_sent_; }
 
-  void StartReceiving(
-      const PacketReceiverCallbackWithStatus& packet_receiver) final {}
+  void StartReceiving(PacketReceiverCallbackWithStatus packet_receiver) final {}
 
   void StopReceiving() final {}
 
@@ -135,13 +134,13 @@ class TransportClient : public CastTransport::Client {
       CastTransportImplTest* cast_transport_sender_impl_test)
       : cast_transport_sender_impl_test_(cast_transport_sender_impl_test) {}
 
-  void OnStatusChanged(CastTransportStatus status) final{};
+  void OnStatusChanged(CastTransportStatus status) final {}
   void OnLoggingEventsReceived(
       std::unique_ptr<std::vector<FrameEvent>> frame_events,
       std::unique_ptr<std::vector<PacketEvent>> packet_events) final {
     CHECK(cast_transport_sender_impl_test_);
     cast_transport_sender_impl_test_->ReceivedLoggingEvents();
-  };
+  }
   void ProcessRtpPacket(std::unique_ptr<Packet> packet) final {}
 
  private:

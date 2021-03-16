@@ -16,6 +16,7 @@ import * as m from 'mithril';
 
 import {timeToString} from '../common/time';
 
+import {TRACK_SHELL_WIDTH} from './css_constants';
 import {globals} from './globals';
 import {gridlines} from './gridline_helper';
 import {Panel, PanelSize} from './panel';
@@ -25,16 +26,30 @@ export class TimeAxisPanel extends Panel {
     return m('.time-axis-panel');
   }
 
-
   renderCanvas(ctx: CanvasRenderingContext2D, size: PanelSize) {
     const timeScale = globals.frontendLocalState.timeScale;
     const range = globals.frontendLocalState.visibleWindowTime;
-    ctx.font = '10px Google Sans';
     ctx.fillStyle = '#999';
 
+    // Write trace offset time + line.
+    ctx.font = '12px Roboto Condensed';
+
+    ctx.textAlign = 'right';
+    const offsetTime =
+        timeToString(range.start - globals.state.traceTime.startSec);
+    ctx.fillText(offsetTime, TRACK_SHELL_WIDTH - 6, 11);
+
+    ctx.textAlign = 'left';
+    const startTime = timeToString(globals.state.traceTime.startSec);
+    ctx.fillText(startTime + ' +', 6, 11);
+
+    // Draw time axis.
+    ctx.font = '10px Roboto Condensed';
     for (const [x, time] of gridlines(size.width, range, timeScale)) {
       ctx.fillRect(x, 0, 1, size.height);
-      ctx.fillText(timeToString(time - range.start), x + 5, 10);
+      ctx.fillText('+' + timeToString(time - range.start), x + 5, 10);
     }
+
+    ctx.fillRect(TRACK_SHELL_WIDTH - 2, 0, 2, size.height);
   }
 }

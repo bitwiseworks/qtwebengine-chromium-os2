@@ -13,12 +13,6 @@
 #include "ui/gl/gpu_preference.h"
 #include "ui/gl/gpu_timing.h"
 
-// TODO(crbug.com/892490): remove this once the cause of this bug is
-// known.
-#if defined(OS_ANDROID)
-#include "base/debug/dump_without_crashing.h"
-#endif
-
 namespace gpu {
 
 GLContextVirtual::GLContextVirtual(
@@ -45,11 +39,6 @@ bool GLContextVirtual::MakeCurrent(gl::GLSurface* surface) {
     return shared_context_->MakeVirtuallyCurrent(this, surface);
 
   LOG(ERROR) << "Trying to make virtual context current without decoder.";
-// TODO(crbug.com/892490): remove this once the cause of this bug is
-// known.
-#if defined(OS_ANDROID)
-  base::debug::DumpWithoutCrashing();
-#endif
   return false;
 }
 
@@ -97,8 +86,11 @@ void GLContextVirtual::SetSafeToForceGpuSwitch() {
   return shared_context_->SetSafeToForceGpuSwitch();
 }
 
-bool GLContextVirtual::WasAllocatedUsingRobustnessExtension() {
-  return shared_context_->WasAllocatedUsingRobustnessExtension();
+unsigned int GLContextVirtual::CheckStickyGraphicsResetStatus() {
+  // Don't pretend we know which one of the virtual contexts was responsible.
+  unsigned int reset_status = shared_context_->CheckStickyGraphicsResetStatus();
+  return reset_status == GL_NO_ERROR ? GL_NO_ERROR
+                                     : GL_UNKNOWN_CONTEXT_RESET_ARB;
 }
 
 void GLContextVirtual::SetUnbindFboOnMakeCurrent() {

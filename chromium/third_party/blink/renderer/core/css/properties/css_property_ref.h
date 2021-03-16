@@ -51,11 +51,11 @@ class CORE_EXPORT CSSPropertyRef {
   // is the static Variable instance.
   CSSPropertyRef(const CSSProperty&);
 
-  bool IsValid() const { return property_id_ != CSSPropertyInvalid; }
+  bool IsValid() const { return property_id_ != CSSPropertyID::kInvalid; }
 
   const CSSProperty& GetProperty() const {
     DCHECK(IsValid());
-    if (property_id_ == CSSPropertyVariable)
+    if (property_id_ == CSSPropertyID::kVariable)
       return custom_property_;
     return CSSProperty::Get(resolveCSSPropertyID(property_id_));
   }
@@ -66,7 +66,7 @@ class CORE_EXPORT CSSPropertyRef {
     return GetProperty();
   }
 
-  void Trace(blink::Visitor* visitor) { visitor->Trace(custom_property_); }
+  void Trace(Visitor* visitor) { visitor->Trace(custom_property_); }
 
  private:
   CSSPropertyID property_id_;

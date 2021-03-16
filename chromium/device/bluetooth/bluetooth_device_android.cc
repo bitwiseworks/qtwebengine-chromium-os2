@@ -11,7 +11,7 @@
 #include "base/strings/stringprintf.h"
 #include "device/bluetooth/bluetooth_adapter_android.h"
 #include "device/bluetooth/bluetooth_remote_gatt_service_android.h"
-#include "jni/ChromeBluetoothDevice_jni.h"
+#include "device/bluetooth/jni_headers/ChromeBluetoothDevice_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -153,10 +153,9 @@ void BluetoothDeviceAndroid::SetConnectionLatency(
   NOTIMPLEMENTED();
 }
 
-void BluetoothDeviceAndroid::Connect(
-    PairingDelegate* pairing_delegate,
-    const base::Closure& callback,
-    const ConnectErrorCallback& error_callback) {
+void BluetoothDeviceAndroid::Connect(PairingDelegate* pairing_delegate,
+                                     base::OnceClosure callback,
+                                     ConnectErrorCallback error_callback) {
   NOTIMPLEMENTED();
 }
 
@@ -249,7 +248,7 @@ void BluetoothDeviceAndroid::CreateGattRemoteService(
   std::string instance_id_string =
       base::android::ConvertJavaStringToUTF8(env, instance_id);
 
-  if (base::ContainsKey(gatt_services_, instance_id_string))
+  if (base::Contains(gatt_services_, instance_id_string))
     return;
 
   std::unique_ptr<BluetoothRemoteGattServiceAndroid> service =
@@ -265,7 +264,8 @@ void BluetoothDeviceAndroid::CreateGattRemoteService(
 BluetoothDeviceAndroid::BluetoothDeviceAndroid(BluetoothAdapterAndroid* adapter)
     : BluetoothDevice(adapter) {}
 
-void BluetoothDeviceAndroid::CreateGattConnectionImpl() {
+void BluetoothDeviceAndroid::CreateGattConnectionImpl(
+    base::Optional<device::BluetoothUUID> service_uuid) {
   Java_ChromeBluetoothDevice_createGattConnectionImpl(AttachCurrentThread(),
                                                       j_device_);
 }

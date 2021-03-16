@@ -39,6 +39,7 @@ enum BufferUsage
     BUFFER_USAGE_PIXEL_UNPACK,
     BUFFER_USAGE_PIXEL_PACK,
     BUFFER_USAGE_UNIFORM,
+    BUFFER_USAGE_STRUCTURED,
     BUFFER_USAGE_EMULATED_INDEXED_VERTEX,
     BUFFER_USAGE_RAW_UAV,
 
@@ -67,10 +68,20 @@ class Buffer11 : public BufferD3D
                                          const d3d11::Buffer **bufferOut,
                                          UINT *firstConstantOut,
                                          UINT *numConstantsOut);
+    angle::Result getStructuredBufferRangeSRV(const gl::Context *context,
+                                              unsigned int offset,
+                                              unsigned int size,
+                                              unsigned int structureByteStride,
+                                              const d3d11::ShaderResourceView **srvOut);
     angle::Result getSRV(const gl::Context *context,
                          DXGI_FORMAT srvFormat,
                          const d3d11::ShaderResourceView **srvOut);
-    angle::Result getRawUAV(const gl::Context *context, d3d11::UnorderedAccessView **uavOut);
+    angle::Result getRawUAVRange(const gl::Context *context,
+                                 GLintptr offset,
+                                 GLsizeiptr size,
+                                 d3d11::UnorderedAccessView **uavOut);
+
+    angle::Result markRawBufferUsage(const gl::Context *context);
     bool isMapped() const { return mMappedStorage != nullptr; }
     angle::Result packPixels(const gl::Context *context,
                              const gl::FramebufferAttachment &readAttachment,
@@ -115,22 +126,41 @@ class Buffer11 : public BufferD3D
     class NativeStorage;
     class PackStorage;
     class SystemMemoryStorage;
+    class StructuredBufferStorage;
 
-    struct ConstantBufferCacheEntry
+    struct BufferCacheEntry
     {
-        ConstantBufferCacheEntry() : storage(nullptr), lruCount(0) {}
+        BufferCacheEntry() : storage(nullptr), lruCount(0) {}
 
         BufferStorage *storage;
         unsigned int lruCount;
     };
 
+    struct StructuredBufferKey
+    {
+        StructuredBufferKey(unsigned int offsetIn, unsigned int structureByteStrideIn)
+            : offset(offsetIn), structureByteStride(structureByteStrideIn)
+        {}
+        bool operator<(const StructuredBufferKey &rhs) const
+        {
+            return std::tie(offset, structureByteStride) <
+                   std::tie(rhs.offset, rhs.structureByteStride);
+        }
+        unsigned int offset;
+        unsigned int structureByteStride;
+    };
+
     void markBufferUsage(BufferUsage usage);
+    angle::Result markBufferUsage(const gl::Context *context, BufferUsage usage);
     angle::Result garbageCollection(const gl::Context *context, BufferUsage currentUsage);
 
     angle::Result updateBufferStorage(const gl::Context *context,
                                       BufferStorage *storage,
                                       size_t sourceOffset,
                                       size_t storageSize);
+
+    angle::Result getNativeStorageForUAV(const gl::Context *context,
+                                         Buffer11::NativeStorage **storageOut);
 
     template <typename StorageOutT>
     angle::Result getBufferStorage(const gl::Context *context,
@@ -180,10 +210,15 @@ class Buffer11 : public BufferD3D
     // Cache of D3D11 constant buffer for specific ranges of buffer data.
     // This is used to emulate UBO ranges on 11.0 devices.
     // Constant buffers are indexed by there start offset.
-    typedef std::map<GLintptr /*offset*/, ConstantBufferCacheEntry> ConstantBufferCache;
-    ConstantBufferCache mConstantBufferRangeStoragesCache;
+    typedef std::map<GLintptr /*offset*/, BufferCacheEntry> BufferCache;
+    BufferCache mConstantBufferRangeStoragesCache;
     size_t mConstantBufferStorageAdditionalSize;
     unsigned int mMaxConstantBufferLruCount;
+
+    typedef std::map<StructuredBufferKey, BufferCacheEntry> StructuredBufferCache;
+    StructuredBufferCache mStructuredBufferRangeStoragesCache;
+    size_t mStructuredBufferStorageAdditionalSize;
+    unsigned int mMaxStructuredBufferLruCount;
 };
 
 }  // namespace rx

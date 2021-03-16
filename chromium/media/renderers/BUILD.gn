@@ -21,8 +21,6 @@ source_set("renderers") {
     "default_decoder_factory.h",
     "default_renderer_factory.cc",
     "default_renderer_factory.h",
-    "flinging_renderer_client_factory.cc",
-    "flinging_renderer_client_factory.h",
     "paint_canvas_video_renderer.cc",
     "paint_canvas_video_renderer.h",
     "remote_playback_client_wrapper.h",
@@ -41,20 +39,26 @@ source_set("renderers") {
     "//cc/base",  # For MathUtil.
     "//cc/paint",
     "//components/viz/client",
+    "//components/viz/common",
     "//gpu/command_buffer/client:gles2_interface",
+    "//gpu/command_buffer/client:raster_interface",
     "//gpu/command_buffer/common",
+    "//media:media_buildflags",
     "//media/audio",
     "//media/base",
     "//media/filters",
     "//media/video",
-    "//skia",
-    "//third_party/libaom:av1_buildflags",
+    "//third_party/libaom:libaom_buildflags",
     "//third_party/libyuv",
     "//ui/gfx:geometry_skia",
     "//ui/gfx:memory_buffer",
     "//ui/gfx/geometry",
     "//ui/gl",
   ]
+
+  if (is_fuchsia) {
+    deps += [ "//fuchsia/engine:switches" ]
+  }
 
   configs += [
     "//media:subcomponent_config",
@@ -89,5 +93,42 @@ source_set("unit_tests") {
     "//testing/gtest",
     "//third_party/libyuv",
     "//ui/gfx",
+    "//ui/gl",
+    "//ui/gl:test_support",
   ]
+  if (is_win) {
+    deps += [ "//media/renderers:media_foundation_renderer" ]
+  }
+}
+
+if (is_win) {
+  source_set("media_foundation_renderer") {
+    sources = [
+      "win/media_engine_extension.cc",
+      "win/media_engine_extension.h",
+      "win/media_engine_notify_impl.cc",
+      "win/media_engine_notify_impl.h",
+      "win/media_foundation_audio_stream.cc",
+      "win/media_foundation_audio_stream.h",
+      "win/media_foundation_protection_manager.cc",
+      "win/media_foundation_protection_manager.h",
+      "win/media_foundation_source_wrapper.cc",
+      "win/media_foundation_source_wrapper.h",
+      "win/media_foundation_stream_wrapper.cc",
+      "win/media_foundation_stream_wrapper.h",
+      "win/media_foundation_video_stream.cc",
+      "win/media_foundation_video_stream.h",
+      "win/mf_cdm_proxy.h",
+    ]
+    deps = [
+      "//media",
+      "//media/base/win:media_foundation_util",
+    ]
+
+    # media_foundation_renderer uses Windows D3D and Media Foundation APIs.
+    libs = [
+      "d3d11.lib",
+      "mfplat.lib",
+    ]
+  }
 }

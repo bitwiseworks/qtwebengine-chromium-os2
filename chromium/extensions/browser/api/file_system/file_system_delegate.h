@@ -16,7 +16,7 @@
 #include "extensions/common/api/file_system.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
-class UIThreadExtensionFunction;
+class ExtensionFunction;
 
 namespace base {
 class FilePath;
@@ -53,7 +53,7 @@ class FileSystemDelegate {
   // Shows a dialog to prompt the user to select files/directories. Returns
   // false if the dialog cannot be shown, i.e. there is no valid WebContents.
   virtual bool ShowSelectFileDialog(
-      scoped_refptr<UIThreadExtensionFunction> extension_function,
+      scoped_refptr<ExtensionFunction> extension_function,
       ui::SelectFileDialog::Type type,
       const base::FilePath& default_path,
       const ui::SelectFileDialog::FileTypeInfo* file_types,
@@ -66,8 +66,8 @@ class FileSystemDelegate {
       bool has_write_permission,
       const base::string16& app_name,
       content::WebContents* web_contents,
-      const base::Closure& on_accept,
-      const base::Closure& on_cancel) = 0;
+      base::OnceClosure on_accept,
+      base::OnceClosure on_cancel) = 0;
 
   // Finds a string describing the accept type. Returns 0 if no applicable
   // string ID is found.
@@ -82,14 +82,13 @@ class FileSystemDelegate {
 
   // Grants or denies an extension's request for access to the named file
   // system. May prompt the user for consent.
-  virtual void RequestFileSystem(
-      content::BrowserContext* browser_context,
-      scoped_refptr<UIThreadExtensionFunction> requester,
-      const Extension& extension,
-      std::string volume_id,
-      bool writable,
-      const FileSystemCallback& success_callback,
-      const ErrorCallback& error_callback) = 0;
+  virtual void RequestFileSystem(content::BrowserContext* browser_context,
+                                 scoped_refptr<ExtensionFunction> requester,
+                                 const Extension& extension,
+                                 std::string volume_id,
+                                 bool writable,
+                                 const FileSystemCallback& success_callback,
+                                 const ErrorCallback& error_callback) = 0;
 
   // Immediately calls VolumeListCallback or ErrorCallback.
   virtual void GetVolumeList(content::BrowserContext* browser_context,

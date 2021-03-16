@@ -5,17 +5,16 @@
 #ifndef V8_REGEXP_X64_REGEXP_MACRO_ASSEMBLER_X64_H_
 #define V8_REGEXP_X64_REGEXP_MACRO_ASSEMBLER_X64_H_
 
-#include "src/macro-assembler.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/codegen/x64/assembler-x64.h"
 #include "src/regexp/regexp-macro-assembler.h"
-#include "src/x64/assembler-x64.h"
 #include "src/zone/zone-chunk-list.h"
 
 namespace v8 {
 namespace internal {
 
-#ifndef V8_INTERPRETED_REGEXP
-
-class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
+class V8_EXPORT_PRIVATE RegExpMacroAssemblerX64
+    : public NativeRegExpMacroAssembler {
  public:
   RegExpMacroAssemblerX64(Isolate* isolate, Zone* zone, Mode mode,
                           int registers_to_save);
@@ -25,7 +24,7 @@ class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
   void AdvanceRegister(int reg, int by) override;
   void Backtrack() override;
   void Bind(Label* label) override;
-  void CheckAtStart(Label* on_at_start) override;
+  void CheckAtStart(int cp_offset, Label* on_at_start) override;
   void CheckCharacter(uint32_t c, Label* on_equal) override;
   void CheckCharacterAfterAnd(uint32_t c, uint32_t mask,
                               Label* on_equal) override;
@@ -38,7 +37,6 @@ class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
   void CheckNotBackReference(int start_reg, bool read_backward,
                              Label* on_no_match) override;
   void CheckNotBackReferenceIgnoreCase(int start_reg, bool read_backward,
-                                       bool unicode,
                                        Label* on_no_match) override;
   void CheckNotCharacter(uint32_t c, Label* on_not_equal) override;
   void CheckNotCharacterAfterAnd(uint32_t c, uint32_t mask,
@@ -61,9 +59,9 @@ class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
   void IfRegisterLT(int reg, int comparand, Label* if_lt) override;
   void IfRegisterEqPos(int reg, Label* if_eq) override;
   IrregexpImplementation Implementation() override;
-  void LoadCurrentCharacter(int cp_offset, Label* on_end_of_input,
-                            bool check_bounds = true,
-                            int characters = 1) override;
+  void LoadCurrentCharacterImpl(int cp_offset, Label* on_end_of_input,
+                                bool check_bounds, int characters,
+                                int eats_at_least) override;
   void PopCurrentPosition() override;
   void PopRegister(int register_index) override;
   void PushBacktrack(Label* label) override;
@@ -90,72 +88,73 @@ class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
   // Offsets from rbp of function parameters and stored registers.
   static const int kFramePointer = 0;
   // Above the frame pointer - function parameters and return address.
-  static const int kReturn_eip = kFramePointer + kRegisterSize;
-  static const int kFrameAlign = kReturn_eip + kRegisterSize;
+  static const int kReturn_eip = kFramePointer + kSystemPointerSize;
+  static const int kFrameAlign = kReturn_eip + kSystemPointerSize;
 
-#ifdef _WIN64
+#ifdef V8_TARGET_OS_WIN
   // Parameters (first four passed as registers, but with room on stack).
   // In Microsoft 64-bit Calling Convention, there is room on the callers
   // stack (before the return address) to spill parameter registers. We
   // use this space to store the register passed parameters.
   static const int kInputString = kFrameAlign;
   // StartIndex is passed as 32 bit int.
-  static const int kStartIndex = kInputString + kRegisterSize;
-  static const int kInputStart = kStartIndex + kRegisterSize;
-  static const int kInputEnd = kInputStart + kRegisterSize;
-  static const int kRegisterOutput = kInputEnd + kRegisterSize;
+  static const int kStartIndex = kInputString + kSystemPointerSize;
+  static const int kInputStart = kStartIndex + kSystemPointerSize;
+  static const int kInputEnd = kInputStart + kSystemPointerSize;
+  static const int kRegisterOutput = kInputEnd + kSystemPointerSize;
   // For the case of global regular expression, we have room to store at least
   // one set of capture results.  For the case of non-global regexp, we ignore
   // this value. NumOutputRegisters is passed as 32-bit value.  The upper
   // 32 bit of this 64-bit stack slot may contain garbage.
-  static const int kNumOutputRegisters = kRegisterOutput + kRegisterSize;
-  static const int kStackHighEnd = kNumOutputRegisters + kRegisterSize;
+  static const int kNumOutputRegisters = kRegisterOutput + kSystemPointerSize;
+  static const int kStackHighEnd = kNumOutputRegisters + kSystemPointerSize;
   // DirectCall is passed as 32 bit int (values 0 or 1).
-  static const int kDirectCall = kStackHighEnd + kRegisterSize;
-  static const int kIsolate = kDirectCall + kRegisterSize;
+  static const int kDirectCall = kStackHighEnd + kSystemPointerSize;
+  static const int kIsolate = kDirectCall + kSystemPointerSize;
 #else
   // In AMD64 ABI Calling Convention, the first six integer parameters
   // are passed as registers, and caller must allocate space on the stack
   // if it wants them stored. We push the parameters after the frame pointer.
-  static const int kInputString = kFramePointer - kRegisterSize;
-  static const int kStartIndex = kInputString - kRegisterSize;
-  static const int kInputStart = kStartIndex - kRegisterSize;
-  static const int kInputEnd = kInputStart - kRegisterSize;
-  static const int kRegisterOutput = kInputEnd - kRegisterSize;
+  static const int kInputString = kFramePointer - kSystemPointerSize;
+  static const int kStartIndex = kInputString - kSystemPointerSize;
+  static const int kInputStart = kStartIndex - kSystemPointerSize;
+  static const int kInputEnd = kInputStart - kSystemPointerSize;
+  static const int kRegisterOutput = kInputEnd - kSystemPointerSize;
 
   // For the case of global regular expression, we have room to store at least
   // one set of capture results.  For the case of non-global regexp, we ignore
   // this value.
-  static const int kNumOutputRegisters = kRegisterOutput - kRegisterSize;
+  static const int kNumOutputRegisters = kRegisterOutput - kSystemPointerSize;
   static const int kStackHighEnd = kFrameAlign;
-  static const int kDirectCall = kStackHighEnd + kRegisterSize;
-  static const int kIsolate = kDirectCall + kRegisterSize;
+  static const int kDirectCall = kStackHighEnd + kSystemPointerSize;
+  static const int kIsolate = kDirectCall + kSystemPointerSize;
 #endif
 
-#ifdef _WIN64
+#ifdef V8_TARGET_OS_WIN
   // Microsoft calling convention has three callee-saved registers
   // (that we are using). We push these after the frame pointer.
-  static const int kBackup_rsi = kFramePointer - kRegisterSize;
-  static const int kBackup_rdi = kBackup_rsi - kRegisterSize;
-  static const int kBackup_rbx = kBackup_rdi - kRegisterSize;
+  static const int kBackup_rsi = kFramePointer - kSystemPointerSize;
+  static const int kBackup_rdi = kBackup_rsi - kSystemPointerSize;
+  static const int kBackup_rbx = kBackup_rdi - kSystemPointerSize;
   static const int kLastCalleeSaveRegister = kBackup_rbx;
 #else
   // AMD64 Calling Convention has only one callee-save register that
   // we use. We push this after the frame pointer (and after the
   // parameters).
-  static const int kBackup_rbx = kNumOutputRegisters - kRegisterSize;
+  static const int kBackup_rbx = kNumOutputRegisters - kSystemPointerSize;
   static const int kLastCalleeSaveRegister = kBackup_rbx;
 #endif
 
-  static const int kSuccessfulCaptures =
-      kLastCalleeSaveRegister - kSystemPointerSize;
   // When adding local variables remember to push space for them in
   // the frame in GetCode.
+  static const int kSuccessfulCaptures =
+      kLastCalleeSaveRegister - kSystemPointerSize;
   static const int kStringStartMinusOne =
       kSuccessfulCaptures - kSystemPointerSize;
+  static const int kBacktrackCount = kStringStartMinusOne - kSystemPointerSize;
 
   // First register address. Following registers are below it on the stack.
-  static const int kRegisterZero = kStringStartMinusOne - kSystemPointerSize;
+  static const int kRegisterZero = kBacktrackCount - kSystemPointerSize;
 
   // Initial size of code buffer.
   static const int kRegExpCodeSize = 1024;
@@ -254,8 +253,6 @@ class RegExpMacroAssemblerX64: public NativeRegExpMacroAssembler {
   Label check_preempt_label_;
   Label stack_overflow_label_;
 };
-
-#endif  // V8_INTERPRETED_REGEXP
 
 }  // namespace internal
 }  // namespace v8

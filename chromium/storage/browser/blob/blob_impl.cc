@@ -9,11 +9,17 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
+#include "base/containers/span.h"
+#include "base/files/file_util.h"
+#include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "net/base/io_buffer.h"
-#include "net/disk_cache/disk_cache.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_data_item.h"
 #include "storage/browser/blob/blob_data_snapshot.h"
+#include "storage/browser/blob/blob_url_loader.h"
 #include "storage/browser/blob/mojo_blob_reader.h"
 
 namespace storage {
@@ -21,7 +27,7 @@ namespace {
 
 class ReaderDelegate : public MojoBlobReader::Delegate {
  public:
-  ReaderDelegate(blink::mojom::BlobReaderClientPtr client)
+  ReaderDelegate(mojo::PendingRemote<blink::mojom::BlobReaderClient> client)
       : client_(std::move(client)) {}
 
   MojoBlobReader::Delegate::RequestSideData DidCalculateSize(
@@ -38,7 +44,7 @@ class ReaderDelegate : public MojoBlobReader::Delegate {
   }
 
  private:
-  blink::mojom::BlobReaderClientPtr client_;
+  mojo::Remote<blink::mojom::BlobReaderClient> client_;
 
   DISALLOW_COPY_AND_ASSIGN(ReaderDelegate);
 };
@@ -79,24 +85,32 @@ class DataPipeGetterReaderDelegate : public MojoBlobReader::Delegate {
 }  // namespace
 
 // static
-base::WeakPtr<BlobImpl> BlobImpl::Create(std::unique_ptr<BlobDataHandle> handle,
-                                         blink::mojom::BlobRequest request) {
-  return (new BlobImpl(std::move(handle), std::move(request)))
+base::WeakPtr<BlobImpl> BlobImpl::Create(
+    std::unique_ptr<BlobDataHandle> handle,
+    mojo::PendingReceiver<blink::mojom::Blob> receiver) {
+  return (new BlobImpl(std::move(handle), std::move(receiver)))
       ->weak_ptr_factory_.GetWeakPtr();
 }
 
-void BlobImpl::Clone(blink::mojom::BlobRequest request) {
-  bindings_.AddBinding(this, std::move(request));
+void BlobImpl::UpdateHandle(std::unique_ptr<BlobDataHandle> new_handle) {
+  DCHECK_EQ(handle_->uuid(), new_handle->uuid());
+  handle_ = std::move(new_handle);
 }
 
-void BlobImpl::AsDataPipeGetter(network::mojom::DataPipeGetterRequest request) {
-  data_pipe_getter_bindings_.AddBinding(this, std::move(request));
+void BlobImpl::Clone(mojo::PendingReceiver<blink::mojom::Blob> receiver) {
+  receivers_.Add(this, std::move(receiver));
 }
 
-void BlobImpl::ReadRange(uint64_t offset,
-                         uint64_t length,
-                         mojo::ScopedDataPipeProducerHandle handle,
-                         blink::mojom::BlobReaderClientPtr client) {
+void BlobImpl::AsDataPipeGetter(
+    mojo::PendingReceiver<network::mojom::DataPipeGetter> receiver) {
+  data_pipe_getter_receivers_.Add(this, std::move(receiver));
+}
+
+void BlobImpl::ReadRange(
+    uint64_t offset,
+    uint64_t length,
+    mojo::ScopedDataPipeProducerHandle handle,
+    mojo::PendingRemote<blink::mojom::BlobReaderClient> client) {
   MojoBlobReader::Create(
       handle_.get(),
       (length == std::numeric_limits<uint64_t>::max())
@@ -105,11 +119,22 @@ void BlobImpl::ReadRange(uint64_t offset,
       std::make_unique<ReaderDelegate>(std::move(client)), std::move(handle));
 }
 
-void BlobImpl::ReadAll(mojo::ScopedDataPipeProducerHandle handle,
-                       blink::mojom::BlobReaderClientPtr client) {
+void BlobImpl::ReadAll(
+    mojo::ScopedDataPipeProducerHandle handle,
+    mojo::PendingRemote<blink::mojom::BlobReaderClient> client) {
   MojoBlobReader::Create(handle_.get(), net::HttpByteRange(),
                          std::make_unique<ReaderDelegate>(std::move(client)),
                          std::move(handle));
+}
+
+void BlobImpl::Load(
+    mojo::PendingReceiver<network::mojom::URLLoader> loader,
+    const std::string& method,
+    const net::HttpRequestHeaders& headers,
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
+  BlobURLLoader::CreateAndStart(std::move(loader), method, headers,
+                                std::move(client),
+                                std::make_unique<BlobDataHandle>(*handle_));
 }
 
 void BlobImpl::ReadSideData(ReadSideDataCallback callback) {
@@ -117,62 +142,115 @@ void BlobImpl::ReadSideData(ReadSideDataCallback callback) {
       [](BlobDataHandle handle, ReadSideDataCallback callback,
          BlobStatus status) {
         if (status != BlobStatus::DONE) {
+          DCHECK(BlobStatusIsError(status));
           std::move(callback).Run(base::nullopt);
           return;
         }
 
         auto snapshot = handle.CreateSnapshot();
-        // Currently side data is supported only for single DiskCache entry
-        // blob.
+        // Currently side data is supported only for blobs with a single entry.
         const auto& items = snapshot->items();
-        if (items.size() != 1 ||
-            items[0]->type() != BlobDataItem::Type::kDiskCacheEntry) {
+        if (items.size() != 1) {
           std::move(callback).Run(base::nullopt);
           return;
         }
 
         const auto& item = items[0];
-        disk_cache::Entry* entry = item->disk_cache_entry();
-        if (!entry) {
+        if (item->type() != BlobDataItem::Type::kReadableDataHandle) {
           std::move(callback).Run(base::nullopt);
           return;
         }
-        int32_t body_size =
-            entry->GetDataSize(item->disk_cache_side_stream_index());
+
+        int32_t body_size = item->data_handle()->GetSideDataSize();
         if (body_size == 0) {
-          std::move(callback).Run(std::vector<uint8_t>());
+          std::move(callback).Run(base::nullopt);
           return;
         }
-        auto io_buffer = base::MakeRefCounted<net::IOBufferWithSize>(body_size);
-
-        auto io_callback = base::AdaptCallbackForRepeating(base::BindOnce(
-            [](scoped_refptr<net::IOBufferWithSize> io_buffer,
-               ReadSideDataCallback callback, int result) {
+        item->data_handle()->ReadSideData(base::BindOnce(
+            [](ReadSideDataCallback callback, int result,
+               mojo_base::BigBuffer buffer) {
               if (result < 0) {
                 std::move(callback).Run(base::nullopt);
                 return;
               }
-              const uint8_t* data =
-                  reinterpret_cast<const uint8_t*>(io_buffer->data());
-              std::move(callback).Run(
-                  std::vector<uint8_t>(data, data + io_buffer->size()));
+              std::move(callback).Run(std::move(buffer));
             },
-            io_buffer, std::move(callback)));
-
-        int rv = entry->ReadData(item->disk_cache_side_stream_index(), 0,
-                                 io_buffer.get(), body_size, io_callback);
-        if (rv != net::ERR_IO_PENDING)
-          io_callback.Run(rv);
+            std::move(callback)));
       },
       *handle_, std::move(callback)));
+}
+
+void BlobImpl::CaptureSnapshot(CaptureSnapshotCallback callback) {
+  handle_->RunOnConstructionComplete(base::BindOnce(
+      [](base::WeakPtr<BlobImpl> blob_impl, CaptureSnapshotCallback callback,
+         BlobStatus status) {
+        if (!blob_impl) {
+          // No need to call callback, since blob_impl is only destroyed if the
+          // mojo pipe is disconnected.
+          return;
+        }
+
+        auto* handle = blob_impl->handle_.get();
+
+        if (status != BlobStatus::DONE) {
+          DCHECK(BlobStatusIsError(status));
+          std::move(callback).Run(0, base::nullopt);
+          return;
+        }
+
+        auto snapshot = handle->CreateSnapshot();
+        // Only blobs consisting of a single file can have a modification
+        // time.
+        const auto& items = snapshot->items();
+        if (items.size() != 1) {
+          std::move(callback).Run(handle->size(), base::nullopt);
+          return;
+        }
+
+        const auto& item = items[0];
+        if (item->type() != BlobDataItem::Type::kFile) {
+          std::move(callback).Run(handle->size(), base::nullopt);
+          return;
+        }
+
+        base::Time modification_time = item->expected_modification_time();
+        if (!modification_time.is_null() &&
+            handle->size() != BlobDataHandle::kUnknownSize) {
+          std::move(callback).Run(handle->size(), modification_time);
+          return;
+        }
+
+        struct SizeAndTime {
+          int64_t size;
+          base::Optional<base::Time> time;
+        };
+        base::ThreadPool::PostTaskAndReplyWithResult(
+            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+            base::BindOnce(
+                [](const base::FilePath& path) {
+                  base::File::Info info;
+                  if (!base::GetFileInfo(path, &info))
+                    return SizeAndTime{0, base::nullopt};
+                  return SizeAndTime{info.size, info.last_modified};
+                },
+                item->path()),
+            base::BindOnce(
+                [](CaptureSnapshotCallback callback,
+                   const SizeAndTime& result) {
+                  std::move(callback).Run(result.size, result.time);
+                },
+                std::move(callback)));
+      },
+      weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void BlobImpl::GetInternalUUID(GetInternalUUIDCallback callback) {
   std::move(callback).Run(handle_->uuid());
 }
 
-void BlobImpl::Clone(network::mojom::DataPipeGetterRequest request) {
-  data_pipe_getter_bindings_.AddBinding(this, std::move(request));
+void BlobImpl::Clone(
+    mojo::PendingReceiver<network::mojom::DataPipeGetter> receiver) {
+  data_pipe_getter_receivers_.Add(this, std::move(receiver));
 }
 
 void BlobImpl::Read(mojo::ScopedDataPipeProducerHandle handle,
@@ -184,29 +262,34 @@ void BlobImpl::Read(mojo::ScopedDataPipeProducerHandle handle,
 }
 
 void BlobImpl::FlushForTesting() {
-  bindings_.FlushForTesting();
-  data_pipe_getter_bindings_.FlushForTesting();
-  if (bindings_.empty() && data_pipe_getter_bindings_.empty())
+  auto weak_self = weak_ptr_factory_.GetWeakPtr();
+  receivers_.FlushForTesting();
+  if (!weak_self)
+    return;
+  data_pipe_getter_receivers_.FlushForTesting();
+  if (!weak_self)
+    return;
+  if (receivers_.empty() && data_pipe_getter_receivers_.empty())
     delete this;
 }
 
 BlobImpl::BlobImpl(std::unique_ptr<BlobDataHandle> handle,
-                   blink::mojom::BlobRequest request)
-    : handle_(std::move(handle)), weak_ptr_factory_(this) {
+                   mojo::PendingReceiver<blink::mojom::Blob> receiver)
+    : handle_(std::move(handle)) {
   DCHECK(handle_);
-  bindings_.AddBinding(this, std::move(request));
-  bindings_.set_connection_error_handler(base::BindRepeating(
-      &BlobImpl::OnConnectionError, base::Unretained(this)));
-  data_pipe_getter_bindings_.set_connection_error_handler(base::BindRepeating(
-      &BlobImpl::OnConnectionError, base::Unretained(this)));
+  receivers_.Add(this, std::move(receiver));
+  receivers_.set_disconnect_handler(
+      base::BindRepeating(&BlobImpl::OnMojoDisconnect, base::Unretained(this)));
+  data_pipe_getter_receivers_.set_disconnect_handler(
+      base::BindRepeating(&BlobImpl::OnMojoDisconnect, base::Unretained(this)));
 }
 
 BlobImpl::~BlobImpl() = default;
 
-void BlobImpl::OnConnectionError() {
-  if (!bindings_.empty())
+void BlobImpl::OnMojoDisconnect() {
+  if (!receivers_.empty())
     return;
-  if (!data_pipe_getter_bindings_.empty())
+  if (!data_pipe_getter_receivers_.empty())
     return;
   delete this;
 }

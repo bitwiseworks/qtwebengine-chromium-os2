@@ -6,11 +6,10 @@
 
 // system_utils.cpp: Implementation of common functions
 
-#include "system_utils.h"
+#include "common/system_utils.h"
 
 namespace angle
 {
-
 bool PrependPathToEnvironmentVar(const char *variableName, const char *path)
 {
     std::string oldValue = GetEnvironmentVar(variableName);
@@ -23,11 +22,10 @@ bool PrependPathToEnvironmentVar(const char *variableName, const char *path)
     else
     {
         buf = path;
-        buf += GetPathSeparator();
+        buf += GetPathSeparatorForEnvironmentVar();
         buf += oldValue;
         newValue = buf.c_str();
     }
     return SetEnvironmentVar(variableName, newValue);
 }
-
 }  // namespace angle

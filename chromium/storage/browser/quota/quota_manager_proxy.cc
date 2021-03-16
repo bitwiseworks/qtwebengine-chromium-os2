@@ -5,6 +5,7 @@
 #include "storage/browser/quota/quota_manager_proxy.h"
 
 #include <stdint.h>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -12,7 +13,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/task_runner_util.h"
-#include "base/trace_event/trace_event.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 
 namespace storage {
@@ -31,40 +31,36 @@ void DidGetUsageAndQuota(base::SequencedTaskRunner* original_task_runner,
                                   std::move(callback), status, usage, quota));
     return;
   }
-
-  // crbug.com/349708
-  TRACE_EVENT0("io", "QuotaManagerProxy DidGetUsageAndQuota");
   std::move(callback).Run(status, usage, quota);
 }
 
 }  // namespace
 
-void QuotaManagerProxy::RegisterClient(QuotaClient* client) {
+void QuotaManagerProxy::RegisterClient(scoped_refptr<QuotaClient> client) {
   if (!io_thread_->BelongsToCurrentThread() &&
       io_thread_->PostTask(
-          FROM_HERE,
-          base::BindOnce(&QuotaManagerProxy::RegisterClient, this, client))) {
+          FROM_HERE, base::BindOnce(&QuotaManagerProxy::RegisterClient, this,
+                                    std::move(client)))) {
     return;
   }
 
   if (manager_)
-    manager_->RegisterClient(client);
+    manager_->RegisterClient(std::move(client));
   else
     client->OnQuotaManagerDestroyed();
 }
 
-void QuotaManagerProxy::NotifyStorageAccessed(QuotaClient::ID client_id,
-                                              const url::Origin& origin,
+void QuotaManagerProxy::NotifyStorageAccessed(const url::Origin& origin,
                                               blink::mojom::StorageType type) {
   if (!io_thread_->BelongsToCurrentThread()) {
     io_thread_->PostTask(
         FROM_HERE, base::BindOnce(&QuotaManagerProxy::NotifyStorageAccessed,
-                                  this, client_id, origin, type));
+                                  this, origin, type));
     return;
   }
 
   if (manager_)
-    manager_->NotifyStorageAccessed(client_id, origin, type);
+    manager_->NotifyStorageAccessed(origin, type);
 }
 
 void QuotaManagerProxy::NotifyStorageModified(QuotaClient::ID client_id,
@@ -105,6 +101,17 @@ void QuotaManagerProxy::NotifyOriginNoLongerInUse(const url::Origin& origin) {
     manager_->NotifyOriginNoLongerInUse(origin);
 }
 
+void QuotaManagerProxy::NotifyWriteFailed(const url::Origin& origin) {
+  if (!io_thread_->BelongsToCurrentThread()) {
+    io_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&QuotaManagerProxy::NotifyWriteFailed, this, origin));
+    return;
+  }
+  if (manager_)
+    manager_->NotifyWriteFailed(origin);
+}
+
 void QuotaManagerProxy::SetUsageCacheEnabled(QuotaClient::ID client_id,
                                              const url::Origin& origin,
                                              blink::mojom::StorageType type,
@@ -136,9 +143,6 @@ void QuotaManagerProxy::GetUsageAndQuota(
                         blink::mojom::QuotaStatusCode::kErrorAbort, 0, 0);
     return;
   }
-
-  // crbug.com/349708
-  TRACE_EVENT0("io", "QuotaManagerProxy::GetUsageAndQuota");
 
   manager_->GetUsageAndQuota(
       origin, type,

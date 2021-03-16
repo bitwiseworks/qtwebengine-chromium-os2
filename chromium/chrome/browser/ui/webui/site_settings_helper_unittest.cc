@@ -4,10 +4,11 @@
 
 #include "chrome/browser/ui/webui/site_settings_helper.h"
 
+#include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/json/json_reader.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/permissions/chooser_context_base.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/common/pref_names.h"
@@ -18,17 +19,20 @@
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/content_settings/core/test/content_settings_mock_provider.h"
 #include "components/content_settings/core/test/content_settings_test_utils.h"
+#include "components/permissions/chooser_context_base.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "device/usb/public/cpp/fake_usb_device_manager.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_registry.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/device/public/cpp/test/fake_usb_device_manager.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
 namespace site_settings {
 
 namespace {
-constexpr ContentSettingsType kContentType = CONTENT_SETTINGS_TYPE_GEOLOCATION;
+constexpr ContentSettingsType kContentType = ContentSettingsType::GEOLOCATION;
 }
 
 class SiteSettingsHelperTest : public testing::Test {
@@ -62,7 +66,7 @@ class SiteSettingsHelperTest : public testing::Test {
   }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 TEST_F(SiteSettingsHelperTest, CheckExceptionOrder) {
@@ -85,7 +89,7 @@ TEST_F(SiteSettingsHelperTest, CheckExceptionOrder) {
   policy_provider->SetWebsiteSetting(
       ContentSettingsPattern::FromString(star_google_com),
       ContentSettingsPattern::Wildcard(), kContentType, "",
-      new base::Value(CONTENT_SETTING_BLOCK));
+      std::make_unique<base::Value>(CONTENT_SETTING_BLOCK));
   policy_provider->set_read_only(true);
   content_settings::TestUtils::OverrideProvider(
       map, std::move(policy_provider), HostContentSettingsMap::POLICY_PROVIDER);
@@ -103,7 +107,7 @@ TEST_F(SiteSettingsHelperTest, CheckExceptionOrder) {
   extension_provider->SetWebsiteSetting(
       ContentSettingsPattern::FromString(drive_google_com),
       ContentSettingsPattern::Wildcard(), kContentType, "",
-      new base::Value(CONTENT_SETTING_ASK));
+      std::make_unique<base::Value>(CONTENT_SETTING_ASK));
   extension_provider->set_read_only(true);
   content_settings::TestUtils::OverrideProvider(
       map, std::move(extension_provider),
@@ -185,7 +189,7 @@ TEST_F(SiteSettingsHelperTest, ContentSettingSource) {
   // Note this is not testing |kContentType|, because this setting is only valid
   // for protected content.
   content_setting = GetContentSettingForOrigin(
-      &profile, map, origin, CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER,
+      &profile, map, origin, ContentSettingsType::PROTECTED_MEDIA_IDENTIFIER,
       &source, extension_registry, &display_name);
   EXPECT_EQ(SiteSettingSourceToString(SiteSettingSource::kDrmDisabled), source);
   EXPECT_EQ(CONTENT_SETTING_BLOCK, content_setting);
@@ -193,10 +197,10 @@ TEST_F(SiteSettingsHelperTest, ContentSettingSource) {
 
   // Extension.
   auto extension_provider = std::make_unique<content_settings::MockProvider>();
-  extension_provider->SetWebsiteSetting(ContentSettingsPattern::FromURL(origin),
-                                        ContentSettingsPattern::FromURL(origin),
-                                        kContentType, "",
-                                        new base::Value(CONTENT_SETTING_BLOCK));
+  extension_provider->SetWebsiteSetting(
+      ContentSettingsPattern::FromURL(origin),
+      ContentSettingsPattern::FromURL(origin), kContentType, "",
+      std::make_unique<base::Value>(CONTENT_SETTING_BLOCK));
   extension_provider->set_read_only(true);
   content_settings::TestUtils::OverrideProvider(
       map, std::move(extension_provider),
@@ -209,10 +213,10 @@ TEST_F(SiteSettingsHelperTest, ContentSettingSource) {
 
   // Enterprise policy.
   auto policy_provider = std::make_unique<content_settings::MockProvider>();
-  policy_provider->SetWebsiteSetting(ContentSettingsPattern::FromURL(origin),
-                                     ContentSettingsPattern::FromURL(origin),
-                                     kContentType, "",
-                                     new base::Value(CONTENT_SETTING_ALLOW));
+  policy_provider->SetWebsiteSetting(
+      ContentSettingsPattern::FromURL(origin),
+      ContentSettingsPattern::FromURL(origin), kContentType, "",
+      std::make_unique<base::Value>(CONTENT_SETTING_ALLOW));
   policy_provider->set_read_only(true);
   content_settings::TestUtils::OverrideProvider(
       map, std::move(policy_provider), HostContentSettingsMap::POLICY_PROVIDER);
@@ -234,14 +238,22 @@ TEST_F(SiteSettingsHelperTest, ContentSettingSource) {
 namespace {
 
 // Test GURLs
-const GURL kGoogleOrigin("https://google.com");
-const GURL kChromiumOrigin("https://chromium.org");
-const GURL kAndroidOrigin("https://android.com");
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL GoogleUrl() {
+  return GURL("https://google.com");
+}
+GURL ChromiumUrl() {
+  return GURL("https://chromium.org");
+}
+GURL AndroidUrl() {
+  return GURL("https://android.com");
+}
 
 void ExpectValidChooserExceptionObject(
     const base::Value& actual_exception_object,
     const std::string& chooser_type,
-    const std::string& display_name,
+    const base::string16& display_name,
     const base::Value& chooser_object) {
   const base::Value* chooser_type_value = actual_exception_object.FindKeyOfType(
       kChooserType, base::Value::Type::STRING);
@@ -251,7 +263,7 @@ void ExpectValidChooserExceptionObject(
   const base::Value* display_name_value = actual_exception_object.FindKeyOfType(
       kDisplayName, base::Value::Type::STRING);
   ASSERT_TRUE(display_name_value);
-  EXPECT_EQ(display_name_value->GetString(), display_name);
+  EXPECT_EQ(base::UTF8ToUTF16(display_name_value->GetString()), display_name);
 
   const base::Value* object_value = actual_exception_object.FindKeyOfType(
       kObject, base::Value::Type::DICTIONARY);
@@ -315,12 +327,12 @@ void ExpectValidSiteExceptionObject(const base::Value& actual_site_object,
 
 TEST_F(SiteSettingsHelperTest, CreateChooserExceptionObject) {
   const std::string kUsbChooserGroupName =
-      ContentSettingsTypeToGroupName(CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA);
+      ContentSettingsTypeToGroupName(ContentSettingsType::USB_CHOOSER_DATA);
   const std::string& kPolicySource =
       SiteSettingSourceToString(SiteSettingSource::kPolicy);
   const std::string& kPreferenceSource =
       SiteSettingSourceToString(SiteSettingSource::kPreference);
-  const char kObjectName[] = "Gadget";
+  const base::string16& kObjectName = base::ASCIIToUTF16("Gadget");
   ChooserExceptionDetails exception_details;
 
   // Create a chooser object for testing.
@@ -329,74 +341,69 @@ TEST_F(SiteSettingsHelperTest, CreateChooserExceptionObject) {
 
   // Add a user permission for a requesting origin of |kGoogleOrigin| and an
   // embedding origin of |kChromiumOrigin|.
-  exception_details[std::make_pair(kGoogleOrigin.GetOrigin(),
-                                   kPreferenceSource)]
-      .insert(kChromiumOrigin.GetOrigin());
+  exception_details[std::make_pair(GoogleUrl().GetOrigin(), kPreferenceSource)]
+      .insert(std::make_pair(ChromiumUrl().GetOrigin(), /*incognito=*/false));
 
   {
     auto exception = CreateChooserExceptionObject(
         /*display_name=*/kObjectName,
         /*object=*/*chooser_object,
         /*chooser_type=*/kUsbChooserGroupName,
-        /*chooser_exception_details=*/exception_details,
-        /*incognito=*/false);
+        /*chooser_exception_details=*/exception_details);
     ExpectValidChooserExceptionObject(
-        *exception, /*chooser_type=*/kUsbChooserGroupName,
+        exception, /*chooser_type=*/kUsbChooserGroupName,
         /*display_name=*/kObjectName, *chooser_object);
 
-    const auto& sites_list = exception->FindKey(kSites)->GetList();
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[0],
-                                   /*origin=*/kGoogleOrigin,
-                                   /*embedding_origin=*/kChromiumOrigin,
+                                   /*origin=*/GoogleUrl(),
+                                   /*embedding_origin=*/ChromiumUrl(),
                                    /*source=*/kPreferenceSource,
                                    /*incognito=*/false);
   }
 
   // Add a user permissions for a requesting and embedding origin pair of
-  // |kAndroidOrigin|.
-  exception_details[std::make_pair(kAndroidOrigin.GetOrigin(),
-                                   kPreferenceSource)]
-      .insert(kAndroidOrigin.GetOrigin());
+  // |kAndroidOrigin| granted in an off the record profile.
+  exception_details[std::make_pair(AndroidUrl().GetOrigin(), kPreferenceSource)]
+      .insert(std::make_pair(AndroidUrl().GetOrigin(), /*incognito=*/true));
 
   {
     auto exception = CreateChooserExceptionObject(
         /*display_name=*/kObjectName,
         /*object=*/*chooser_object,
         /*chooser_type=*/kUsbChooserGroupName,
-        /*chooser_exception_details=*/exception_details,
-        /*incognito=*/true);
-    ExpectValidChooserExceptionObject(*exception,
+        /*chooser_exception_details=*/exception_details);
+    ExpectValidChooserExceptionObject(exception,
                                       /*chooser_type=*/kUsbChooserGroupName,
                                       /*display_name=*/kObjectName,
                                       *chooser_object);
 
     // The map sorts the sites by requesting origin, so |kAndroidOrigin| should
     // be first, followed by the origin pair (kGoogleOrigin, kChromiumOrigin).
-    const auto& sites_list = exception->FindKey(kSites)->GetList();
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[0],
-                                   /*origin=*/kAndroidOrigin,
-                                   /*embedding_origin=*/kAndroidOrigin,
+                                   /*origin=*/AndroidUrl(),
+                                   /*embedding_origin=*/AndroidUrl(),
                                    /*source=*/kPreferenceSource,
                                    /*incognito=*/true);
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[1],
-                                   /*origin=*/kGoogleOrigin,
-                                   /*embedding_origin=*/kChromiumOrigin,
+                                   /*origin=*/GoogleUrl(),
+                                   /*embedding_origin=*/ChromiumUrl(),
                                    /*source=*/kPreferenceSource,
-                                   /*incognito=*/true);
+                                   /*incognito=*/false);
   }
 
   // Add a policy permission for a requesting origin of |kGoogleOrigin| with a
   // wildcard embedding origin.
-  exception_details[std::make_pair(kGoogleOrigin.GetOrigin(), kPolicySource)]
-      .insert(GURL::EmptyGURL());
+  exception_details[std::make_pair(GoogleUrl().GetOrigin(), kPolicySource)]
+      .insert(std::make_pair(GURL::EmptyGURL(), /*incognito=*/false));
   {
     auto exception = CreateChooserExceptionObject(
         /*display_name=*/kObjectName,
         /*object=*/*chooser_object,
         /*chooser_type=*/kUsbChooserGroupName,
-        /*chooser_exception_details=*/exception_details,
-        /*incognito=*/false);
-    ExpectValidChooserExceptionObject(*exception,
+        /*chooser_exception_details=*/exception_details);
+    ExpectValidChooserExceptionObject(exception,
                                       /*chooser_type=*/kUsbChooserGroupName,
                                       /*display_name=*/kObjectName,
                                       *chooser_object);
@@ -405,20 +412,20 @@ TEST_F(SiteSettingsHelperTest, CreateChooserExceptionObject) {
     // CreateChooserExceptionObject method sorts the sites further by the
     // source. Therefore, policy granted sites are listed before user granted
     // sites.
-    const auto& sites_list = exception->FindKey(kSites)->GetList();
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[0],
-                                   /*origin=*/kGoogleOrigin,
+                                   /*origin=*/GoogleUrl(),
                                    /*embedding_origin=*/GURL::EmptyGURL(),
                                    /*source=*/kPolicySource,
                                    /*incognito=*/false);
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[1],
-                                   /*origin=*/kAndroidOrigin,
-                                   /*embedding_origin=*/kAndroidOrigin,
+                                   /*origin=*/AndroidUrl(),
+                                   /*embedding_origin=*/AndroidUrl(),
                                    /*source=*/kPreferenceSource,
-                                   /*incognito=*/false);
+                                   /*incognito=*/true);
     ExpectValidSiteExceptionObject(/*actual_site_object=*/sites_list[2],
-                                   /*origin=*/kGoogleOrigin,
-                                   /*embedding_origin=*/kChromiumOrigin,
+                                   /*origin=*/GoogleUrl(),
+                                   /*embedding_origin=*/ChromiumUrl(),
                                    /*source=*/kPreferenceSource,
                                    /*incognito=*/false);
   }
@@ -461,12 +468,17 @@ class SiteSettingsHelperChooserExceptionTest : public testing::Test {
         device_manager_.CreateAndAddDevice(6354, 0, "Google", "Gadget", "");
 
     auto* chooser_context = UsbChooserContextFactory::GetForProfile(profile());
-    device::mojom::UsbDeviceManagerPtr device_manager_ptr;
-    device_manager_.AddBinding(mojo::MakeRequest(&device_manager_ptr));
-    chooser_context->SetDeviceManagerForTesting(std::move(device_manager_ptr));
+    mojo::PendingRemote<device::mojom::UsbDeviceManager> device_manager;
+    device_manager_.AddReceiver(
+        device_manager.InitWithNewPipeAndPassReceiver());
+    chooser_context->SetDeviceManagerForTesting(std::move(device_manager));
     chooser_context->GetDevices(
         base::DoNothing::Once<std::vector<device::mojom::UsbDeviceInfoPtr>>());
     base::RunLoop().RunUntilIdle();
+
+    const auto kAndroidOrigin = url::Origin::Create(AndroidUrl());
+    const auto kChromiumOrigin = url::Origin::Create(ChromiumUrl());
+    const auto kGoogleOrigin = url::Origin::Create(GoogleUrl());
 
     // Add the user granted permissions for testing.
     // These two persistent device permissions should be lumped together with
@@ -481,7 +493,7 @@ class SiteSettingsHelperChooserExceptionTest : public testing::Test {
                                            *ephemeral_device_info);
 
     // Add the policy granted permissions for testing.
-    auto policy_value = base::JSONReader::Read(kUsbPolicySetting);
+    auto policy_value = base::JSONReader::ReadDeprecated(kUsbPolicySetting);
     DCHECK(policy_value);
     profile()->GetPrefs()->Set(prefs::kManagedWebUsbAllowDevicesForUrls,
                                *policy_value);
@@ -490,31 +502,24 @@ class SiteSettingsHelperChooserExceptionTest : public testing::Test {
   device::FakeUsbDeviceManager device_manager_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   TestingProfile profile_;
 };
 
 void ExpectDisplayNameEq(const base::Value& actual_exception_object,
                          const std::string& display_name) {
-  const base::Value* display_name_value = actual_exception_object.FindKeyOfType(
-      kDisplayName, base::Value::Type::STRING);
-  ASSERT_TRUE(display_name_value);
-  EXPECT_EQ(display_name_value->GetString(), display_name);
+  const std::string* actual_display_name =
+      actual_exception_object.FindStringKey(kDisplayName);
+  ASSERT_TRUE(actual_display_name);
+  EXPECT_EQ(*actual_display_name, display_name);
 }
 
 }  // namespace
 
-// At the moment, UI strings to describe wildcard device permissions have not
-// been added yet. As a result, the names are inaccurate. Once the strings are
-// added, the device names for policy defined devices will change, and so will
-// the order in which GetChooserExceptionListFromProfile returns these chooser
-// exceptions.
-// TODO(https://crbug.com/854320): Update this unit test when the UI strings are
-// added for the wildcard devices with the new chooser exception order.
 TEST_F(SiteSettingsHelperChooserExceptionTest,
        GetChooserExceptionListFromProfile) {
   const std::string kUsbChooserGroupName =
-      ContentSettingsTypeToGroupName(CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA);
+      ContentSettingsTypeToGroupName(ContentSettingsType::USB_CHOOSER_DATA);
   const ChooserTypeNameEntry* chooser_type =
       ChooserTypeFromGroupName(kUsbChooserGroupName);
   const std::string& kPolicySource =
@@ -527,11 +532,65 @@ TEST_F(SiteSettingsHelperChooserExceptionTest,
   // origin and the embedding origin. User granted permissions that are also
   // granted by policy are combined with the policy so that duplicate
   // permissions are not displayed.
-  std::unique_ptr<base::ListValue> exceptions =
-      GetChooserExceptionListFromProfile(profile(), /*incognito=*/false,
-                                         *chooser_type);
-  ASSERT_EQ(exceptions->GetSize(), 4u);
-  auto& exceptions_list = exceptions->GetList();
+  base::Value exceptions =
+      GetChooserExceptionListFromProfile(profile(), *chooser_type);
+  base::Value::ConstListView exceptions_list = exceptions.GetList();
+  ASSERT_EQ(exceptions_list.size(), 4u);
+
+  // This exception should describe the permissions for any device with the
+  // vendor ID corresponding to "Google Inc.". There are no user granted
+  // permissions that intersect with this permission, and this policy only
+  // grants one permission to the following site pair:
+  // * ("https://google.com", "https://android.com")
+  {
+    const auto& exception = exceptions_list[0];
+    ExpectDisplayNameEq(exception,
+                        /*display_name=*/"Devices from Google Inc.");
+
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
+    ASSERT_EQ(sites_list.size(), 1u);
+    ExpectValidSiteExceptionObject(sites_list[0],
+                                   /*origin=*/GoogleUrl(),
+                                   /*embedding_origin=*/AndroidUrl(),
+                                   /*source=*/kPolicySource,
+                                   /*incognito=*/false);
+  }
+
+  // This exception should describe the permissions for any device.
+  // There are no user granted permissions that intersect with this permission,
+  // and this policy only grants one permission to the following site pair:
+  // * ("https://google.com", "https://google.com")
+  {
+    const auto& exception = exceptions_list[1];
+    ExpectDisplayNameEq(exception,
+                        /*display_name=*/"Devices from any vendor");
+
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
+    ASSERT_EQ(sites_list.size(), 1u);
+    ExpectValidSiteExceptionObject(sites_list[0],
+                                   /*origin=*/GoogleUrl(),
+                                   /*embedding_origin=*/GoogleUrl(),
+                                   /*source=*/kPolicySource,
+                                   /*incognito=*/false);
+  }
+
+  // This exception should describe the permissions for any device with the
+  // vendor ID 6354. There is a user granted permission for a device with that
+  // vendor ID, so the site list for this exception will only have the policy
+  // granted permission, which is the following:
+  // * ("https://android.com", "")
+  {
+    const auto& exception = exceptions_list[2];
+    ExpectDisplayNameEq(exception,
+                        /*display_name=*/"Devices from vendor 0x18D2");
+
+    const auto& sites_list = exception.FindKey(kSites)->GetList();
+    ASSERT_EQ(sites_list.size(), 1u);
+    ExpectValidSiteExceptionObject(sites_list[0],
+                                   /*origin=*/AndroidUrl(),
+                                   /*source=*/kPolicySource,
+                                   /*incognito=*/false);
+  }
 
   // This exception should describe the permissions for the "Gizmo" device.
   // The user granted permissions are the following:
@@ -547,73 +606,319 @@ TEST_F(SiteSettingsHelperChooserExceptionTest,
   // * ("https://chromium.org", "")
   // * ("https://android.com", "https://chromium.org")
   {
-    const auto& exception = exceptions_list[0];
+    const auto& exception = exceptions_list[3];
     ExpectDisplayNameEq(exception, /*display_name=*/"Gizmo");
 
     const auto& sites_list = exception.FindKey(kSites)->GetList();
     ASSERT_EQ(sites_list.size(), 2u);
     ExpectValidSiteExceptionObject(sites_list[0],
-                                   /*origin=*/kChromiumOrigin,
+                                   /*origin=*/ChromiumUrl(),
                                    /*source=*/kPolicySource,
                                    /*incognito=*/false);
     ExpectValidSiteExceptionObject(sites_list[1],
-                                   /*origin=*/kAndroidOrigin,
-                                   /*embedding_origin=*/kChromiumOrigin,
+                                   /*origin=*/AndroidUrl(),
+                                   /*embedding_origin=*/ChromiumUrl(),
                                    /*source=*/kPreferenceSource,
                                    /*incognito=*/false);
   }
+}
 
-  // This exception should describe the permissions for any device with the
-  // vendor ID 6354. There is a user granted permission for a device with that
-  // vendor ID, so the site list for this exception will only have the policy
-  // granted permission, which is the following:
-  // * ("https://android.com", "")
-  {
-    const auto& exception = exceptions_list[1];
-    ExpectDisplayNameEq(exception,
-                        /*display_name=*/"Unknown device [18d2:ffffffff]");
+namespace {
 
-    const auto& sites_list = exception.FindKey(kSites)->GetList();
-    ExpectValidSiteExceptionObject(sites_list[0],
-                                   /*origin=*/kAndroidOrigin,
-                                   /*source=*/kPolicySource,
-                                   /*incognito=*/false);
+// All of the possible managed states for a boolean preference that can be
+// both enforced and recommended.
+enum class PrefSetting {
+  kEnforcedOff,
+  kEnforcedOn,
+  kRecommendedOff,
+  kRecommendedOn,
+  kNotSet,
+};
+
+// Possible preference sources supported by TestingPrefService.
+// TODO(crbug.com/1063281): Extend TestingPrefService to support prefs set for
+//                          supervised users.
+enum class PrefSource {
+  kExtension,
+  kDevicePolicy,
+  kRecommended,
+  kNone,
+};
+
+// Represents a set of settings, preferences and the associated expected
+// CookieControlsManagedState.
+struct CookiesManagedStateTestCase {
+  ContentSetting default_content_setting;
+  content_settings::SettingSource default_content_setting_source;
+  PrefSetting block_third_party;
+  PrefSource block_third_party_source;
+  CookieControlsManagedState expected_result;
+};
+
+const std::vector<CookiesManagedStateTestCase> test_cases = {
+    {CONTENT_SETTING_DEFAULT,
+     content_settings::SETTING_SOURCE_NONE,
+     PrefSetting::kEnforcedOff,
+     PrefSource::kExtension,
+     {{false, PolicyIndicatorType::kNone},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone}}},
+    {CONTENT_SETTING_DEFAULT,
+     content_settings::SETTING_SOURCE_NONE,
+     PrefSetting::kEnforcedOn,
+     PrefSource::kDevicePolicy,
+     {{true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone}}},
+    {CONTENT_SETTING_DEFAULT,
+     content_settings::SETTING_SOURCE_NONE,
+     PrefSetting::kRecommendedOff,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kRecommended},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone}}},
+    {CONTENT_SETTING_DEFAULT,
+     content_settings::SETTING_SOURCE_NONE,
+     PrefSetting::kRecommendedOn,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kRecommended},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone}}},
+    {CONTENT_SETTING_DEFAULT,
+     content_settings::SETTING_SOURCE_NONE,
+     PrefSetting::kNotSet,
+     PrefSource::kNone,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone}}},
+    {CONTENT_SETTING_ALLOW,
+     content_settings::SETTING_SOURCE_POLICY,
+     PrefSetting::kEnforcedOff,
+     PrefSource::kExtension,
+     {{true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy}}},
+    {CONTENT_SETTING_ALLOW,
+     content_settings::SETTING_SOURCE_EXTENSION,
+     PrefSetting::kEnforcedOn,
+     PrefSource::kDevicePolicy,
+     {{true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension}}},
+    {CONTENT_SETTING_ALLOW,
+     content_settings::SETTING_SOURCE_SUPERVISED,
+     PrefSetting::kRecommendedOff,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kRecommended},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent}}},
+    {CONTENT_SETTING_ALLOW,
+     content_settings::SETTING_SOURCE_POLICY,
+     PrefSetting::kRecommendedOn,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kRecommended},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy}}},
+    {CONTENT_SETTING_ALLOW,
+     content_settings::SETTING_SOURCE_EXTENSION,
+     PrefSetting::kNotSet,
+     PrefSource::kNone,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension}}},
+    {CONTENT_SETTING_BLOCK,
+     content_settings::SETTING_SOURCE_SUPERVISED,
+     PrefSetting::kEnforcedOff,
+     PrefSource::kDevicePolicy,
+     {{true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent}}},
+    {CONTENT_SETTING_BLOCK,
+     content_settings::SETTING_SOURCE_POLICY,
+     PrefSetting::kEnforcedOn,
+     PrefSource::kExtension,
+     {{true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy}}},
+    {CONTENT_SETTING_BLOCK,
+     content_settings::SETTING_SOURCE_EXTENSION,
+     PrefSetting::kRecommendedOff,
+     PrefSource::kRecommended,
+     {{true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension}}},
+    {CONTENT_SETTING_BLOCK,
+     content_settings::SETTING_SOURCE_SUPERVISED,
+     PrefSetting::kRecommendedOn,
+     PrefSource::kRecommended,
+     {{true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent}}},
+    {CONTENT_SETTING_BLOCK,
+     content_settings::SETTING_SOURCE_POLICY,
+     PrefSetting::kNotSet,
+     PrefSource::kNone,
+     {{true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy}}},
+    {CONTENT_SETTING_SESSION_ONLY,
+     content_settings::SETTING_SOURCE_EXTENSION,
+     PrefSetting::kEnforcedOff,
+     PrefSource::kDevicePolicy,
+     {{true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension}}},
+    {CONTENT_SETTING_SESSION_ONLY,
+     content_settings::SETTING_SOURCE_SUPERVISED,
+     PrefSetting::kEnforcedOn,
+     PrefSource::kExtension,
+     {{true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent}}},
+    {CONTENT_SETTING_SESSION_ONLY,
+     content_settings::SETTING_SOURCE_POLICY,
+     PrefSetting::kRecommendedOff,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kRecommended},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {true, PolicyIndicatorType::kDevicePolicy},
+      {true, PolicyIndicatorType::kDevicePolicy}}},
+    {CONTENT_SETTING_SESSION_ONLY,
+     content_settings::SETTING_SOURCE_EXTENSION,
+     PrefSetting::kRecommendedOn,
+     PrefSource::kRecommended,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kRecommended},
+      {true, PolicyIndicatorType::kExtension},
+      {true, PolicyIndicatorType::kExtension}}},
+    {CONTENT_SETTING_SESSION_ONLY,
+     content_settings::SETTING_SOURCE_SUPERVISED,
+     PrefSetting::kNotSet,
+     PrefSource::kNone,
+     {{false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {false, PolicyIndicatorType::kNone},
+      {true, PolicyIndicatorType::kParent},
+      {true, PolicyIndicatorType::kParent}}}};
+
+void SetupTestConditions(HostContentSettingsMap* map,
+                         sync_preferences::TestingPrefServiceSyncable* prefs,
+                         const CookiesManagedStateTestCase& test_case) {
+  if (test_case.default_content_setting != CONTENT_SETTING_DEFAULT) {
+    auto provider = std::make_unique<content_settings::MockProvider>();
+    provider->SetWebsiteSetting(
+        ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
+        ContentSettingsType::COOKIES, std::string(),
+        std::make_unique<base::Value>(test_case.default_content_setting));
+    HostContentSettingsMap::ProviderType provider_type;
+    switch (test_case.default_content_setting_source) {
+      case content_settings::SETTING_SOURCE_POLICY:
+        provider_type = HostContentSettingsMap::POLICY_PROVIDER;
+        break;
+      case content_settings::SETTING_SOURCE_EXTENSION:
+        provider_type = HostContentSettingsMap::CUSTOM_EXTENSION_PROVIDER;
+        break;
+      case content_settings::SETTING_SOURCE_SUPERVISED:
+        provider_type = HostContentSettingsMap::SUPERVISED_PROVIDER;
+        break;
+      case content_settings::SETTING_SOURCE_NONE:
+      default:
+        provider_type = HostContentSettingsMap::DEFAULT_PROVIDER;
+    }
+    content_settings::TestUtils::OverrideProvider(map, std::move(provider),
+                                                  provider_type);
   }
 
-  // This exception should describe the permissions for any device.
-  // There are no user granted permissions that intersect with this permission,
-  // and this policy only grants one permission to the following site pair:
-  // * ("https://google.com", "https://google.com")
-  {
-    const auto& exception = exceptions_list[2];
-    ExpectDisplayNameEq(exception,
-                        /*display_name=*/"Unknown device [ffffffff:ffffffff]");
-
-    const auto& sites_list = exception.FindKey(kSites)->GetList();
-    ExpectValidSiteExceptionObject(sites_list[0],
-                                   /*origin=*/kGoogleOrigin,
-                                   /*embedding_origin=*/kGoogleOrigin,
-                                   /*source=*/kPolicySource,
-                                   /*incognito=*/false);
-  }
-
-  // This exception should describe the permissions for any device with the
-  // vendor ID corresponding to "Google Inc.". There are no user granted
-  // permissions that intersect with this permission, and this policy only
-  // grants one permission to the following site pair:
-  // * ("https://google.com", "https://android.com")
-  {
-    const auto& exception = exceptions_list[3];
-    ExpectDisplayNameEq(exception,
-                        /*display_name=*/"Unknown device from Google Inc.");
-
-    const auto& sites_list = exception.FindKey(kSites)->GetList();
-    ExpectValidSiteExceptionObject(sites_list[0],
-                                   /*origin=*/kGoogleOrigin,
-                                   /*embedding_origin=*/kAndroidOrigin,
-                                   /*source=*/kPolicySource,
-                                   /*incognito=*/false);
+  if (test_case.block_third_party != PrefSetting::kNotSet) {
+    bool third_party_value =
+        test_case.block_third_party == PrefSetting::kRecommendedOn ||
+        test_case.block_third_party == PrefSetting::kEnforcedOn;
+    if (test_case.block_third_party_source == PrefSource::kExtension) {
+      prefs->SetExtensionPref(prefs::kBlockThirdPartyCookies,
+                              std::make_unique<base::Value>(third_party_value));
+    } else if (test_case.block_third_party_source ==
+               PrefSource::kDevicePolicy) {
+      prefs->SetManagedPref(prefs::kBlockThirdPartyCookies,
+                            std::make_unique<base::Value>(third_party_value));
+    } else if (test_case.block_third_party_source == PrefSource::kRecommended) {
+      prefs->SetRecommendedPref(
+          prefs::kBlockThirdPartyCookies,
+          std::make_unique<base::Value>(third_party_value));
+    }
   }
 }
+
+void AssertManagedCookieStateEqual(const CookieControlsManagedState& a,
+                                   const CookieControlsManagedState b) {
+  ASSERT_EQ(a.allow_all.disabled, b.allow_all.disabled);
+  ASSERT_EQ(a.allow_all.indicator, b.allow_all.indicator);
+  ASSERT_EQ(a.block_third_party_incognito.disabled,
+            b.block_third_party_incognito.disabled);
+  ASSERT_EQ(a.block_third_party_incognito.indicator,
+            b.block_third_party_incognito.indicator);
+  ASSERT_EQ(a.block_third_party.disabled, b.block_third_party.disabled);
+  ASSERT_EQ(a.block_third_party.indicator, b.block_third_party.indicator);
+  ASSERT_EQ(a.block_all.disabled, b.block_all.disabled);
+  ASSERT_EQ(a.block_all.indicator, b.block_all.indicator);
+  ASSERT_EQ(a.session_only.disabled, b.session_only.disabled);
+  ASSERT_EQ(a.session_only.indicator, b.session_only.indicator);
+}
+
+TEST_F(SiteSettingsHelperTest, CookiesManagedState) {
+  for (auto test_case : test_cases) {
+    TestingProfile profile;
+    HostContentSettingsMap* map =
+        HostContentSettingsMapFactory::GetForProfile(&profile);
+    sync_preferences::TestingPrefServiceSyncable* prefs =
+        profile.GetTestingPrefService();
+    testing::Message scope_message;
+    scope_message << "Content Setting:" << test_case.default_content_setting
+                  << " Block Third Party:"
+                  << static_cast<int>(test_case.block_third_party);
+    SCOPED_TRACE(scope_message);
+    SetupTestConditions(map, prefs, test_case);
+    AssertManagedCookieStateEqual(
+        site_settings::GetCookieControlsManagedState(&profile),
+        test_case.expected_result);
+  }
+}
+
+}  // namespace
 
 }  // namespace site_settings

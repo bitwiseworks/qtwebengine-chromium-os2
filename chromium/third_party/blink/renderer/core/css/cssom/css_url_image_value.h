@@ -10,17 +10,10 @@
 
 namespace blink {
 
-class ScriptState;
 class CSSImageValue;
 
 class CORE_EXPORT CSSURLImageValue final : public CSSStyleImageValue {
  public:
-  static CSSURLImageValue* Create(ScriptState*,
-                                  const AtomicString& url,
-                                  ExceptionState&);
-
-  static CSSURLImageValue* FromCSSValue(const CSSImageValue&);
-
   explicit CSSURLImageValue(const CSSImageValue& value) : value_(value) {}
 
   const String& url() const;
@@ -39,7 +32,7 @@ class CORE_EXPORT CSSURLImageValue final : public CSSStyleImageValue {
   StyleValueType GetType() const final { return kURLImageType; }
   const CSSValue* ToCSSValue() const final;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   scoped_refptr<Image> GetImage() const;

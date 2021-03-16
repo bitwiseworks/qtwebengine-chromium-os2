@@ -115,6 +115,22 @@ NET_EXPORT std::string TrimEndingDot(base::StringPiece host);
 // Returns either the host from |url|, or, if the host is empty, the full spec.
 NET_EXPORT std::string GetHostOrSpecFromURL(const GURL& url);
 
+// Returns the given domain minus its leftmost label, or the empty string if the
+// given domain is just a single label. For normal domain names (not IP
+// addresses), this represents the "superdomain" of the given domain.
+// Note that this does not take into account anything like the Public Suffix
+// List, so the superdomain may end up being a bare eTLD. The returned string is
+// not guaranteed to be a valid or canonical hostname, or to make any sense at
+// all.
+//
+// Examples:
+//
+// GetSuperdomain("assets.example.com") -> "example.com"
+// GetSuperdomain("example.net") -> "net"
+// GetSuperdomain("littlebox") -> ""
+// GetSuperdomain("127.0.0.1") -> "0.0.1"
+NET_EXPORT std::string GetSuperdomain(base::StringPiece domain);
+
 // Canonicalizes |host| and returns it.  Also fills |host_info| with
 // IP address information.  |host_info| must not be NULL.
 NET_EXPORT std::string CanonicalizeHost(base::StringPiece host,
@@ -156,6 +172,12 @@ NET_EXPORT bool HostStringIsLocalhost(base::StringPiece host);
 //   - reference section
 NET_EXPORT GURL SimplifyUrlForRequest(const GURL& url);
 
+// Changes scheme "ws" to "http" and "wss" to "https". This is useful for origin
+// checks and authentication, where WebSocket URLs are treated as if they were
+// HTTP. It is an error to call this function with a url with a scheme other
+// than "ws" or "wss".
+NET_EXPORT GURL ChangeWebSocketSchemeToHttpScheme(const GURL& url);
+
 // Extracts the unescaped username/password from |url|, saving the results
 // into |*username| and |*password|.
 NET_EXPORT_PRIVATE void GetIdentityFromURL(const GURL& url,
@@ -165,6 +187,10 @@ NET_EXPORT_PRIVATE void GetIdentityFromURL(const GURL& url,
 // Returns true if the url's host is a Google server. This should only be used
 // for histograms and shouldn't be used to affect behavior.
 NET_EXPORT_PRIVATE bool HasGoogleHost(const GURL& url);
+
+// Returns true if |host| is the hostname of a Google server. This should only
+// be used for histograms and shouldn't be used to affect behavior.
+NET_EXPORT_PRIVATE bool IsGoogleHost(base::StringPiece host);
 
 // This function tests |host| to see if its one used in the initial TLS 1.3
 // deployment. TLS connections to them form the basis of our comparisons.

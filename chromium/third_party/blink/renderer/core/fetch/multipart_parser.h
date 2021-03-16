@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/network/http_header_map.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -24,7 +25,7 @@ namespace blink {
 // - If MultipartParser::cancel() is called, Client's methods will not be
 //   called anymore.
 class CORE_EXPORT MultipartParser final
-    : public GarbageCollectedFinalized<MultipartParser> {
+    : public GarbageCollected<MultipartParser> {
  public:
   // Client recieves parsed part header fields and data.
   class CORE_EXPORT Client : public GarbageCollectedMixin {
@@ -39,7 +40,7 @@ class CORE_EXPORT MultipartParser final
     virtual void PartDataInMultipartReceived(const char* bytes, size_t) = 0;
     // The method is called whenever all data of a complete part is parsed.
     virtual void PartDataInMultipartFullyReceived() = 0;
-    void Trace(blink::Visitor* visitor) override {}
+    void Trace(Visitor* visitor) override {}
   };
 
   MultipartParser(Vector<char> boundary, Client*);
@@ -49,10 +50,12 @@ class CORE_EXPORT MultipartParser final
 
   bool IsCancelled() const { return state_ == State::kCancelled; }
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
  private:
   class Matcher {
+    DISALLOW_NEW();
+
    public:
     Matcher();
     Matcher(const char* data, size_t num_matched_bytes, size_t);

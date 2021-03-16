@@ -40,7 +40,6 @@ namespace blink {
 
 class DOMFileSystemBase;
 class EntrySync;
-class FileSystemBaseHandle;
 
 // A common base class for Entry and EntrySync.
 class MODULES_EXPORT EntryBase : public ScriptWrappable {
@@ -57,9 +56,7 @@ class MODULES_EXPORT EntryBase : public ScriptWrappable {
 
   String toURL() const;
 
-  FileSystemBaseHandle* asFileSystemHandle() const;
-
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   EntryBase(DOMFileSystemBase*, const String& full_path);

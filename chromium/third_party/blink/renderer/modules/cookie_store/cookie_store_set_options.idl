@@ -7,13 +7,13 @@
 enum CookieSameSite {
   "strict",
   "lax",
-  "unrestricted"
+  "none"
 };
 
 dictionary CookieStoreSetOptions {
   DOMTimeStamp? expires = null;
   USVString? domain = null;
   USVString path = "/";
-  boolean secure = true;
+  boolean secure;
   CookieSameSite sameSite = "strict";
 };

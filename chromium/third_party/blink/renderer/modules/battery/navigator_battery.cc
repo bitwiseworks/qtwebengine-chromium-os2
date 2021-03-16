@@ -6,8 +6,9 @@
 
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/modules/battery/battery_manager.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -24,13 +25,13 @@ ScriptPromise NavigatorBattery::getBattery(ScriptState* script_state) {
 
   // Check to see if this request would be blocked according to the Battery
   // Status API specification.
-  if (auto* document = To<Document>(context)) {
+  if (auto* document = Document::From(context)) {
     LocalFrame* frame = document->GetFrame();
     if (frame) {
       if (!context->IsSecureContext())
-        UseCounter::Count(frame, WebFeature::kBatteryStatusInsecureOrigin);
-      UseCounter::CountIfFeatureWouldBeBlockedByFeaturePolicy(
-          *frame, WebFeature::kBatteryStatusCrossOrigin,
+        UseCounter::Count(document, WebFeature::kBatteryStatusInsecureOrigin);
+      frame->CountUseIfFeatureWouldBeBlockedByFeaturePolicy(
+          WebFeature::kBatteryStatusCrossOrigin,
           WebFeature::kBatteryStatusSameOriginABA);
     }
   }
@@ -52,7 +53,7 @@ NavigatorBattery& NavigatorBattery::From(Navigator& navigator) {
   return *supplement;
 }
 
-void NavigatorBattery::Trace(blink::Visitor* visitor) {
+void NavigatorBattery::Trace(Visitor* visitor) {
   visitor->Trace(battery_manager_);
   Supplement<Navigator>::Trace(visitor);
 }

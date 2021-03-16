@@ -6,7 +6,7 @@
 #outer-container {
   -webkit-box-align: center;
   -webkit-box-pack: center;
-  bottom: 57px;  /* Leave space for the header bar */
+  bottom: var(--shelf-area-height);  /* Leave space for the header bar */
   display: -webkit-box;
   left: 0;
   min-height: 717px; /* This enables scrolling. Min resolution: 1024x768 */
@@ -106,50 +106,6 @@
 
 .oobe-display #inner-container.down {
   transform: translateY(50px) rotateX(-2.5deg);
-}
-
-#oobe #step-logo {
-  display: none;
-}
-
-#account-picker-dot,
-#app-launch-splash-dot,
-#arc-kiosk-splash-dot,
-#auto-enrollment-check-dot,
-#autolaunch-dot,
-#confirm-password-dot,
-#debugging-dot,
-#device-disabled-dot,
-#enrollment-dot,
-#error-message-dot,
-#fatal-error-dot,
-#hid-detection-dot,
-#kiosk-enable-dot,
-#oauth-enrollment-dot,
-#password-changed-dot,
-#reset-dot,
-#supervised-user-creation-dialog-dot,
-#supervised-user-creation-dot,
-#terms-of-service-dot,
-#arc-tos-dot,
-#tpm-error-message-dot,
-#update-required-dot,
-#wrong-hwid-dot,
-#unrecoverable-cryptohome-error-dot {
-  display: none;
-}
-
-#oobe.connect #connect-dot,
-#oobe.enrollment #gaia-signin-dot,
-#oobe.enrollment #signin-dot,
-#oobe.eula #eula-dot,
-#oobe.gaia-signin #gaia-signin-dot,
-#oobe.oauth-enrollment #gaia-signin-dot,
-#oobe.oauth-enrollment #signin-dot,
-#oobe.signin #signin-dot,
-#oobe.update #update-dot,
-#oobe.user-image #user-image-dot {
-  opacity: 1;
 }
 
 body:not(.oobe-display) #inner-container {

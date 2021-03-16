@@ -41,8 +41,6 @@
 #include "third_party/blink/renderer/core/html/custom/custom_element_definition.h"
 #include "third_party/blink/renderer/core/html/custom/v0_custom_element_definition.h"
 #include "third_party/blink/renderer/core/intersection_observer/element_intersection_observer_data.h"
-#include "third_party/blink/renderer/platform/bindings/script_wrappable_visitor.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
@@ -55,15 +53,12 @@ class ResizeObserver;
 
 class ElementRareData : public NodeRareData {
  public:
-  static ElementRareData* Create(NodeRenderingData* node_layout_data) {
-    return MakeGarbageCollected<ElementRareData>(node_layout_data);
-  }
-
   explicit ElementRareData(NodeRenderingData*);
   ~ElementRareData();
 
   void SetPseudoElement(PseudoId, PseudoElement*);
   PseudoElement* GetPseudoElement(PseudoId) const;
+  PseudoElementData::PseudoElementVector GetPseudoElements() const;
 
   void SetTabIndexExplicitly() {
     SetElementFlag(ElementFlags::kTabIndexWasSetExplicitly, true);
@@ -91,25 +86,17 @@ class ElementRareData : public NodeRareData {
     attribute_map_ = attribute_map;
   }
 
-  ComputedStyle* GetComputedStyle() const { return computed_style_.get(); }
-  void SetComputedStyle(scoped_refptr<ComputedStyle>);
-  void ClearComputedStyle();
-
   DOMTokenList* GetClassList() const { return class_list_.Get(); }
   void SetClassList(DOMTokenList* class_list) {
     class_list_ = class_list;
   }
 
   void SetPart(DOMTokenList* part) {
-    if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
-      return;
     part_ = part;
   }
   DOMTokenList* GetPart() const { return part_.Get(); }
 
   void SetPartNamesMap(const AtomicString part_names) {
-    if (!RuntimeEnabledFeatures::CSSPartPseudoElementEnabled())
-      return;
     if (!part_names_map_) {
       part_names_map_.reset(new NamesMap());
     }
@@ -158,6 +145,19 @@ class ElementRareData : public NodeRareData {
   bool DidAttachInternals() const { return did_attach_internals_; }
   ElementInternals& EnsureElementInternals(HTMLElement& target);
 
+  void SetStyleShouldForceLegacyLayout(bool force) {
+    style_should_force_legacy_layout_ = force;
+  }
+  bool StyleShouldForceLegacyLayout() const {
+    return style_should_force_legacy_layout_;
+  }
+  void SetShouldForceLegacyLayoutForChild(bool force) {
+    should_force_legacy_layout_for_child_ = force;
+  }
+  bool ShouldForceLegacyLayoutForChild() const {
+    return should_force_legacy_layout_for_child_;
+  }
+
   AccessibleNode* GetAccessibleNode() const { return accessible_node_.Get(); }
   AccessibleNode* EnsureAccessibleNode(Element* owner_element) {
     if (!accessible_node_) {
@@ -184,19 +184,17 @@ class ElementRareData : public NodeRareData {
     return *intersection_observer_data_;
   }
 
-  using ResizeObserverDataMap = HeapHashMap<TraceWrapperMember<ResizeObserver>,
-                                            Member<ResizeObservation>>;
+  using ResizeObserverDataMap =
+      HeapHashMap<Member<ResizeObserver>, Member<ResizeObservation>>;
 
   ResizeObserverDataMap* ResizeObserverData() const {
     return resize_observer_data_;
   }
   ResizeObserverDataMap& EnsureResizeObserverData();
 
-  DisplayLockContext* EnsureDisplayLockContext(Element* element,
-                                               ExecutionContext* context) {
+  DisplayLockContext* EnsureDisplayLockContext(Element* element) {
     if (!display_lock_context_) {
-      display_lock_context_ =
-          MakeGarbageCollected<DisplayLockContext>(element, context);
+      display_lock_context_ = MakeGarbageCollected<DisplayLockContext>(element);
     }
     return display_lock_context_.Get();
   }
@@ -207,40 +205,40 @@ class ElementRareData : public NodeRareData {
   const AtomicString& GetNonce() const { return nonce_; }
   void SetNonce(const AtomicString& nonce) { nonce_ = nonce; }
 
-  void TraceAfterDispatch(blink::Visitor*);
+  void TraceAfterDispatch(blink::Visitor*) const;
 
  private:
   ScrollOffset saved_layer_scroll_offset_;
   AtomicString nonce_;
 
-  TraceWrapperMember<DatasetDOMStringMap> dataset_;
-  TraceWrapperMember<ShadowRoot> shadow_root_;
-  TraceWrapperMember<DOMTokenList> class_list_;
-  TraceWrapperMember<DOMTokenList> part_;
+  Member<DatasetDOMStringMap> dataset_;
+  Member<ShadowRoot> shadow_root_;
+  Member<DOMTokenList> class_list_;
+  Member<DOMTokenList> part_;
   std::unique_ptr<NamesMap> part_names_map_;
-  TraceWrapperMember<NamedNodeMap> attribute_map_;
-  TraceWrapperMember<AttrNodeList> attr_node_list_;
-  TraceWrapperMember<InlineCSSStyleDeclaration> cssom_wrapper_;
-  TraceWrapperMember<InlineStylePropertyMap> cssom_map_wrapper_;
+  Member<NamedNodeMap> attribute_map_;
+  Member<AttrNodeList> attr_node_list_;
+  Member<InlineCSSStyleDeclaration> cssom_wrapper_;
+  Member<InlineStylePropertyMap> cssom_map_wrapper_;
 
   Member<ElementAnimations> element_animations_;
-  TraceWrapperMember<ElementIntersectionObserverData>
-      intersection_observer_data_;
-  TraceWrapperMember<ResizeObserverDataMap> resize_observer_data_;
+  Member<ElementIntersectionObserverData> intersection_observer_data_;
+  Member<ResizeObserverDataMap> resize_observer_data_;
 
-  scoped_refptr<ComputedStyle> computed_style_;
   // TODO(davaajav):remove this field when v0 custom elements are deprecated
   Member<V0CustomElementDefinition> v0_custom_element_definition_;
   Member<CustomElementDefinition> custom_element_definition_;
   AtomicString is_value_;
-  TraceWrapperMember<ElementInternals> element_internals_;
+  Member<ElementInternals> element_internals_;
 
   Member<PseudoElementData> pseudo_element_data_;
 
-  TraceWrapperMember<AccessibleNode> accessible_node_;
+  Member<AccessibleNode> accessible_node_;
 
-  WeakMember<DisplayLockContext> display_lock_context_;
+  Member<DisplayLockContext> display_lock_context_;
   bool did_attach_internals_ = false;
+  bool should_force_legacy_layout_for_child_ = false;
+  bool style_should_force_legacy_layout_ = false;
 };
 
 inline LayoutSize DefaultMinimumSizeForResizing() {
@@ -263,7 +261,7 @@ inline void ElementRareData::SetPseudoElement(PseudoId pseudo_id,
   if (!pseudo_element_data_) {
     if (!element)
       return;
-    pseudo_element_data_ = PseudoElementData::Create();
+    pseudo_element_data_ = MakeGarbageCollected<PseudoElementData>();
   }
   pseudo_element_data_->SetPseudoElement(pseudo_id, element);
 }
@@ -273,6 +271,13 @@ inline PseudoElement* ElementRareData::GetPseudoElement(
   if (!pseudo_element_data_)
     return nullptr;
   return pseudo_element_data_->GetPseudoElement(pseudo_id);
+}
+
+inline PseudoElementData::PseudoElementVector
+ElementRareData::GetPseudoElements() const {
+  if (!pseudo_element_data_)
+    return {};
+  return pseudo_element_data_->GetPseudoElements();
 }
 
 }  // namespace blink

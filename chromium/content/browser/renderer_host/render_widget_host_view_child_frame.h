@@ -17,6 +17,7 @@
 #include "build/build_config.h"
 #include "cc/input/touch_action.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
+#include "components/viz/common/frame_timing_details_map.h"
 #include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/host/host_frame_sink_client.h"
@@ -26,20 +27,16 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/touch_selection_controller_client_manager.h"
 #include "content/public/common/input_event_ack_state.h"
-#include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
+#include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
+#include "third_party/blink/public/platform/viewport_intersection_state.h"
 #include "third_party/blink/public/platform/web_intrinsic_sizing_info.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
-
-namespace viz {
-class CompositorFrameSinkSupport;
-}
 
 namespace content {
 class FrameConnectorDelegate;
 class RenderWidgetHost;
 class RenderWidgetHostViewChildFrameTest;
-class RenderWidgetHostViewGuestSurfaceTest;
 class TouchSelectionControllerClientChildFrame;
 
 // RenderWidgetHostViewChildFrame implements the view for a RenderWidgetHost
@@ -53,30 +50,12 @@ class TouchSelectionControllerClientChildFrame;
 class CONTENT_EXPORT RenderWidgetHostViewChildFrame
     : public RenderWidgetHostViewBase,
       public TouchSelectionControllerClientManager::Observer,
-      public viz::mojom::CompositorFrameSinkClient,
       public viz::HostFrameSinkClient {
  public:
   static RenderWidgetHostViewChildFrame* Create(RenderWidgetHost* widget);
   ~RenderWidgetHostViewChildFrame() override;
 
   void SetFrameConnectorDelegate(FrameConnectorDelegate* frame_connector);
-
-#if defined(USE_AURA)
-  // When the viz::FrameSinkId for this child frame is created and registered
-  // remotely, it can be set here.
-  void SetFrameSinkId(const viz::FrameSinkId& frame_sink_id);
-#endif  // defined(USE_AURA)
-
-  // This functions registers single-use callbacks that want to be notified when
-  // the next frame is swapped. The callback is triggered by
-  // SubmitCompositorFrame, which is the appropriate time to request pixel
-  // readback for the frame that is about to be drawn. Once called, the callback
-  // pointer is released.
-  // TODO(crbug.com/787941): This should be removed because it doesn't work when
-  // VIZ display compositing is enabled. The public CopyFromSurface() API does
-  // not make guarantees that it will succeed before the first frame is
-  // composited.
-  void RegisterFrameSwappedCallback(base::OnceClosure callback);
 
   // TouchSelectionControllerClientManager::Observer implementation.
   void OnManagerWillDestroy(
@@ -87,79 +66,67 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   void SetSize(const gfx::Size& size) override;
   void SetBounds(const gfx::Rect& rect) override;
   void Focus() override;
-  bool HasFocus() const override;
-  bool IsSurfaceAvailableForCopy() const override;
+  bool HasFocus() override;
+  bool IsSurfaceAvailableForCopy() override;
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
       base::OnceCallback<void(const SkBitmap&)> callback) override;
   void EnsureSurfaceSynchronizedForWebTest() override;
-  uint32_t GetCaptureSequenceNumber() const override;
   void Show() override;
   void Hide() override;
   bool IsShowing() override;
   void WasUnOccluded() override;
   void WasOccluded() override;
-  gfx::Rect GetViewBounds() const override;
-  gfx::Size GetVisibleViewportSize() const override;
+  gfx::Rect GetViewBounds() override;
+  gfx::Size GetVisibleViewportSize() override;
   void SetInsets(const gfx::Insets& insets) override;
-  gfx::NativeView GetNativeView() const override;
+  gfx::NativeView GetNativeView() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
-  gfx::Size GetCompositorViewportPixelSize() const override;
   bool IsMouseLocked() override;
-  void SetNeedsBeginFrames(bool needs_begin_frames) override;
-  void SetWantsAnimateOnlyBeginFrames() override;
   void TakeFallbackContentFrom(RenderWidgetHostView* view) override;
 
   // RenderWidgetHostViewBase implementation.
   RenderWidgetHostViewBase* GetRootView() override;
+  uint32_t GetCaptureSequenceNumber() const override;
+  gfx::Size GetCompositorViewportPixelSize() override;
   void InitAsPopup(RenderWidgetHostView* parent_host_view,
                    const gfx::Rect& bounds) override;
   void InitAsFullscreen(RenderWidgetHostView* reference_host_view) override;
   void UpdateCursor(const WebCursor& cursor) override;
   void SetIsLoading(bool is_loading) override;
-  void RenderProcessGone(base::TerminationStatus status,
-                         int error_code) override;
+  void RenderProcessGone() override;
   void Destroy() override;
   void SetTooltipText(const base::string16& tooltip_text) override;
   void GestureEventAck(const blink::WebGestureEvent& event,
                        InputEventAckState ack_result) override;
-  void DidCreateNewRendererCompositorFrameSink(
-      viz::mojom::CompositorFrameSinkClient* renderer_compositor_frame_sink)
-      override;
-  void SubmitCompositorFrame(
-      const viz::LocalSurfaceId& local_surface_id,
-      viz::CompositorFrame frame,
-      base::Optional<viz::HitTestRegionList> hit_test_region_list) override;
-  void OnDidNotProduceFrame(const viz::BeginFrameAck& ack) override;
   // Since the URL of content rendered by this class is not displayed in
   // the URL bar, this method does not need an implementation.
-  void ClearCompositorFrame() override {}
-  void ResetFallbackToFirstNavigationSurface() override{};
+  void ResetFallbackToFirstNavigationSurface() override {}
 
   void TransformPointToRootSurface(gfx::PointF* point) override;
   gfx::Rect GetBoundsInRootWindow() override;
   void DidStopFlinging() override;
-  bool LockMouse() override;
+  blink::mojom::PointerLockResult LockMouse(
+      bool request_unadjusted_movement) override;
+  blink::mojom::PointerLockResult ChangeMouseLock(
+      bool request_unadjusted_movement) override;
   void UnlockMouse() override;
   const viz::FrameSinkId& GetFrameSinkId() const override;
   const viz::LocalSurfaceIdAllocation& GetLocalSurfaceIdAllocation()
       const override;
+  void NotifyHitTestRegionUpdated(const viz::AggregatedHitTestRegion&) override;
+  bool ScreenRectIsUnstableFor(const blink::WebInputEvent& event) override;
   void PreProcessTouchEvent(const blink::WebTouchEvent& event) override;
   viz::FrameSinkId GetRootFrameSinkId() override;
   viz::SurfaceId GetCurrentSurfaceId() const override;
   bool HasSize() const override;
   gfx::PointF TransformPointToRootCoordSpaceF(
       const gfx::PointF& point) override;
-  bool TransformPointToLocalCoordSpaceLegacy(
-      const gfx::PointF& point,
-      const viz::SurfaceId& original_surface,
-      gfx::PointF* transformed_point) override;
   bool TransformPointToCoordSpaceForView(
       const gfx::PointF& point,
       RenderWidgetHostViewBase* target_view,
-      gfx::PointF* transformed_point,
-      viz::EventSource source = viz::EventSource::ANY) override;
+      gfx::PointF* transformed_point) override;
   void DidNavigate() override;
   gfx::PointF TransformRootPointToViewCoordSpace(
       const gfx::PointF& point) override;
@@ -168,6 +135,8 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   void OnRenderFrameMetadataChangedAfterActivation() override;
   void UpdateIntrinsicSizingInfo(
       const blink::WebIntrinsicSizingInfo& sizing_info) override;
+  std::unique_ptr<SyntheticGestureTarget> CreateSyntheticGestureTarget()
+      override;
 
   bool IsRenderWidgetHostViewChildFrame() override;
 
@@ -182,27 +151,15 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   InputEventAckState FilterInputEvent(
       const blink::WebInputEvent& input_event) override;
-  InputEventAckState FilterChildGestureEvent(
-      const blink::WebGestureEvent& gesture_event) override;
   BrowserAccessibilityManager* CreateBrowserAccessibilityManager(
       BrowserAccessibilityDelegate* delegate,
       bool for_root_frame) override;
-  void GetScreenInfo(ScreenInfo* screen_info) const override;
+  void GetScreenInfo(ScreenInfo* screen_info) override;
   void EnableAutoResize(const gfx::Size& min_size,
                         const gfx::Size& max_size) override;
   void DisableAutoResize(const gfx::Size& new_size) override;
   viz::ScopedSurfaceIdAllocator DidUpdateVisualProperties(
       const cc::RenderFrameMetadata& metadata) override;
-
-  // viz::mojom::CompositorFrameSinkClient implementation.
-  void DidReceiveCompositorFrameAck(
-      const std::vector<viz::ReturnedResource>& resources) override;
-  void OnBeginFrame(const viz::BeginFrameArgs& args,
-                    const base::flat_map<uint32_t, gfx::PresentationFeedback>&
-                        feedbacks) override;
-  void ReclaimResources(
-      const std::vector<viz::ReturnedResource>& resources) override;
-  void OnBeginFramePausedChanged(bool paused) override;
 
   // viz::HostFrameSinkClient implementation.
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
@@ -220,9 +177,8 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   void RegisterFrameSinkId();
   void UnregisterFrameSinkId();
 
-  void UpdateViewportIntersection(const gfx::Rect& viewport_intersection,
-                                  const gfx::Rect& compositor_visible_rect,
-                                  bool occluded_or_obscured);
+  void UpdateViewportIntersection(
+      const blink::ViewportIntersectionState& intersection_state);
 
   // TODO(sunxd): Rename SetIsInert to UpdateIsInert.
   void SetIsInert();
@@ -237,7 +193,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
  protected:
   friend class RenderWidgetHostView;
   friend class RenderWidgetHostViewChildFrameTest;
-  friend class RenderWidgetHostViewGuestSurfaceTest;
   FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewChildFrameTest,
                            ForwardsBeginFrameAcks);
 
@@ -247,8 +202,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   // Sets |parent_frame_sink_id_| and registers frame sink hierarchy. If the
   // parent was already set then it also unregisters hierarchy.
   void SetParentFrameSinkId(const viz::FrameSinkId& parent_frame_sink_id);
-
-  void SendSurfaceInfoToEmbedder();
 
   // Clears current compositor surface, if one is in use.
   void ClearCompositorSurfaceIfNecessary();
@@ -265,7 +218,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   viz::FrameSinkId frame_sink_id_;
 
   // Surface-related state.
-  std::unique_ptr<viz::CompositorFrameSinkSupport> support_;
   viz::SurfaceInfo last_activated_surface_info_;
   gfx::Rect last_screen_rect_;
 
@@ -288,8 +240,6 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
 
   virtual void FirstSurfaceActivation(const viz::SurfaceInfo& surface_info);
 
-  void CreateCompositorFrameSinkSupport();
-  void ResetCompositorFrameSinkSupport();
   void DetachFromTouchSelectionClientManagerIfNecessary();
 
   // Returns false if the view cannot be shown. This is the case where the frame
@@ -311,10 +261,8 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   // The surface client ID of the parent RenderWidgetHostView.  0 if none.
   viz::FrameSinkId parent_frame_sink_id_;
 
-  const bool enable_viz_;
-  const bool enable_surface_synchronization_;
-  viz::mojom::CompositorFrameSinkClient* renderer_compositor_frame_sink_ =
-      nullptr;
+  gfx::RectF last_stable_screen_rect_;
+  base::TimeTicks screen_rect_stable_since_;
 
   gfx::Insets insets_;
 
@@ -324,7 +272,7 @@ class CONTENT_EXPORT RenderWidgetHostViewChildFrame
   // True if there is currently a scroll sequence being bubbled to our parent.
   bool is_scroll_sequence_bubbling_ = false;
 
-  base::WeakPtrFactory<RenderWidgetHostViewChildFrame> weak_factory_;
+  base::WeakPtrFactory<RenderWidgetHostViewChildFrame> weak_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewChildFrame);
 };
 

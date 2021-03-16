@@ -11,16 +11,14 @@ namespace blink {
 WebGLCompressedTextureETC1::WebGLCompressedTextureETC1(
     WebGLRenderingContextBase* context)
     : WebGLExtension(context) {
+  context->ExtensionsUtil()->EnsureExtensionEnabled(
+      "GL_OES_compressed_ETC1_RGB8_texture");
+
   context->AddCompressedTextureFormat(GL_ETC1_RGB8_OES);
 }
 
 WebGLExtensionName WebGLCompressedTextureETC1::GetName() const {
   return kWebGLCompressedTextureETC1Name;
-}
-
-WebGLCompressedTextureETC1* WebGLCompressedTextureETC1::Create(
-    WebGLRenderingContextBase* context) {
-  return MakeGarbageCollected<WebGLCompressedTextureETC1>(context);
 }
 
 bool WebGLCompressedTextureETC1::Supported(WebGLRenderingContextBase* context) {

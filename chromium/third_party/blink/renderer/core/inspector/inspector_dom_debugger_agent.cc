@@ -44,6 +44,11 @@
 #include "third_party/blink/renderer/core/inspector/resolve_node.h"
 #include "third_party/blink/renderer/core/inspector/v8_inspector_string.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/inspector_protocol/crdtp/json.h"
+
+using crdtp::SpanFrom;
+using crdtp::json::ConvertCBORToJSON;
 
 namespace {
 
@@ -209,7 +214,7 @@ InspectorDOMDebuggerAgent::InspectorDOMDebuggerAgent(
 
 InspectorDOMDebuggerAgent::~InspectorDOMDebuggerAgent() = default;
 
-void InspectorDOMDebuggerAgent::Trace(blink::Visitor* visitor) {
+void InspectorDOMDebuggerAgent::Trace(Visitor* visitor) {
   visitor->Trace(dom_agent_);
   visitor->Trace(dom_breakpoints_);
   InspectorBaseAgent::Trace(visitor);
@@ -219,12 +224,12 @@ Response InspectorDOMDebuggerAgent::disable() {
   SetEnabled(false);
   dom_breakpoints_.clear();
   agent_state_.ClearAllFields();
-  return Response::OK();
+  return Response::Success();
 }
 
 void InspectorDOMDebuggerAgent::Restore() {
   if (enabled_.Get())
-    instrumenting_agents_->addInspectorDOMDebuggerAgent(this);
+    instrumenting_agents_->AddInspectorDOMDebuggerAgent(this);
 }
 
 Response InspectorDOMDebuggerAgent::setEventListenerBreakpoint(
@@ -243,11 +248,11 @@ Response InspectorDOMDebuggerAgent::setInstrumentationBreakpoint(
 Response InspectorDOMDebuggerAgent::SetBreakpoint(const String& event_name,
                                                   const String& target_name) {
   if (event_name.IsEmpty())
-    return Response::Error("Event name is empty");
+    return Response::ServerError("Event name is empty");
   event_listener_breakpoints_.Set(
       EventListenerBreakpointKey(event_name, target_name), true);
   DidAddBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorDOMDebuggerAgent::removeEventListenerBreakpoint(
@@ -267,11 +272,11 @@ Response InspectorDOMDebuggerAgent::RemoveBreakpoint(
     const String& event_name,
     const String& target_name) {
   if (event_name.IsEmpty())
-    return Response::Error("Event name is empty");
+    return Response::ServerError("Event name is empty");
   event_listener_breakpoints_.Clear(
       EventListenerBreakpointKey(event_name, target_name));
   DidRemoveBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 void InspectorDOMDebuggerAgent::DidInvalidateStyleAttr(Node* node) {
@@ -311,17 +316,18 @@ void InspectorDOMDebuggerAgent::DidRemoveDOMNode(Node* node) {
 static Response DomTypeForName(const String& type_string, int& type) {
   if (type_string == "subtree-modified") {
     type = SubtreeModified;
-    return Response::OK();
+    return Response::Success();
   }
   if (type_string == "attribute-modified") {
     type = AttributeModified;
-    return Response::OK();
+    return Response::Success();
   }
   if (type_string == "node-removed") {
     type = NodeRemoved;
-    return Response::OK();
+    return Response::Success();
   }
-  return Response::Error(String("Unknown DOM breakpoint type: " + type_string));
+  return Response::ServerError(
+      String("Unknown DOM breakpoint type: " + type_string).Utf8());
 }
 
 static String DomTypeName(int type) {
@@ -343,12 +349,12 @@ Response InspectorDOMDebuggerAgent::setDOMBreakpoint(
     const String& type_string) {
   Node* node = nullptr;
   Response response = dom_agent_->AssertNode(node_id, node);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
 
   int type = -1;
   response = DomTypeForName(type_string, type);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
 
   uint32_t root_bit = 1 << type;
@@ -359,7 +365,7 @@ Response InspectorDOMDebuggerAgent::setDOMBreakpoint(
       UpdateSubtreeBreakpoints(child, root_bit, true);
   }
   DidAddBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorDOMDebuggerAgent::removeDOMBreakpoint(
@@ -367,12 +373,12 @@ Response InspectorDOMDebuggerAgent::removeDOMBreakpoint(
     const String& type_string) {
   Node* node = nullptr;
   Response response = dom_agent_->AssertNode(node_id, node);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
 
   int type = -1;
   response = DomTypeForName(type_string, type);
-  if (!response.isSuccess())
+  if (!response.IsSuccess())
     return response;
 
   uint32_t root_bit = 1 << type;
@@ -389,7 +395,7 @@ Response InspectorDOMDebuggerAgent::removeDOMBreakpoint(
       UpdateSubtreeBreakpoints(child, root_bit, false);
   }
   DidRemoveBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorDOMDebuggerAgent::getEventListeners(
@@ -405,7 +411,7 @@ Response InspectorDOMDebuggerAgent::getEventListeners(
   std::unique_ptr<v8_inspector::StringBuffer> object_group;
   if (!v8_session_->unwrapObject(&error, ToV8InspectorStringView(object_id),
                                  &object, &context, &object_group)) {
-    return Response::Error(ToCoreString(std::move(error)));
+    return Response::ServerError(ToCoreString(std::move(error)).Utf8());
   }
   v8::Context::Scope scope(context);
   V8EventListenerInfoList event_information;
@@ -414,7 +420,7 @@ Response InspectorDOMDebuggerAgent::getEventListeners(
       pierce.fromMaybe(false), &event_information);
   *listeners_array = BuildObjectsForEventListeners(event_information, context,
                                                    object_group->string());
-  return Response::OK();
+  return Response::Success();
 }
 
 std::unique_ptr<protocol::Array<protocol::DOMDebugger::EventListener>>
@@ -422,9 +428,8 @@ InspectorDOMDebuggerAgent::BuildObjectsForEventListeners(
     const V8EventListenerInfoList& event_information,
     v8::Local<v8::Context> context,
     const v8_inspector::StringView& object_group_id) {
-  std::unique_ptr<protocol::Array<protocol::DOMDebugger::EventListener>>
-      listeners_array =
-          protocol::Array<protocol::DOMDebugger::EventListener>::create();
+  auto listeners_array =
+      std::make_unique<protocol::Array<protocol::DOMDebugger::EventListener>>();
   // Make sure listeners with |use_capture| true come first because they have
   // precedence.
   for (const auto& info : event_information) {
@@ -433,7 +438,7 @@ InspectorDOMDebuggerAgent::BuildObjectsForEventListeners(
     std::unique_ptr<protocol::DOMDebugger::EventListener> listener_object =
         BuildObjectForEventListener(context, info, object_group_id);
     if (listener_object)
-      listeners_array->addItem(std::move(listener_object));
+      listeners_array->emplace_back(std::move(listener_object));
   }
   for (const auto& info : event_information) {
     if (info.use_capture)
@@ -441,7 +446,7 @@ InspectorDOMDebuggerAgent::BuildObjectsForEventListeners(
     std::unique_ptr<protocol::DOMDebugger::EventListener> listener_object =
         BuildObjectForEventListener(context, info, object_group_id);
     if (listener_object)
-      listeners_array->addItem(std::move(listener_object));
+      listeners_array->emplace_back(std::move(listener_object));
   }
   return listeners_array;
 }
@@ -539,11 +544,12 @@ void InspectorDOMDebuggerAgent::BreakProgramOnDOMEvent(Node* target,
   DCHECK(breakpoint_owner_node_id);
   description->setInteger("nodeId", breakpoint_owner_node_id);
   description->setString("type", DomTypeName(breakpoint_type));
-  String json = description->serialize();
+  std::vector<uint8_t> json;
+  ConvertCBORToJSON(SpanFrom(description->Serialize()), &json);
   v8_session_->breakProgram(
       ToV8InspectorStringView(
           v8_inspector::protocol::Debugger::API::Paused::ReasonEnum::DOM),
-      ToV8InspectorStringView(json));
+      v8_inspector::StringView(json.data(), json.size()));
 }
 
 bool InspectorDOMDebuggerAgent::HasBreakpoint(Node* node, int type) {
@@ -579,17 +585,15 @@ void InspectorDOMDebuggerAgent::PauseOnNativeEventIfNeeded(
     bool synchronous) {
   if (!event_data)
     return;
-  String json = event_data->serialize();
+  std::vector<uint8_t> json;
+  ConvertCBORToJSON(SpanFrom(event_data->Serialize()), &json);
+  v8_inspector::StringView json_view(json.data(), json.size());
+  auto listener = ToV8InspectorStringView(
+      v8_inspector::protocol::Debugger::API::Paused::ReasonEnum::EventListener);
   if (synchronous)
-    v8_session_->breakProgram(
-        ToV8InspectorStringView(v8_inspector::protocol::Debugger::API::Paused::
-                                    ReasonEnum::EventListener),
-        ToV8InspectorStringView(json));
+    v8_session_->breakProgram(listener, json_view);
   else
-    v8_session_->schedulePauseOnNextStatement(
-        ToV8InspectorStringView(v8_inspector::protocol::Debugger::API::Paused::
-                                    ReasonEnum::EventListener),
-        ToV8InspectorStringView(json));
+    v8_session_->schedulePauseOnNextStatement(listener, json_view);
 }
 
 std::unique_ptr<protocol::DictionaryValue>
@@ -664,11 +668,11 @@ void InspectorDOMDebuggerAgent::Did(const probe::ExecuteScript& probe) {
 }
 
 void InspectorDOMDebuggerAgent::Will(const probe::UserCallback& probe) {
-  String name = probe.name ? String(probe.name) : probe.atomicName;
-  if (probe.eventTarget) {
-    Node* node = probe.eventTarget->ToNode();
+  String name = probe.name ? String(probe.name) : probe.atomic_name;
+  if (probe.event_target) {
+    Node* node = probe.event_target->ToNode();
     String target_name =
-        node ? node->nodeName() : probe.eventTarget->InterfaceName();
+        node ? node->nodeName() : probe.event_target->InterfaceName();
     AllowNativeBreakpoint(name, &target_name, false);
     return;
   }
@@ -689,7 +693,7 @@ Response InspectorDOMDebuggerAgent::setXHRBreakpoint(const String& url) {
   else
     xhr_breakpoints_.Set(url, true);
   DidAddBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 Response InspectorDOMDebuggerAgent::removeXHRBreakpoint(const String& url) {
@@ -698,7 +702,7 @@ Response InspectorDOMDebuggerAgent::removeXHRBreakpoint(const String& url) {
   else
     xhr_breakpoints_.Clear(url);
   DidRemoveBreakpoint();
-  return Response::OK();
+  return Response::Success();
 }
 
 // Returns the breakpoint url if a match is found, or WTF::String().
@@ -722,11 +726,12 @@ void InspectorDOMDebuggerAgent::WillSendXMLHttpOrFetchNetworkRequest(
       protocol::DictionaryValue::create();
   event_data->setString("breakpointURL", breakpoint_url);
   event_data->setString("url", url);
-  String json = event_data->serialize();
+  std::vector<uint8_t> json;
+  ConvertCBORToJSON(SpanFrom(event_data->Serialize()), &json);
   v8_session_->breakProgram(
       ToV8InspectorStringView(
           v8_inspector::protocol::Debugger::API::Paused::ReasonEnum::XHR),
-      ToV8InspectorStringView(json));
+      v8_inspector::StringView(json.data(), json.size()));
 }
 
 void InspectorDOMDebuggerAgent::DidCreateCanvasContext() {
@@ -756,9 +761,9 @@ void InspectorDOMDebuggerAgent::DidRemoveBreakpoint() {
 void InspectorDOMDebuggerAgent::SetEnabled(bool enabled) {
   enabled_.Set(enabled);
   if (enabled)
-    instrumenting_agents_->addInspectorDOMDebuggerAgent(this);
+    instrumenting_agents_->AddInspectorDOMDebuggerAgent(this);
   else
-    instrumenting_agents_->removeInspectorDOMDebuggerAgent(this);
+    instrumenting_agents_->RemoveInspectorDOMDebuggerAgent(this);
 }
 
 void InspectorDOMDebuggerAgent::DidCommitLoadForLocalFrame(LocalFrame*) {

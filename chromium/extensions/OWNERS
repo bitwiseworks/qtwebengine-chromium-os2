@@ -12,6 +12,7 @@
 rdevlin.cronin@chromium.org
 lazyboy@chromium.org
 karandeepb@chromium.org
+dbertoni@chromium.org
 benwells@chromium.org
 rockot@google.com
 finnur@chromium.org
@@ -21,3 +22,4 @@ reillyg@chromium.org
 per-file *.xtb=file://tools/translation/TRANSLATION_OWNERS
 
 # COMPONENT: Platform>Extensions
+# TEAM: chromium-extensions@chromium.org

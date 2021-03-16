@@ -12,6 +12,7 @@
 #define VIDEO_VIDEO_QUALITY_OBSERVER_H_
 
 #include <stdint.h>
+
 #include <set>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include "api/video/video_codec_type.h"
 #include "api/video/video_content_type.h"
 #include "api/video/video_frame.h"
+#include "rtc_base/numerics/moving_average.h"
 #include "rtc_base/numerics/sample_counter.h"
 
 namespace webrtc {
@@ -30,7 +32,7 @@ class VideoQualityObserver {
   // Use either VideoQualityObserver::kBlockyQpThresholdVp8 or
   // VideoQualityObserver::kBlockyQpThresholdVp9.
   explicit VideoQualityObserver(VideoContentType content_type);
-  ~VideoQualityObserver();
+  ~VideoQualityObserver() = default;
 
   void OnDecodedFrame(const VideoFrame& frame,
                       absl::optional<uint8_t> qp,
@@ -40,9 +42,20 @@ class VideoQualityObserver {
 
   void OnStreamInactive();
 
- private:
+  uint32_t NumFreezes() const;
+  uint32_t NumPauses() const;
+  uint32_t TotalFreezesDurationMs() const;
+  uint32_t TotalPausesDurationMs() const;
+  uint32_t TotalFramesDurationMs() const;
+  double SumSquaredFrameDurationsSec() const;
+
   void UpdateHistograms();
 
+  static const uint32_t kMinFrameSamplesToDetectFreeze;
+  static const uint32_t kMinIncreaseForFreezeMs;
+  static const uint32_t kAvgInterframeDelaysWindowSizeFrames;
+
+ private:
   enum Resolution {
     Low = 0,
     Medium = 1,
@@ -55,12 +68,13 @@ class VideoQualityObserver {
   int64_t last_frame_pixels_;
   bool is_last_frame_blocky_;
   // Decoded timestamp of the last delayed frame.
-  int64_t last_unfreeze_time_;
-  rtc::SampleCounter render_interframe_delays_;
+  int64_t last_unfreeze_time_ms_;
+  rtc::MovingAverage render_interframe_delays_;
   double sum_squared_interframe_delays_secs_;
   // An inter-frame delay is counted as a freeze if it's significantly longer
   // than average inter-frame delay.
   rtc::SampleCounter freezes_durations_;
+  rtc::SampleCounter pauses_durations_;
   // Time between freezes.
   rtc::SampleCounter smooth_playback_durations_;
   // Counters for time spent in different resolutions. Time between each two

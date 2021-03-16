@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #include <cmath>
+#include <unordered_map>
 
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/trace_event_analyzer.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/tab_capture/tab_capture_performance_test_base.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -20,13 +22,9 @@
 #include "extensions/common/switches.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/perf/perf_test.h"
+#include "testing/perf/perf_result_reporter.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_switches.h"
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 namespace {
 
@@ -34,10 +32,61 @@ namespace {
 // contribute anything toward stable measurements: A brief moment of startup
 // "jank" is acceptable, and shutdown may result in missing events (since
 // render widget draws may stop before capture stops).
-constexpr size_t kTrimEvents = 24;  // 1 sec at 24fps, or 0.4 sec at 60 fps.
+constexpr int kTrimEvents = 24;  // 1 sec at 24fps, or 0.4 sec at 60 fps.
 
 // Minimum number of events required for a reasonable analysis.
-constexpr size_t kMinDataPoints = 100;  // ~5 sec at 24fps.
+constexpr int kMinDataPointsForFullRun = 100;  // ~5 sec at 24fps.
+
+// Minimum number of events required for data analysis in a non-performance run.
+constexpr int kMinDataPointsForQuickRun = 3;
+
+constexpr char kMetricPrefixTabCapture[] = "TabCapture.";
+constexpr char kMetricCaptureMs[] = "capture";
+constexpr char kMetricCaptureFailRatePercent[] = "capture_fail_rate";
+constexpr char kMetricCaptureLatencyMs[] = "capture_latency";
+constexpr char kMetricRendererFrameDrawMs[] = "renderer_frame_draw";
+
+constexpr char kEventCapture[] = "Capture";
+constexpr char kEventSuffixFailRate[] = "FailRate";
+constexpr char kEventSuffixLatency[] = "Latency";
+constexpr char kEventCommitAndDrawCompositorFrame[] =
+    "RenderWidget::DidCommitAndDrawCompositorFrame";
+const std::unordered_map<std::string, std::string> kEventToMetricMap(
+    {{kEventCapture, kMetricCaptureMs},
+     {std::string(kEventCapture) + kEventSuffixFailRate,
+      kMetricCaptureFailRatePercent},
+     {std::string(kEventCapture) + kEventSuffixLatency,
+      kMetricCaptureLatencyMs},
+     {kEventCommitAndDrawCompositorFrame, kMetricRendererFrameDrawMs}});
+
+perf_test::PerfResultReporter SetUpTabCaptureReporter(
+    const std::string& story) {
+  perf_test::PerfResultReporter reporter(kMetricPrefixTabCapture, story);
+  reporter.RegisterImportantMetric(kMetricCaptureMs, "ms");
+  reporter.RegisterImportantMetric(kMetricCaptureFailRatePercent, "percent");
+  reporter.RegisterImportantMetric(kMetricCaptureLatencyMs, "ms");
+  reporter.RegisterImportantMetric(kMetricRendererFrameDrawMs, "ms");
+  return reporter;
+}
+
+std::string GetMetricFromEventName(const std::string& event_name) {
+  auto iter = kEventToMetricMap.find(event_name);
+  return iter == kEventToMetricMap.end() ? event_name : iter->second;
+}
+
+// A convenience macro to run a gtest expectation in the "full performance run"
+// setting, or else a warning that something is not being entirely tested in the
+// "CQ run" setting. This is required because the test runs in the CQ may not be
+// long enough to collect sufficient tracing data; and, unfortunately, there's
+// nothing we can do about that.
+#define EXPECT_FOR_PERFORMANCE_RUN(expr)             \
+  do {                                               \
+    if (is_full_performance_run()) {                 \
+      EXPECT_TRUE(expr);                             \
+    } else if (!(expr)) {                            \
+      LOG(WARNING) << "Allowing failure: " << #expr; \
+    }                                                \
+  } while (false)
 
 enum TestFlags {
   kUseGpu = 1 << 0,              // Only execute test if --enable-gpu was given
@@ -65,6 +114,12 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
       suffix += "_webrtc";
     if (HasFlag(kSmallWindow))
       suffix += "_small";
+    // Make sure we always have a story.
+    if (suffix.size() == 0) {
+      suffix = "_baseline_story";
+    }
+    // Strip off the leading _.
+    suffix.erase(0, 1);
     return suffix;
   }
 
@@ -92,44 +147,32 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
     TabCapturePerformanceTestBase::SetUpCommandLine(command_line);
   }
 
-  static void GetTraceEvents(trace_analyzer::TraceAnalyzer* analyzer,
-                             const std::string& event_name,
-                             trace_analyzer::TraceEventVector* events) {
-    trace_analyzer::Query query =
-        trace_analyzer::Query::EventNameIs(event_name) &&
-        (trace_analyzer::Query::EventPhaseIs(TRACE_EVENT_PHASE_BEGIN) ||
-         trace_analyzer::Query::EventPhaseIs(TRACE_EVENT_PHASE_ASYNC_BEGIN) ||
-         trace_analyzer::Query::EventPhaseIs(TRACE_EVENT_PHASE_FLOW_BEGIN) ||
-         trace_analyzer::Query::EventPhaseIs(TRACE_EVENT_PHASE_INSTANT) ||
-         trace_analyzer::Query::EventPhaseIs(TRACE_EVENT_PHASE_COMPLETE));
-    analyzer->FindEvents(query, events);
-    VLOG(0) << "Retrieved " << events->size() << " events for: " << event_name;
-    ASSERT_LT(2 * kTrimEvents + kMinDataPoints, events->size())
-        << "Not enough events of type " << event_name << " found for analysis.";
-  }
-
   // Analyze and print the mean and stddev of how often events having the name
   // |event_name| occur.
   bool PrintRateResults(trace_analyzer::TraceAnalyzer* analyzer,
                         const std::string& event_name) {
     trace_analyzer::TraceEventVector events;
-    GetTraceEvents(analyzer, event_name, &events);
+    QueryTraceEvents(analyzer, event_name, &events);
 
     // Ignore some events for startup/setup/caching/teardown.
-    trace_analyzer::TraceEventVector rate_events(events.begin() + kTrimEvents,
-                                                 events.end() - kTrimEvents);
-    trace_analyzer::RateStats stats;
-    if (!GetRateStats(rate_events, &stats, NULL)) {
-      LOG(ERROR) << "GetRateStats failed";
+    const int trim_count = is_full_performance_run() ? kTrimEvents : 0;
+    if (static_cast<int>(events.size()) < trim_count * 2) {
+      LOG(ERROR) << "Fewer events for " << event_name
+                 << " than would be trimmed: " << events.size();
       return false;
     }
+    trace_analyzer::TraceEventVector rate_events(events.begin() + trim_count,
+                                                 events.end() - trim_count);
+    trace_analyzer::RateStats stats;
+    const bool have_rate_stats = GetRateStats(rate_events, &stats, nullptr);
     double mean_ms = stats.mean_us / 1000.0;
     double std_dev_ms = stats.standard_deviation_us / 1000.0;
     std::string mean_and_error = base::StringPrintf("%f,%f", mean_ms,
                                                     std_dev_ms);
-    perf_test::PrintResultMeanAndError(kTestName, GetSuffixForTestFlags(),
-                                       event_name, mean_and_error, "ms", true);
-    return true;
+    auto reporter = SetUpTabCaptureReporter(GetSuffixForTestFlags());
+    reporter.AddResultMeanAndError(GetMetricFromEventName(event_name),
+                                   mean_and_error);
+    return have_rate_stats;
   }
 
   // Analyze and print the mean and stddev of the amount of time between the
@@ -137,11 +180,17 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
   bool PrintLatencyResults(trace_analyzer::TraceAnalyzer* analyzer,
                            const std::string& event_name) {
     trace_analyzer::TraceEventVector events;
-    GetTraceEvents(analyzer, event_name, &events);
+    QueryTraceEvents(analyzer, event_name, &events);
 
     // Ignore some events for startup/setup/caching/teardown.
+    const int trim_count = is_full_performance_run() ? kTrimEvents : 0;
+    if (static_cast<int>(events.size()) < trim_count * 2) {
+      LOG(ERROR) << "Fewer events for " << event_name
+                 << " than would be trimmed: " << events.size();
+      return false;
+    }
     trace_analyzer::TraceEventVector events_to_analyze(
-        events.begin() + kTrimEvents, events.end() - kTrimEvents);
+        events.begin() + trim_count, events.end() - trim_count);
 
     // Compute mean and standard deviation of all capture latencies.
     double sum = 0.0;
@@ -156,15 +205,16 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
       sqr_sum += latency * latency;
       ++count;
     }
-    DCHECK_GE(static_cast<size_t>(count), kMinDataPoints);
-    const double mean_us = sum / count;
+    const double mean_us = (count == 0) ? NAN : (sum / count);
     const double std_dev_us =
-        sqrt(std::max(0.0, count * sqr_sum - sum * sum)) / count;
-    perf_test::PrintResultMeanAndError(
-        kTestName, GetSuffixForTestFlags(), event_name + "Latency",
-        base::StringPrintf("%f,%f", mean_us / 1000.0, std_dev_us / 1000.0),
-        "ms", true);
-    return true;
+        (count == 0)
+            ? NAN
+            : (sqrt(std::max(0.0, count * sqr_sum - sum * sum)) / count);
+    auto reporter = SetUpTabCaptureReporter(GetSuffixForTestFlags());
+    reporter.AddResultMeanAndError(
+        GetMetricFromEventName(event_name + kEventSuffixLatency),
+        base::StringPrintf("%f,%f", mean_us / 1000.0, std_dev_us / 1000.0));
+    return count > 0;
   }
 
   // Analyze and print the mean and stddev of how often events having the name
@@ -172,11 +222,17 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
   bool PrintFailRateResults(trace_analyzer::TraceAnalyzer* analyzer,
                             const std::string& event_name) {
     trace_analyzer::TraceEventVector events;
-    GetTraceEvents(analyzer, event_name, &events);
+    QueryTraceEvents(analyzer, event_name, &events);
 
     // Ignore some events for startup/setup/caching/teardown.
+    const int trim_count = is_full_performance_run() ? kTrimEvents : 0;
+    if (static_cast<int>(events.size()) < trim_count * 2) {
+      LOG(ERROR) << "Fewer events for " << event_name
+                 << " than would be trimmed: " << events.size();
+      return false;
+    }
     trace_analyzer::TraceEventVector events_to_analyze(
-        events.begin() + kTrimEvents, events.end() - kTrimEvents);
+        events.begin() + trim_count, events.end() - trim_count);
 
     // Compute percentage of begin→end events missing a success=true flag.
     double fail_percent = 100.0;
@@ -203,10 +259,11 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
       }
       fail_percent *= fail_count / events_to_analyze.size();
     }
-    perf_test::PrintResult(
-        kTestName, GetSuffixForTestFlags(), event_name + "FailRate",
-        base::StringPrintf("%f", fail_percent), "percent", true);
-    return true;
+    auto reporter = SetUpTabCaptureReporter(GetSuffixForTestFlags());
+    reporter.AddResult(
+        GetMetricFromEventName(event_name + kEventSuffixFailRate),
+        fail_percent);
+    return !events_to_analyze.empty();
   }
 
  protected:
@@ -215,15 +272,15 @@ class TabCapturePerformanceTest : public TabCapturePerformanceTestBase,
   std::string test_page_html_;
 
   // Naming of performance measurement written to stdout.
-  static const char kTestName[];
 };
-
-// static
-const char TabCapturePerformanceTest::kTestName[] = "TabCapturePerformance";
 
 }  // namespace
 
 IN_PROC_BROWSER_TEST_P(TabCapturePerformanceTest, Performance) {
+  if (!is_full_performance_run()) {
+    // TODO(crbug.com/1042457): Flaky failures across multiple CQ builders.
+    return;
+  }
   // Load the extension and test page, and tell the extension to start tab
   // capture.
   LoadExtension(GetApiTestDataDir()
@@ -238,11 +295,15 @@ IN_PROC_BROWSER_TEST_P(TabCapturePerformanceTest, Performance) {
       << (reason ? *reason : std::string("<MISSING REASON>"));
 
   // Observe the running browser for a while, collecting a trace.
-  const std::string json_events = TraceAndObserve("gpu,gpu.capture");
-
-  std::unique_ptr<trace_analyzer::TraceAnalyzer> analyzer;
-  analyzer.reset(trace_analyzer::TraceAnalyzer::Create(json_events));
-  analyzer->AssociateAsyncBeginEndEvents();
+  std::unique_ptr<trace_analyzer::TraceAnalyzer> analyzer = TraceAndObserve(
+      "gpu,gpu.capture",
+      std::vector<base::StringPiece>{kEventCommitAndDrawCompositorFrame,
+                                     kEventCapture},
+      // In a full performance run, events will be trimmed from both ends of
+      // trace. Otherwise, just require the bare-minimum to verify the stats
+      // calculations will work.
+      is_full_performance_run() ? (2 * kTrimEvents + kMinDataPointsForFullRun)
+                                : kMinDataPointsForQuickRun);
 
   // The printed result will be the average time between composites in the
   // renderer of the page being captured. This may not reach the full frame
@@ -251,29 +312,45 @@ IN_PROC_BROWSER_TEST_P(TabCapturePerformanceTest, Performance) {
   // Note that any changes to drawing or compositing in the renderer,
   // including changes to Blink (e.g., Canvas drawing), layout, etc.; will
   // have an impact on this result.
-  EXPECT_TRUE(PrintRateResults(
-      analyzer.get(), "RenderWidget::DidCommitAndDrawCompositorFrame"));
+  EXPECT_FOR_PERFORMANCE_RUN(
+      PrintRateResults(analyzer.get(), kEventCommitAndDrawCompositorFrame));
 
   // This prints out the average time between capture events in the browser
   // process. This should roughly match the renderer's draw+composite rate.
-  EXPECT_TRUE(PrintRateResults(analyzer.get(), "Capture"));
+  EXPECT_FOR_PERFORMANCE_RUN(PrintRateResults(analyzer.get(), kEventCapture));
 
   // Analyze mean/stddev of the capture latency. This is a measure of how long
   // each capture took, from initiation until read-back from the GPU into a
   // media::VideoFrame was complete. Lower is better.
-  EXPECT_TRUE(PrintLatencyResults(analyzer.get(), "Capture"));
+  EXPECT_FOR_PERFORMANCE_RUN(
+      PrintLatencyResults(analyzer.get(), kEventCapture));
 
   // Analyze percentage of failed captures. This measures how often captures
   // were initiated, but not completed successfully. Lower is better, and zero
   // is ideal.
-  EXPECT_TRUE(PrintFailRateResults(analyzer.get(), "Capture"));
+  EXPECT_FOR_PERFORMANCE_RUN(
+      PrintFailRateResults(analyzer.get(), kEventCapture));
 }
 
-// Note: First argument is optional and intentionally left blank.
-// (it's a prefix for the generated test cases)
-INSTANTIATE_TEST_CASE_P(,
-                        TabCapturePerformanceTest,
-                        testing::Values(0,
-                                        kUseGpu,
-                                        kTestThroughWebRTC,
-                                        kTestThroughWebRTC | kUseGpu));
+#if defined(OS_CHROMEOS)
+
+// On ChromeOS, software compositing is not an option, and using MSAN on
+// ChromeOS causes problems due to its hardware OpenGL library.
+#if !defined(MEMORY_SANITIZER)
+INSTANTIATE_TEST_SUITE_P(All,
+                         TabCapturePerformanceTest,
+                         testing::Values(kUseGpu,
+                                         kTestThroughWebRTC | kUseGpu));
+#endif
+
+#else
+
+// Run everything on non-ChromeOS platforms.
+INSTANTIATE_TEST_SUITE_P(All,
+                         TabCapturePerformanceTest,
+                         testing::Values(0,
+                                         kUseGpu,
+                                         kTestThroughWebRTC,
+                                         kTestThroughWebRTC | kUseGpu));
+
+#endif  // defined(OS_CHROMEOS)

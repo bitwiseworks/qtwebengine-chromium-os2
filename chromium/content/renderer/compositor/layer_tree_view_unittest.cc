@@ -6,19 +6,20 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "cc/layers/solid_color_layer.h"
 #include "cc/test/fake_layer_tree_frame_sink.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/test/test_ukm_recorder_factory.h"
 #include "cc/trees/layer_tree_host.h"
+#include "cc/trees/render_frame_metadata_observer.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/test/test_context_provider.h"
@@ -50,7 +51,7 @@ class FakeLayerTreeViewDelegate : public StubLayerTreeViewDelegate {
     // Subtract one cuz the current request has already been counted but should
     // not be included for this.
     if (num_requests_since_last_success_ - 1 < num_requests_before_success_) {
-      std::move(callback).Run(nullptr);
+      std::move(callback).Run(nullptr, nullptr);
       return;
     }
 
@@ -60,7 +61,8 @@ class FakeLayerTreeViewDelegate : public StubLayerTreeViewDelegate {
           GL_GUILTY_CONTEXT_RESET_ARB, GL_INNOCENT_CONTEXT_RESET_ARB);
     }
     std::move(callback).Run(
-        cc::FakeLayerTreeFrameSink::Create3d(std::move(context_provider)));
+        cc::FakeLayerTreeFrameSink::Create3d(std::move(context_provider)),
+        nullptr);
   }
 
   void Reset() {
@@ -256,7 +258,7 @@ class LayerTreeViewWithFrameSinkTrackingTest : public testing::Test {
   }
 
  protected:
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::TaskEnvironment task_environment_;
   cc::TestTaskGraphRunner test_task_graph_runner_;
   blink::scheduler::WebFakeThreadScheduler fake_thread_scheduler_;
   FakeLayerTreeViewDelegate layer_tree_view_delegate_;
@@ -331,7 +333,7 @@ TEST(LayerTreeViewTest, VisibilityTest) {
   // Test that LayerTreeView does not retry FrameSink request while
   // invisible.
 
-  base::test::ScopedTaskEnvironment task_environment;
+  base::test::TaskEnvironment task_environment;
 
   cc::TestTaskGraphRunner test_task_graph_runner;
   blink::scheduler::WebFakeThreadScheduler fake_thread_scheduler;
@@ -373,125 +375,6 @@ TEST(LayerTreeViewTest, VisibilityTest) {
     layer_tree_view.set_run_loop(nullptr);
     EXPECT_EQ(2, layer_tree_view.num_requests_sent());
   }
-}
-
-class NotifySwapTimesLayerTreeViewTest : public ::testing::Test {
- public:
-  NotifySwapTimesLayerTreeViewTest()
-      : layer_tree_view_(
-            &layer_tree_view_delegate_,
-            blink::scheduler::GetSingleThreadTaskRunnerForTesting(),
-            nullptr /* compositor_thread */,
-            &test_task_graph_runner_,
-            &fake_thread_scheduler_) {
-    layer_tree_view_delegate_.add_request();
-  }
-
-  void SetUp() override {
-    cc::LayerTreeSettings settings;
-    settings.single_thread_proxy_scheduler = false;
-    layer_tree_view_.Initialize(settings,
-                                std::make_unique<cc::TestUkmRecorderFactory>());
-
-    viz::ParentLocalSurfaceIdAllocator allocator;
-    layer_tree_view_.SetVisible(true);
-    allocator.GenerateId();
-    layer_tree_view_.SetViewportSizeAndScale(
-        gfx::Size(200, 100), 1.f,
-        allocator.GetCurrentLocalSurfaceIdAllocation());
-
-    auto root_layer = cc::SolidColorLayer::Create();
-    root_layer->SetBounds(gfx::Size(200, 100));
-    root_layer->SetBackgroundColor(SK_ColorGREEN);
-    layer_tree_view_.layer_tree_host()->SetRootLayer(root_layer);
-
-    auto color_layer = cc::SolidColorLayer::Create();
-    color_layer->SetBounds(gfx::Size(100, 100));
-    root_layer->AddChild(color_layer);
-    color_layer->SetBackgroundColor(SK_ColorRED);
-  }
-
-  base::TimeTicks CompositeAndReturnSwapTimestamp() {
-    base::TimeTicks swap_time;
-    base::RunLoop run_loop;
-    layer_tree_view_.NotifySwapTime(base::BindOnce(
-        [](base::OnceClosure callback, base::TimeTicks* swap_time,
-           blink::WebLayerTreeView::SwapResult result,
-           base::TimeTicks timestamp) {
-          *swap_time = timestamp;
-          std::move(callback).Run();
-        },
-        run_loop.QuitClosure(), &swap_time));
-    blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
-        FROM_HERE,
-        base::BindOnce(
-            &LayerTreeView::UpdateAllLifecyclePhasesAndCompositeForTesting,
-            base::Unretained(&layer_tree_view_), true /* do_raster */));
-    run_loop.Run();
-    return swap_time;
-  }
-
- protected:
-  base::test::ScopedTaskEnvironment task_environment_;
-  cc::TestTaskGraphRunner test_task_graph_runner_;
-  blink::scheduler::WebFakeThreadScheduler fake_thread_scheduler_;
-  FakeLayerTreeViewDelegate layer_tree_view_delegate_;
-  LayerTreeView layer_tree_view_;
-};
-
-TEST_F(NotifySwapTimesLayerTreeViewTest, PresentationTimestampValid) {
-  base::HistogramTester histograms;
-
-  base::TimeTicks swap_time = CompositeAndReturnSwapTimestamp();
-  ASSERT_FALSE(swap_time.is_null());
-
-  layer_tree_view_.DidPresentCompositorFrame(
-      1, gfx::PresentationFeedback(
-             swap_time + base::TimeDelta::FromMilliseconds(2),
-             base::TimeDelta::FromMilliseconds(16), 0));
-  EXPECT_THAT(histograms.GetAllSamples(
-                  "PageLoad.Internal.Renderer.PresentationTime.Valid"),
-              testing::ElementsAre(base::Bucket(true, 1)));
-  EXPECT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Internal.Renderer.PresentationTime.DeltaFromSwapTime"),
-      testing::ElementsAre(base::Bucket(2, 1)));
-}
-
-TEST_F(NotifySwapTimesLayerTreeViewTest, PresentationTimestampInvalid) {
-  base::HistogramTester histograms;
-
-  base::TimeTicks swap_time = CompositeAndReturnSwapTimestamp();
-  ASSERT_FALSE(swap_time.is_null());
-
-  layer_tree_view_.DidPresentCompositorFrame(1, gfx::PresentationFeedback());
-  EXPECT_THAT(histograms.GetAllSamples(
-                  "PageLoad.Internal.Renderer.PresentationTime.Valid"),
-              testing::ElementsAre(base::Bucket(false, 1)));
-  EXPECT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Internal.Renderer.PresentationTime.DeltaFromSwapTime"),
-      testing::IsEmpty());
-}
-
-TEST_F(NotifySwapTimesLayerTreeViewTest,
-       PresentationTimestampEarlierThanSwaptime) {
-  base::HistogramTester histograms;
-
-  base::TimeTicks swap_time = CompositeAndReturnSwapTimestamp();
-  ASSERT_FALSE(swap_time.is_null());
-
-  layer_tree_view_.DidPresentCompositorFrame(
-      1, gfx::PresentationFeedback(
-             swap_time - base::TimeDelta::FromMilliseconds(2),
-             base::TimeDelta::FromMilliseconds(16), 0));
-  EXPECT_THAT(histograms.GetAllSamples(
-                  "PageLoad.Internal.Renderer.PresentationTime.Valid"),
-              testing::ElementsAre(base::Bucket(false, 1)));
-  EXPECT_THAT(
-      histograms.GetAllSamples(
-          "PageLoad.Internal.Renderer.PresentationTime.DeltaFromSwapTime"),
-      testing::IsEmpty());
 }
 
 }  // namespace

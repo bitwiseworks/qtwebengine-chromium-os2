@@ -70,9 +70,9 @@ class TestDataDeviceDelegate : public DataDeviceDelegate {
   void OnDataDeviceDestroying(DataDevice* data_device) override {
     events_.push_back(DataEvent::kDestroy);
   }
-  DataOffer* OnDataOffer() override {
+  DataOffer* OnDataOffer(DataOffer::Purpose purpose) override {
     events_.push_back(DataEvent::kOffer);
-    data_offer_.reset(new DataOffer(new TestDataOfferDelegate));
+    data_offer_.reset(new DataOffer(new TestDataOfferDelegate, purpose));
     return data_offer_.get();
   }
   void OnEnter(Surface* surface,
@@ -90,7 +90,7 @@ class TestDataDeviceDelegate : public DataDeviceDelegate {
   void OnSelection(const DataOffer& data_offer) override {
     events_.push_back(DataEvent::kSelection);
   }
-  bool CanAcceptDataEventsForSurface(Surface* surface) override {
+  bool CanAcceptDataEventsForSurface(Surface* surface) const override {
     return can_accept_data_events_for_surface_;
   }
 

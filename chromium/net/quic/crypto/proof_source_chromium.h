@@ -14,7 +14,7 @@
 #include "crypto/rsa_private_key.h"
 #include "net/base/net_export.h"
 #include "net/cert/x509_certificate.h"
-#include "net/third_party/quic/core/crypto/proof_source.h"
+#include "net/third_party/quiche/src/quic/core/crypto/proof_source.h"
 
 namespace net {
 
@@ -37,7 +37,7 @@ class NET_EXPORT_PRIVATE ProofSourceChromium : public quic::ProofSource {
                 const std::string& hostname,
                 const std::string& server_config,
                 quic::QuicTransportVersion quic_version,
-                quic::QuicStringPiece chlo_hash,
+                quiche::QuicheStringPiece chlo_hash,
                 std::unique_ptr<Callback> callback) override;
 
   quic::QuicReferenceCountedPointer<Chain> GetCertChain(
@@ -48,7 +48,7 @@ class NET_EXPORT_PRIVATE ProofSourceChromium : public quic::ProofSource {
       const quic::QuicSocketAddress& server_address,
       const std::string& hostname,
       uint16_t signature_algorithm,
-      quic::QuicStringPiece in,
+      quiche::QuicheStringPiece in,
       std::unique_ptr<SignatureCallback> callback) override;
 
  private:
@@ -57,7 +57,7 @@ class NET_EXPORT_PRIVATE ProofSourceChromium : public quic::ProofSource {
       const std::string& hostname,
       const std::string& server_config,
       quic::QuicTransportVersion quic_version,
-      quic::QuicStringPiece chlo_hash,
+      quiche::QuicheStringPiece chlo_hash,
       quic::QuicReferenceCountedPointer<quic::ProofSource::Chain>* out_chain,
       quic::QuicCryptoProof* proof);
 

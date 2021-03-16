@@ -13,18 +13,18 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
+#include "device/fido/ctap_make_credential_request.h"
 #include "device/fido/device_operation.h"
 
 namespace device {
 
 class FidoDevice;
-class CtapMakeCredentialRequest;
 class AuthenticatorMakeCredentialResponse;
 class PublicKeyCredentialDescriptor;
 
 // Represents per device registration logic for U2F tokens. Handles regular U2F
 // registration as well as the logic of iterating key handles in the exclude
-// list and conducting check-only U2F sign to prevent duplicate registration.
+// list and conducting U2F signs to prevent duplicate registration.
 // U2fRegistrationOperation is owned by MakeCredentialTask and |request_| is
 // also owned by MakeCredentialTask.
 class COMPONENT_EXPORT(DEVICE_FIDO) U2fRegisterOperation
@@ -38,20 +38,29 @@ class COMPONENT_EXPORT(DEVICE_FIDO) U2fRegisterOperation
 
   // DeviceOperation:
   void Start() override;
+  void Cancel() override;
 
  private:
   using ExcludeListIterator =
       std::vector<PublicKeyCredentialDescriptor>::const_iterator;
 
-  void TryRegistration(bool is_duplicate_registration);
-  void OnRegisterResponseReceived(
-      bool is_duplicate_registration,
-      base::Optional<std::vector<uint8_t>> device_response);
+  void WinkAndTrySign();
+  void TrySign();
   void OnCheckForExcludedKeyHandle(
-      ExcludeListIterator it,
       base::Optional<std::vector<uint8_t>> device_response);
+  void WinkAndTryRegistration();
+  void TryRegistration();
+  void OnRegisterResponseReceived(
+      base::Optional<std::vector<uint8_t>> device_response);
+  const std::vector<uint8_t>& excluded_key_handle() const;
 
-  base::WeakPtrFactory<U2fRegisterOperation> weak_factory_;
+  size_t current_key_handle_index_ = 0;
+  bool canceled_ = false;
+  // probing_alternative_rp_id_ is true if |app_id| is set in |request()| and
+  // thus the exclude list is being probed a second time with the alternative RP
+  // ID.
+  bool probing_alternative_rp_id_ = false;
+  base::WeakPtrFactory<U2fRegisterOperation> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(U2fRegisterOperation);
 };

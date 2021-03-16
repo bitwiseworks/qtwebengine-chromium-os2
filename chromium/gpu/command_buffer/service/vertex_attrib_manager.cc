@@ -234,15 +234,16 @@ void VertexAttribManager::SetIsBound(bool is_bound) {
   }
 }
 
-bool VertexAttribManager::ValidateBindings(
-    const char* function_name,
-    GLES2Decoder* decoder,
-    FeatureInfo* feature_info,
-    BufferManager* buffer_manager,
-    Program* current_program,
-    GLuint max_vertex_accessed,
-    bool instanced,
-    GLsizei primcount) {
+bool VertexAttribManager::ValidateBindings(const char* function_name,
+                                           GLES2Decoder* decoder,
+                                           FeatureInfo* feature_info,
+                                           BufferManager* buffer_manager,
+                                           Program* current_program,
+                                           GLuint max_vertex_accessed,
+                                           bool instanced,
+                                           GLsizei primcount,
+                                           GLint basevertex,
+                                           GLuint baseinstance) {
   DCHECK(primcount);
   ErrorState* error_state = decoder->GetErrorState();
   // true if any enabled, used divisor is zero
@@ -280,14 +281,16 @@ bool VertexAttribManager::ValidateBindings(
     if (attrib_info) {
       divisor0 |= (attrib->divisor() == 0);
       have_enabled_active_attribs = true;
-      GLuint count = attrib->MaxVertexAccessed(primcount, max_vertex_accessed);
+      GLuint count = attrib->MaxVertexAccessed(primcount, max_vertex_accessed,
+                                               basevertex, baseinstance);
       // This attrib is used in the current program.
       if (!attrib->CanAccess(count)) {
         ERRORSTATE_SET_GL_ERROR(
             error_state, GL_INVALID_OPERATION, function_name,
             (std::string(
-                "attempt to access out of range vertices in attribute ") +
-             base::UintToString(attrib->index())).c_str());
+                 "attempt to access out of range vertices in attribute ") +
+             base::NumberToString(attrib->index()))
+                .c_str());
         return false;
       }
       if (use_client_side_arrays_for_stream_buffers) {

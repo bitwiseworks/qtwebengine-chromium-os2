@@ -7,7 +7,7 @@
 #include "base/atomicops.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "base/synchronization/cancellation_flag.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 
@@ -57,7 +57,7 @@ class ThreadCPUThrottler::ThrottlingThread final
 
   base::PlatformThreadHandle throttled_thread_handle_;
   base::PlatformThreadHandle throttling_thread_handle_;
-  base::CancellationFlag cancellation_flag_;
+  base::AtomicFlag cancellation_flag_;
 
   DISALLOW_COPY_AND_ASSIGN(ThrottlingThread);
 };
@@ -106,6 +106,9 @@ void ThreadCPUThrottler::ThrottlingThread::InstallSignalHandler() {
   struct sigaction sa;
   sa.sa_handler = &HandleSignal;
   sigemptyset(&sa.sa_mask);
+  // Block SIGPROF while our handler is running so that the V8 CPU profiler
+  // doesn't try to sample the stack while our signal handler is active.
+  sigaddset(&sa.sa_mask, SIGPROF);
   sa.sa_flags = SA_RESTART;
   signal_handler_installed_ =
       (sigaction(SIGUSR2, &sa, &old_signal_handler_) == 0);
@@ -164,15 +167,16 @@ void ThreadCPUThrottler::ThrottlingThread::Throttle() {
 }
 
 void ThreadCPUThrottler::ThrottlingThread::Start() {
-#ifdef USE_SIGNALS
+#if defined(USE_SIGNALS) || defined(OS_WIN)
+#if defined(USE_SIGNALS)
   InstallSignalHandler();
-#elif !defined(OS_WIN)
-  LOG(ERROR) << "CPU throttling is not supported.";
-  return;
 #endif
   if (!base::PlatformThread::Create(0, this, &throttling_thread_handle_)) {
     LOG(ERROR) << "Failed to create throttling thread.";
   }
+#else
+  LOG(ERROR) << "CPU throttling is not supported.";
+#endif
 }
 
 void ThreadCPUThrottler::ThrottlingThread::Sleep(base::TimeDelta duration) {

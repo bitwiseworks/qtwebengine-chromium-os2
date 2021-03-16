@@ -19,7 +19,6 @@
 #include "dawn_native/BindGroup.h"
 #include "dawn_native/ComputePipeline.h"
 #include "dawn_native/Forward.h"
-#include "dawn_native/InputState.h"
 #include "dawn_native/PipelineLayout.h"
 #include "dawn_native/RenderPipeline.h"
 
@@ -92,7 +91,8 @@ namespace dawn_native {
             bool matches = true;
 
             for (uint32_t i : IterateBitSet(mLastPipelineLayout->GetBindGroupLayoutsMask())) {
-                if (mLastPipelineLayout->GetBindGroupLayout(i) != mBindgroups[i]->GetLayout()) {
+                if (mBindgroups[i] == nullptr ||
+                    mLastPipelineLayout->GetBindGroupLayout(i) != mBindgroups[i]->GetLayout()) {
                     matches = false;
                     break;
                 }
@@ -106,8 +106,9 @@ namespace dawn_native {
         if (aspects[VALIDATION_ASPECT_VERTEX_BUFFERS]) {
             ASSERT(mLastRenderPipeline != nullptr);
 
-            auto requiredInputs = mLastRenderPipeline->GetInputState()->GetInputsSetMask();
-            if ((mInputsSet & requiredInputs) == requiredInputs) {
+            const std::bitset<kMaxVertexBuffers>& requiredVertexBuffers =
+                mLastRenderPipeline->GetVertexBufferSlotsUsed();
+            if ((mVertexBufferSlotsUsed & requiredVertexBuffers) == requiredVertexBuffers) {
                 mAspects.set(VALIDATION_ASPECT_VERTEX_BUFFERS);
             }
         }
@@ -152,10 +153,8 @@ namespace dawn_native {
         mAspects.set(VALIDATION_ASPECT_INDEX_BUFFER);
     }
 
-    void CommandBufferStateTracker::SetVertexBuffer(uint32_t start, uint32_t count) {
-        for (uint32_t i = 0; i < count; ++i) {
-            mInputsSet.set(start + i);
-        }
+    void CommandBufferStateTracker::SetVertexBuffer(uint32_t slot) {
+        mVertexBufferSlotsUsed.set(slot);
     }
 
     void CommandBufferStateTracker::SetPipelineCommon(PipelineBase* pipeline) {

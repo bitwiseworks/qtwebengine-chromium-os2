@@ -83,7 +83,7 @@ static const double rate_thresh_mult[FRAME_SCALE_STEPS] = { 1.0, 2.0 };
 static const double rcf_mult[FRAME_SCALE_STEPS] = { 1.0, 2.0 };
 
 typedef struct {
-  // Rate targetting variables
+  // Rate targeting variables
   int base_frame_target;  // A baseline frame target before adjustment
                           // for previous under or over shoot.
   int this_frame_target;  // Actual frame target after rc adjustment.
@@ -197,6 +197,12 @@ typedef struct {
   int ext_use_post_encode_drop;
 
   int damped_adjustment[RATE_FACTOR_LEVELS];
+  double arf_active_best_quality_adjustment_factor;
+  int arf_increase_active_best_quality;
+
+  int preserve_arf_as_gld;
+  int preserve_next_arf_as_gld;
+  int show_arf_as_gld;
 } RATE_CONTROL;
 
 struct VP9_COMP;
@@ -261,6 +267,8 @@ void vp9_rc_update_rate_correction_factors(struct VP9_COMP *cpi);
 // Post encode drop for CBR mode.
 int post_encode_drop_cbr(struct VP9_COMP *cpi, size_t *size);
 
+int vp9_test_drop(struct VP9_COMP *cpi);
+
 // Decide if we should drop this frame: For 1-pass CBR.
 // Changes only the decimation count in the rate control structure
 int vp9_rc_drop_frame(struct VP9_COMP *cpi);
@@ -321,6 +329,8 @@ int vp9_encodedframe_overshoot(struct VP9_COMP *cpi, int frame_size, int *q);
 void vp9_configure_buffer_updates(struct VP9_COMP *cpi, int gf_group_index);
 
 void vp9_estimate_qp_gop(struct VP9_COMP *cpi);
+
+void vp9_compute_frame_low_motion(struct VP9_COMP *const cpi);
 
 #ifdef __cplusplus
 }  // extern "C"

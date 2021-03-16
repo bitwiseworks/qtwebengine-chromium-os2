@@ -24,7 +24,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_STYLE_ATTRIBUTE_MUTATION_SCOPE_H_
 
 #include "third_party/blink/renderer/platform/heap/member.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -51,8 +51,8 @@ class StyleAttributeMutationScope {
   static bool should_notify_inspector_;
   static bool should_deliver_;
 
-  Member<MutationObserverInterestGroup> mutation_recipients_;
-  Member<MutationRecord> mutation_;
+  MutationObserverInterestGroup* mutation_recipients_ = nullptr;
+  MutationRecord* mutation_ = nullptr;
   AtomicString old_value_;
   DISALLOW_COPY_AND_ASSIGN(StyleAttributeMutationScope);
 };

@@ -22,14 +22,14 @@ db close
 sqlite3_shutdown
 sqlite3_config_uri 1
 reset_db
-
+ 
 # Create a simple RBU database. That expects to write to a table:
 #
 #   CREATE TABLE t1(a PRIMARY KEY, b, c);
 #
 proc create_rbu1 {filename} {
   forcedelete $filename
-  sqlite3 rbu1 $filename
+  sqlite3 rbu1 $filename  
   rbu1 eval {
     CREATE TABLE data_t1(a, b, c, rbu_control);
     INSERT INTO data_t1 VALUES('a', 'one', 1, 0);

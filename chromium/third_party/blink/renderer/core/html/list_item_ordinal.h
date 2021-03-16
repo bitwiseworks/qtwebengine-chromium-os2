@@ -39,7 +39,7 @@ class LayoutObject;
 class Node;
 
 // Represents an "ordinal value" and its related algorithms:
-// https://html.spec.whatwg.org/multipage/grouping-content.html#ordinal-value
+// https://html.spec.whatwg.org/C/#ordinal-value
 //
 // The ordinal value is determined by the DOM tree order. However, since any
 // elements with 'display: list-item' can be list items, the layout tree
@@ -60,12 +60,6 @@ class CORE_EXPORT ListItemOrdinal {
   base::Optional<int> ExplicitValue() const;
   void SetExplicitValue(int, const Node&);
   void ClearExplicitValue(const Node&);
-
-  // Get/set whether this item is in a list or not.
-  bool NotInList() const { return not_in_list_; }
-  void SetNotInList(bool, const Node&);
-  bool NotInListChanged() const { return not_in_list_changed_; }
-  void SetNotInListChanged(bool);
 
   static bool IsList(const Node&);
   static bool IsListItem(const Node&);
@@ -113,8 +107,6 @@ class CORE_EXPORT ListItemOrdinal {
 
   mutable int value_ = 0;
   mutable unsigned type_ : 2;  // ValueType
-  unsigned not_in_list_ : 1;
-  unsigned not_in_list_changed_ : 1;
 };
 
 }  // namespace blink

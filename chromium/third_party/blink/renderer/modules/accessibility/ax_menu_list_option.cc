@@ -25,18 +25,18 @@
 
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_option.h"
 
-#include "SkMatrix44.h"
 #include "third_party/blink/renderer/core/aom/accessible_node.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_menu_list_popup.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
+#include "third_party/skia/include/core/SkMatrix44.h"
 
 namespace blink {
 
 AXMenuListOption::AXMenuListOption(HTMLOptionElement* element,
                                    AXObjectCacheImpl& ax_object_cache)
-    : AXMockObject(ax_object_cache), element_(element) {}
+    : AXNodeObject(element, ax_object_cache), element_(element) {}
 
 AXMenuListOption::~AXMenuListOption() {
   DCHECK(!element_);
@@ -44,7 +44,7 @@ AXMenuListOption::~AXMenuListOption() {
 
 void AXMenuListOption::Detach() {
   element_ = nullptr;
-  AXMockObject::Detach();
+  AXNodeObject::Detach();
 }
 
 LocalFrameView* AXMenuListOption::DocumentFrameView() const {
@@ -73,7 +73,7 @@ AXObject* AXMenuListOption::ComputeParent() const {
   Node* node = GetNode();
   if (!node)
     return nullptr;
-  HTMLSelectElement* select = ToHTMLOptionElement(node)->OwnerSelectElement();
+  auto* select = To<HTMLOptionElement>(node)->OwnerSelectElement();
   if (!select)
     return nullptr;
   AXObject* select_ax_object = AXObjectCache().GetOrCreate(select);
@@ -81,17 +81,17 @@ AXObject* AXMenuListOption::ComputeParent() const {
     return nullptr;
 
   // This happens if the <select> is not rendered. Return it and move on.
-  if (!select_ax_object->IsMenuList())
+  auto* menu_list = DynamicTo<AXMenuList>(select_ax_object);
+  if (!menu_list)
     return select_ax_object;
 
-  AXMenuList* menu_list = ToAXMenuList(select_ax_object);
   if (menu_list->HasChildren()) {
     const auto& child_objects = menu_list->Children();
     if (child_objects.IsEmpty())
       return nullptr;
     DCHECK_EQ(child_objects.size(), 1UL);
-    DCHECK(child_objects[0]->IsMenuListPopup());
-    ToAXMenuListPopup(child_objects[0].Get())->UpdateChildrenIfNecessary();
+    DCHECK(IsA<AXMenuListPopup>(child_objects[0].Get()));
+    To<AXMenuListPopup>(child_objects[0].Get())->UpdateChildrenIfNecessary();
   } else {
     menu_list->UpdateChildrenIfNecessary();
   }
@@ -141,6 +141,22 @@ AccessibilitySelectedState AXMenuListOption::IsSelected() const {
                                              : kSelectedStateFalse);
 }
 
+bool AXMenuListOption::OnNativeClickAction() {
+  if (!element_)
+    return false;
+
+  // Clicking on an option within a menu list should first select that item,
+  // then toggle whether the menu list is showing.
+  element_->SetSelected(true);
+
+  // Calling OnNativeClickAction on the parent select element will toggle
+  // it open or closed.
+  if (IsA<AXMenuListPopup>(ParentObject()))
+    return ParentObject()->OnNativeClickAction();
+
+  return AXNodeObject::OnNativeClickAction();
+}
+
 bool AXMenuListOption::OnNativeSetSelectedAction(bool b) {
   if (!element_ || !CanSetSelectedAttribute())
     return false;
@@ -165,7 +181,7 @@ void AXMenuListOption::GetRelativeBounds(AXObject** out_container,
   AXObject* parent = ParentObject();
   if (!parent)
     return;
-  DCHECK(parent->IsMenuListPopup());
+  DCHECK(IsA<AXMenuListPopup>(parent));
 
   AXObject* grandparent = parent->ParentObject();
   if (!grandparent)
@@ -212,15 +228,15 @@ HTMLSelectElement* AXMenuListOption::ParentSelectNode() const {
   if (!GetNode())
     return nullptr;
 
-  if (auto* option = ToHTMLOptionElementOrNull(GetNode()))
+  if (auto* option = DynamicTo<HTMLOptionElement>(GetNode()))
     return option->OwnerSelectElement();
 
   return nullptr;
 }
 
-void AXMenuListOption::Trace(blink::Visitor* visitor) {
+void AXMenuListOption::Trace(Visitor* visitor) {
   visitor->Trace(element_);
-  AXMockObject::Trace(visitor);
+  AXNodeObject::Trace(visitor);
 }
 
 }  // namespace blink

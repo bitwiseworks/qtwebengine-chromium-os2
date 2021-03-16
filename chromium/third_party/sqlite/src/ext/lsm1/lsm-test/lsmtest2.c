@@ -1,6 +1,6 @@
 
 /*
-** This file contains tests related to recovery following application
+** This file contains tests related to recovery following application 
 ** and system crashes (power failures) while writing to the database.
 */
 
@@ -20,7 +20,7 @@ struct Cksum {
 ** tdb_scan() callback used by testCksumDatabase()
 */
 static void scanCksumDb(
-  void *pCtx,
+  void *pCtx, 
   void *pKey, int nKey,
   void *pVal, int nVal
 ){
@@ -42,7 +42,7 @@ static void scanCksumDb(
 ** tdb_scan() callback used by testCountDatabase()
 */
 static void scanCountDb(
-  void *pCtx,
+  void *pCtx, 
   void *pKey, int nKey,
   void *pVal, int nVal
 ){
@@ -77,7 +77,7 @@ int testCksumDatabase(
   Cksum cksum;
   memset(&cksum, 0, sizeof(Cksum));
   tdb_scan(pDb, (void *)&cksum, 0, 0, 0, 0, 0, scanCksumDb);
-  sprintf(zOut, "%d %x %x",
+  sprintf(zOut, "%d %x %x", 
       cksum.nRow, (u32)cksum.cksum1, (u32)cksum.cksum2
   );
   assert( strlen(zOut)<TEST_CKSUM_BYTES );
@@ -113,7 +113,7 @@ void testCompareStr(const char *z1, const char *z2, int *pRc){
 ** This function is a no-op if *pRc is not 0 when it is called.
 **
 ** Otherwise, the two integers i1 and i2 are compared. If they are equal,
-** the function returns without doing anything. Otherwise, an error message
+** the function returns without doing anything. Otherwise, an error message 
 ** is printed, *pRc is set to 1 and the test_failed() function called.
 */
 void testCompareInt(int i1, int i2, int *pRc){
@@ -138,7 +138,7 @@ void testCaseStart(int *pRc, char *zFmt, ...){
 ** This function is a no-op if *pRc is non-zero when it is called. Zero
 ** is returned in this case.
 **
-** Otherwise, the zFmt (a printf style format string) and following arguments
+** Otherwise, the zFmt (a printf style format string) and following arguments 
 ** are used to create a test case name. If zPattern is NULL or a glob pattern
 ** that matches the test case name, 1 is returned and the test case started.
 ** Otherwise, zero is returned and the test case does not start.
@@ -306,7 +306,7 @@ static void crash_test1(int bCompress, int *pRc){
   char *zCfg;
 
   const char *azConfig[2] = {
-    "page_size=1024 block_size=65536 autoflush=16384 safety=2 mmap=0",
+    "page_size=1024 block_size=65536 autoflush=16384 safety=2 mmap=0", 
     "page_size=1024 block_size=65536 autoflush=16384 safety=2 "
     " compression=1 mmap=0"
   };
@@ -345,7 +345,7 @@ static void crash_test1(int bCompress, int *pRc){
     tdb_close(pDb);
 
     /* Check that the database content is still correct */
-    testCompareCksumLsmdb(DBNAME,
+    testCompareCksumLsmdb(DBNAME, 
         bCompress, testCksumArrayGet(pCksumDb, nRow), 0, pRc);
   }
 

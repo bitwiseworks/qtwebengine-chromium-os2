@@ -7,11 +7,11 @@ import json
 
 from blinkpy.common.checkout.git_mock import MockGit
 from blinkpy.common.host_mock import MockHost
-from blinkpy.common.net.buildbot import Build
 from blinkpy.common.net.git_cl import CLStatus
 from blinkpy.common.net.git_cl import TryJobStatus
 from blinkpy.common.net.git_cl_mock import MockGitCL
 from blinkpy.common.net.network_transaction import NetworkTimeout
+from blinkpy.common.net.results_fetcher import Build
 from blinkpy.common.path_finder import RELATIVE_WEB_TESTS
 from blinkpy.common.system.executive_mock import MockCall
 from blinkpy.common.system.executive_mock import MockExecutive
@@ -188,6 +188,45 @@ class TestImporterTest(LoggingTestCase):
             importer.git_cl.calls,
             [['git', 'cl', 'try'], ['git', 'cl', 'set-close']])
 
+    def test_submit_cl_timeout_and_already_merged(self):
+        # Here we simulate a case where we timeout waiting for the CQ to submit a
+        # CL because we miss the notification that it was merged. We then get an
+        # error when trying to close the CL because it's already been merged.
+        host = MockHost()
+        host.filesystem.write_text_file(MOCK_WEB_TESTS + 'W3CImportExpectations', '')
+        importer = TestImporter(host)
+        # Define some error text that looks like a typical ScriptError.
+        git_error_text = (
+            'This is a git Script Error\n'
+            '...there is usually a stack trace here with some calls\n'
+            '...and maybe other calls\n'
+            'And finally, there is the exception:\n'
+            'GerritError: Conflict: change is merged\n'
+        )
+        importer.git_cl = MockGitCL(
+            host, status='lgtm', git_error_output={'set-close': git_error_text},
+            # Only the latest job for each builder is counted.
+            try_job_results={
+                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'FAILURE'),
+                Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS')})
+        importer.git_cl.wait_for_closed_status = lambda: False
+        success = importer.run_commit_queue_for_cl()
+        # Since the CL is already merged, we absorb the error and treat it as success.
+        self.assertTrue(success)
+        self.assertLog([
+            'INFO: Triggering CQ try jobs.\n',
+            'INFO: All jobs finished.\n',
+            'INFO: CQ appears to have passed; trying to commit.\n',
+            'ERROR: Cannot submit CL; aborting.\n',
+            'ERROR: CL is already merged; treating as success.\n',
+        ])
+        self.assertEqual(importer.git_cl.calls, [
+            ['git', 'cl', 'try'],
+            ['git', 'cl', 'upload', '-f', '--send-mail'],
+            ['git', 'cl', 'set-commit'],
+            ['git', 'cl', 'set-close'],
+        ])
+
     def test_apply_exportable_commits_locally(self):
         # TODO(robertma): Consider using MockLocalWPT.
         host = MockHost()
@@ -239,23 +278,47 @@ class TestImporterTest(LoggingTestCase):
     def test_update_all_test_expectations_files(self):
         host = MockHost()
         host.filesystem.files[MOCK_WEB_TESTS + 'TestExpectations'] = (
-            'Bug(test) some/test/a.html [ Failure ]\n'
-            'Bug(test) some/test/b.html [ Failure ]\n'
-            'Bug(test) some/test/c.html [ Failure ]\n')
+            '# results: [ Failure ]\n'
+            'some/test/a.html [ Failure ]\n'
+            'some/test/b.html [ Failure ]\n'
+            'ignore/globs/* [ Failure ]\n'
+            'some/test/c\*.html [ Failure ]\n'
+            # default test case, line below should exist in new file
+            'some/test/d.html [ Failure ]\n')
+        host.filesystem.files[MOCK_WEB_TESTS + 'WebDriverExpectations'] = (
+            '# results: [ Failure ]\n'
+            'external/wpt/webdriver/some/test/a\*.html>>foo\* [ Failure ]\n'
+            'external/wpt/webdriver/some/test/a\*.html>>bar [ Failure ]\n'
+            'external/wpt/webdriver/some/test/b.html>>foo [ Failure ]\n'
+            'external/wpt/webdriver/some/test/c.html>>a [ Failure ]\n'
+            # default test case, line below should exist in new file
+            'external/wpt/webdriver/some/test/d.html>>foo [ Failure ]\n')
         host.filesystem.files[MOCK_WEB_TESTS + 'VirtualTestSuites'] = '[]'
         host.filesystem.files[MOCK_WEB_TESTS + 'new/a.html'] = ''
         host.filesystem.files[MOCK_WEB_TESTS + 'new/b.html'] = ''
         importer = TestImporter(host)
-        deleted_tests = ['some/test/b.html']
+        deleted_tests = ['some/test/b.html', 'external/wpt/webdriver/some/test/b.html']
         renamed_test_pairs = {
             'some/test/a.html': 'new/a.html',
-            'some/test/c.html': 'new/c.html',
+            'some/test/c*.html': 'new/c*.html',
+            'external/wpt/webdriver/some/test/a*.html': 'old/a*.html',
+            'external/wpt/webdriver/some/test/c.html': 'old/c.html',
         }
         importer.update_all_test_expectations_files(deleted_tests, renamed_test_pairs)
         self.assertMultiLineEqual(
             host.filesystem.read_text_file(MOCK_WEB_TESTS + 'TestExpectations'),
-            ('Bug(test) new/a.html [ Failure ]\n'
-             'Bug(test) new/c.html [ Failure ]\n'))
+            ('# results: [ Failure ]\n'
+             'new/a.html [ Failure ]\n'
+             'ignore/globs/* [ Failure ]\n'
+             'new/c\*.html [ Failure ]\n'
+             'some/test/d.html [ Failure ]\n'))
+        self.assertMultiLineEqual(
+            host.filesystem.read_text_file(MOCK_WEB_TESTS + 'WebDriverExpectations'),
+            ('# results: [ Failure ]\n'
+             'old/a\*.html>>foo\* [ Failure ]\n'
+             'old/a\*.html>>bar [ Failure ]\n'
+             'old/c.html>>a [ Failure ]\n'
+             'external/wpt/webdriver/some/test/d.html>>foo [ Failure ]\n'))
 
     def test_get_directory_owners(self):
         host = MockHost()
@@ -306,19 +369,6 @@ class TestImporterTest(LoggingTestCase):
             '/chromium/src/+/master/docs/testing/web_platform_tests.md\n\n'
             'NOAUTOREVERT=true\n'
             'No-Export: true')
-        self.assertEqual(host.executive.calls, [['git', 'log', '-1', '--format=%B']])
-
-    def test_cl_description_with_environ_variables(self):
-        host = MockHost()
-        host.executive = MockExecutive(output='Last commit message\n')
-        importer = TestImporter(host)
-        importer.host.environ['BUILDBOT_MASTERNAME'] = 'my.master'
-        importer.host.environ['BUILDBOT_BUILDERNAME'] = 'b'
-        importer.host.environ['BUILDBOT_BUILDNUMBER'] = '123'
-        description = importer._cl_description(directory_owners={})
-        self.assertIn(
-            'Build: https://ci.chromium.org/buildbot/my.master/b/123\n\n',
-            description)
         self.assertEqual(host.executive.calls, [['git', 'log', '-1', '--format=%B']])
 
     def test_cl_description_moves_noexport_tag(self):
@@ -445,6 +495,13 @@ class TestImporterTest(LoggingTestCase):
         self.assertEqual('external@example.com', importer.tbr_reviewer())
         self.assertLog([])
 
+    def test_tbr_reviewer_skips_non_committer(self):
+        host = MockHost()
+        importer = TestImporter(host)
+        importer._fetch_ecosystem_infra_sheriff_username = lambda: 'kyleju'
+        self.assertEqual(TBR_FALLBACK, importer.tbr_reviewer())
+        self.assertLog(['WARNING: Cannot TBR by kyleju: not a committer\n'])
+
     def test_generate_manifest_successful_run(self):
         # This test doesn't test any aspect of the real manifest script, it just
         # asserts that TestImporter._generate_manifest would invoke the script.
@@ -459,7 +516,7 @@ class TestImporterTest(LoggingTestCase):
                     'python',
                     '/mock-checkout/third_party/blink/tools/blinkpy/third_party/wpt/wpt/wpt',
                     'manifest',
-                    '--work',
+                    '--no-download',
                     '--tests-root',
                     MOCK_WEB_TESTS + 'external/wpt',
                 ]

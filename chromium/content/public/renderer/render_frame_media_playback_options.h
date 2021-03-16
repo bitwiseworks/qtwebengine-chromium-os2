@@ -6,6 +6,7 @@
 #define CONTENT_PUBLIC_RENDERER_RENDER_FRAME_MEDIA_PLAYBACK_OPTIONS_H_
 
 #include "build/build_config.h"
+#include "content/public/common/media_playback_renderer_type.mojom.h"
 
 namespace content {
 
@@ -28,6 +29,17 @@ struct RenderFrameMediaPlaybackOptions {
 
   // Whether background video optimization is supported on current platform.
   bool is_background_video_track_optimization_supported = true;
+
+  // Which renderer should be used in this media playback.
+  mojom::RendererType renderer_type = mojom::RendererType::DEFAULT_RENDERER;
+
+  bool is_mojo_renderer_enabled() const {
+    return renderer_type == mojom::RendererType::MOJO_RENDERER;
+  }
+
+  bool is_remoting_renderer_enabled() const {
+    return renderer_type == mojom::RendererType::REMOTING_RENDERER;
+  }
 };
 
 }  // namespace content

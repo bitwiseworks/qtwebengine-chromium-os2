@@ -11,7 +11,7 @@ namespace blink {
 
 StaleRevalidationResourceClient::StaleRevalidationResourceClient(
     Resource* stale_resource)
-    : start_time_(CurrentTimeTicks()), stale_resource_(stale_resource) {}
+    : start_time_(base::TimeTicks::Now()), stale_resource_(stale_resource) {}
 
 StaleRevalidationResourceClient::~StaleRevalidationResourceClient() = default;
 
@@ -21,15 +21,15 @@ void StaleRevalidationResourceClient::NotifyFinished(Resource* resource) {
     GetMemoryCache()->Remove(stale_resource_);
   ClearResource();
 
-  TimeTicks finish_time = resource->LoadFinishTime();
-  if (!finish_time.is_null()) {
+  base::TimeTicks response_end = resource->LoadResponseEnd();
+  if (!response_end.is_null()) {
     UMA_HISTOGRAM_LONG_TIMES(
         "Blink.ResourceFetcher.StaleWhileRevalidateDuration",
-        finish_time - start_time_);
+        response_end - start_time_);
   }
 }
 
-void StaleRevalidationResourceClient::Trace(blink::Visitor* visitor) {
+void StaleRevalidationResourceClient::Trace(Visitor* visitor) {
   visitor->Trace(stale_resource_);
   RawResourceClient::Trace(visitor);
 }

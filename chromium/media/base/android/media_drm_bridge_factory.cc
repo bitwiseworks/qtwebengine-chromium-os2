@@ -13,12 +13,10 @@
 
 namespace media {
 
-MediaDrmBridgeFactory::MediaDrmBridgeFactory(
-    const CreateFetcherCB& create_fetcher_cb,
-    const CreateStorageCB& create_storage_cb)
-    : create_fetcher_cb_(create_fetcher_cb),
-      create_storage_cb_(create_storage_cb),
-      weak_factory_(this) {
+MediaDrmBridgeFactory::MediaDrmBridgeFactory(CreateFetcherCB create_fetcher_cb,
+                                             CreateStorageCB create_storage_cb)
+    : create_fetcher_cb_(std::move(create_fetcher_cb)),
+      create_storage_cb_(std::move(create_storage_cb)) {
   DCHECK(create_fetcher_cb_);
   DCHECK(create_storage_cb_);
 }
@@ -36,7 +34,7 @@ void MediaDrmBridgeFactory::Create(
     const SessionClosedCB& session_closed_cb,
     const SessionKeysChangeCB& session_keys_change_cb,
     const SessionExpirationUpdateCB& session_expiration_update_cb,
-    const CdmCreatedCB& cdm_created_cb) {
+    CdmCreatedCB cdm_created_cb) {
   DCHECK(MediaDrmBridge::IsKeySystemSupported(key_system));
   DCHECK(MediaDrmBridge::IsAvailable());
   DCHECK(!security_origin.opaque());
@@ -57,7 +55,7 @@ void MediaDrmBridgeFactory::Create(
         key_system +
         " may require use_video_overlay_for_embedded_encrypted_video";
     NOTREACHED() << error_message;
-    cdm_created_cb.Run(nullptr, error_message);
+    std::move(cdm_created_cb).Run(nullptr, error_message);
     return;
   }
 
@@ -65,14 +63,14 @@ void MediaDrmBridgeFactory::Create(
   session_closed_cb_ = session_closed_cb;
   session_keys_change_cb_ = session_keys_change_cb;
   session_expiration_update_cb_ = session_expiration_update_cb;
-  cdm_created_cb_ = cdm_created_cb;
+  cdm_created_cb_ = std::move(cdm_created_cb);
 
   // MediaDrmStorage may be lazy created in MediaDrmStorageBridge.
   storage_ = std::make_unique<MediaDrmStorageBridge>();
 
-  // TODO(xhwang): We should always try per-origin provisioning as long as it's
-  // supported regardless of whether persistent license is enabled or not.
-  if (!MediaDrmBridge::IsPersistentLicenseTypeSupported(key_system)) {
+  if (!MediaDrmBridge::IsPerOriginProvisioningSupported()) {
+    // Per-origin provisioning isn't supported, so proceed without specifying an
+    // origin ID.
     CreateMediaDrmBridge("");
     return;
   }
@@ -83,20 +81,18 @@ void MediaDrmBridgeFactory::Create(
                      weak_factory_.GetWeakPtr()));
 }
 
-void MediaDrmBridgeFactory::OnStorageInitialized() {
+void MediaDrmBridgeFactory::OnStorageInitialized(bool success) {
   DCHECK(storage_);
+  DVLOG(2) << __func__ << ": success = " << success
+           << ", origin_id = " << storage_->origin_id();
 
-  // MediaDrmStorageBridge should always return a valid origin ID after
-  // initialize. Otherwise the pipe is broken and we should not create
-  // MediaDrmBridge here.
-  auto origin_id = storage_->origin_id();
-  DVLOG(2) << __func__ << ": origin_id = " << origin_id;
-  if (origin_id.empty()) {
+  // MediaDrmStorageBridge should only be created on a successful Initialize().
+  if (!success) {
     std::move(cdm_created_cb_).Run(nullptr, "Cannot fetch origin ID");
     return;
   }
 
-  CreateMediaDrmBridge(origin_id);
+  CreateMediaDrmBridge(storage_->origin_id());
 }
 
 void MediaDrmBridgeFactory::CreateMediaDrmBridge(const std::string& origin_id) {
@@ -116,7 +112,7 @@ void MediaDrmBridgeFactory::CreateMediaDrmBridge(const std::string& origin_id) {
     return;
   }
 
-  media_drm_bridge_->SetMediaCryptoReadyCB(base::BindRepeating(
+  media_drm_bridge_->SetMediaCryptoReadyCB(base::BindOnce(
       &MediaDrmBridgeFactory::OnMediaCryptoReady, weak_factory_.GetWeakPtr()));
 }
 

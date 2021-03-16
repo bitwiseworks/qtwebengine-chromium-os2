@@ -25,13 +25,8 @@ namespace extensions {
 
 class Extension;
 class ExtensionAPI;
-class InfoMap;
-class IOThreadExtensionMessageFilter;
 class ProcessMap;
 class WindowController;
-
-// A factory function for creating new ExtensionFunction instances.
-typedef ExtensionFunction* (*ExtensionFunctionFactory)();
 
 // ExtensionFunctionDispatcher receives requests to execute functions from
 // Chrome extensions running in a RenderFrameHost and dispatches them to the
@@ -70,16 +65,6 @@ class ExtensionFunctionDispatcher
     virtual ~Delegate() {}
   };
 
-  // Dispatches an IO-thread extension function. Only used for specific
-  // functions that must be handled on the IO-thread.
-  static void DispatchOnIOThread(
-      InfoMap* extension_info_map,
-      void* profile_id,
-      int render_process_id,
-      base::WeakPtr<IOThreadExtensionMessageFilter> ipc_sender,
-      int routing_id,
-      const ExtensionHostMsg_Request_Params& params);
-
   // Public constructor. Callers must ensure that:
   // - This object outlives any RenderFrameHost's passed to created
   //   ExtensionFunctions.
@@ -113,47 +98,33 @@ class ExtensionFunctionDispatcher
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
 
  private:
-  // For a given RenderFrameHost instance, UIThreadResponseCallbackWrapper
+  // For a given RenderFrameHost instance, ResponseCallbackWrapper
   // creates ExtensionFunction::ResponseCallback instances which send responses
   // to the corresponding render view in ExtensionMsg_Response messages.
   // This class tracks the lifespan of the RenderFrameHost instance, and will be
   // destroyed automatically when it goes away.
-  class UIThreadResponseCallbackWrapper;
+  class ResponseCallbackWrapper;
 
-  // Same as UIThreadResponseCallbackWrapper above, but applies to an extension
+  // Same as ResponseCallbackWrapper above, but applies to an extension
   // function from an extension Service Worker.
-  class UIThreadWorkerResponseCallbackWrapper;
+  class WorkerResponseCallbackWrapper;
 
-  // Key used to store UIThreadWorkerResponseCallbackWrapper in the map
-  // |ui_thread_response_callback_wrappers_for_worker_|.
+  // Key used to store WorkerResponseCallbackWrapper in the map
+  // |response_callback_wrappers_for_worker_|.
   struct WorkerResponseCallbackMapKey;
-
-  // Helper to check whether an ExtensionFunction has the required permissions.
-  // This should be called after the function is fully initialized.
-  // If the check fails, |callback| is run with an access-denied error and false
-  // is returned. |function| must not be run in that case.
-  static bool CheckPermissions(
-      ExtensionFunction* function,
-      const ExtensionHostMsg_Request_Params& params,
-      const ExtensionFunction::ResponseCallback& callback);
 
   // Helper to create an ExtensionFunction to handle the function given by
   // |params|. Can be called on any thread.
   // Does not set subclass properties, or include_incognito.
-  static ExtensionFunction* CreateExtensionFunction(
+  static scoped_refptr<ExtensionFunction> CreateExtensionFunction(
       const ExtensionHostMsg_Request_Params& params,
       const Extension* extension,
       int requesting_process_id,
+      const GURL* rfh_url,
       const ProcessMap& process_map,
       ExtensionAPI* api,
       void* profile_id,
       const ExtensionFunction::ResponseCallback& callback);
-
-  // Helper to run the response callback with an access denied error. Can be
-  // called on any thread.
-  static void SendAccessDenied(
-      const ExtensionFunction::ResponseCallback& callback,
-      functions::HistogramValue histogram_value);
 
   void DispatchWithCallbackInternal(
       const ExtensionHostMsg_Request_Params& params,
@@ -171,17 +142,16 @@ class ExtensionFunctionDispatcher
   // instance goes away, the corresponding entry in this map (if exists) will be
   // removed.
   typedef std::map<content::RenderFrameHost*,
-                   std::unique_ptr<UIThreadResponseCallbackWrapper>>
-      UIThreadResponseCallbackWrapperMap;
-  UIThreadResponseCallbackWrapperMap ui_thread_response_callback_wrappers_;
+                   std::unique_ptr<ResponseCallbackWrapper>>
+      ResponseCallbackWrapperMap;
+  ResponseCallbackWrapperMap response_callback_wrappers_;
 
-  using UIThreadWorkerResponseCallbackWrapperMap =
+  using WorkerResponseCallbackWrapperMap =
       std::map<WorkerResponseCallbackMapKey,
-               std::unique_ptr<UIThreadWorkerResponseCallbackWrapper>>;
+               std::unique_ptr<WorkerResponseCallbackWrapper>>;
   // TODO(lazyboy): The map entries are cleared upon RenderProcessHost shutown,
   // we should really be clearing it on service worker shutdown.
-  UIThreadWorkerResponseCallbackWrapperMap
-      ui_thread_response_callback_wrappers_for_worker_;
+  WorkerResponseCallbackWrapperMap response_callback_wrappers_for_worker_;
 };
 
 }  // namespace extensions

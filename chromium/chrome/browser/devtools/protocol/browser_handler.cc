@@ -7,13 +7,12 @@
 #include <set>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/task/post_task.h"
 #include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/devtools/devtools_dock_tile.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/permissions/permission_manager.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
@@ -21,10 +20,10 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_png_rep.h"
 
-using PermissionOverrides = std::set<content::PermissionType>;
 using protocol::Maybe;
 using protocol::Response;
 
@@ -62,49 +61,6 @@ std::unique_ptr<protocol::Browser::Bounds> GetBrowserWindowBounds(
       .Build();
 }
 
-Response FromProtocolPermissionType(
-    const protocol::Browser::PermissionType& type,
-    content::PermissionType* out_type) {
-  if (type == protocol::Browser::PermissionTypeEnum::Notifications) {
-    *out_type = content::PermissionType::NOTIFICATIONS;
-  } else if (type == protocol::Browser::PermissionTypeEnum::Geolocation) {
-    *out_type = content::PermissionType::GEOLOCATION;
-  } else if (type ==
-             protocol::Browser::PermissionTypeEnum::ProtectedMediaIdentifier) {
-    *out_type = content::PermissionType::PROTECTED_MEDIA_IDENTIFIER;
-  } else if (type == protocol::Browser::PermissionTypeEnum::Midi) {
-    *out_type = content::PermissionType::MIDI;
-  } else if (type == protocol::Browser::PermissionTypeEnum::MidiSysex) {
-    *out_type = content::PermissionType::MIDI_SYSEX;
-  } else if (type == protocol::Browser::PermissionTypeEnum::DurableStorage) {
-    *out_type = content::PermissionType::DURABLE_STORAGE;
-  } else if (type == protocol::Browser::PermissionTypeEnum::AudioCapture) {
-    *out_type = content::PermissionType::AUDIO_CAPTURE;
-  } else if (type == protocol::Browser::PermissionTypeEnum::VideoCapture) {
-    *out_type = content::PermissionType::VIDEO_CAPTURE;
-  } else if (type == protocol::Browser::PermissionTypeEnum::BackgroundSync) {
-    *out_type = content::PermissionType::BACKGROUND_SYNC;
-  } else if (type == protocol::Browser::PermissionTypeEnum::Flash) {
-    *out_type = content::PermissionType::FLASH;
-  } else if (type == protocol::Browser::PermissionTypeEnum::Sensors) {
-    *out_type = content::PermissionType::SENSORS;
-  } else if (type ==
-             protocol::Browser::PermissionTypeEnum::AccessibilityEvents) {
-    *out_type = content::PermissionType::ACCESSIBILITY_EVENTS;
-  } else if (type == protocol::Browser::PermissionTypeEnum::ClipboardRead) {
-    *out_type = content::PermissionType::CLIPBOARD_READ;
-  } else if (type == protocol::Browser::PermissionTypeEnum::ClipboardWrite) {
-    *out_type = content::PermissionType::CLIPBOARD_WRITE;
-  } else if (type == protocol::Browser::PermissionTypeEnum::PaymentHandler) {
-    *out_type = content::PermissionType::PAYMENT_HANDLER;
-  } else if (type == protocol::Browser::PermissionTypeEnum::BackgroundFetch) {
-    *out_type = content::PermissionType::BACKGROUND_FETCH;
-  } else {
-    return Response::InvalidParams("Unknown permission type: " + type);
-  }
-  return Response::OK();
-}
-
 }  // namespace
 
 BrowserHandler::BrowserHandler(protocol::UberDispatcher* dispatcher,
@@ -124,10 +80,10 @@ Response BrowserHandler::GetWindowForTarget(
   auto host =
       content::DevToolsAgentHost::GetForId(target_id.fromMaybe(target_id_));
   if (!host)
-    return Response::Error("No target with given id");
+    return Response::ServerError("No target with given id");
   content::WebContents* web_contents = host->GetWebContents();
   if (!web_contents)
-    return Response::Error("No web contents in the target");
+    return Response::ServerError("No web contents in the target");
 
   Browser* browser = nullptr;
   for (auto* b : *BrowserList::GetInstance()) {
@@ -136,12 +92,12 @@ Response BrowserHandler::GetWindowForTarget(
       browser = b;
   }
   if (!browser)
-    return Response::Error("Browser window not found");
+    return Response::ServerError("Browser window not found");
 
   BrowserWindow* window = browser->window();
   *out_window_id = browser->session_id().id();
   *out_bounds = GetBrowserWindowBounds(window);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response BrowserHandler::GetWindowBounds(
@@ -149,17 +105,20 @@ Response BrowserHandler::GetWindowBounds(
     std::unique_ptr<protocol::Browser::Bounds>* out_bounds) {
   BrowserWindow* window = GetBrowserWindow(window_id);
   if (!window)
-    return Response::Error("Browser window not found");
+    return Response::ServerError("Browser window not found");
 
   *out_bounds = GetBrowserWindowBounds(window);
-  return Response::OK();
+  return Response::Success();
 }
 
 Response BrowserHandler::Close() {
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce([]() { chrome::ExitIgnoreUnloadHandlers(); }));
-  return Response::OK();
+  base::PostTask(
+      FROM_HERE, {content::BrowserThread::UI}, base::BindOnce([]() {
+        if (ChromeDevToolsManagerDelegate::GetInstance())
+          ChromeDevToolsManagerDelegate::GetInstance()->BrowserCloseRequested();
+        chrome::ExitIgnoreUnloadHandlers();
+      }));
+  return Response::Success();
 }
 
 Response BrowserHandler::SetWindowBounds(
@@ -167,7 +126,7 @@ Response BrowserHandler::SetWindowBounds(
     std::unique_ptr<protocol::Browser::Bounds> window_bounds) {
   BrowserWindow* window = GetBrowserWindow(window_id);
   if (!window)
-    return Response::Error("Browser window not found");
+    return Response::ServerError("Browser window not found");
   gfx::Rect bounds = window->GetBounds();
   const bool set_bounds = window_bounds->HasLeft() || window_bounds->HasTop() ||
                           window_bounds->HasWidth() ||
@@ -181,29 +140,29 @@ Response BrowserHandler::SetWindowBounds(
 
   const std::string window_state = window_bounds->GetWindowState("normal");
   if (set_bounds && window_state != "normal") {
-    return Response::Error(
+    return Response::ServerError(
         "The 'minimized', 'maximized' and 'fullscreen' states cannot be "
         "combined with 'left', 'top', 'width' or 'height'");
   }
 
   if (window_state == "fullscreen") {
     if (window->IsMinimized()) {
-      return Response::Error(
+      return Response::ServerError(
           "To make minimized window fullscreen, "
           "restore it to normal state first.");
     }
     window->GetExclusiveAccessContext()->EnterFullscreen(
-        GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE);
+        GURL(), EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE, display::kInvalidDisplayId);
   } else if (window_state == "maximized") {
     if (window->IsMinimized() || window->IsFullscreen()) {
-      return Response::Error(
+      return Response::ServerError(
           "To maximize a minimized or fullscreen "
           "window, restore it to normal state first.");
     }
     window->Maximize();
   } else if (window_state == "minimized") {
     if (window->IsFullscreen()) {
-      return Response::Error(
+      return Response::ServerError(
           "To minimize a fullscreen window, restore it to normal "
           "state first.");
     }
@@ -221,64 +180,7 @@ Response BrowserHandler::SetWindowBounds(
     NOTREACHED();
   }
 
-  return Response::OK();
-}
-
-Response BrowserHandler::Disable() {
-  for (auto& browser_context_id : contexts_with_overridden_permissions_) {
-    Profile* profile = nullptr;
-    Maybe<std::string> context_id =
-        browser_context_id == "" ? Maybe<std::string>()
-                                 : Maybe<std::string>(browser_context_id);
-    FindProfile(context_id, &profile);
-    if (profile) {
-      PermissionManager* permission_manager = PermissionManager::Get(profile);
-      permission_manager->ResetPermissionOverridesForDevTools();
-    }
-  }
-  contexts_with_overridden_permissions_.clear();
-  return Response::OK();
-}
-
-Response BrowserHandler::GrantPermissions(
-    const std::string& origin,
-    std::unique_ptr<protocol::Array<protocol::Browser::PermissionType>>
-        permissions,
-    Maybe<std::string> browser_context_id) {
-  Profile* profile = nullptr;
-  Response response = FindProfile(browser_context_id, &profile);
-  if (!response.isSuccess())
-    return response;
-
-  PermissionOverrides overrides;
-  for (size_t i = 0; i < permissions->length(); ++i) {
-    content::PermissionType type;
-    Response type_response =
-        FromProtocolPermissionType(permissions->get(i), &type);
-    if (!type_response.isSuccess())
-      return type_response;
-    overrides.insert(type);
-  }
-
-  PermissionManager* permission_manager = PermissionManager::Get(profile);
-  GURL url = GURL(origin).GetOrigin();
-  permission_manager->SetPermissionOverridesForDevTools(url,
-                                                        std::move(overrides));
-  contexts_with_overridden_permissions_.insert(
-      browser_context_id.fromMaybe(""));
-  return Response::FallThrough();
-}
-
-Response BrowserHandler::ResetPermissions(
-    Maybe<std::string> browser_context_id) {
-  Profile* profile = nullptr;
-  Response response = FindProfile(browser_context_id, &profile);
-  if (!response.isSuccess())
-    return response;
-  PermissionManager* permission_manager = PermissionManager::Get(profile);
-  permission_manager->ResetPermissionOverridesForDevTools();
-  contexts_with_overridden_permissions_.erase(browser_context_id.fromMaybe(""));
-  return Response::FallThrough();
+  return Response::Success();
 }
 
 protocol::Response BrowserHandler::SetDockTile(
@@ -288,29 +190,6 @@ protocol::Response BrowserHandler::SetDockTile(
   if (image.isJust())
     reps.emplace_back(image.fromJust().bytes(), 1);
   DevToolsDockTile::Update(label.fromMaybe(std::string()),
-                           reps.size() ? gfx::Image(reps) : gfx::Image());
-  return Response::OK();
-}
-
-Response BrowserHandler::FindProfile(
-    const Maybe<std::string>& browser_context_id,
-    Profile** profile) {
-  auto* delegate = ChromeDevToolsManagerDelegate::GetInstance();
-  if (!browser_context_id.isJust()) {
-    *profile =
-        Profile::FromBrowserContext(delegate->GetDefaultBrowserContext());
-    if (*profile == nullptr)
-      return Response::Error("Browser context management is not supported.");
-    return Response::OK();
-  }
-
-  std::string context_id = browser_context_id.fromJust();
-  for (auto* context : delegate->GetBrowserContexts()) {
-    if (context->UniqueId() == context_id) {
-      *profile = Profile::FromBrowserContext(context);
-      return Response::OK();
-    }
-  }
-  return Response::InvalidParams("Failed to find browser context for id " +
-                                 context_id);
+                           !reps.empty() ? gfx::Image(reps) : gfx::Image());
+  return Response::Success();
 }

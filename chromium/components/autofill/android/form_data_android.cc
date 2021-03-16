@@ -6,8 +6,8 @@
 
 #include "base/android/jni_string.h"
 #include "components/autofill/android/form_field_data_android.h"
+#include "components/autofill/android/jni_headers/FormData_jni.h"
 #include "components/autofill/core/browser/form_structure.h"
-#include "jni/FormData_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -19,8 +19,12 @@ using base::android::ScopedJavaLocalRef;
 
 namespace autofill {
 
-FormDataAndroid::FormDataAndroid(const FormData& form)
-    : form_(form), index_(0) {}
+FormDataAndroid::FormDataAndroid(const FormData& form,
+                                 const TransformCallback& callback)
+    : form_(form), index_(0) {
+  for (FormFieldData& field : form_.fields)
+    field.bounds = callback.Run(field.bounds);
+}
 
 FormDataAndroid::~FormDataAndroid() {
   JNIEnv* env = AttachCurrentThread();
@@ -47,7 +51,7 @@ ScopedJavaLocalRef<jobject> FormDataAndroid::GetJavaPeer(
     ScopedJavaLocalRef<jstring> jname =
         ConvertUTF16ToJavaString(env, form_.name);
     ScopedJavaLocalRef<jstring> jhost =
-        ConvertUTF8ToJavaString(env, form_.origin.GetOrigin().spec());
+        ConvertUTF8ToJavaString(env, form_.url.GetOrigin().spec());
     obj = Java_FormData_createFormData(env, reinterpret_cast<intptr_t>(this),
                                        jname, jhost, form_.fields.size());
     java_ref_ = JavaObjectWeakGlobalRef(env, obj);

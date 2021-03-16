@@ -19,16 +19,24 @@ class CORE_EXPORT NavigatorLanguage : public GarbageCollectedMixin {
   const Vector<String>& languages();
   bool IsLanguagesDirty() const;
   void SetLanguagesDirty();
+  AtomicString SerializeLanguagesForClientHintHeader();
 
-  void Trace(blink::Visitor*) override;
+  // Accepts a comma-separated list of languages.
+  void SetLanguagesForTesting(const String& languages);
+
+  void Trace(Visitor*) override;
 
  protected:
-  bool languages_dirty_ = true;
-  WeakMember<ExecutionContext> context_;
   virtual String GetAcceptLanguages() = 0;
 
  private:
+  void EnsureUpdatedLanguage();
+
+  // NavigatorLanguage can be instantiated after a frame detachment and
+  // |execution_context_| may be null at the time of instantiation.
+  WeakMember<ExecutionContext> execution_context_;
   Vector<String> languages_;
+  bool languages_dirty_ = true;
 };
 
 }  // namespace blink

@@ -51,12 +51,10 @@ MODULES_EXPORT ExceptionCode WebCryptoErrorToExceptionCode(WebCryptoErrorType);
 //  * All methods of the CryptoResult implementation must be called from
 //    the origin thread. The exception is that destruction may happen on
 //    another thread.
-//  * One of the completeWith***() functions must be called, or the
-//    m_resolver will be leaked until the ExecutionContext is destroyed.
+//  * One of the CompleteWith***() functions must be called, or the
+//    |resolver_| will be leaked until the ExecutionContext is destroyed.
 class MODULES_EXPORT CryptoResultImpl final : public CryptoResult {
  public:
-  static CryptoResultImpl* Create(ScriptState*);
-
   explicit CryptoResultImpl(ScriptState*);
   ~CryptoResultImpl() override;
 
@@ -68,13 +66,15 @@ class MODULES_EXPORT CryptoResultImpl final : public CryptoResult {
   void CompleteWithKeyPair(const WebCryptoKey& public_key,
                            const WebCryptoKey& private_key) override;
 
+  void CompleteWithError(ExceptionState&);
+
   // If called after completion (including cancellation) will return an empty
   // ScriptPromise.
   ScriptPromise Promise();
 
   WebCryptoResult Result() { return WebCryptoResult(this, cancel_.get()); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   class Resolver;

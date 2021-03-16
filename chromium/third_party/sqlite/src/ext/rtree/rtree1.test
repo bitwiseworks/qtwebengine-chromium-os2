@@ -61,8 +61,8 @@ do_test rtree-1.1.2 {
   execsql { SELECT name FROM sqlite_master ORDER BY name }
 } {t1 t1_node t1_parent t1_rowid}
 do_test rtree-1.1.3 {
-  execsql {
-    DROP TABLE t1;
+  execsql { 
+    DROP TABLE t1; 
     SELECT name FROM sqlite_master ORDER BY name;
   }
 } {}
@@ -84,8 +84,8 @@ do_test rtree-1.2.3 {
   execsql { SELECT name FROM aux.sqlite_master ORDER BY name }
 } {{a" "b} {a" "b_node} {a" "b_parent} {a" "b_rowid}}
 do_test rtree-1.2.4 {
-  execsql {
-    DROP TABLE aux.'a" "b';
+  execsql { 
+    DROP TABLE aux.'a" "b'; 
     SELECT name FROM aux.sqlite_master ORDER BY name;
   }
 } {}
@@ -105,13 +105,16 @@ for {set nCol 1} {$nCol<[llength $cols]} {incr nCol} {
   if {$nCol > 11}    { set X {1 {Too many columns for an rtree table}} }
 
   do_test rtree-1.3.$nCol {
-    catchsql "
+    catchsql " 
       CREATE VIRTUAL TABLE t1 USING rtree($columns);
     "
   } $X
 
   catchsql { DROP TABLE t1 }
 }
+do_catchsql_test rtree-1.3.1000 {
+  CREATE VIRTUAL TABLE t1000 USING rtree;
+} {1 {Too few columns for an rtree table}}
 
 # Like execsql except display output as integer where that can be
 # done without loss of information.
@@ -172,10 +175,10 @@ do_test rtree-1.6.1 {
 } {}
 
 #----------------------------------------------------------------------------
-# Test cases rtree-2.*
+# Test cases rtree-2.* 
 #
 do_test rtree-2.1.1 {
-  execsql {
+  execsql { 
     CREATE VIRTUAL TABLE t1 USING rtree(ii, x1, x2, y1, y2);
     SELECT * FROM t1;
   }
@@ -217,13 +220,13 @@ do_test rtree-2.X {
 # focus of these tests.
 #
 do_test rtree-3.1.1 {
-  execsql {
+  execsql { 
     CREATE VIRTUAL TABLE t1 USING rtree(ii, x1, x2, y1, y2);
     SELECT * FROM t1;
   }
 } {}
 do_test rtree-3.1.2 {
-  execsql_intout {
+  execsql_intout { 
     INSERT INTO t1 VALUES(5, 1, 3, 2, 4);
     SELECT * FROM t1;
   }
@@ -250,7 +253,7 @@ do_test rtree-5.1.1 {
   execsql { CREATE VIRTUAL TABLE t2 USING rtree(ii, x1, x2) }
 } {}
 do_test rtree-5.1.2 {
-  execsql_intout {
+  execsql_intout { 
     INSERT INTO t2 VALUES(1, 10, 20);
     INSERT INTO t2 VALUES(2, 30, 40);
     INSERT INTO t2 VALUES(3, 50, 60);
@@ -258,19 +261,19 @@ do_test rtree-5.1.2 {
   }
 } {1 10 20 2 30 40 3 50 60}
 do_test rtree-5.1.3 {
-  execsql_intout {
+  execsql_intout { 
     DELETE FROM t2 WHERE ii=2;
     SELECT * FROM t2 ORDER BY ii;
   }
 } {1 10 20 3 50 60}
 do_test rtree-5.1.4 {
-  execsql_intout {
+  execsql_intout { 
     DELETE FROM t2 WHERE ii=1;
     SELECT * FROM t2 ORDER BY ii;
   }
 } {3 50 60}
 do_test rtree-5.1.5 {
-  execsql {
+  execsql { 
     DELETE FROM t2 WHERE ii=3;
     SELECT * FROM t2 ORDER BY ii;
   }
@@ -334,7 +337,7 @@ do_test rtree-7.1.7 {
 
 # An error midway through a rename operation.
 do_test rtree-7.2.1 {
-  execsql {
+  execsql { 
     CREATE TABLE t4_node(a);
   }
   catchsql { ALTER TABLE "abc 123" RENAME TO t4 }
@@ -343,7 +346,7 @@ do_test rtree-7.2.2 {
   execsql_intout { SELECT * FROM "abc 123" }
 } {1 2 3 4 5 6 7}
 do_test rtree-7.2.3 {
-  execsql {
+  execsql { 
     DROP TABLE t4_node;
     CREATE TABLE t4_rowid(a);
   }
@@ -374,13 +377,43 @@ do_test rtree-8.1.1 {
     INSERT INTO t6 VALUES(2, 4, 6);
   }
 } {}
-do_test rtree-8.1.2 { execsql { SELECT ii FROM t6 WHERE x1>2 } } {1 2}
-do_test rtree-8.1.3 { execsql { SELECT ii FROM t6 WHERE x1>3 } } {2}
-do_test rtree-8.1.4 { execsql { SELECT ii FROM t6 WHERE x1>4 } } {}
-do_test rtree-8.1.5 { execsql { SELECT ii FROM t6 WHERE x1>5 } } {}
-do_test rtree-8.1.6 { execsql { SELECT ii FROM t6 WHERE x1<3 } } {}
-do_test rtree-8.1.7 { execsql { SELECT ii FROM t6 WHERE x1<4 } } {1}
-do_test rtree-8.1.8 { execsql { SELECT ii FROM t6 WHERE x1<5 } } {1 2}
+do_test rtree-8.1.2 { execsql { SELECT ii FROM t6 WHERE x1>2 } }   {1 2}
+do_test rtree-8.1.3 { execsql { SELECT ii FROM t6 WHERE x1>3 } }   {2}
+do_test rtree-8.1.4 { execsql { SELECT ii FROM t6 WHERE x1>4 } }   {}
+do_test rtree-8.1.5 { execsql { SELECT ii FROM t6 WHERE x1>5 } }   {}
+do_test rtree-8.1.6 { execsql { SELECT ii FROM t6 WHERE x1>''} }   {}
+do_test rtree-8.1.7 { execsql { SELECT ii FROM t6 WHERE x1>null}}  {}
+do_test rtree-8.1.8 { execsql { SELECT ii FROM t6 WHERE x1>'2'} }   {1 2}
+do_test rtree-8.1.9 { execsql { SELECT ii FROM t6 WHERE x1>'3'} }   {2}
+do_test rtree-8.2.2 { execsql { SELECT ii FROM t6 WHERE x1>=2 } }  {1 2}
+do_test rtree-8.2.3 { execsql { SELECT ii FROM t6 WHERE x1>=3 } }  {1 2}
+do_test rtree-8.2.4 { execsql { SELECT ii FROM t6 WHERE x1>=4 } }  {2}
+do_test rtree-8.2.5 { execsql { SELECT ii FROM t6 WHERE x1>=5 } }  {}
+do_test rtree-8.2.6 { execsql { SELECT ii FROM t6 WHERE x1>=''} }  {}
+do_test rtree-8.2.7 { execsql { SELECT ii FROM t6 WHERE x1>=null}} {}
+do_test rtree-8.2.8 { execsql { SELECT ii FROM t6 WHERE x1>='4'} } {2}
+do_test rtree-8.2.9 { execsql { SELECT ii FROM t6 WHERE x1>='5'} } {}
+do_test rtree-8.3.2 { execsql { SELECT ii FROM t6 WHERE x1<2 } }   {}
+do_test rtree-8.3.3 { execsql { SELECT ii FROM t6 WHERE x1<3 } }   {}
+do_test rtree-8.3.4 { execsql { SELECT ii FROM t6 WHERE x1<4 } }   {1}
+do_test rtree-8.3.5 { execsql { SELECT ii FROM t6 WHERE x1<5 } }   {1 2}
+do_test rtree-8.3.6 { execsql { SELECT ii FROM t6 WHERE x1<''} }   {1 2}
+do_test rtree-8.3.7 { execsql { SELECT ii FROM t6 WHERE x1<null}}  {}
+do_test rtree-8.3.8 { execsql { SELECT ii FROM t6 WHERE x1<'3'} }  {}
+do_test rtree-8.3.9 { execsql { SELECT ii FROM t6 WHERE x1<'4'} }  {1}
+do_test rtree-8.4.2 { execsql { SELECT ii FROM t6 WHERE x1<=2 } }  {}
+do_test rtree-8.4.3 { execsql { SELECT ii FROM t6 WHERE x1<=3 } }  {1}
+do_test rtree-8.4.4 { execsql { SELECT ii FROM t6 WHERE x1<=4 } }  {1 2}
+do_test rtree-8.4.5 { execsql { SELECT ii FROM t6 WHERE x1<=5 } }  {1 2}
+do_test rtree-8.4.6 { execsql { SELECT ii FROM t6 WHERE x1<=''} }  {1 2}
+do_test rtree-8.4.7 { execsql { SELECT ii FROM t6 WHERE x1<=null}} {}
+do_test rtree-8.5.2 { execsql { SELECT ii FROM t6 WHERE x1=2 } }   {}
+do_test rtree-8.5.3 { execsql { SELECT ii FROM t6 WHERE x1=3 } }   {1}
+do_test rtree-8.5.4 { execsql { SELECT ii FROM t6 WHERE x1=4 } }   {2}
+do_test rtree-8.5.5 { execsql { SELECT ii FROM t6 WHERE x1=5 } }   {}
+do_test rtree-8.5.6 { execsql { SELECT ii FROM t6 WHERE x1=''} }   {}
+do_test rtree-8.5.7 { execsql { SELECT ii FROM t6 WHERE x1=null}}  {}
+
 
 #----------------------------------------------------------------------------
 # Test cases rtree-9.*
@@ -410,13 +443,13 @@ do_test rtree-9.2 {
 } {1600}
 do_test rtree-9.3 {
   execsql {
-    SELECT count(*) FROM bar b1, bar b2, foo s1
+    SELECT count(*) FROM bar b1, bar b2, foo s1 
     WHERE b1.minX <= b2.maxX AND s1.id = b1.id;
   }
 } {1600}
 
 #-------------------------------------------------------------------------
-# Ticket #3970: Check that the error message is meaningful when a
+# Ticket #3970: Check that the error message is meaningful when a 
 # keyword is used as a column name.
 #
 do_test rtree-10.1 {
@@ -425,7 +458,7 @@ do_test rtree-10.1 {
 
 #-------------------------------------------------------------------------
 # Test last_insert_rowid().
-#
+# 
 do_test rtree-11.1 {
   execsql {
     CREATE VIRTUAL TABLE t8 USING rtree(idx, x1, x2, y1, y2);
@@ -530,7 +563,7 @@ foreach {tn sql_template testdata} {
 reset_db
 do_execsql_test 13.1 {
   CREATE VIRTUAL TABLE t9 USING rtree(id, xmin, xmax);
-  INSERT INTO t9 VALUES(1,0,0);
+  INSERT INTO t9 VALUES(1,0,0);            
   INSERT INTO t9 VALUES(2,0,0);
   SELECT * FROM t9 WHERE id IN (1, 2);
 } {1 0.0 0.0 2 0.0 0.0}
@@ -578,15 +611,29 @@ do_execsql_test 14.5 {
   1 0.0 0.0
   2 52.0 81.0
 }
+do_execsql_test 14.6 {
+  INSERT INTO t10 VALUES(0,10,20);
+  SELECT * FROM t10 WHERE ii=NULL;
+} {}
+do_execsql_test 14.7 {
+  SELECT * FROM t10 WHERE ii='xyz';
+} {}
+do_execsql_test 14.8 {
+  SELECT * FROM t10 WHERE ii='0.0';
+} {0 10.0 20.0}
+do_execsql_test 14.9 {
+  SELECT * FROM t10 WHERE ii=0.0;
+} {0 10.0 20.0}
 
-do_execsql_test 14.4 {
+
+do_execsql_test 14.104 {
   DROP TABLE t10;
   CREATE VIRTUAL TABLE t10 USING rtree_i32(ii, x1, x2);
   INSERT INTO t10 VALUES(1, 'one', 'two');
   INSERT INTO t10 VALUES(2, '52xyz', '81...');
   INSERT INTO t10 VALUES(3, 42.3, 49.9);
 }
-do_execsql_test 14.5 {
+do_execsql_test 14.105 {
   SELECT * FROM t10;
 } {
   1 0 0
@@ -660,6 +707,15 @@ do_execsql_test 17.1 {
 do_execsql_test 17.2 {
   REINDEX;
 } {}
+
+reset_db
+do_execsql_test 18.0 {
+  CREATE VIRTUAL TABLE rt0 USING rtree(c0, c1, c2);
+  INSERT INTO rt0(c0,c1,c2) VALUES(9,2,3);
+  SELECT c0 FROM rt0 WHERE rt0.c1 > '-1'; 
+  SELECT rt0.c1 > '-1' FROM rt0;
+} {9 1}
+
 
 expand_all_sql db
 finish_test

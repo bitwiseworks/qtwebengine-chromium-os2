@@ -42,6 +42,8 @@ class CORE_EXPORT CSSRule : public ScriptWrappable {
  public:
   ~CSSRule() override = default;
 
+  // The values must match the table in [1]. See also css_rule.idl.
+  // [1] https://wiki.csswg.org/spec/cssom-constants
   enum Type {
     kStyleRule = 1,
     kCharsetRule = 2,
@@ -53,8 +55,10 @@ class CORE_EXPORT CSSRule : public ScriptWrappable {
     kKeyframeRule = 8,
     kNamespaceRule = 10,
     kSupportsRule = 12,
-    kFontFeatureValuesRule = 14,
     kViewportRule = 15,
+    kPropertyRule = 18,
+    // Experimental features below. Such features must be greater than 1000:
+    // the 0-1000 range is reserved by the CSS Working Group.
   };
 
   virtual Type type() const = 0;
@@ -67,26 +71,23 @@ class CORE_EXPORT CSSRule : public ScriptWrappable {
 
   void SetParentRule(CSSRule*);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   CSSStyleSheet* parentStyleSheet() const {
     if (parent_is_rule_)
-      return parent_rule_ ? parent_rule_->parentStyleSheet() : nullptr;
-    return parent_style_sheet_;
+      return parent_ ? ParentAsCSSRule()->parentStyleSheet() : nullptr;
+    return ParentAsCSSStyleSheet();
   }
 
   CSSRule* parentRule() const {
-    return parent_is_rule_ ? parent_rule_ : nullptr;
+    return parent_is_rule_ ? ParentAsCSSRule() : nullptr;
   }
 
   // The CSSOM spec states that "setting the cssText attribute must do nothing."
   void setCSSText(const String&) {}
 
  protected:
-  CSSRule(CSSStyleSheet* parent)
-      : has_cached_selector_text_(false),
-        parent_is_rule_(false),
-        parent_style_sheet_(parent) {}
+  CSSRule(CSSStyleSheet* parent);
 
   bool HasCachedSelectorText() const { return has_cached_selector_text_; }
   void SetHasCachedSelectorText(bool has_cached_selector_text) const {
@@ -96,19 +97,28 @@ class CORE_EXPORT CSSRule : public ScriptWrappable {
   const CSSParserContext* ParserContext(SecureContextMode) const;
 
  private:
+  bool VerifyParentIsCSSRule() const;
+  bool VerifyParentIsCSSStyleSheet() const;
+
+  CSSRule* ParentAsCSSRule() const {
+    DCHECK(parent_is_rule_);
+    DCHECK(VerifyParentIsCSSRule());
+    return reinterpret_cast<CSSRule*>(parent_.Get());
+  }
+  CSSStyleSheet* ParentAsCSSStyleSheet() const {
+    DCHECK(!parent_is_rule_);
+    DCHECK(VerifyParentIsCSSStyleSheet());
+    return reinterpret_cast<CSSStyleSheet*>(parent_.Get());
+  }
+
   mutable unsigned char has_cached_selector_text_ : 1;
   unsigned char parent_is_rule_ : 1;
 
-  // These should be Members, but no Members in unions.
-  union {
-    CSSRule* parent_rule_;
-    CSSStyleSheet* parent_style_sheet_;
-  };
+  // parent_ should reference either CSSRule or CSSStyleSheet (both are
+  // descendants of ScriptWrappable). This field should only be accessed
+  // via the getters above (ParentAsCSSRule and ParentAsCSSStyleSheet).
+  Member<ScriptWrappable> parent_;
 };
-
-#define DEFINE_CSS_RULE_TYPE_CASTS(ToType, TYPE_NAME)                          \
-  DEFINE_TYPE_CASTS(ToType, CSSRule, rule, rule->type() == CSSRule::TYPE_NAME, \
-                    rule.type() == CSSRule::TYPE_NAME)
 
 }  // namespace blink
 

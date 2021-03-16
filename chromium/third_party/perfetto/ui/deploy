@@ -81,6 +81,7 @@ runtime: python27
 api_version: 1
 threadsafe: yes
 instance_class: B1
+default_expiration: "1m"
 manual_scaling:
   instances: 1
 handlers:
@@ -93,6 +94,9 @@ handlers:
   static_files: static/\1
   upload: static/(.*[.]wasm)
   mime_type: application/wasm
+- url: /assets/(.*)
+  static_files: static/assets/\1
+  upload: static/assets/(.*)
 - url: /(.*)
   static_files: static/\1
   upload: static/(.*)

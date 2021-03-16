@@ -15,7 +15,7 @@
 #include "base/android/jni_android.h"
 #include "base/macros.h"
 #include "components/safe_browsing/android/safe_browsing_api_handler.h"
-#include "components/safe_browsing/db/v4_protocol_manager_util.h"
+#include "components/safe_browsing/core/db/v4_protocol_manager_util.h"
 #include "url/gurl.h"
 
 namespace safe_browsing {
@@ -25,17 +25,23 @@ class SafeBrowsingApiHandlerBridge : public SafeBrowsingApiHandler {
   SafeBrowsingApiHandlerBridge();
   ~SafeBrowsingApiHandlerBridge() override;
 
-  std::string GetSafetyNetId() const override;
+  std::string GetSafetyNetId() override;
 
   // Makes Native->Java call to check the URL against Safe Browsing lists.
   void StartURLCheck(std::unique_ptr<URLCheckCallbackMeta> callback,
                      const GURL& url,
                      const SBThreatTypeSet& threat_types) override;
 
+  bool StartCSDAllowlistCheck(const GURL& url) override;
+
+  bool StartHighConfidenceAllowlistCheck(const GURL& url) override;
+
  private:
   // Creates the |j_api_handler_| if it hasn't been already.  If the API is not
   // supported, this will return false and j_api_handler_ will remain nullptr.
   bool CheckApiIsSupported();
+
+  bool StartAllowlistCheck(const GURL& url, const SBThreatType& sb_threat_type);
 
   // The Java-side SafeBrowsingApiHandler. Must call CheckApiIsSupported first.
   base::android::ScopedJavaGlobalRef<jobject> j_api_handler_;

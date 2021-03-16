@@ -122,7 +122,7 @@ struct LsmDb {
   /* IO logging hook */
   void (*xWriteHook)(void *, int, lsm_i64, int, int);
   void *pWriteCtx;
-
+  
   /* Worker threads (for lsm_mt) */
   int nMtMinCkpt;
   int nMtMaxCkpt;
@@ -200,7 +200,7 @@ static int testEnvWrite(lsm_file *pFile, lsm_i64 iOff, void *pData, int nData){
 
   if( pDb->bPrepareCrash ){
     FileData *pData2 = &pDb->aFile[p->bLog];
-    int iFirst;
+    int iFirst;                 
     int iLast;
     int iSector;
 
@@ -213,7 +213,7 @@ static int testEnvWrite(lsm_file *pFile, lsm_i64 iOff, void *pData, int nData){
       pData2->aSector = (FileSector *)testRealloc(
           pData2->aSector, nNew*sizeof(FileSector)
       );
-      memset(&pData2->aSector[pData2->nSector],
+      memset(&pData2->aSector[pData2->nSector], 
           0, (nNew - pData2->nSector) * sizeof(FileSector)
       );
       pData2->nSector = nNew;
@@ -308,8 +308,8 @@ static int testEnvSectorSize(lsm_file *pFile){
 }
 
 static int testEnvRemap(
-  lsm_file *pFile,
-  lsm_i64 iMin,
+  lsm_file *pFile, 
+  lsm_i64 iMin, 
   void **ppOut,
   lsm_i64 *pnOut
 ){
@@ -319,7 +319,7 @@ static int testEnvRemap(
 }
 
 static int testEnvFileid(
-  lsm_file *pFile,
+  lsm_file *pFile, 
   void *ppOut,
   int *pnOut
 ){
@@ -448,7 +448,7 @@ static int testZipCompress(
 ){
   uLongf n = *pnOut;              /* In/out buffer size for compress() */
   int rc;                         /* compress() return code */
-
+ 
   rc = compress((Bytef*)aOut, &n, (Bytef*)aIn, nIn);
   *pnOut = n;
   return (rc==Z_OK ? 0 : LSM_ERROR);
@@ -525,7 +525,7 @@ static int waitOnCheckpointer(LsmDb *pDb, lsm_db *db){
     rc = lsm_info(db, LSM_INFO_CHECKPOINT_SIZE, &nKB);
     if( rc!=LSM_OK || nKB<pDb->nMtMaxCkpt ) break;
 #ifdef LSM_MUTEX_PTHREADS
-    mt_signal_worker(pDb,
+    mt_signal_worker(pDb, 
         (pDb->eMode==LSMTEST_MODE_BACKGROUND_CKPT ? 0 : 1)
     );
 #endif
@@ -566,9 +566,9 @@ static int waitOnWorker(LsmDb *pDb){
 }
 
 static int test_lsm_write(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
   void *pVal,
   int nVal
 ){
@@ -577,9 +577,9 @@ static int test_lsm_write(
 
   if( pDb->eMode==LSMTEST_MODE_BACKGROUND_CKPT ){
     rc = waitOnCheckpointer(pDb, pDb->db);
-  }else if(
+  }else if( 
       pDb->eMode==LSMTEST_MODE_BACKGROUND_WORK
-   || pDb->eMode==LSMTEST_MODE_BACKGROUND_BOTH
+   || pDb->eMode==LSMTEST_MODE_BACKGROUND_BOTH 
   ){
     rc = waitOnWorker(pDb);
   }
@@ -596,7 +596,7 @@ static int test_lsm_delete(TestDb *pTestDb, void *pKey, int nKey){
 }
 
 static int test_lsm_delete_range(
-  TestDb *pTestDb,
+  TestDb *pTestDb, 
   void *pKey1, int nKey1,
   void *pKey2, int nKey2
 ){
@@ -605,10 +605,10 @@ static int test_lsm_delete_range(
 }
 
 static int test_lsm_fetch(
-  TestDb *pTestDb,
-  void *pKey,
-  int nKey,
-  void **ppVal,
+  TestDb *pTestDb, 
+  void *pKey, 
+  int nKey, 
+  void **ppVal, 
   int *pnVal
 ){
   int rc;
@@ -765,7 +765,7 @@ static int test_lsm_rollback(TestDb *pTestDb, int iLevel){
 }
 
 /*
-** A log message callback registered with lsm connections. Prints all
+** A log message callback registered with lsm connections. Prints all 
 ** messages to stderr.
 */
 static void xLog(void *pCtx, int rc, const char *z){
@@ -791,7 +791,7 @@ static void xWorkHook(lsm_db *db, void *pArg){
 
 int test_lsm_config_str(
   LsmDb *pLsm,
-  lsm_db *db,
+  lsm_db *db, 
   int bWorker,
   const char *zStr,
   int *pnThread
@@ -938,8 +938,8 @@ static int testLsmStartWorkers(LsmDb *, int, const char *, const char *);
 
 static int testLsmOpen(
   const char *zCfg,
-  const char *zFilename,
-  int bClear,
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   static const DatabaseMethods LsmMethods = {
@@ -969,7 +969,7 @@ static int testLsmOpen(
   pDb->zName = (char *)&pDb[1];
   memcpy(pDb->zName, zFilename, nFilename + 1);
 
-  /* Default the sector size used for crash simulation to 512 bytes.
+  /* Default the sector size used for crash simulation to 512 bytes. 
   ** Todo: There should be an OS method to obtain this value - just as
   ** there is in SQLite. For now, LSM assumes that it is smaller than
   ** the page size (default 4KB).
@@ -1027,18 +1027,18 @@ static int testLsmOpen(
 }
 
 int test_lsm_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   return testLsmOpen(zSpec, zFilename, bClear, ppDb);
 }
 
 int test_lsm_small_open(
-  const char *zSpec,
-  const char *zFile,
-  int bClear,
+  const char *zSpec, 
+  const char *zFile, 
+  int bClear, 
   TestDb **ppDb
 ){
   const char *zCfg = "page_size=256 block_size=64 mmap=1024";
@@ -1046,13 +1046,13 @@ int test_lsm_small_open(
 }
 
 int test_lsm_lomem_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
     /* "max_freelist=4 autocheckpoint=32" */
-  const char *zCfg =
+  const char *zCfg = 
     "page_size=256 block_size=64 autoflush=16 "
     "autocheckpoint=32"
     "mmap=0 "
@@ -1061,25 +1061,25 @@ int test_lsm_lomem_open(
 }
 
 int test_lsm_lomem2_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
     /* "max_freelist=4 autocheckpoint=32" */
-  const char *zCfg =
+  const char *zCfg = 
     "page_size=512 block_size=64 autoflush=0 mmap=0 "
   ;
   return testLsmOpen(zCfg, zFilename, bClear, ppDb);
 }
 
 int test_lsm_zip_open(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
-  const char *zCfg =
+  const char *zCfg = 
     "page_size=256 block_size=64 autoflush=16 "
     "autocheckpoint=32 compression=1 mmap=0 "
   ;
@@ -1131,9 +1131,9 @@ void tdb_lsm_system_crash(TestDb *pDb){
 }
 
 void tdb_lsm_safety(TestDb *pDb, int eMode){
-  assert( eMode==LSM_SAFETY_OFF
-       || eMode==LSM_SAFETY_NORMAL
-       || eMode==LSM_SAFETY_FULL
+  assert( eMode==LSM_SAFETY_OFF 
+       || eMode==LSM_SAFETY_NORMAL 
+       || eMode==LSM_SAFETY_FULL 
   );
   if( tdb_lsm(pDb) ){
     int iParam = eMode;
@@ -1152,8 +1152,8 @@ void tdb_lsm_prepare_sync_crash(TestDb *pDb, int iSync){
 }
 
 void tdb_lsm_config_work_hook(
-  TestDb *pDb,
-  void (*xWork)(lsm_db *, void *),
+  TestDb *pDb, 
+  void (*xWork)(lsm_db *, void *), 
   void *pWorkCtx
 ){
   if( tdb_lsm(pDb) ){
@@ -1164,7 +1164,7 @@ void tdb_lsm_config_work_hook(
 }
 
 void tdb_lsm_write_hook(
-  TestDb *pDb,
+  TestDb *pDb, 
   void (*xWrite)(void *, int, lsm_i64, int, int),
   void *pWriteCtx
 ){
@@ -1244,7 +1244,7 @@ static void *worker_main(void *pArg){
     p->bDoWork = 0;
   }
   pthread_mutex_unlock(&p->worker_mutex);
-
+  
   return 0;
 }
 
@@ -1316,9 +1316,9 @@ static int mt_start_worker(
   LsmWorker *p;                   /* Object to initialize */
 
   assert( iWorker<pDb->nWorker );
-  assert( eType==LSMTEST_THREAD_CKPT
-       || eType==LSMTEST_THREAD_WORKER
-       || eType==LSMTEST_THREAD_WORKER_AC
+  assert( eType==LSMTEST_THREAD_CKPT 
+       || eType==LSMTEST_THREAD_WORKER 
+       || eType==LSMTEST_THREAD_WORKER_AC 
   );
 
   p = &pDb->aWorker[iWorker];
@@ -1396,9 +1396,9 @@ static int testLsmStartWorkers(
 
 
 int test_lsm_mt2(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   const char *zCfg = "mt_mode=2";
@@ -1406,9 +1406,9 @@ int test_lsm_mt2(
 }
 
 int test_lsm_mt3(
-  const char *zSpec,
-  const char *zFilename,
-  int bClear,
+  const char *zSpec, 
+  const char *zFilename, 
+  int bClear, 
   TestDb **ppDb
 ){
   const char *zCfg = "mt_mode=4";
@@ -1416,8 +1416,8 @@ int test_lsm_mt3(
 }
 
 #else
-static void mt_shutdown(LsmDb *pDb) {
-  unused_parameter(pDb);
+static void mt_shutdown(LsmDb *pDb) { 
+  unused_parameter(pDb); 
 }
 int test_lsm_mt(const char *zFilename, int bClear, TestDb **ppDb){
   unused_parameter(zFilename);

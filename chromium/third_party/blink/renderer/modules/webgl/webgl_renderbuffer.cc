@@ -30,31 +30,36 @@
 
 namespace blink {
 
-WebGLRenderbuffer* WebGLRenderbuffer::Create(WebGLRenderingContextBase* ctx) {
-  return MakeGarbageCollected<WebGLRenderbuffer>(ctx);
-}
-
 WebGLRenderbuffer::WebGLRenderbuffer(WebGLRenderingContextBase* ctx)
     : WebGLSharedPlatform3DObject(ctx),
       internal_format_(GL_RGBA4),
       width_(0),
       height_(0),
+      is_multisampled_(false),
       has_ever_been_bound_(false) {
   GLuint rbo;
   ctx->ContextGL()->GenRenderbuffers(1, &rbo);
   SetObject(rbo);
 }
 
-WebGLRenderbuffer::~WebGLRenderbuffer() {
-  RunDestructor();
-}
+WebGLRenderbuffer::~WebGLRenderbuffer() = default;
 
 void WebGLRenderbuffer::DeleteObjectImpl(gpu::gles2::GLES2Interface* gl) {
   gl->DeleteRenderbuffers(1, &object_);
   object_ = 0;
 }
 
-void WebGLRenderbuffer::Trace(blink::Visitor* visitor) {
+int WebGLRenderbuffer::UpdateMultisampleState(bool multisampled) {
+  int result = 0;
+  if (!is_multisampled_ && multisampled)
+    result = 1;
+  if (is_multisampled_ && !multisampled)
+    result = -1;
+  is_multisampled_ = multisampled;
+  return result;
+}
+
+void WebGLRenderbuffer::Trace(Visitor* visitor) {
   WebGLSharedPlatform3DObject::Trace(visitor);
 }
 

@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,8 +19,8 @@
 #include "base/values.h"
 #include "chromeos/network/network_connection_observer.h"
 #include "chromeos/network/network_state_handler_observer.h"
-#include "components/arc/common/net.mojom.h"
-#include "components/arc/connection_observer.h"
+#include "components/arc/mojom/net.mojom.h"
+#include "components/arc/session/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 namespace content {
@@ -91,9 +92,10 @@ class ArcNetHostImpl : public KeyedService,
   void DefaultNetworkChanged(const chromeos::NetworkState* network) override;
   void NetworkConnectionStateChanged(
       const chromeos::NetworkState* network) override;
+  void ActiveNetworksChanged(
+      const std::vector<const chromeos::NetworkState*>& networks) override;
   void NetworkListChanged() override;
   void DeviceListChanged() override;
-  void GetDefaultNetwork(GetDefaultNetworkCallback callback) override;
 
   // Overriden from chromeos::NetworkConnectionObserver.
   void DisconnectRequested(const std::string& service_path) override;
@@ -104,7 +106,7 @@ class ArcNetHostImpl : public KeyedService,
 
  private:
   const chromeos::NetworkState* GetDefaultNetworkFromChrome();
-  void UpdateDefaultNetwork();
+  void UpdateActiveNetworks();
   void DefaultNetworkSuccessCallback(const std::string& service_path,
                                      const base::DictionaryValue& dictionary);
 
@@ -149,21 +151,26 @@ class ArcNetHostImpl : public KeyedService,
       const std::string& error_name,
       std::unique_ptr<base::DictionaryValue> error_data);
 
+  // Request properties of the Service corresponding to |service_path|.
+  void RequestUpdateForNetwork(const std::string& service_path);
+
   ArcBridgeService* const arc_bridge_service_;  // Owned by ArcServiceManager.
 
   // True if the chrome::NetworkStateHandler is currently being observed for
   // state changes.
   bool observing_network_state_ = false;
+  // Contains all service paths for which a property update request is
+  // currently scheduled.
+  std::set<std::string> pending_service_property_requests_;
 
   std::string cached_service_path_;
   std::string cached_guid_;
-
   std::string arc_vpn_service_path_;
   // Owned by the user profile whose context was used to initialize |this|.
   PrefService* pref_service_ = nullptr;
 
   THREAD_CHECKER(thread_checker_);
-  base::WeakPtrFactory<ArcNetHostImpl> weak_factory_;
+  base::WeakPtrFactory<ArcNetHostImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ArcNetHostImpl);
 };

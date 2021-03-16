@@ -5,15 +5,20 @@
 #include "gpu/vulkan/vulkan_device_queue.h"
 
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
+#include "gpu/config/vulkan_info.h"
 #include "gpu/vulkan/vulkan_command_pool.h"
+#include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 
 namespace gpu {
 
-VulkanDeviceQueue::VulkanDeviceQueue(VkInstance vk_instance)
-    : vk_instance_(vk_instance) {}
+VulkanDeviceQueue::VulkanDeviceQueue(VkInstance vk_instance,
+                                     bool enforce_protected_memory)
+    : vk_instance_(vk_instance),
+      enforce_protected_memory_(enforce_protected_memory) {}
 
 VulkanDeviceQueue::~VulkanDeviceQueue() {
   DCHECK_EQ(static_cast<VkPhysicalDevice>(VK_NULL_HANDLE), vk_physical_device_);
@@ -23,25 +28,21 @@ VulkanDeviceQueue::~VulkanDeviceQueue() {
 
 bool VulkanDeviceQueue::Initialize(
     uint32_t options,
+    const VulkanInfo& info,
     const std::vector<const char*>& required_extensions,
+    const std::vector<const char*>& optional_extensions,
+    bool allow_protected_memory,
     const GetPresentationSupportCallback& get_presentation_support) {
+  DCHECK_EQ(static_cast<VkPhysicalDevice>(VK_NULL_HANDLE), vk_physical_device_);
+  DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), owned_vk_device_);
+  DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), vk_device_);
+  DCHECK_EQ(static_cast<VkQueue>(VK_NULL_HANDLE), vk_queue_);
+  DCHECK(!enforce_protected_memory_ || allow_protected_memory);
+
   if (VK_NULL_HANDLE == vk_instance_)
     return false;
 
   VkResult result = VK_SUCCESS;
-
-  uint32_t device_count = 0;
-  result = vkEnumeratePhysicalDevices(vk_instance_, &device_count, nullptr);
-  if (VK_SUCCESS != result || device_count == 0)
-    return false;
-
-  std::vector<VkPhysicalDevice> devices(device_count);
-  result =
-      vkEnumeratePhysicalDevices(vk_instance_, &device_count, devices.data());
-  if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumeratePhysicalDevices() failed: " << result;
-    return false;
-  }
 
   VkQueueFlags queue_flags = 0;
   if (options & DeviceQueueOption::GRAPHICS_QUEUE_FLAG)
@@ -49,38 +50,37 @@ bool VulkanDeviceQueue::Initialize(
 
   int device_index = -1;
   int queue_index = -1;
-  for (size_t i = 0; i < devices.size(); ++i) {
-    const VkPhysicalDevice& device = devices[i];
-    uint32_t queue_count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count, nullptr);
-    if (queue_count) {
-      std::vector<VkQueueFamilyProperties> queue_properties(queue_count);
-      vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_count,
-                                               queue_properties.data());
-      for (size_t n = 0; n < queue_properties.size(); ++n) {
-        if ((queue_properties[n].queueFlags & queue_flags) != queue_flags)
-          continue;
+  for (size_t i = 0; i < info.physical_devices.size(); ++i) {
+    const auto& device_info = info.physical_devices[i];
+    const VkPhysicalDevice& device = device_info.device;
+    for (size_t n = 0; n < device_info.queue_families.size(); ++n) {
+      if ((device_info.queue_families[n].queueFlags & queue_flags) !=
+          queue_flags)
+        continue;
 
-        if (options & DeviceQueueOption::PRESENTATION_SUPPORT_QUEUE_FLAG &&
-            !get_presentation_support.Run(device, queue_properties, n)) {
-          continue;
-        }
-
-        queue_index = static_cast<int>(n);
-        break;
+      if (options & DeviceQueueOption::PRESENTATION_SUPPORT_QUEUE_FLAG &&
+          !get_presentation_support.Run(device, device_info.queue_families,
+                                        n)) {
+        continue;
       }
 
-      if (-1 != queue_index) {
-        device_index = static_cast<int>(i);
-        break;
-      }
+      queue_index = static_cast<int>(n);
+      break;
+    }
+    if (-1 != queue_index) {
+      device_index = static_cast<int>(i);
+      break;
     }
   }
 
-  if (queue_index == -1)
+  if (queue_index == -1) {
+    DLOG(ERROR) << "Cannot find capable device queue.";
     return false;
+  }
 
-  vk_physical_device_ = devices[device_index];
+  const auto& physical_device_info = info.physical_devices[device_index];
+  vk_physical_device_ = physical_device_info.device;
+  vk_physical_device_properties_ = physical_device_info.properties;
   vk_queue_index_ = queue_index;
 
   float queue_priority = 0.0f;
@@ -89,82 +89,167 @@ bool VulkanDeviceQueue::Initialize(
   queue_create_info.queueFamilyIndex = queue_index;
   queue_create_info.queueCount = 1;
   queue_create_info.pQueuePriorities = &queue_priority;
-
-  std::vector<const char*> enabled_layer_names;
-#if DCHECK_IS_ON()
-  uint32_t num_device_layers = 0;
-  result = vkEnumerateDeviceLayerProperties(vk_physical_device_,
-                                            &num_device_layers, nullptr);
-  if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumerateDeviceLayerProperties(NULL) failed: " << result;
-    return false;
-  }
-
-  std::vector<VkLayerProperties> device_layers(num_device_layers);
-  result = vkEnumerateDeviceLayerProperties(
-      vk_physical_device_, &num_device_layers, device_layers.data());
-  if (VK_SUCCESS != result) {
-    DLOG(ERROR) << "vkEnumerateDeviceLayerProperties() failed: " << result;
-    return false;
-  }
-
-  std::unordered_set<std::string> desired_layers({
-    "VK_LAYER_LUNARG_standard_validation",
-  });
-
-  for (const VkLayerProperties& layer_property : device_layers) {
-    if (desired_layers.find(layer_property.layerName) != desired_layers.end())
-      enabled_layer_names.push_back(layer_property.layerName);
-  }
-#endif
+  queue_create_info.flags =
+      allow_protected_memory ? VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT : 0;
 
   std::vector<const char*> enabled_extensions;
-  enabled_extensions.insert(std::end(enabled_extensions),
-                            std::begin(required_extensions),
-                            std::end(required_extensions));
+  for (const char* extension : required_extensions) {
+    const auto it =
+        std::find_if(physical_device_info.extensions.begin(),
+                     physical_device_info.extensions.end(),
+                     [extension](const VkExtensionProperties& p) {
+                       return std::strcmp(extension, p.extensionName) == 0;
+                     });
+    if (it == physical_device_info.extensions.end()) {
+      // On Fuchsia, some device extensions are provided by layers.
+      // TODO(penghuang): checking extensions against layer device extensions
+      // too.
+#if !defined(OS_FUCHSIA)
+      DLOG(ERROR) << "Required Vulkan extension " << extension
+                  << " is not supported.";
+      return false;
+#endif
+    }
+    enabled_extensions.push_back(extension);
+  }
 
-  VkDeviceCreateInfo device_create_info = {};
-  device_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  for (const char* extension : optional_extensions) {
+    const auto it =
+        std::find_if(physical_device_info.extensions.begin(),
+                     physical_device_info.extensions.end(),
+                     [extension](const VkExtensionProperties& p) {
+                       return std::strcmp(extension, p.extensionName) == 0;
+                     });
+    if (it == physical_device_info.extensions.end()) {
+      DLOG(ERROR) << "Optional Vulkan extension " << extension
+                  << " is not supported.";
+    } else {
+      enabled_extensions.push_back(extension);
+    }
+  }
+
+  uint32_t device_api_version = std::min(
+      info.used_api_version, vk_physical_device_properties_.apiVersion);
+
+  // Disable all physical device features by default.
+  enabled_device_features_2_ = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+
+  // Android and Fuchsia need YCbCr sampler support.
+#if defined(OS_ANDROID) || defined(OS_FUCHSIA)
+  if (!physical_device_info.feature_sampler_ycbcr_conversion) {
+    LOG(ERROR) << "samplerYcbcrConversion is not supported.";
+    return false;
+  }
+  sampler_ycbcr_conversion_features_ = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES};
+  sampler_ycbcr_conversion_features_.samplerYcbcrConversion = VK_TRUE;
+
+  // Add VkPhysicalDeviceSamplerYcbcrConversionFeatures struct to pNext chain
+  // of VkPhysicalDeviceFeatures2 to enable YCbCr sampler support.
+  sampler_ycbcr_conversion_features_.pNext = enabled_device_features_2_.pNext;
+  enabled_device_features_2_.pNext = &sampler_ycbcr_conversion_features_;
+#endif  // defined(OS_ANDROID) || defined(OS_FUCHSIA)
+
+  if (allow_protected_memory) {
+    if (!physical_device_info.feature_protected_memory) {
+      DLOG(ERROR) << "Protected memory is not supported";
+      return false;
+    }
+    protected_memory_features_ = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROTECTED_MEMORY_FEATURES};
+    protected_memory_features_.protectedMemory = VK_TRUE;
+
+    // Add VkPhysicalDeviceProtectedMemoryFeatures struct to pNext chain
+    // of VkPhysicalDeviceFeatures2 to enable YCbCr sampler support.
+    protected_memory_features_.pNext = enabled_device_features_2_.pNext;
+    enabled_device_features_2_.pNext = &protected_memory_features_;
+  }
+
+  VkDeviceCreateInfo device_create_info = {
+      VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
+  device_create_info.pNext = enabled_device_features_2_.pNext;
   device_create_info.queueCreateInfoCount = 1;
   device_create_info.pQueueCreateInfos = &queue_create_info;
-  device_create_info.enabledLayerCount = enabled_layer_names.size();
-  device_create_info.ppEnabledLayerNames = enabled_layer_names.data();
   device_create_info.enabledExtensionCount = enabled_extensions.size();
   device_create_info.ppEnabledExtensionNames = enabled_extensions.data();
+  device_create_info.pEnabledFeatures = &enabled_device_features_2_.features;
 
   result = vkCreateDevice(vk_physical_device_, &device_create_info, nullptr,
-                          &vk_device_);
-  if (VK_SUCCESS != result)
+                          &owned_vk_device_);
+  if (VK_SUCCESS != result) {
+    DLOG(ERROR) << "vkCreateDevice failed. result:" << result;
     return false;
+  }
 
   enabled_extensions_ = gfx::ExtensionSet(std::begin(enabled_extensions),
                                           std::end(enabled_extensions));
 
-  gpu::GetVulkanFunctionPointers()->BindDeviceFunctionPointers(vk_device_);
+  if (!gpu::GetVulkanFunctionPointers()->BindDeviceFunctionPointers(
+          owned_vk_device_, device_api_version, enabled_extensions_)) {
+    vkDestroyDevice(owned_vk_device_, nullptr);
+    owned_vk_device_ = VK_NULL_HANDLE;
+    return false;
+  }
 
-  if (gfx::HasExtension(enabled_extensions_, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
-    gpu::GetVulkanFunctionPointers()->BindSwapchainFunctionPointers(vk_device_);
+  vk_device_ = owned_vk_device_;
 
-  vkGetDeviceQueue(vk_device_, queue_index, 0, &vk_queue_);
+  if (allow_protected_memory) {
+    VkDeviceQueueInfo2 queue_info2 = {};
+    queue_info2.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
+    queue_info2.flags = VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT;
+    queue_info2.queueFamilyIndex = queue_index;
+    queue_info2.queueIndex = 0;
+    vkGetDeviceQueue2(vk_device_, &queue_info2, &vk_queue_);
+  } else {
+    vkGetDeviceQueue(vk_device_, queue_index, 0, &vk_queue_);
+  }
 
+  cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
+
+  allow_protected_memory_ = allow_protected_memory;
+  return true;
+}
+
+bool VulkanDeviceQueue::InitializeForWebView(
+    VkPhysicalDevice vk_physical_device,
+    VkDevice vk_device,
+    VkQueue vk_queue,
+    uint32_t vk_queue_index,
+    gfx::ExtensionSet enabled_extensions) {
+  DCHECK_EQ(static_cast<VkPhysicalDevice>(VK_NULL_HANDLE), vk_physical_device_);
+  DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), owned_vk_device_);
+  DCHECK_EQ(static_cast<VkDevice>(VK_NULL_HANDLE), vk_device_);
+  DCHECK_EQ(static_cast<VkQueue>(VK_NULL_HANDLE), vk_queue_);
+
+  vk_physical_device_ = vk_physical_device;
+  vk_device_ = vk_device;
+  vk_queue_ = vk_queue;
+  vk_queue_index_ = vk_queue_index;
+  enabled_extensions_ = std::move(enabled_extensions);
+
+  cleanup_helper_ = std::make_unique<VulkanFenceHelper>(this);
   return true;
 }
 
 void VulkanDeviceQueue::Destroy() {
-  if (VK_NULL_HANDLE != vk_device_) {
-    vkDestroyDevice(vk_device_, nullptr);
-    vk_device_ = VK_NULL_HANDLE;
+  if (cleanup_helper_) {
+    cleanup_helper_->Destroy();
+    cleanup_helper_.reset();
   }
 
+  if (VK_NULL_HANDLE != owned_vk_device_) {
+    vkDestroyDevice(owned_vk_device_, nullptr);
+    owned_vk_device_ = VK_NULL_HANDLE;
+  }
+  vk_device_ = VK_NULL_HANDLE;
   vk_queue_ = VK_NULL_HANDLE;
   vk_queue_index_ = 0;
-
   vk_physical_device_ = VK_NULL_HANDLE;
 }
 
 std::unique_ptr<VulkanCommandPool> VulkanDeviceQueue::CreateCommandPool() {
   std::unique_ptr<VulkanCommandPool> command_pool(new VulkanCommandPool(this));
-  if (!command_pool->Initialize())
+  if (!command_pool->Initialize(enforce_protected_memory_))
     return nullptr;
 
   return command_pool;

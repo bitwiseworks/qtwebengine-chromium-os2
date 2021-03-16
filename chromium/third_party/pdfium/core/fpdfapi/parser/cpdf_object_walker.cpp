@@ -47,7 +47,7 @@ class DictionaryIterator final : public CPDF_ObjectWalker::SubobjectIterator {
   const CPDF_Object* IncrementImpl() override {
     ASSERT(IsStarted());
     ASSERT(!IsFinished());
-    const CPDF_Object* result = dict_iterator_->second.get();
+    const CPDF_Object* result = dict_iterator_->second.Get();
     dict_key_ = dict_iterator_->first;
     ++dict_iterator_;
     return result;
@@ -80,7 +80,7 @@ class ArrayIterator final : public CPDF_ObjectWalker::SubobjectIterator {
   const CPDF_Object* IncrementImpl() override {
     ASSERT(IsStarted());
     ASSERT(!IsFinished());
-    const CPDF_Object* result = arr_iterator_->get();
+    const CPDF_Object* result = arr_iterator_->Get();
     ++arr_iterator_;
     return result;
   }
@@ -149,8 +149,8 @@ const CPDF_Object* CPDF_ObjectWalker::GetNext() {
     if (it->IsFinished()) {
       stack_.pop();
     } else {
-      next_object_ = it->Increment();
-      parent_object_ = it->object();
+      next_object_.Reset(it->Increment());
+      parent_object_.Reset(it->object());
       dict_key_ = parent_object_->IsDictionary()
                       ? static_cast<DictionaryIterator*>(it)->dict_key()
                       : ByteString();

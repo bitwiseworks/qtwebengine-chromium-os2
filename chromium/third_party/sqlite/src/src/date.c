@@ -10,7 +10,7 @@
 **
 *************************************************************************
 ** This file contains the C functions that implement date and time
-** functions for SQLite.
+** functions for SQLite.  
 **
 ** There is only one exported symbol in this file - the function
 ** sqlite3RegisterDateTimeFunctions() found at the bottom of the file.
@@ -19,7 +19,7 @@
 ** SQLite processes all times and dates as julian day numbers.  The
 ** dates and times are stored as the number of days since noon
 ** in Greenwich on November 24, 4714 B.C. according to the Gregorian
-** calendar system.
+** calendar system. 
 **
 ** 1970-01-01 00:00:00 is JD 2440587.5
 ** 2000-01-01 00:00:00 is JD 2451544.5
@@ -367,7 +367,7 @@ static void setRawDateNumber(DateTime *p, double r){
 ** The following are acceptable forms for the input string:
 **
 **      YYYY-MM-DD HH:MM:SS.FFF  +/-HH:MM
-**      DDDD.DD
+**      DDDD.DD 
 **      now
 **
 ** In the first form, the +/-HH:MM is always optional.  The fractional
@@ -377,8 +377,8 @@ static void setRawDateNumber(DateTime *p, double r){
 ** as there is a year and date.
 */
 static int parseDateOrTime(
-  sqlite3_context *context,
-  const char *zDate,
+  sqlite3_context *context, 
+  const char *zDate, 
   DateTime *p
 ){
   double r;
@@ -388,7 +388,7 @@ static int parseDateOrTime(
     return 0;
   }else if( sqlite3StrICmp(zDate,"now")==0 && sqlite3NotPureFunc(context) ){
     return setDateTimeToCurrent(context, p);
-  }else if( sqlite3AtoF(zDate, &r, sqlite3Strlen30(zDate), SQLITE_UTF8) ){
+  }else if( sqlite3AtoF(zDate, &r, sqlite3Strlen30(zDate), SQLITE_UTF8)>0 ){
     setRawDateNumber(p, r);
     return 0;
   }
@@ -399,7 +399,7 @@ static int parseDateOrTime(
 ** Multiplying this by 86400000 gives 464269060799999 as the maximum value
 ** for DateTime.iJD.
 **
-** But some older compilers (ex: gcc 4.2.1 on older Macs) cannot deal with
+** But some older compilers (ex: gcc 4.2.1 on older Macs) cannot deal with 
 ** such a large integer literal, so we have to encode it.
 */
 #define INT_464269060799999  ((((i64)0x1a640)<<32)|0x1072fdff)
@@ -481,14 +481,14 @@ static void clearYMD_HMS_TZ(DateTime *p){
 #ifndef SQLITE_OMIT_LOCALTIME
 /*
 ** On recent Windows platforms, the localtime_s() function is available
-** as part of the "Secure CRT". It is essentially equivalent to
-** localtime_r() available under most POSIX platforms, except that the
+** as part of the "Secure CRT". It is essentially equivalent to 
+** localtime_r() available under most POSIX platforms, except that the 
 ** order of the parameters is reversed.
 **
 ** See http://msdn.microsoft.com/en-us/library/a442x3ye(VS.80).aspx.
 **
 ** If the user has not indicated to use localtime_r() or localtime_s()
-** already, check for an MSVC build environment that provides
+** already, check for an MSVC build environment that provides 
 ** localtime_s().
 */
 #if !HAVE_LOCALTIME_R && !HAVE_LOCALTIME_S \
@@ -544,7 +544,7 @@ static int osLocaltime(time_t *t, struct tm *pTm){
 /*
 ** Compute the difference (in milliseconds) between localtime and UTC
 ** (a.k.a. GMT) for the time value p where p is in UTC. If no error occurs,
-** return this value and set *pRc to SQLITE_OK.
+** return this value and set *pRc to SQLITE_OK. 
 **
 ** Or, if an error does occur, set *pRc to SQLITE_ERROR. The returned value
 ** is undefined in this case.
@@ -688,7 +688,7 @@ static int parseModifier(
         r = p->s*1000.0 + 210866760000000.0;
         if( r>=0.0 && r<464269060800000.0 ){
           clearYMD_HMS_TZ(p);
-          p->iJD = (sqlite3_int64)r;
+          p->iJD = (sqlite3_int64)(r + 0.5);
           p->validJD = 1;
           p->rawS = 0;
           rc = 0;
@@ -722,7 +722,7 @@ static int parseModifier(
       ** date is already on the appropriate weekday, this is a no-op.
       */
       if( sqlite3_strnicmp(z, "weekday ", 8)==0
-               && sqlite3AtoF(&z[8], &r, sqlite3Strlen30(&z[8]), SQLITE_UTF8)
+               && sqlite3AtoF(&z[8], &r, sqlite3Strlen30(&z[8]), SQLITE_UTF8)>0
                && (n=(int)r)==r && n>=0 && r<7 ){
         sqlite3_int64 Z;
         computeYMD_HMS(p);
@@ -781,7 +781,7 @@ static int parseModifier(
       double rRounder;
       int i;
       for(n=1; z[n] && z[n]!=':' && !sqlite3Isspace(z[n]); n++){}
-      if( !sqlite3AtoF(z, &r, n, SQLITE_UTF8) ){
+      if( sqlite3AtoF(z, &r, n, SQLITE_UTF8)<=0 ){
         rc = 1;
         break;
       }
@@ -871,9 +871,9 @@ static int parseModifier(
 ** then assume a default value of "now" for argv[0].
 */
 static int isDate(
-  sqlite3_context *context,
-  int argc,
-  sqlite3_value **argv,
+  sqlite3_context *context, 
+  int argc, 
+  sqlite3_value **argv, 
   DateTime *p
 ){
   int i, n;

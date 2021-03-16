@@ -5,13 +5,14 @@
 #ifndef UI_VIEWS_CONTENT_CLIENT_VIEWS_CONTENT_BROWSER_CLIENT_H_
 #define UI_VIEWS_CONTENT_CLIENT_VIEWS_CONTENT_BROWSER_CLIENT_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "content/public/browser/content_browser_client.h"
 
 namespace ui {
 
 class ViewsContentClient;
-class ViewsContentClientMainParts;
 
 class ViewsContentBrowserClient : public content::ContentBrowserClient {
  public:
@@ -20,15 +21,10 @@ class ViewsContentBrowserClient : public content::ContentBrowserClient {
   ~ViewsContentBrowserClient() override;
 
   // content::ContentBrowserClient:
-  content::BrowserMainParts* CreateBrowserMainParts(
+  std::unique_ptr<content::BrowserMainParts> CreateBrowserMainParts(
       const content::MainFunctionParams& parameters) override;
-  void GetQuotaSettings(
-      content::BrowserContext* context,
-      content::StoragePartition* partition,
-      storage::OptionalQuotaSettingsCallback callback) override;
 
  private:
-  ViewsContentClientMainParts* views_content_main_parts_;
   ViewsContentClient* views_content_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewsContentBrowserClient);

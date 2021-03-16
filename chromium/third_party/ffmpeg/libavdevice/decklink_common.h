@@ -24,6 +24,10 @@
 #define AVDEVICE_DECKLINK_COMMON_H
 
 #include <DeckLinkAPIVersion.h>
+#if BLACKMAGIC_DECKLINK_API_VERSION < 0x0b000000
+#define IID_IDeckLinkProfileAttributes IID_IDeckLinkAttributes
+#define IDeckLinkProfileAttributes IDeckLinkAttributes
+#endif
 
 #include "libavutil/thread.h"
 #include "decklink_common_c.h"
@@ -87,7 +91,7 @@ struct decklink_ctx {
     IDeckLinkOutput *dlo;
     IDeckLinkInput *dli;
     IDeckLinkConfiguration *cfg;
-    IDeckLinkAttributes *attr;
+    IDeckLinkProfileAttributes *attr;
     decklink_output_callback *output_callback;
 
     /* DeckLink mode information */
@@ -145,6 +149,7 @@ struct decklink_ctx {
 
     int channels;
     int audio_depth;
+    unsigned long tc_seen;    // used with option wait_for_tc
 };
 
 typedef enum { DIRECTION_IN, DIRECTION_OUT} decklink_direction_t;
@@ -192,8 +197,8 @@ static const BMDTimecodeFormat decklink_timecode_format_map[] = {
 };
 
 int ff_decklink_set_configs(AVFormatContext *avctx, decklink_direction_t direction);
-int ff_decklink_set_format(AVFormatContext *avctx, int width, int height, int tb_num, int tb_den, enum AVFieldOrder field_order, decklink_direction_t direction = DIRECTION_OUT, int num = 0);
-int ff_decklink_set_format(AVFormatContext *avctx, decklink_direction_t direction, int num);
+int ff_decklink_set_format(AVFormatContext *avctx, int width, int height, int tb_num, int tb_den, enum AVFieldOrder field_order, decklink_direction_t direction = DIRECTION_OUT);
+int ff_decklink_set_format(AVFormatContext *avctx, decklink_direction_t direction);
 int ff_decklink_list_devices(AVFormatContext *avctx, struct AVDeviceInfoList *device_list, int show_inputs, int show_outputs);
 void ff_decklink_list_devices_legacy(AVFormatContext *avctx, int show_inputs, int show_outputs);
 int ff_decklink_list_formats(AVFormatContext *avctx, decklink_direction_t direction = DIRECTION_OUT);

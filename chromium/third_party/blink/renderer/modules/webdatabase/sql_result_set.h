@@ -41,11 +41,9 @@ class SQLResultSet final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SQLResultSet* Create() { return MakeGarbageCollected<SQLResultSet>(); }
-
   SQLResultSet();
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   SQLResultSetRowList* rows() const;
 

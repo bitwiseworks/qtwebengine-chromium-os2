@@ -17,7 +17,7 @@ namespace blink {
 class ProgressShadowElementTest : public testing::Test {
  protected:
   void SetUp() final {
-    dummy_page_holder_ = DummyPageHolder::Create(IntSize(800, 600));
+    dummy_page_holder_ = std::make_unique<DummyPageHolder>(IntSize(800, 600));
   }
   Document& GetDocument() { return dummy_page_holder_->GetDocument(); }
 
@@ -26,24 +26,23 @@ class ProgressShadowElementTest : public testing::Test {
 };
 
 TEST_F(ProgressShadowElementTest, LayoutObjectIsNeeded) {
-  GetDocument().body()->SetInnerHTMLFromString(R"HTML(
+  GetDocument().body()->setInnerHTML(R"HTML(
     <progress id='prog' style='-webkit-appearance:none' />
   )HTML");
 
-  HTMLProgressElement* progress =
-      ToHTMLProgressElement(GetDocument().getElementById("prog"));
+  auto* progress =
+      To<HTMLProgressElement>(GetDocument().getElementById("prog"));
   ASSERT_TRUE(progress);
 
-  Element* shadow_element = ToElement(progress->GetShadowRoot()->firstChild());
+  auto* shadow_element = To<Element>(progress->GetShadowRoot()->firstChild());
   ASSERT_TRUE(shadow_element);
 
-  GetDocument().View()->UpdateAllLifecyclePhases(
-      DocumentLifecycle::LifecycleUpdateReason::kTest);
+  GetDocument().View()->UpdateAllLifecyclePhases(DocumentUpdateReason::kTest);
 
-  progress->LazyReattachIfAttached();
+  progress->SetForceReattachLayoutTree();
   GetDocument().Lifecycle().AdvanceTo(DocumentLifecycle::kInStyleRecalc);
-  GetDocument().GetStyleEngine().RecalcStyle(kForce);
-  EXPECT_TRUE(shadow_element->GetNonAttachedStyle());
+  GetDocument().GetStyleEngine().RecalcStyle();
+  EXPECT_TRUE(shadow_element->GetComputedStyle());
 
   scoped_refptr<ComputedStyle> style = shadow_element->StyleForLayoutObject();
   EXPECT_TRUE(shadow_element->LayoutObjectIsNeeded(*style));

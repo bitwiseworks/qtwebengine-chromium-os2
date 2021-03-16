@@ -8,9 +8,8 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
-#include "chrome/test/data/webui/web_ui_test.mojom.h"
+#include "chrome/test/data/webui/web_ui_test.mojom-forward.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "mojo/public/cpp/bindings/binding.h"
 
 namespace base {
 class Value;
@@ -50,7 +49,7 @@ class WebUITestHandler {
 
  private:
   // Gets the callback that Javascript execution is complete.
-  void JavaScriptComplete(const base::Value* result);
+  void JavaScriptComplete(base::Value result);
 
   // Runs a message loop until test finishes. Returns the result of the
   // test.

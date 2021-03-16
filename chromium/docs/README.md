@@ -39,12 +39,12 @@ used when committed.
 ## Document Index
 
 ### Checking Out and Building
-*   [Linux Build Instructions](linux_build_instructions.md) - Linux
+*   [Linux Build Instructions](linux/build_instructions.md) - Linux
 *   [Mac Build Instructions](mac_build_instructions.md) - MacOS
 *   [Windows Build Instructions](windows_build_instructions.md) - Windows
 *   [Android Build Instructions](android_build_instructions.md) - Android target
     (on a Linux host)
-*   [Cast Build Instructions](linux_cast_build_instructions.md) - Cast target
+*   [Cast Build Instructions](linux/cast_build_instructions.md) - Cast target
     (on a Linux host)
 *   [Cast for Android Build Instructions](android_cast_build_instructions.md) -
     Cast for Android (on a Linux host)
@@ -53,7 +53,7 @@ used when committed.
 *   [iOS Build Instructions](ios/build_instructions.md) - iOS target (on a MacOS
     host)
 *   [Chrome OS Build Instructions](chromeos_build_instructions.md) - Chrome OS
-*   [Linux Chromium ARM Recipes](linux_chromium_arm.md) - Recipes for building
+*   [Linux Chromium ARM Recipes](linux/chromium_arm.md) - Recipes for building
     Chromium for ARM on Linux.
 *   [Chrome Component Build](component_build.md) - Faster builds using more
     libraries
@@ -68,14 +68,15 @@ used when committed.
 
 ### Integrated Development Environment (IDE) Set Up Guides
 *   [Android Studio](android_studio.md) - Android Studio for Android builds
+*   [Atom](atom.md) - Atom multi-platform code editor
+*   [CLion](clion.md) - CLion IDE, supports GUI debugging.
 *   [Eclipse for Android](eclipse.md) - Eclipse for Android
-*   [Eclipse for Linux](linux_eclipse_dev.md) - Eclipse for other platforms
+*   [Eclipse for Linux](linux/eclipse_dev.md) - Eclipse for other platforms
     (This guide was written for Linux, but is probably usable on Windows/MacOS
     as well)
-*   [Qt Creator](qtcreator.md) - Using Qt Creator as an IDE or GUI debugger
-*   [Setting up Visual Studio Code](vscode.md) - Visual Studio Code
 *   [EMACS Notes](emacs.md) - EMACS commands/styles/tool integrations
-*   [Atom](atom.md) - Atom multi-platform code editor
+*   [Qt Creator](qtcreator.md) - Using Qt Creator as an IDE or GUI debugger
+*   [Visual Studio Code](vscode.md) - Visual Studio Code
 
 ### Git
 *   [Git Cookbook](git_cookbook.md) - A collection of git recipes for common
@@ -102,6 +103,10 @@ used when committed.
     update the clang-format binaries that come with a checkout of Chromium
 
 ### General Development
+*   [Contributing to Chromium](contributing.md) - Reference workflow process for
+    contributing to the Chromium code base.
+*   [Commit Checklist](commit_checklist.md) - Streamlined checklist to go
+    through before uploading CLs on Gerrit.
 *   [Code Reviews](code_reviews.md) - Code review requirements and guidelines
 *   [Respectful Code Reviews](cr_respect.md) - A guide for code reviewers
 *   [Respectful Changes](cl_respect.md) - A guide for code authors
@@ -146,6 +151,8 @@ used when committed.
 *   [WebUI Explainer](webui_explainer.md) - An explanation of C++ and JavaScript
     infrastructural code for Chrome UIs implemented with web technologies (i.e.
     chrome:// URLs).
+*   [Watchlists](infra/watchlists.md) - Use watchlists to get notified of CLs
+    you are interested in.
 
 ### Testing
 *   [Running and Debugging Web Tests](testing/web_tests.md)
@@ -163,11 +170,17 @@ used when committed.
     Running web tests by hand.
 *   [Web Platform Tests](testing/web_platform_tests.md) - Shared tests across
     browser vendors
-*   [Using Breakpad with `content_shell`](testing/using_breakpad_with_content_shell.md) -
+*   [Using Crashpad with `content_shell`](testing/using_crashpad_with_content_shell.md) -
     Capture stack traces on layout test crashes without an attached debugger
-*   [Test Descriptions](test_descriptions.md) - Unit test targets that can be
+*   [Test Descriptions](testing/test_descriptions.md) - Unit test targets that can be
     built, with associated desciptions.
-*   [IPC Fuzzer](ipc_fuzzer.md) - Fuzz testing of Chromium IPC interfaces.
+*   [Fuzz Testing](../testing/libfuzzer/README.md) - Fuzz testing in Chromium.
+*   [IPC Fuzzer](testing/ipc_fuzzer.md) - Fuzz testing of Chromium IPC interfaces.
+*   [Running Chrome tests with AddressSanitizer (asan) and LeakSanitizer (lsan)](testing/linux_running_asan_tests.md) -
+    Run Chrome tests with ASAN and LSAN builds to detect addressability issues and memory leaks.
+*   [Code Coverage](testing/code_coverage.md) - Code coverage for Chromium.
+*   [Code Coverage in Gerrit](testing/code_coverage_in_gerrit.md) - Per-CL code
+    coverage in Gerrit to assist code reviews.
 
 ### GPU-related docs
 *   [GPU Pixel Wrangling](gpu/pixel_wrangling.md) - Instructions for GPU
@@ -180,49 +193,47 @@ used when committed.
     how the bots are maintained.
 
 ### Misc Linux-Specific Docs
-*   [Linux Proxy Config](linux_proxy_config.md) - Network proxy sources on Linux
-*   [Debugging SSL on Linux](linux_debugging_ssl.md) - Tips on debugging SSL
+*   [Linux Proxy Config](linux/proxy_config.md) - Network proxy sources on Linux
+*   [Debugging SSL on Linux](linux/debugging_ssl.md) - Tips on debugging SSL
     code in Linux
-*   [Linux Cert Managment](linux_cert_management.md) - Managing X.509
+*   [Linux Cert Managment](linux/cert_management.md) - Managing X.509
     Certificates in Linux
-*   [Tips for Debugging on Linux](linux_debugging.md)
-*   [Linux GTK Theme Integration](linux_gtk_theme_integration.md) - Having
+*   [Tips for Debugging on Linux](linux/debugging.md)
+*   [Linux GTK Theme Integration](linux/gtk_theme_integration.md) - Having
     Chrome match the GTK+ theme.
-*   [Gtk vs ViewsGtk](gtk_vs_views_gtk.md) - Notes on when to use Gtk vs
-    ViewsGtk
-*   [Browser Plugins on Linux](linux_plugins.md) - A collection of links to
+*   [Browser Plugins on Linux](linux/plugins.md) - A collection of links to
     information on how browser plugins work on Linux
-*   [Linux Crash Dumping](linux_crash_dumping.md) - How Breakpad uploads crash
+*   [Linux Crash Dumping](linux/crash_dumping.md) - How Breakpad uploads crash
     reports to Google crash servers.
-*   [Linux Minidump to Core](linux_minidump_to_core.md) - How to convert a
+*   [Linux Minidump to Core](linux/minidump_to_core.md) - How to convert a
     Breakpad-generated minidump files to a core file readable by most debuggersx
-*   [Linux Sandbox IPC](linux_sandbox_ipc.md) - The lower level UPC system used
+*   [Linux Sandbox IPC](linux/sandbox_ipc.md) - The lower level UPC system used
     to route requests from the bottom of the call stack up into the browser.
-*   [Linux Dev Build as Default Browser](linux_dev_build_as_default_browser.md) -
+*   [Linux Dev Build as Default Browser](linux/dev_build_as_default_browser.md) -
     How to configure a Dev build of Chrome as the default browser in Linux.
-*   [Linux Chromium Packages](linux_chromium_packages.md) - Packages of Chromium
+*   [Linux Chromium Packages](linux/chromium_packages.md) - Packages of Chromium
     browser (not Chrome) provided by some Linux distributions.
 *   [`seccomp` Sandbox Crash Dumping](seccomp_sandbox_crash_dumping.md) - Notes
     on crash dumping a process running in a seccomp sandbox.
-*   [Linux Password Storage](linux_password_storage.md) - Keychain integrations
+*   [Linux Password Storage](linux/password_storage.md) - Keychain integrations
     between Chromium and Linux.
 *   [Linux Sublime Development](sublime_ide.md) - Using Sublime as an IDE
     for Chromium development on Linux.
-*   [Building and Debugging GTK](linux_building_debug_gtk.md) - Building
+*   [Building and Debugging GTK](linux/building_debug_gtk.md) - Building
     Chromium against GTK using lower optimization levels and/or more debugging
     symbols.
-*   [Debugging GTK](linux_debugging_gtk.md) - Using the GTK Debug packages and
+*   [Debugging GTK](linux/debugging_gtk.md) - Using the GTK Debug packages and
     related tools.
-*   [Chroot Notes](using_a_linux_chroot.md) - Setting up a chroot to work around
+*   [Chroot Notes](linux/using_a_chroot.md) - Setting up a chroot to work around
     libfreetype differences in some versions of Linux.
-*   [Linux Sandboxing](linux_sandboxing.md) - The Linux multi-process model to
+*   [Linux Sandboxing](linux/sandboxing.md) - The Linux multi-process model to
     isolate browser components with different privileges.
-*   [Zygote Process](linux_zygote.md) - How the Linux Zygote process, used to
+*   [Zygote Process](linux/zygote.md) - How the Linux Zygote process, used to
     spawn new processes, works.
-*   [Running Web Tests on Linux](web_tests_linux.md) - Linux-specific
+*   [Running Web Tests on Linux](testing/web_tests_linux.md) - Linux-specific
     instructions for running web tests.
-*   [Linux Sysroot Images](linux_sysroot.md) - How builds use libraries on Linux
-*   [Linux Hardware Video Decoding](linux_hw_video_decode.md) - Enabling
+*   [Linux Sysroot Images](linux/sysroot.md) - How builds use libraries on Linux
+*   [Linux Hardware Video Decoding](linux/hw_video_decode.md) - Enabling
     hardware video decode codepaths on Linux
 
 ### Misc MacOS-Specific Docs
@@ -236,9 +247,6 @@ used when committed.
 *   [Handling cygwin rebaseall failures](cygwin_dll_remapping_failure.md)
 *   [Hacking on ANGLE in Chromium](angle_in_chromium.md) - OpenGL ES 2.0 built
     on top of DirectX
-*   [Retrieveing Code Analysis Warnings](retrieving_code_analysis_warnings.md) -
-    How to retrieve and summarize the warnings generated by Microsoft VC++'s
-    `/analyze` compile option.
 *   [Windows Split DLLs](windows_split_dll.md) - Splitting `chrome.dll` into
     multiple dlls to work around toolchain limitations on Windows.
 
@@ -250,7 +258,7 @@ used when committed.
     Setting up profiling for `content_shell` on Android
 *   [Working Remotely with Android](working_remotely_with_android.md) - Building
     on a remote machine for an Android device connected to your local machine
-*   [Android Test Instructions](android_test_instructions.md) - Running a build
+*   [Android Test Instructions](testing/android_test_instructions.md) - Running a build
     on an Android device or emulator.
 *   [Android Debugging](android_debugging_instructions.md) - Tools and tips for
     how to debug Java and/or C/C++ code running on Android.
@@ -266,6 +274,10 @@ used when committed.
     What are .build_config files and how they are used.
 *   [Android App Bundles](../build/android/docs/android_app_bundles.md) -
     How to build Android app bundles for Chrome.
+*   [Dynamic Feature Modules (DFMs)](android_dynamic_feature_modules.md) - How
+    to create dynamic feature modules.
+*   [Chrome for Android UI](ui/android/overview.md) - Resources and best practices for
+    developing UI
 
 ### Misc iOS-Specific Docs
 *   [Continuous Build and Test Infrastructure for Chromium for iOS](ios/infra.md)
@@ -276,6 +288,10 @@ used when committed.
 *   [Running iOS test suites locally](ios/testing.md)
 
 ### Misc Chrome-OS-Specific Docs
+*   [Setting up captive portals and other restrictive networks](login/restrictive_networks.md)
+*   [Enterprise Enrollment](enterprise/enrollment.md)
+    *   [Kiosk mode and public sessions](enterprise/kiosk_public_session.md)
+*   [Debugging UI in OOBE/login/lock](login/ui_debugging.md)
 *   [Chrome Logging on Chrome OS](chrome_os_logging.md)
 
 ### Misc WebUI-Specific Docs
@@ -288,8 +304,12 @@ used when committed.
 *   [Autoplay of HTMLMediaElements](media/autoplay.md) - How HTMLMediaElements
     are autoplayed.
 *   [Piranha Plant](piranha_plant.md) - Future architecture of MediaStreams
-*   [Video Decode/Encode Accelerator Tests](media/gpu/vdatest_usage.md) - How to
-    use the accelerated video decoder/encoder test programs.
+*   [Video Encode Accelerator Tests](media/gpu/veatest_usage.md) - How to
+    use the accelerated video encoder test program.
+*   [Video Decoder Tests](media/gpu/video_decoder_test_usage.md) - Running the
+    video decoder tests.
+*   [Video Decoder Performance Tests](media/gpu/video_decoder_perf_test_usage.md) -
+    Running the video decoder performance tests.
 
 ### Accessibility
 *   [Accessibility Overview](accessibility/overview.md) - Overview of
@@ -334,28 +354,45 @@ used when committed.
 *   [Documentation Guidelines](documentation_guidelines.md)
 *   [Chromium Browser vs Google Chrome](chromium_browser_vs_google_chrome.md) -
     What's the difference between _Chromium Browser_ and _Google Chrome_?
+*   [Google Chrome branded builds](google_chrome_branded_builds.md)
 *   [Proxy Auto Config using WPAD](proxy_auto_config.md) - How WPAD servers are
     used to automatically set proxy settings.
 *   [Installing Chromium OS on VMWare](installation_at_vmware.md) - How to
     install Chromium OS on VMWare.
 *   [User Data Directory](user_data_dir.md) - How the user data and cache
     directories are determined on all platforms.
-*   [Mojo](../mojo/README.md) - IPC mechanism used by services.
+*   [User Data Storage](user_data_storage.md) - Policy documentation for files in User Data.
+
+### Mojo &amp; Services
+*   [Intro to Mojo &amp; Services](mojo_and_services.md) - Quick introduction
+    to Mojo and services in Chromium, with examples
+*   [Mojo API Reference](/mojo/README.md) - Detailed reference documentation for
+    all things Mojo
+*   [Service Development Guidelines](/services/README.md) - Guidelines for
+    service development in the Chromium tree
+*   [Servicifying Chromium Features](servicification.md) - General advice for
+    integrating new and existing subsystems into Chromium as services
+*   [Converting Legacy IPC to Mojo](mojo_ipc_conversion.md) - Tips and common
+    patterns for practical IPC conversion work
+*   [Mojo “Style” Guide](security/mojo.md) - Recommendations for best practices
+    from Mojo and IPC reviewers
+
+### WebXR
+*   [Running OpenVR Without Headset](xr/run_openvr_without_headset.md) -
+    Instructions for running OpenVR on Windows without a headset
 
 ### Probably Obsolete
 *   [TPM Quick Reference](tpm_quick_ref.md) - Trusted Platform Module notes.
 *   [System Hardening Features](system_hardening_features.md) - A list of
     current and planned Chrome OS security features.
-*   [Browser View Resizer](browser_view_resizer.md) - Design doc for making
-    browser window resizing easier on Windows.
 *   [WebView Policies](webview_policies.md)
-*   [Linux Profiling](linux_profiling.md) - How to profile Chromium on Linux
-*   [Linux Graphics Pipeline](linux_graphics_pipeline.md)
-*   [Linux `SUID` Sandbox](linux_suid_sandbox.md) - Sandboxing renderers using a
+*   [Linux Profiling](linux/profiling.md) - How to profile Chromium on Linux
+*   [Linux Graphics Pipeline](linux/graphics_pipeline.md)
+*   [Linux `SUID` Sandbox](linux/suid_sandbox.md) - Sandboxing renderers using a
     SUID binary on Linux
-*   [Linux `SUID` Sandbox Development](linux_suid_sandbox_development.md) -
+*   [Linux `SUID` Sandbox Development](linux/suid_sandbox_development.md) -
     Development on the above system.
-*   [Linux PID Namespace Support](linux_pid_namespace_support.md)
+*   [Linux PID Namespace Support](linux/pid_namespace_support.md)
 *   [Vanilla msysgit workflow](vanilla_msysgit_workflow.md) - A workflow for
     using mostly vanilla git on Windows.
 *   [Old Chromoting Build Instructions](old_chromoting_build_instructions.md)

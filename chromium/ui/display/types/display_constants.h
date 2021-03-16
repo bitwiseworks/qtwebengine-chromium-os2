@@ -28,7 +28,7 @@ enum MultipleDisplayState {
   MULTIPLE_DISPLAY_STATE_INVALID,
   MULTIPLE_DISPLAY_STATE_HEADLESS,
   MULTIPLE_DISPLAY_STATE_SINGLE,
-  MULTIPLE_DISPLAY_STATE_DUAL_MIRROR,     // TODO(crbug.com/774795) Rename this.
+  MULTIPLE_DISPLAY_STATE_MULTI_MIRROR,    // 2+ displays in mirror mode.
   MULTIPLE_DISPLAY_STATE_MULTI_EXTENDED,  // 2+ displays in extended mode.
 };
 
@@ -62,6 +62,32 @@ enum HDCPState {
   // Update this when adding a new type.
   HDCP_STATE_LAST = HDCP_STATE_ENABLED
 };
+
+// The orientation of the panel in respect to the natural device orientation.
+enum PanelOrientation {
+  kNormal = 0,
+  kBottomUp = 1,
+  kLeftUp = 2,
+  kRightUp = 3,
+  kLast = kRightUp
+};
+
+// The existence, or lack thereof, and state of an ePrivacy screen.
+enum PrivacyScreenState {
+  kDisabled = 0,
+  kEnabled = 1,
+  kNotSupported = 2,
+  kPrivacyScreenStateLast = kNotSupported,
+};
+
+// Defines the float values closest to repeating decimal scale factors.
+constexpr float kDsf_1_777 = 1.77777779102325439453125f;
+constexpr float kDsf_2_252 = 2.2522523403167724609375f;
+constexpr float kDsf_2_666 = 2.6666667461395263671875f;
+
+constexpr char kDsfStr_1_777[] = "1.77777779102325439453125";
+constexpr char kDsfStr_2_252[] = "2.2522523403167724609375";
+constexpr char kDsfStr_2_666[] = "2.6666667461395263671875";
 
 }  // namespace display
 

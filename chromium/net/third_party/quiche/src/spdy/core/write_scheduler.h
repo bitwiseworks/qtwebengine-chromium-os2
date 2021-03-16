@@ -6,12 +6,12 @@
 #define QUICHE_SPDY_CORE_WRITE_SCHEDULER_H_
 
 #include <cstdint>
+#include <string>
 #include <tuple>
 #include <vector>
 
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_export.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
 
 namespace spdy {
 
@@ -40,7 +40,7 @@ namespace spdy {
 // returned by PopNextReadyStream(); when returned by that method, the stream's
 // state changes to not ready.
 template <typename StreamIdType>
-class SPDY_EXPORT_PRIVATE WriteScheduler {
+class QUICHE_EXPORT_PRIVATE WriteScheduler {
  public:
   typedef StreamPrecedence<StreamIdType> StreamPrecedenceType;
 
@@ -147,8 +147,14 @@ class SPDY_EXPORT_PRIVATE WriteScheduler {
   // Returns the number of streams currently marked ready.
   virtual size_t NumReadyStreams() const = 0;
 
+  // Returns true if stream with |stream_id| is ready.
+  virtual bool IsStreamReady(StreamIdType stream_id) const = 0;
+
+  // Returns the number of registered streams.
+  virtual size_t NumRegisteredStreams() const = 0;
+
   // Returns summary of internal state, for logging/debugging.
-  virtual SpdyString DebugString() const = 0;
+  virtual std::string DebugString() const = 0;
 };
 
 }  // namespace spdy

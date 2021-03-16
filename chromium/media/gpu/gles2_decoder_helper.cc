@@ -14,8 +14,8 @@
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
-#include "gpu/command_buffer/service/texture_manager.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/scoped_binders.h"
 
 using gpu::gles2::AbstractTexture;
 
@@ -27,10 +27,7 @@ class GLES2DecoderHelperImpl : public GLES2DecoderHelper {
       : decoder_(decoder) {
     DCHECK(decoder_);
     gpu::gles2::ContextGroup* group = decoder_->GetContextGroup();
-    texture_manager_ = group->texture_manager();
     mailbox_manager_ = group->mailbox_manager();
-    // TODO(sandersd): Support GLES2DecoderPassthroughImpl.
-    DCHECK(texture_manager_);
     DCHECK(mailbox_manager_);
   }
 
@@ -61,7 +58,7 @@ class GLES2DecoderHelperImpl : public GLES2DecoderHelper {
 
     // TODO(sandersd): Do we always want to allocate for GL_TEXTURE_2D?
     if (target == GL_TEXTURE_2D) {
-      glBindTexture(target, texture->service_id());
+      gl::ScopedTextureBinder scoped_binder(target, texture->service_id());
       glTexImage2D(target,           // target
                    0,                // level
                    internal_format,  // internal_format
@@ -71,7 +68,6 @@ class GLES2DecoderHelperImpl : public GLES2DecoderHelper {
                    format,           // format
                    type,             // type
                    nullptr);         // data
-      decoder_->RestoreActiveTextureUnitBinding(target);
     }
 
     return texture;
@@ -97,7 +93,6 @@ class GLES2DecoderHelperImpl : public GLES2DecoderHelper {
 
  private:
   gpu::DecoderContext* decoder_;
-  gpu::gles2::TextureManager* texture_manager_;
   gpu::MailboxManager* mailbox_manager_;
   THREAD_CHECKER(thread_checker_);
 

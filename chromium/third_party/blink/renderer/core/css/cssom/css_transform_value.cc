@@ -32,12 +32,13 @@ CSSTransformValue* CSSTransformValue::Create(
 }
 
 CSSTransformValue* CSSTransformValue::FromCSSValue(const CSSValue& css_value) {
-  if (!css_value.IsValueList()) {
+  auto* css_value_list = DynamicTo<CSSValueList>(css_value);
+  if (!css_value_list) {
     // TODO(meade): Also need to check the separator here if we care.
     return nullptr;
   }
   HeapVector<Member<CSSTransformComponent>> components;
-  for (const CSSValue* value : ToCSSValueList(css_value)) {
+  for (const CSSValue* value : *css_value_list) {
     CSSTransformComponent* component =
         CSSTransformComponent::FromCSSValue(*value);
     if (!component)
@@ -76,25 +77,25 @@ const CSSValue* CSSTransformValue::ToCSSValue() const {
   return transform_css_value;
 }
 
-bool CSSTransformValue::AnonymousIndexedSetter(
+IndexedPropertySetterResult CSSTransformValue::AnonymousIndexedSetter(
     unsigned index,
     const Member<CSSTransformComponent> component,
     ExceptionState& exception_state) {
   if (index < transform_components_.size()) {
     transform_components_[index] = component;
-    return true;
+    return IndexedPropertySetterResult::kIntercepted;
   }
 
   if (index == transform_components_.size()) {
     transform_components_.push_back(component);
-    return true;
+    return IndexedPropertySetterResult::kIntercepted;
   }
 
   exception_state.ThrowRangeError(
       ExceptionMessages::IndexOutsideRange<unsigned>(
           "index", index, 0, ExceptionMessages::kInclusiveBound,
           transform_components_.size(), ExceptionMessages::kInclusiveBound));
-  return false;
+  return IndexedPropertySetterResult::kIntercepted;
 }
 
 }  // namespace blink

@@ -36,10 +36,10 @@ int lsmErrorBkpt(int rc){
 static void assert_db_state(lsm_db *pDb){
 
   /* If there is at least one cursor or a write transaction open, the database
-  ** handle must be holding a pointer to a client snapshot. And the reverse
-  ** - if there are no open cursors and no write transactions then there must
+  ** handle must be holding a pointer to a client snapshot. And the reverse 
+  ** - if there are no open cursors and no write transactions then there must 
   ** not be a client snapshot.  */
-
+  
   assert( (pDb->pCsr!=0||pDb->nTransOpen>0)==(pDb->iReader>=0||pDb->bRoTrans) );
 
   assert( (pDb->iReader<0 && pDb->bRoTrans==0) || pDb->pClient!=0 );
@@ -47,7 +47,7 @@ static void assert_db_state(lsm_db *pDb){
   assert( pDb->nTransOpen>=0 );
 }
 #else
-# define assert_db_state(x)
+# define assert_db_state(x) 
 #endif
 
 /*
@@ -118,7 +118,7 @@ static void dbReleaseClientSnapshot(lsm_db *pDb){
 }
 
 static int getFullpathname(
-  lsm_env *pEnv,
+  lsm_env *pEnv, 
   const char *zRel,
   char **pzAbs
 ){
@@ -175,8 +175,8 @@ int lsm_open(lsm_db *pDb, const char *zFilename){
 
     /* Translate the possibly relative pathname supplied by the user into
     ** an absolute pathname. This is required because the supplied path
-    ** is used (either directly or with "-log" appended to it) for more
-    ** than one purpose - to open both the database and log files, and
+    ** is used (either directly or with "-log" appended to it) for more 
+    ** than one purpose - to open both the database and log files, and 
     ** perhaps to unlink the log file during disconnection. An absolute
     ** path is required to ensure that the correct files are operated
     ** on even if the application changes the cwd.  */
@@ -191,8 +191,8 @@ int lsm_open(lsm_db *pDb, const char *zFilename){
     if( pDb->bReadonly==0 ){
       /* Configure the file-system connection with the page-size and block-size
       ** of this database. Even if the database file is zero bytes in size
-      ** on disk, these values have been set in shared-memory by now, and so
-      ** are guaranteed not to change during the lifetime of this connection.
+      ** on disk, these values have been set in shared-memory by now, and so 
+      ** are guaranteed not to change during the lifetime of this connection.  
       */
       if( rc==LSM_OK && LSM_OK==(rc = lsmCheckpointLoad(pDb, 0)) ){
         lsmFsSetPageSize(pDb->pFS, lsmCheckpointPgsz(pDb->aSnapshot));
@@ -227,8 +227,8 @@ int lsm_close(lsm_db *pDb){
       lsmLogClose(pDb);
       lsmFsClose(pDb->pFS);
       /* assert( pDb->mLock==0 ); */
-
-      /* Invoke any destructors registered for the compression or
+      
+      /* Invoke any destructors registered for the compression or 
       ** compression factory callbacks.  */
       if( pDb->factory.xFree ) pDb->factory.xFree(pDb->factory.pCtx);
       if( pDb->compress.xFree ) pDb->compress.xFree(pDb->compress.pCtx);
@@ -249,7 +249,7 @@ int lsm_config(lsm_db *pDb, int eParam, ...){
 
   switch( eParam ){
     case LSM_CONFIG_AUTOFLUSH: {
-      /* This parameter is read and written in KB. But all internal
+      /* This parameter is read and written in KB. But all internal 
       ** processing is done in bytes.  */
       int *piVal = va_arg(ap, int *);
       int iVal = *piVal;
@@ -284,8 +284,8 @@ int lsm_config(lsm_db *pDb, int eParam, ...){
     case LSM_CONFIG_PAGE_SIZE: {
       int *piVal = va_arg(ap, int *);
       if( pDb->pDatabase ){
-        /* If lsm_open() has been called, this is a read-only parameter.
-        ** Set the output variable to the page-size according to the
+        /* If lsm_open() has been called, this is a read-only parameter. 
+        ** Set the output variable to the page-size according to the 
         ** FileSystem object.  */
         *piVal = lsmFsPageSize(pDb->pFS);
       }else{
@@ -299,12 +299,12 @@ int lsm_config(lsm_db *pDb, int eParam, ...){
     }
 
     case LSM_CONFIG_BLOCK_SIZE: {
-      /* This parameter is read and written in KB. But all internal
+      /* This parameter is read and written in KB. But all internal 
       ** processing is done in bytes.  */
       int *piVal = va_arg(ap, int *);
       if( pDb->pDatabase ){
-        /* If lsm_open() has been called, this is a read-only parameter.
-        ** Set the output variable to the block-size in KB according to the
+        /* If lsm_open() has been called, this is a read-only parameter. 
+        ** Set the output variable to the block-size in KB according to the 
         ** FileSystem object.  */
         *piVal = lsmFsBlockSize(pDb->pFS) / 1024;
       }else{
@@ -365,7 +365,7 @@ int lsm_config(lsm_db *pDb, int eParam, ...){
     case LSM_CONFIG_MULTIPLE_PROCESSES: {
       int *piVal = va_arg(ap, int *);
       if( pDb->pDatabase ){
-        /* If lsm_open() has been called, this is a read-only parameter.
+        /* If lsm_open() has been called, this is a read-only parameter. 
         ** Set the output variable to true if this connection is currently
         ** in multi-process mode.  */
         *piVal = lsmDbMultiProc(pDb);
@@ -432,7 +432,7 @@ int lsm_config(lsm_db *pDb, int eParam, ...){
 }
 
 void lsmAppendSegmentList(LsmString *pStr, char *zPre, Segment *pSeg){
-  lsmStringAppendf(pStr, "%s{%d %d %d %d}", zPre,
+  lsmStringAppendf(pStr, "%s{%d %d %d %d}", zPre, 
         pSeg->iFirst, pSeg->iLastPg, pSeg->iRoot, pSeg->nSize
   );
 }
@@ -528,10 +528,10 @@ static int infoTreeSize(lsm_db *db, int *pnOldKB, int *pnNewKB){
   /* The following code suffers from two race conditions, as it accesses and
   ** trusts the contents of shared memory without verifying checksums:
   **
-  **   * The two values read - TreeHeader.root.nByte and oldroot.nByte - are
+  **   * The two values read - TreeHeader.root.nByte and oldroot.nByte - are 
   **     32-bit fields. It is assumed that reading from one of these
   **     is atomic - that it is not possible to read a partially written
-  **     garbage value. However the two values may be mutually inconsistent.
+  **     garbage value. However the two values may be mutually inconsistent. 
   **
   **   * TreeHeader.iLogOff is a 64-bit value. And lsmCheckpointLogOffset()
   **     reads a 64-bit value from a snapshot stored in shared memory. It
@@ -700,7 +700,7 @@ static int doWriteOp(
     }
   }
 
-  /* If a transaction was opened at the start of this function, commit it.
+  /* If a transaction was opened at the start of this function, commit it. 
   ** Or, if an error has occurred, roll it back.  */
   if( bCommit ){
     if( rc==LSM_OK ){
@@ -713,7 +713,7 @@ static int doWriteOp(
   return rc;
 }
 
-/*
+/* 
 ** Write a new value into the database.
 */
 int lsm_insert(
@@ -725,7 +725,7 @@ int lsm_insert(
 }
 
 /*
-** Delete a value from the database.
+** Delete a value from the database. 
 */
 int lsm_delete(lsm_db *db, const void *pKey, int nKey){
   return doWriteOp(db, 0, pKey, nKey, 0, -1);
@@ -747,7 +747,7 @@ int lsm_delete_range(
 }
 
 /*
-** Open a new cursor handle.
+** Open a new cursor handle. 
 **
 ** If there are currently no other open cursor handles, and no open write
 ** transaction, open a read transaction here.
@@ -836,8 +836,8 @@ int lsm_csr_value(lsm_cursor *pCsr, const void **ppVal, int *pnVal){
 }
 
 void lsm_config_log(
-  lsm_db *pDb,
-  void (*xLog)(void *, int, const char *),
+  lsm_db *pDb, 
+  void (*xLog)(void *, int, const char *), 
   void *pCtx
 ){
   pDb->xLog = xLog;
@@ -845,8 +845,8 @@ void lsm_config_log(
 }
 
 void lsm_config_work_hook(
-  lsm_db *pDb,
-  void (*xWork)(lsm_db *, void *),
+  lsm_db *pDb, 
+  void (*xWork)(lsm_db *, void *), 
   void *pCtx
 ){
   pDb->xWork = xWork;
@@ -994,7 +994,7 @@ int lsm_set_user_version(lsm_db *pDb, unsigned int iUsr){
     pDb->treehdr.iUsrVersion = iUsr;
   }
 
-  /* If a transaction was opened at the start of this function, commit it.
+  /* If a transaction was opened at the start of this function, commit it. 
   ** Or, if an error has occurred, roll it back.  */
   if( bCommit ){
     if( rc==LSM_OK ){

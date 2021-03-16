@@ -6,20 +6,20 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
 #include "net/socket/client_socket_factory.h"
-#include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
+#include "net/socket/stream_socket.h"
 #include "net/ssl/ssl_config.h"
 #include "net/ssl/ssl_config_service.h"
 
 namespace network {
 
 TLSClientSocket::TLSClientSocket(
-    mojom::TLSClientSocketRequest request,
-    mojom::SocketObserverPtr observer,
+    mojo::PendingRemote<mojom::SocketObserver> observer,
     const net::NetworkTrafficAnnotationTag& traffic_annotation)
     : observer_(std::move(observer)), traffic_annotation_(traffic_annotation) {}
 
@@ -28,16 +28,15 @@ TLSClientSocket::~TLSClientSocket() {}
 void TLSClientSocket::Connect(
     const net::HostPortPair& host_port_pair,
     const net::SSLConfig& ssl_config,
-    std::unique_ptr<net::ClientSocketHandle> tcp_socket,
-    const net::SSLClientSocketContext& ssl_client_socket_context,
+    std::unique_ptr<net::StreamSocket> tcp_socket,
+    net::SSLClientContext* ssl_client_context,
     net::ClientSocketFactory* socket_factory,
     mojom::TCPConnectedSocket::UpgradeToTLSCallback callback,
     bool send_ssl_info) {
   connect_callback_ = std::move(callback);
   send_ssl_info_ = send_ssl_info;
-  socket_ = socket_factory->CreateSSLClientSocket(std::move(tcp_socket),
-                                                  host_port_pair, ssl_config,
-                                                  ssl_client_socket_context);
+  socket_ = socket_factory->CreateSSLClientSocket(
+      ssl_client_context, std::move(tcp_socket), host_port_pair, ssl_config);
   int result = socket_->Connect(base::BindRepeating(
       &TLSClientSocket::OnTLSConnectCompleted, base::Unretained(this)));
   if (result != net::ERR_IO_PENDING)

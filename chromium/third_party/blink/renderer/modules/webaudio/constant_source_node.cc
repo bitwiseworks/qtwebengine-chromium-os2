@@ -6,8 +6,8 @@
 
 #include <algorithm>
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_constant_source_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
-#include "third_party/blink/renderer/modules/webaudio/constant_source_options.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -70,33 +70,34 @@ void ConstantSourceHandler::Process(uint32_t frames_to_process) {
     return;
   }
 
-  if (offset_->HasSampleAccurateValues()) {
-    DCHECK_LE(frames_to_process, sample_accurate_values_.size());
-    if (frames_to_process <= sample_accurate_values_.size()) {
-      float* offsets = sample_accurate_values_.Data();
-      offset_->CalculateSampleAccurateValues(offsets, frames_to_process);
-      if (non_silent_frames_to_process > 0) {
-        memcpy(output_bus->Channel(0)->MutableData() + quantum_frame_offset,
-               offsets + quantum_frame_offset,
-               non_silent_frames_to_process * sizeof(*offsets));
-        output_bus->ClearSilentFlag();
-      } else {
-        output_bus->Zero();
-      }
-    }
-  } else {
-    float value = offset_->Value();
+  bool is_sample_accurate = offset_->HasSampleAccurateValuesTimeline();
 
-    if (value == 0) {
-      output_bus->Zero();
-    } else {
-      float* dest = output_bus->Channel(0)->MutableData();
-      dest += quantum_frame_offset;
-      for (unsigned k = 0; k < non_silent_frames_to_process; ++k) {
-        dest[k] = value;
-      }
+  if (is_sample_accurate && offset_->IsAudioRate()) {
+    DCHECK_LE(frames_to_process, sample_accurate_values_.size());
+    float* offsets = sample_accurate_values_.Data();
+    offset_->CalculateSampleAccurateValues(offsets, frames_to_process);
+    if (non_silent_frames_to_process > 0) {
+      memcpy(output_bus->Channel(0)->MutableData() + quantum_frame_offset,
+             offsets + quantum_frame_offset,
+             non_silent_frames_to_process * sizeof(*offsets));
       output_bus->ClearSilentFlag();
+    } else {
+      output_bus->Zero();
     }
+
+    return;
+  }
+
+  float value = is_sample_accurate ? offset_->FinalValue() : offset_->Value();
+  if (value == 0) {
+    output_bus->Zero();
+  } else {
+    float* dest = output_bus->Channel(0)->MutableData();
+    dest += quantum_frame_offset;
+    for (unsigned k = 0; k < non_silent_frames_to_process; ++k) {
+      dest[k] = value;
+    }
+    output_bus->ClearSilentFlag();
   }
 }
 
@@ -104,12 +105,26 @@ bool ConstantSourceHandler::PropagatesSilence() const {
   return !IsPlayingOrScheduled() || HasFinished();
 }
 
+void ConstantSourceHandler::HandleStoppableSourceNode() {
+  double now = Context()->currentTime();
+
+  // If we know the end time, and the source was started and the current time is
+  // definitely past the end time, we can stop this node.  (This handles the
+  // case where the this source is not connected to the destination and we want
+  // to stop it.)
+  if (end_time_ != kUnknownTime && IsPlayingOrScheduled() &&
+      now >= end_time_ + kExtraStopFrames / Context()->sampleRate()) {
+    Finish();
+  }
+}
+
 // ----------------------------------------------------------------
 ConstantSourceNode::ConstantSourceNode(BaseAudioContext& context)
     : AudioScheduledSourceNode(context),
       offset_(AudioParam::Create(
           context,
-          kParamTypeConstantSourceOffset,
+          Uuid(),
+          AudioParamHandler::kParamTypeConstantSourceOffset,
           1,
           AudioParamHandler::AutomationRate::kAudio,
           AudioParamHandler::AutomationRateMode::kVariable)) {
@@ -121,11 +136,6 @@ ConstantSourceNode* ConstantSourceNode::Create(
     BaseAudioContext& context,
     ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
 
   return MakeGarbageCollected<ConstantSourceNode>(context);
 }
@@ -146,7 +156,7 @@ ConstantSourceNode* ConstantSourceNode::Create(
   return node;
 }
 
-void ConstantSourceNode::Trace(blink::Visitor* visitor) {
+void ConstantSourceNode::Trace(Visitor* visitor) {
   visitor->Trace(offset_);
   AudioScheduledSourceNode::Trace(visitor);
 }
@@ -157,6 +167,16 @@ ConstantSourceHandler& ConstantSourceNode::GetConstantSourceHandler() const {
 
 AudioParam* ConstantSourceNode::offset() {
   return offset_;
+}
+
+void ConstantSourceNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+  GraphTracer().DidCreateAudioParam(offset_);
+}
+
+void ConstantSourceNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioParam(offset_);
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

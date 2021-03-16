@@ -29,11 +29,10 @@ class LanguageSettingsPrivateDelegateFactory
   static LanguageSettingsPrivateDelegateFactory* GetInstance();
 
  protected:
-  // BrowserContextKeyedBaseFactory overrides:
+  // BrowserContextKeyedServiceFactory overrides:
   content::BrowserContext* GetBrowserContextToUse(
       content::BrowserContext* context) const override;
   bool ServiceIsCreatedWithBrowserContext() const override;
-  bool ServiceIsNULLWhileTesting() const override;
 
  private:
   friend struct base::DefaultSingletonTraits<

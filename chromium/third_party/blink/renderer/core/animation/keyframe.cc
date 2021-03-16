@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
 #include "third_party/blink/renderer/core/animation/effect_model.h"
 #include "third_party/blink/renderer/core/animation/invalidatable_interpolation.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -15,7 +16,7 @@ Keyframe::PropertySpecificKeyframe::PropertySpecificKeyframe(
     scoped_refptr<TimingFunction> easing,
     EffectModel::CompositeOperation composite)
     : offset_(offset), easing_(std::move(easing)), composite_(composite) {
-  DCHECK(!IsNull(offset));
+  DCHECK(!Timing::IsNull(offset));
   if (!easing_)
     easing_ = LinearTimingFunction::Shared();
 }
@@ -24,7 +25,7 @@ Interpolation* Keyframe::PropertySpecificKeyframe::CreateInterpolation(
     const PropertyHandle& property_handle,
     const Keyframe::PropertySpecificKeyframe& end) const {
   // const_cast to take refs.
-  return InvalidatableInterpolation::Create(
+  return MakeGarbageCollected<InvalidatableInterpolation>(
       property_handle, const_cast<PropertySpecificKeyframe*>(this),
       const_cast<PropertySpecificKeyframe*>(&end));
 }

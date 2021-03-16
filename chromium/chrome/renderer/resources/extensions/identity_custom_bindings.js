@@ -4,9 +4,7 @@
 
 // Custom binding for the Identity API.
 
-var binding = apiBridge || require('binding').Binding.create('identity');
-
-binding.registerCustomHook(function(binding, id, contextType) {
+apiBridge.registerCustomHook(function(binding, id, contextType) {
   var apiFunctions = binding.apiFunctions;
 
   apiFunctions.setHandleRequest('getRedirectURL', function(path) {
@@ -14,11 +12,8 @@ binding.registerCustomHook(function(binding, id, contextType) {
       path = '/';
     else
       path = String(path);
-    if (path[0] != '/')
+    if (path[0] !== '/')
       path = '/' + path;
     return 'https://' + id + '.chromiumapp.org' + path;
   });
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

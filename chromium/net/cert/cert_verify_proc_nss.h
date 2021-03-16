@@ -38,10 +38,12 @@ class NET_EXPORT_PRIVATE CertVerifyProcNSS : public CertVerifyProc {
   int VerifyInternal(X509Certificate* cert,
                      const std::string& hostname,
                      const std::string& ocsp_response,
+                     const std::string& sct_list,
                      int flags,
                      CRLSet* crl_set,
                      const CertificateList& additional_trust_anchors,
-                     CertVerifyResult* verify_result) override;
+                     CertVerifyResult* verify_result,
+                     const NetLogWithSource& net_log) override;
 };
 
 }  // namespace net

@@ -16,13 +16,11 @@
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace base {
-class SingleThreadTaskRunner;
 class TickClock;
 }
 
 namespace data_reduction_proxy {
 
-class DataReductionProxyConfigurator;
 class DataReductionProxyMutableConfigValues;
 class TestDataReductionProxyParams;
 
@@ -32,19 +30,13 @@ class TestDataReductionProxyParams;
 // change the underlying state.
 class TestDataReductionProxyConfig : public DataReductionProxyConfig {
  public:
-  TestDataReductionProxyConfig(
-      scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      DataReductionProxyConfigurator* configurator);
+  TestDataReductionProxyConfig();
 
   // Creates a |TestDataReductionProxyConfig| with the provided |config_values|.
   // This permits any DataReductionProxyConfigValues to be used (such as
   // DataReductionProxyParams or DataReductionProxyMutableConfigValues).
   TestDataReductionProxyConfig(
-      std::unique_ptr<DataReductionProxyConfigValues> config_values,
-      scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      DataReductionProxyConfigurator* configurator);
+      std::unique_ptr<DataReductionProxyConfigValues> config_values);
 
   ~TestDataReductionProxyConfig() override;
 
@@ -58,66 +50,24 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
   // TODO(jeremyim): Rationalize with test_params().
   DataReductionProxyConfigValues* config_values();
 
-  // Resets the Lo-Fi status to default state.
-  void ResetLoFiStatusForTest();
-
   // Sets the |tick_clock_| to |tick_clock|. Ownership of |tick_clock| is not
   // passed to the callee.
   void SetTickClock(const base::TickClock* tick_clock);
 
   base::TimeTicks GetTicksNow() const override;
 
-  // Sets if the captive portal probe has been blocked for the current network.
-  void SetIsCaptivePortal(bool is_captive_portal);
 
-  void SetConnectionTypeForTesting(
-      network::mojom::ConnectionType connection_type) {
-    connection_type_ = connection_type;
-  }
-
-  void AddDefaultProxyBypassRules() override;
 
   void SetShouldAddDefaultProxyBypassRules(bool add_default_proxy_bypass_rules);
 
-  std::string GetCurrentNetworkID() const override;
-
-  void SetCurrentNetworkID(const std::string& network_id);
-
-  base::Optional<std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
-  GetInFlightWarmupProxyDetails() const override;
-
-  void SetInFlightWarmupProxyDetails(
-      base::Optional<
-          std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
-          in_flight_warmup_proxy_details);
-
-  bool IsFetchInFlight() const override;
-
-  void SetIsFetchInFlight(bool fetch_in_flight);
-
-  size_t GetWarmupURLFetchAttemptCounts() const override;
-
-  void SetWarmupURLFetchAttemptCounts(
-      base::Optional<size_t> previous_attempt_counts);
-
   using DataReductionProxyConfig::UpdateConfigForTesting;
-  using DataReductionProxyConfig::HandleWarmupFetcherResponse;
 
  private:
-  bool GetIsCaptivePortal() const override;
 
   const base::TickClock* tick_clock_;
 
   base::Optional<size_t> previous_attempt_counts_;
 
-  base::Optional<std::string> current_network_id_;
-
-  base::Optional<std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
-      in_flight_warmup_proxy_details_;
-
-  // Set to true if the captive portal probe for the current network has been
-  // blocked.
-  bool is_captive_portal_;
 
   // True if the default bypass rules should be added. Should be set to false
   // when fetching resources from an embedded test server running on localhost.
@@ -134,19 +84,11 @@ class MockDataReductionProxyConfig : public TestDataReductionProxyConfig {
  public:
   // Creates a |MockDataReductionProxyConfig|.
   MockDataReductionProxyConfig(
-      std::unique_ptr<DataReductionProxyConfigValues> config_values,
-      scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
-      DataReductionProxyConfigurator* configurator);
+      std::unique_ptr<DataReductionProxyConfigValues> config_values);
   ~MockDataReductionProxyConfig() override;
 
-  MOCK_CONST_METHOD2(WasDataReductionProxyUsed,
-                     bool(const net::URLRequest*,
-                          DataReductionProxyTypeInfo* proxy_info));
   MOCK_CONST_METHOD1(ContainsDataReductionProxy,
                      bool(const net::ProxyConfig::ProxyRules& proxy_rules));
-  MOCK_METHOD1(SecureProxyCheck,
-               void(SecureProxyCheckerCallback fetcher_callback));
 };
 
 }  // namespace data_reduction_proxy

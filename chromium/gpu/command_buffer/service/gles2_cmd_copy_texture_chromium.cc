@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <unordered_map>
 
+#include "gpu/command_buffer/common/gles2_cmd_copy_texture_chromium_utils.h"
+#include "gpu/command_buffer/service/context_state.h"
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/gles2_cmd_copy_tex_image.h"
@@ -34,6 +36,7 @@ enum {
   S_FORMAT_LUMINANCE,
   S_FORMAT_LUMINANCE_ALPHA,
   S_FORMAT_RED,
+  S_FORMAT_RG,
   S_FORMAT_RGB,
   S_FORMAT_RGBA,
   S_FORMAT_RGB8,
@@ -43,6 +46,8 @@ enum {
   S_FORMAT_RGB_YCBCR_420V_CHROMIUM,
   S_FORMAT_RGB_YCBCR_422_CHROMIUM,
   S_FORMAT_COMPRESSED,
+  S_FORMAT_RGB10_A2,
+  S_FORMAT_RGB_YCBCR_P010_CHROMIUM,
   NUM_S_FORMAT
 };
 
@@ -80,36 +85,34 @@ enum {
   NUM_D_FORMAT
 };
 
+enum {
+  GLSL_ESSL100_OR_COMPATIBILITY_PROFILE,
+  GLSL_ESSL300,
+  GLSL_CORE_PROFILE,
+  NUM_GLSL
+};
+
 const unsigned kAlphaSize = 4;
 const unsigned kDitherSize = 2;
-const unsigned kNumVertexShaders = NUM_SAMPLERS;
-const unsigned kNumFragmentShaders =
-    kAlphaSize * kDitherSize * NUM_SAMPLERS * NUM_S_FORMAT * NUM_D_FORMAT;
+const unsigned kNumVertexShaders = NUM_GLSL;
+
+static_assert(std::numeric_limits<unsigned>::max() / NUM_GLSL / NUM_D_FORMAT /
+                      NUM_S_FORMAT / NUM_SAMPLERS / kDitherSize / kAlphaSize >
+                  0,
+              "ShaderId would overflow");
+const unsigned kNumFragmentShaders = kAlphaSize * kDitherSize * NUM_SAMPLERS *
+                                     NUM_S_FORMAT * NUM_D_FORMAT * NUM_GLSL;
 
 typedef unsigned ShaderId;
 
-ShaderId GetVertexShaderId(GLenum target) {
-  ShaderId id = 0;
-  switch (target) {
-    case GL_TEXTURE_2D:
-      id = SAMPLER_2D;
-      break;
-    case GL_TEXTURE_RECTANGLE_ARB:
-      id = SAMPLER_RECTANGLE_ARB;
-      break;
-    case GL_TEXTURE_EXTERNAL_OES:
-      id = SAMPLER_EXTERNAL_OES;
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
-  return id;
+ShaderId GetVertexShaderId(unsigned glslVersion) {
+  return glslVersion;
 }
 
 // Returns the correct fragment shader id to evaluate the copy operation for
 // the premultiply alpha pixel store settings and target.
-ShaderId GetFragmentShaderId(bool premultiply_alpha,
+ShaderId GetFragmentShaderId(unsigned glslVersion,
+                             bool premultiply_alpha,
                              bool unpremultiply_alpha,
                              bool dither,
                              GLenum target,
@@ -154,10 +157,14 @@ ShaderId GetFragmentShaderId(bool premultiply_alpha,
     case GL_R16_EXT:
       sourceFormatIndex = S_FORMAT_RED;
       break;
+    case GL_RG16_EXT:
+      sourceFormatIndex = S_FORMAT_RG;
+      break;
     case GL_RGB:
       sourceFormatIndex = S_FORMAT_RGB;
       break;
     case GL_RGBA:
+    case GL_RGBA16_EXT:
       sourceFormatIndex = S_FORMAT_RGBA;
       break;
     case GL_RGB8:
@@ -185,8 +192,15 @@ ShaderId GetFragmentShaderId(bool premultiply_alpha,
     case GL_ETC1_RGB8_OES:
       sourceFormatIndex = S_FORMAT_COMPRESSED;
       break;
+    case GL_RGB10_A2:
+      sourceFormatIndex = S_FORMAT_RGB10_A2;
+      break;
+    case GL_RGB_YCBCR_P010_CHROMIUM:
+      sourceFormatIndex = S_FORMAT_RGB_YCBCR_P010_CHROMIUM;
+      break;
     default:
-      NOTREACHED();
+      NOTREACHED() << "Invalid source format "
+                   << gl::GLEnums::GetStringEnum(source_format);
       break;
   }
 
@@ -287,42 +301,58 @@ ShaderId GetFragmentShaderId(bool premultiply_alpha,
       break;
   }
 
-  return alphaIndex + ditherIndex * kAlphaSize +
-         targetIndex * kAlphaSize * kDitherSize +
-         sourceFormatIndex * kAlphaSize * kDitherSize * NUM_SAMPLERS +
-         destFormatIndex * kAlphaSize * kDitherSize * NUM_SAMPLERS *
-             NUM_S_FORMAT;
+  ShaderId id = 0;
+  id = id * NUM_GLSL + glslVersion;
+  id = id * NUM_D_FORMAT + destFormatIndex;
+  id = id * NUM_S_FORMAT + sourceFormatIndex;
+  id = id * NUM_SAMPLERS + targetIndex;
+  id = id * kDitherSize + ditherIndex;
+  id = id * kAlphaSize + alphaIndex;
+  return id;
 }
 
 const char* kShaderPrecisionPreamble =
     "#ifdef GL_ES\n"
-    "precision mediump float;\n"
     "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+    "precision highp float;\n"
     "#define TexCoordPrecision highp\n"
     "#else\n"
+    "precision mediump float;\n"
     "#define TexCoordPrecision mediump\n"
     "#endif\n"
     "#else\n"
     "#define TexCoordPrecision\n"
     "#endif\n";
 
-std::string GetVertexShaderSource(const gl::GLVersionInfo& gl_version_info,
-                                  GLenum target) {
-  std::string source;
+void InsertVersionDirective(std::string* source, unsigned glslVersion) {
+  if (glslVersion == GLSL_CORE_PROFILE) {
+    *source += "#version 150\n";
+  } else if (glslVersion == GLSL_ESSL300) {
+    *source += "#version 300 es\n";
+  }
+}
 
-  if (gl_version_info.is_es || gl_version_info.IsLowerThanGL(3, 2)) {
-    if (gl_version_info.is_es3 && target != GL_TEXTURE_EXTERNAL_OES) {
-      source += "#version 300 es\n";
-      source +=
-          "#define ATTRIBUTE in\n"
-          "#define VARYING out\n";
-    } else {
-      source +=
-          "#define ATTRIBUTE attribute\n"
-          "#define VARYING varying\n";
-    }
+unsigned ChooseGLSLVersion(const gl::GLVersionInfo& gl_version_info,
+                           GLenum dest_format) {
+  bool use_essl300_features = CopyTextureCHROMIUMNeedsESSL3(dest_format);
+  if (use_essl300_features && gl_version_info.is_es) {
+    return GLSL_ESSL300;
+  } else if (gl_version_info.IsAtLeastGL(3, 2)) {
+    return GLSL_CORE_PROFILE;
   } else {
-    source += "#version 150\n";
+    return GLSL_ESSL100_OR_COMPATIBILITY_PROFILE;
+  }
+}
+
+std::string GetVertexShaderSource(unsigned glslVersion) {
+  std::string source;
+  InsertVersionDirective(&source, glslVersion);
+
+  if (glslVersion == GLSL_ESSL100_OR_COMPATIBILITY_PROFILE) {
+    source +=
+        "#define ATTRIBUTE attribute\n"
+        "#define VARYING varying\n";
+  } else {
     source +=
         "#define ATTRIBUTE in\n"
         "#define VARYING out\n";
@@ -333,23 +363,20 @@ std::string GetVertexShaderSource(const gl::GLVersionInfo& gl_version_info,
 
   // Main shader source.
   source +=
-      "uniform vec2 u_vertex_dest_mult;\n"
-      "uniform vec2 u_vertex_dest_add;\n"
       "uniform vec2 u_vertex_source_mult;\n"
       "uniform vec2 u_vertex_source_add;\n"
       "ATTRIBUTE vec2 a_position;\n"
       "VARYING TexCoordPrecision vec2 v_uv;\n"
       "void main(void) {\n"
       "  gl_Position = vec4(0, 0, 0, 1);\n"
-      "  gl_Position.xy =\n"
-      "      a_position.xy * u_vertex_dest_mult + u_vertex_dest_add;\n"
+      "  gl_Position.xy = a_position.xy;\n"
       "  v_uv = a_position.xy * u_vertex_source_mult + u_vertex_source_add;\n"
       "}\n";
 
   return source;
 }
 
-std::string GetFragmentShaderSource(const gl::GLVersionInfo& gl_version_info,
+std::string GetFragmentShaderSource(unsigned glslVersion,
                                     bool premultiply_alpha,
                                     bool unpremultiply_alpha,
                                     bool dither,
@@ -358,21 +385,20 @@ std::string GetFragmentShaderSource(const gl::GLVersionInfo& gl_version_info,
                                     GLenum source_format,
                                     GLenum dest_format) {
   std::string source;
+  InsertVersionDirective(&source, glslVersion);
 
-  // Preamble for core and compatibility mode.
-  if (gl_version_info.is_es || gl_version_info.IsLowerThanGL(3, 2)) {
-    if (gl_version_info.is_es3 && target != GL_TEXTURE_EXTERNAL_OES) {
-      source += "#version 300 es\n";
-    }
-    if (target == GL_TEXTURE_EXTERNAL_OES) {
+  // #extension directives
+  if (target == GL_TEXTURE_EXTERNAL_OES) {
+    // If target is TEXTURE_EXTERNAL_OES, API must be ES.
+    if (glslVersion == GLSL_ESSL300) {
+      source += "#extension GL_OES_EGL_image_external_essl3 : enable\n";
+    } else {  // ESSL100
       source += "#extension GL_OES_EGL_image_external : enable\n";
-
-      if (nv_egl_stream_consumer_external) {
-        source += "#extension GL_NV_EGL_stream_consumer_external : enable\n";
-      }
     }
-  } else {
-    source += "#version 150\n";
+
+    if (nv_egl_stream_consumer_external) {
+      source += "#extension GL_NV_EGL_stream_consumer_external : enable\n";
+    }
   }
 
   // Preamble for texture precision.
@@ -382,6 +408,7 @@ std::string GetFragmentShaderSource(const gl::GLVersionInfo& gl_version_info,
   // format or unsigned normalized fixed-point format. |source_format| can only
   // be unsigned normalized fixed-point format.
   if (gpu::gles2::GLES2Util::IsUnsignedIntegerFormat(dest_format)) {
+    DCHECK(glslVersion == GLSL_ESSL300 || glslVersion == GLSL_CORE_PROFILE);
     source += "#define TextureType uvec4\n";
     source += "#define ZERO 0u\n";
     source += "#define MAX_COLOR 255u\n";
@@ -393,8 +420,11 @@ std::string GetFragmentShaderSource(const gl::GLVersionInfo& gl_version_info,
     source += "#define MAX_COLOR 1.0\n";
     source += "#define ScaleValue 1.0\n";
   }
-  if (gl_version_info.is_es2 || gl_version_info.IsLowerThanGL(3, 2) ||
-      target == GL_TEXTURE_EXTERNAL_OES) {
+
+  if (glslVersion == GLSL_ESSL100_OR_COMPATIBILITY_PROFILE) {
+    source +=
+        "#define VARYING varying\n"
+        "#define FRAGCOLOR gl_FragColor\n";
     switch (target) {
       case GL_TEXTURE_2D:
       case GL_TEXTURE_EXTERNAL_OES:
@@ -407,10 +437,6 @@ std::string GetFragmentShaderSource(const gl::GLVersionInfo& gl_version_info,
         NOTREACHED();
         break;
     }
-
-    source +=
-        "#define VARYING varying\n"
-        "#define FRAGCOLOR gl_FragColor\n";
   } else {
     source +=
         "#define VARYING in\n"
@@ -951,19 +977,12 @@ class CopyTextureResourceManagerImpl
   struct ProgramInfo {
     ProgramInfo()
         : program(0u),
-          vertex_dest_mult_handle(0u),
-          vertex_dest_add_handle(0u),
           vertex_source_mult_handle(0u),
           vertex_source_add_handle(0u),
           tex_coord_transform_handle(0u),
           sampler_handle(0u) {}
 
     GLuint program;
-
-    // Transformations that map from the original quad coordinates [-1, 1] into
-    // the destination texture's quad coordinates.
-    GLuint vertex_dest_mult_handle;
-    GLuint vertex_dest_add_handle;
 
     // Transformations that map from the original quad coordinates [-1, 1] into
     // the source texture's texture coordinates.
@@ -1394,11 +1413,13 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
     glVertexAttribPointer(kVertexPositionAttrib, 2, GL_FLOAT, GL_FALSE, 0, 0);
   }
 
-  ShaderId vertex_shader_id = GetVertexShaderId(source_target);
+  unsigned glslVersion = ChooseGLSLVersion(gl_version_info, dest_format);
+
+  ShaderId vertex_shader_id = GetVertexShaderId(glslVersion);
   DCHECK_LT(static_cast<size_t>(vertex_shader_id), vertex_shaders_.size());
   ShaderId fragment_shader_id =
-      GetFragmentShaderId(premultiply_alpha, unpremultiply_alpha, dither,
-                          source_target, source_format, dest_format);
+      GetFragmentShaderId(glslVersion, premultiply_alpha, unpremultiply_alpha,
+                          dither, source_target, source_format, dest_format);
   DCHECK_LT(static_cast<size_t>(fragment_shader_id), fragment_shaders_.size());
 
   ProgramMapKey key(fragment_shader_id);
@@ -1409,8 +1430,7 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
     GLuint* vertex_shader = &vertex_shaders_[vertex_shader_id];
     if (!*vertex_shader) {
       *vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-      std::string source =
-          GetVertexShaderSource(gl_version_info, source_target);
+      std::string source = GetVertexShaderSource(glslVersion);
       CompileShaderWithLog(*vertex_shader, source.c_str());
     }
     glAttachShader(info->program, *vertex_shader);
@@ -1418,7 +1438,7 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
     if (!*fragment_shader) {
       *fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
       std::string source = GetFragmentShaderSource(
-          gl_version_info, premultiply_alpha, unpremultiply_alpha, dither,
+          glslVersion, premultiply_alpha, unpremultiply_alpha, dither,
           nv_egl_stream_consumer_external_, source_target, source_format,
           dest_format);
       CompileShaderWithLog(*fragment_shader, source.c_str());
@@ -1440,10 +1460,6 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
       }
     }
 #endif
-    info->vertex_dest_mult_handle =
-        glGetUniformLocation(info->program, "u_vertex_dest_mult");
-    info->vertex_dest_add_handle =
-        glGetUniformLocation(info->program, "u_vertex_dest_add");
     info->vertex_source_mult_handle =
         glGetUniformLocation(info->program, "u_vertex_source_mult");
     info->vertex_source_add_handle =
@@ -1457,31 +1473,6 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
 
   glUniformMatrix4fv(info->tex_coord_transform_handle, 1, GL_FALSE,
                      transform_matrix);
-
-  // Note: For simplicity, the calculations in this comment block use a single
-  // dimension. All calculations trivially extend to the x-y plane.
-  // The target subrange in the destination texture has coordinates
-  // [xoffset, xoffset + width]. The full destination texture has range
-  // [0, dest_width].
-  //
-  // We want to find A and B such that:
-  //   A * X + B = Y
-  //   C * Y + D = Z
-  //
-  // where X = [-1, 1], Z = [xoffset, xoffset + width]
-  // and C, D satisfy the relationship C * [-1, 1] + D = [0, dest_width].
-  //
-  // Math shows:
-  //  C = D = dest_width / 2
-  //  Y = [(xoffset * 2 / dest_width) - 1,
-  //       (xoffset + width) * 2 / dest_width) - 1]
-  //  A = width / dest_width
-  //  B = (xoffset * 2 + width - dest_width) / dest_width
-  glUniform2f(info->vertex_dest_mult_handle, width * 1.f / dest_width,
-              height * 1.f / dest_height);
-  glUniform2f(info->vertex_dest_add_handle,
-              (xoffset * 2.f + width - dest_width) / dest_width,
-              (yoffset * 2.f + height - dest_height) / dest_height);
 
   // Note: For simplicity, the calculations in this comment block use a single
   // dimension. All calculations trivially extend to the x-y plane.
@@ -1541,6 +1532,8 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
     }
 #endif
 
+    if (decoder->GetFeatureInfo()->IsWebGL2OrES3OrHigherContext())
+      glBindSampler(0, 0);
     glUniform1i(info->sampler_handle, 0);
 
     glBindTexture(source_target, source_id);
@@ -1570,10 +1563,12 @@ void CopyTextureResourceManagerImpl::DoCopyTextureInternal(
     if (decoder->GetFeatureInfo()->feature_flags().ext_window_rectangles) {
       glWindowRectanglesEXT(GL_EXCLUSIVE_EXT, 0, nullptr);
     }
-    glViewport(0, 0, dest_width, dest_height);
+    glViewport(xoffset, yoffset, width, height);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
   }
 
+  if (decoder->GetFeatureInfo()->IsWebGL2OrES3OrHigherContext())
+    decoder->GetContextState()->RestoreSamplerBinding(0, nullptr);
   decoder->RestoreAllAttributes();
   decoder->RestoreTextureState(source_id);
   decoder->RestoreTextureState(dest_id);

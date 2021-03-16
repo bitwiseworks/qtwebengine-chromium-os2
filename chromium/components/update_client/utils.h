@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/containers/flat_map.h"
 #include "base/memory/ref_counted.h"
 #include "components/update_client/update_client.h"
 
@@ -22,11 +21,6 @@ class DictionaryValue;
 class FilePath;
 }
 
-namespace network {
-class SharedURLLoaderFactory;
-class SimpleURLLoader;
-}  // namespace network
-
 namespace update_client {
 
 class Component;
@@ -36,20 +30,6 @@ struct CrxComponent;
 // Installer attributes are component-specific metadata, which may be serialized
 // in an update check request.
 using InstallerAttribute = std::pair<std::string, std::string>;
-
-using LoadCompleteCallback =
-    base::OnceCallback<void(std::unique_ptr<std::string> response_body)>;
-
-// Sends a protocol request to the the service endpoint specified by |url|.
-// The body of the request is provided by |protocol_request| and it is
-// expected to contain XML data. The caller owns the returned object.
-std::unique_ptr<network::SimpleURLLoader> SendProtocolRequest(
-    const GURL& url,
-    const base::flat_map<std::string, std::string>&
-        protocol_request_extra_headers,
-    const std::string& protocol_request,
-    LoadCompleteCallback callback,
-    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
 
 // Returns true if the |component| contains a valid differential update url.
 bool HasDiffUpdate(const Component& component);
@@ -62,9 +42,13 @@ bool IsHttpServerError(int status_code);
 // Returns true if the file and the empty directory are deleted.
 bool DeleteFileAndEmptyParentDirectory(const base::FilePath& filepath);
 
-// Returns the component id of the |component|. The component id is in a
-// format similar with the format of an extension id.
+// Returns the component id of the |component|. The component id is either the
+// app_id, if the member is set, or a string value derived from the public
+// key hash with a format similar with the format of an extension id.
 std::string GetCrxComponentID(const CrxComponent& component);
+
+// Returns a CRX id from a public key hash.
+std::string GetCrxIdFromPublicKeyHash(const std::vector<uint8_t>& pk_hash);
 
 // Returns true if the actual SHA-256 hash of the |filepath| matches the
 // |expected_hash|.
@@ -76,7 +60,7 @@ bool IsValidBrand(const std::string& brand);
 
 // Returns true if the name part of the |attr| parameter matches
 // ^[-_a-zA-Z0-9]{1,256}$ and the value part of the |attr| parameter
-// matches ^[-.,;+_=a-zA-Z0-9]{0,256}$ .
+// matches ^[-.,;+_=$a-zA-Z0-9]{0,256}$ .
 bool IsValidInstallerAttribute(const InstallerAttribute& attr);
 
 // Removes the unsecure urls in the |urls| parameter.

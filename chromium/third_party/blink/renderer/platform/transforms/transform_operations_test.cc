@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/platform/geometry/float_box.h"
 #include "third_party/blink/renderer/platform/geometry/float_box_test_helpers.h"
 #include "third_party/blink/renderer/platform/transforms/identity_transform_operation.h"
+#include "third_party/blink/renderer/platform/transforms/interpolated_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/matrix_3d_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/matrix_transform_operation.h"
 #include "third_party/blink/renderer/platform/transforms/perspective_transform_operation.h"
@@ -77,10 +78,10 @@ TEST(TransformOperationsTest, AbsoluteAnimatedTranslatedBoundsTest) {
   TransformOperations from_ops;
   TransformOperations to_ops;
   from_ops.Operations().push_back(TranslateTransformOperation::Create(
-      Length(-30, blink::kFixed), Length(20, blink::kFixed), 15,
+      Length::Fixed(-30), Length::Fixed(20), 15,
       TransformOperation::kTranslate3D));
   to_ops.Operations().push_back(TranslateTransformOperation::Create(
-      Length(10, blink::kFixed), Length(10, blink::kFixed), 200,
+      Length::Fixed(10), Length::Fixed(10), 200,
       TransformOperation::kTranslate3D));
   FloatBox box(0, 0, 0, 10, 10, 10);
   FloatBox bounds;
@@ -124,13 +125,13 @@ TEST(TransformOperationsTest, EmpiricalAnimatedTranslatedBoundsTest) {
       TransformOperations from_ops;
       TransformOperations to_ops;
       from_ops.Operations().push_back(TranslateTransformOperation::Create(
-          Length(test_transforms[i][0][0], blink::kFixed),
-          Length(test_transforms[i][0][1], blink::kFixed),
-          test_transforms[i][0][2], TransformOperation::kTranslate3D));
+          Length::Fixed(test_transforms[i][0][0]),
+          Length::Fixed(test_transforms[i][0][1]), test_transforms[i][0][2],
+          TransformOperation::kTranslate3D));
       to_ops.Operations().push_back(TranslateTransformOperation::Create(
-          Length(test_transforms[i][1][0], blink::kFixed),
-          Length(test_transforms[i][1][1], blink::kFixed),
-          test_transforms[i][1][2], TransformOperation::kTranslate3D));
+          Length::Fixed(test_transforms[i][1][0]),
+          Length::Fixed(test_transforms[i][1][1]), test_transforms[i][1][2],
+          TransformOperation::kTranslate3D));
       EmpiricallyTestBounds(from_ops, to_ops, progress[j][0], progress[j][1]);
     }
   }
@@ -187,13 +188,13 @@ TEST(TransformOperationsTest, EmpiricalAnimatedScaleBoundsTest) {
       TransformOperations from_ops;
       TransformOperations to_ops;
       from_ops.Operations().push_back(TranslateTransformOperation::Create(
-          Length(test_transforms[i][0][0], blink::kFixed),
-          Length(test_transforms[i][0][1], blink::kFixed),
-          test_transforms[i][0][2], TransformOperation::kTranslate3D));
+          Length::Fixed(test_transforms[i][0][0]),
+          Length::Fixed(test_transforms[i][0][1]), test_transforms[i][0][2],
+          TransformOperation::kTranslate3D));
       to_ops.Operations().push_back(TranslateTransformOperation::Create(
-          Length(test_transforms[i][1][0], blink::kFixed),
-          Length(test_transforms[i][1][1], blink::kFixed),
-          test_transforms[i][1][2], TransformOperation::kTranslate3D));
+          Length::Fixed(test_transforms[i][1][0]),
+          Length::Fixed(test_transforms[i][1][1]), test_transforms[i][1][2],
+          TransformOperation::kTranslate3D));
       EmpiricallyTestBounds(from_ops, to_ops, progress[j][0], progress[j][1]);
     }
   }
@@ -297,7 +298,7 @@ struct ProblematicAxisTest {
 };
 
 TEST(TransformOperationsTest, AbsoluteAnimatedProblematicAxisRotationBounds) {
-  // Zeros in the components of the axis osf rotation turned out to be tricky to
+  // Zeros in the components of the axis of rotation turned out to be tricky to
   // deal with in practice. This function tests some potentially problematic
   // axes to ensure sane behavior.
 
@@ -380,9 +381,9 @@ TEST(TransformOperationsTest, AbsoluteAnimatedPerspectiveBoundsTest) {
 
   from_ops.BlendedBoundsForBox(box, to_ops, -0.25, 1.25, &bounds);
   // The perspective range was [20, 40] and blending will extrapolate that to
-  // [17, 53].  The cube has w/h/d of 10 and the observer is at 17, so the face
-  // closest the observer is 17-10=7.
-  double projected_size = 10.0 / 7.0 * 17.0;
+  // [17.777..., 53.333...].  The cube has w/h/d of 10 and the observer is at
+  // 17.777..., so the face closest the observer is 17.777...-10=7.777...
+  double projected_size = 10.0 / 7.7778 * 17.7778;
   EXPECT_PRED_FORMAT2(
       float_box_test::AssertAlmostEqual,
       FloatBox(0, 0, 0, projected_size, projected_size, projected_size),
@@ -475,21 +476,21 @@ TEST(TransformOperationsTest, AbsoluteSequenceBoundsTest) {
   TransformOperations to_ops;
 
   from_ops.Operations().push_back(
-      TranslateTransformOperation::Create(Length(1, kFixed), Length(-5, kFixed),
+      TranslateTransformOperation::Create(Length::Fixed(1), Length::Fixed(-5),
                                           1, TransformOperation::kTranslate3D));
   from_ops.Operations().push_back(
       ScaleTransformOperation::Create(-1, 2, 3, TransformOperation::kScale3D));
   from_ops.Operations().push_back(TranslateTransformOperation::Create(
-      Length(2, kFixed), Length(4, kFixed), -1,
+      Length::Fixed(2), Length::Fixed(4), -1,
       TransformOperation::kTranslate3D));
 
-  to_ops.Operations().push_back(TranslateTransformOperation::Create(
-      Length(13, kFixed), Length(-1, kFixed), 5,
-      TransformOperation::kTranslate3D));
+  to_ops.Operations().push_back(
+      TranslateTransformOperation::Create(Length::Fixed(13), Length::Fixed(-1),
+                                          5, TransformOperation::kTranslate3D));
   to_ops.Operations().push_back(
       ScaleTransformOperation::Create(-3, -2, 5, TransformOperation::kScale3D));
   to_ops.Operations().push_back(
-      TranslateTransformOperation::Create(Length(6, kFixed), Length(-2, kFixed),
+      TranslateTransformOperation::Create(Length::Fixed(6), Length::Fixed(-2),
                                           3, TransformOperation::kTranslate3D));
 
   FloatBox box(1, 2, 3, 4, 4, 4);
@@ -520,9 +521,8 @@ TEST(TransformOperationsTest, ZoomTest) {
   FloatPoint3D original_point(2, 3, 4);
 
   TransformOperations ops;
-  ops.Operations().push_back(
-      TranslateTransformOperation::Create(Length(1, kFixed), Length(2, kFixed),
-                                          3, TransformOperation::kTranslate3D));
+  ops.Operations().push_back(TranslateTransformOperation::Create(
+      Length::Fixed(1), Length::Fixed(2), 3, TransformOperation::kTranslate3D));
   ops.Operations().push_back(PerspectiveTransformOperation::Create(1234));
   ops.Operations().push_back(
       Matrix3DTransformOperation::Create(TransformationMatrix(
@@ -547,4 +547,59 @@ TEST(TransformOperationsTest, ZoomTest) {
   EXPECT_EQ(result1, result2);
 }
 
+TEST(TransformOperationsTest, PerspectiveOpsTest) {
+  TransformOperations ops;
+  EXPECT_FALSE(ops.HasPerspective());
+  EXPECT_FALSE(ops.HasNonPerspective3DOperation());
+  EXPECT_FALSE(ops.HasNonTrivial3DComponent());
+
+  ops.Operations().push_back(TranslateTransformOperation::Create(
+      Length::Fixed(1), Length::Fixed(2), TransformOperation::kTranslate));
+  EXPECT_FALSE(ops.HasPerspective());
+  EXPECT_FALSE(ops.HasNonPerspective3DOperation());
+  EXPECT_FALSE(ops.HasNonTrivial3DComponent());
+
+  ops.Operations().push_back(PerspectiveTransformOperation::Create(1234));
+  EXPECT_TRUE(ops.HasPerspective());
+  EXPECT_FALSE(ops.HasNonPerspective3DOperation());
+  EXPECT_FALSE(ops.HasNonTrivial3DComponent());
+
+  ops.Operations().push_back(TranslateTransformOperation::Create(
+      Length::Fixed(1), Length::Fixed(2), 3, TransformOperation::kTranslate3D));
+  EXPECT_TRUE(ops.HasPerspective());
+  EXPECT_TRUE(ops.HasNonPerspective3DOperation());
+  EXPECT_TRUE(ops.HasNonTrivial3DComponent());
+}
+
+TEST(TransformOperations, InterpolatedTransformBlendTest) {
+  // When interpolating transform lists of differing lengths,the length of the
+  // shorter list is padded with identity transforms. The Blend method accepts a
+  // null from operator when blending from an identity transform. This test
+  // verifies the correctness of an interpolated transform when the 'from
+  // transform' list is shorter than the 'to transform' list (crbug.com/998938).
+  TransformOperations empt_from, from_ops_padding;
+  TransformOperations to_ops, to_intrepolated;
+  double progress = 0.25, abs_difference = 1e-5;
+  to_ops.Operations().push_back(
+      ScaleTransformOperation::Create(5, 2, TransformOperation::kScale));
+  // to_interpolated is scale(2, 1.25)
+  to_intrepolated.Operations().push_back(
+      InterpolatedTransformOperation::Create(empt_from, to_ops, 0, progress));
+  // result is scale(1.25, 1.0625)
+  TransformOperations result = to_intrepolated.Blend(empt_from, progress);
+  from_ops_padding.Operations().push_back(TranslateTransformOperation::Create(
+      Length::Fixed(20), Length::Fixed(20), TransformOperation::kTranslate));
+  // Pad the from_ops_padding to have at least one operation, otherwise it would
+  // execute the matching prefix.
+  FloatPoint3D original_point(64, 64, 4);
+  FloatPoint3D expected_point(83, 80, 4);
+  TransformationMatrix blended_transform;
+  // result is scale(1.0625, 1.015625) and translate(15, 15)
+  result = result.Blend(from_ops_padding, progress);
+  result.Apply(FloatSize(), blended_transform);
+  FloatPoint3D final_point = blended_transform.MapPoint(original_point);
+  EXPECT_NEAR(expected_point.X(), final_point.X(), abs_difference);
+  EXPECT_NEAR(expected_point.Y(), final_point.Y(), abs_difference);
+  EXPECT_NEAR(expected_point.Z(), final_point.Z(), abs_difference);
+}
 }  // namespace blink

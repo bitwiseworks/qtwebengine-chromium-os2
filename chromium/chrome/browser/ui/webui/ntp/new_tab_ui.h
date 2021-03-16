@@ -16,6 +16,7 @@ class Profile;
 
 namespace base {
 class DictionaryValue;
+class Value;
 }
 
 namespace user_prefs {
@@ -39,7 +40,7 @@ class NewTabUI : public content::WebUIController {
 
   // Adds "url", "title", and "direction" keys on incoming dictionary, setting
   // title as the url as a fallback on empty title.
-  static void SetUrlTitleAndDirection(base::DictionaryValue* dictionary,
+  static void SetUrlTitleAndDirection(base::Value* dictionary,
                                       const base::string16& title,
                                       const GURL& gurl);
 
@@ -54,17 +55,17 @@ class NewTabUI : public content::WebUIController {
     ~NewTabHTMLSource() override;
 
     // content::URLDataSource implementation.
-    std::string GetSource() const override;
+    std::string GetSource() override;
     void StartDataRequest(
-        const std::string& path,
-        const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
-        const content::URLDataSource::GotDataCallback& callback) override;
-    std::string GetMimeType(const std::string&) const override;
-    bool ShouldReplaceExistingSource() const override;
-    std::string GetContentSecurityPolicyScriptSrc() const override;
-    std::string GetContentSecurityPolicyStyleSrc() const override;
-    std::string GetContentSecurityPolicyImgSrc() const override;
-    std::string GetContentSecurityPolicyChildSrc() const override;
+        const GURL& url,
+        const content::WebContents::Getter& wc_getter,
+        content::URLDataSource::GotDataCallback callback) override;
+    std::string GetMimeType(const std::string&) override;
+    bool ShouldReplaceExistingSource() override;
+    std::string GetContentSecurityPolicyScriptSrc() override;
+    std::string GetContentSecurityPolicyStyleSrc() override;
+    std::string GetContentSecurityPolicyImgSrc() override;
+    std::string GetContentSecurityPolicyChildSrc() override;
 
    private:
     // Pointer back to the original profile.
@@ -74,7 +75,6 @@ class NewTabUI : public content::WebUIController {
   };
 
   void OnShowBookmarkBarChanged();
-  void OnDefaultFontSizeChanged();
 
   Profile* GetProfile() const;
 

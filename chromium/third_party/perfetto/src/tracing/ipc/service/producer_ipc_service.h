@@ -21,12 +21,12 @@
 #include <memory>
 #include <string>
 
-#include "perfetto/base/weak_ptr.h"
-#include "perfetto/ipc/basic_types.h"
-#include "perfetto/tracing/core/producer.h"
-#include "perfetto/tracing/core/tracing_service.h"
+#include "perfetto/ext/base/weak_ptr.h"
+#include "perfetto/ext/ipc/basic_types.h"
+#include "perfetto/ext/tracing/core/producer.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
 
-#include "perfetto/ipc/producer_port.ipc.h"
+#include "protos/perfetto/ipc/producer_port.ipc.h"
 
 namespace perfetto {
 
@@ -37,28 +37,35 @@ class Host;
 // Implements the Producer port of the IPC service. This class proxies requests
 // and responses between the core service logic (|svc_|) and remote Producer(s)
 // on the IPC socket, through the methods overriddden from ProducerPort.
-class ProducerIPCService : public protos::ProducerPort {
+class ProducerIPCService : public protos::gen::ProducerPort {
  public:
   explicit ProducerIPCService(TracingService* core_service);
   ~ProducerIPCService() override;
 
   // ProducerPort implementation (from .proto IPC definition).
-  void InitializeConnection(const protos::InitializeConnectionRequest&,
+  void InitializeConnection(const protos::gen::InitializeConnectionRequest&,
                             DeferredInitializeConnectionResponse) override;
-  void RegisterDataSource(const protos::RegisterDataSourceRequest&,
+  void RegisterDataSource(const protos::gen::RegisterDataSourceRequest&,
                           DeferredRegisterDataSourceResponse) override;
-  void UnregisterDataSource(const protos::UnregisterDataSourceRequest&,
+  void UnregisterDataSource(const protos::gen::UnregisterDataSourceRequest&,
                             DeferredUnregisterDataSourceResponse) override;
-  void RegisterTraceWriter(const protos::RegisterTraceWriterRequest&,
+  void RegisterTraceWriter(const protos::gen::RegisterTraceWriterRequest&,
                            DeferredRegisterTraceWriterResponse) override;
-  void UnregisterTraceWriter(const protos::UnregisterTraceWriterRequest&,
+  void UnregisterTraceWriter(const protos::gen::UnregisterTraceWriterRequest&,
                              DeferredUnregisterTraceWriterResponse) override;
-  void CommitData(const protos::CommitDataRequest&,
+  void CommitData(const protos::gen::CommitDataRequest&,
                   DeferredCommitDataResponse) override;
+  void NotifyDataSourceStarted(
+      const protos::gen::NotifyDataSourceStartedRequest&,
+      DeferredNotifyDataSourceStartedResponse) override;
   void NotifyDataSourceStopped(
-      const protos::NotifyDataSourceStoppedRequest&,
+      const protos::gen::NotifyDataSourceStoppedRequest&,
       DeferredNotifyDataSourceStoppedResponse) override;
-  void GetAsyncCommand(const protos::GetAsyncCommandRequest&,
+
+  void ActivateTriggers(const protos::gen::ActivateTriggersRequest&,
+                        DeferredActivateTriggersResponse) override;
+
+  void GetAsyncCommand(const protos::gen::GetAsyncCommandRequest&,
                        DeferredGetAsyncCommandResponse) override;
   void OnClientDisconnected() override;
 
@@ -85,6 +92,11 @@ class ProducerIPCService : public protos::ProducerPort {
                const DataSourceInstanceID* data_source_ids,
                size_t num_data_sources) override;
 
+    void ClearIncrementalState(const DataSourceInstanceID* data_source_ids,
+                               size_t num_data_sources) override;
+
+    void SendSetupTracing();
+
     // The interface obtained from the core service business logic through
     // Service::ConnectProducer(this). This allows to invoke methods for a
     // specific Producer on the Service business logic.
@@ -94,6 +106,11 @@ class ProducerIPCService : public protos::ProducerPort {
     // to send asynchronous commands to the remote Producer (e.g. start/stop a
     // data source).
     DeferredGetAsyncCommandResponse async_producer_commands;
+
+    // Set if the service calls OnTracingSetup() before the
+    // |async_producer_commands| was bound by the service. In this case, we
+    // forward the SetupTracing command when it is bound later.
+    bool send_setup_tracing_on_async_commands_bound = false;
   };
 
   ProducerIPCService(const ProducerIPCService&) = delete;
@@ -109,7 +126,7 @@ class ProducerIPCService : public protos::ProducerPort {
   // |core_service_| business logic.
   std::map<ipc::ClientID, std::unique_ptr<RemoteProducer>> producers_;
 
-  base::WeakPtrFactory<ProducerIPCService> weak_ptr_factory_;
+  base::WeakPtrFactory<ProducerIPCService> weak_ptr_factory_;  // Keep last.
 };
 
 }  // namespace perfetto

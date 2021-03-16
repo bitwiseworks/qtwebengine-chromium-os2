@@ -14,7 +14,7 @@ namespace blink {
 NavigatorMediaSession::NavigatorMediaSession(Navigator& navigator)
     : Supplement<Navigator>(navigator) {}
 
-void NavigatorMediaSession::Trace(blink::Visitor* visitor) {
+void NavigatorMediaSession::Trace(Visitor* visitor) {
   visitor->Trace(session_);
   Supplement<Navigator>::Trace(visitor);
 }
@@ -34,8 +34,10 @@ NavigatorMediaSession& NavigatorMediaSession::From(Navigator& navigator) {
 MediaSession* NavigatorMediaSession::mediaSession(ScriptState* script_state,
                                                   Navigator& navigator) {
   NavigatorMediaSession& self = NavigatorMediaSession::From(navigator);
-  if (!self.session_)
-    self.session_ = MediaSession::Create(ExecutionContext::From(script_state));
+  if (!self.session_) {
+    self.session_ = MakeGarbageCollected<MediaSession>(
+        ExecutionContext::From(script_state));
+  }
   return self.session_.Get();
 }
 

@@ -96,8 +96,8 @@ void SendReceivePeek(SyncSocket* socket_a, SyncSocket* socket_b) {
   ASSERT_EQ(0u, socket_a->Peek());
   ASSERT_EQ(0u, socket_b->Peek());
 
-  ASSERT_TRUE(socket_a->Close());
-  ASSERT_TRUE(socket_b->Close());
+  socket_a->Close();
+  socket_b->Close();
 }
 
 }  // namespace
@@ -121,7 +121,7 @@ TEST_F(SyncSocketTest, ClonedSendReceivePeek) {
   SyncSocket socket_c(socket_a_.Release());
   SyncSocket socket_d(socket_b_.Release());
   SendReceivePeek(&socket_c, &socket_d);
-};
+}
 
 class CancelableSyncSocketTest : public testing::Test {
  public:

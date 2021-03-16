@@ -8,7 +8,6 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
@@ -43,13 +42,20 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
     class CC_EXPORT MainThreadReference {
      public:
       explicit MainThreadReference(TransferableResourceHolder* holder);
+      MainThreadReference(const MainThreadReference&) = delete;
       ~MainThreadReference();
+
+      MainThreadReference& operator=(const MainThreadReference&) = delete;
+
       TransferableResourceHolder* holder() { return holder_.get(); }
 
      private:
       scoped_refptr<TransferableResourceHolder> holder_;
-      DISALLOW_COPY_AND_ASSIGN(MainThreadReference);
     };
+
+    TransferableResourceHolder(const TransferableResourceHolder&) = delete;
+    TransferableResourceHolder& operator=(const TransferableResourceHolder&) =
+        delete;
 
     const viz::TransferableResource& resource() const { return resource_; }
     void Return(const gpu::SyncToken& sync_token, bool is_lost);
@@ -102,12 +108,14 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
     gpu::SyncToken sync_token_;
     bool is_lost_ = false;
     base::ThreadChecker main_thread_checker_;
-    DISALLOW_COPY_AND_ASSIGN(TransferableResourceHolder);
   };
 
   // Used when mailbox names are specified instead of texture IDs.
   static scoped_refptr<TextureLayer> CreateForMailbox(
       TextureLayerClient* client);
+
+  TextureLayer(const TextureLayer&) = delete;
+  TextureLayer& operator=(const TextureLayer&) = delete;
 
   // Resets the client, which also resets the texture.
   void ClearClient();
@@ -129,13 +137,6 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
   // Sets a UV transform to be used at draw time. Defaults to (0, 0) and (1, 1).
   void SetUV(const gfx::PointF& top_left, const gfx::PointF& bottom_right);
 
-  // Sets an opacity value per vertex. It will be multiplied by the layer
-  // opacity value.
-  void SetVertexOpacity(float bottom_left,
-                        float top_left,
-                        float top_right,
-                        float bottom_right);
-
   // Sets whether the alpha channel is premultiplied or unpremultiplied.
   // Defaults to true.
   void SetPremultipliedAlpha(bool premultiplied_alpha);
@@ -143,6 +144,10 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
   // Sets whether the texture should be blended with the background color
   // at draw time. Defaults to false.
   void SetBlendBackgroundColor(bool blend);
+
+  // Sets whether we need to ensure that Texture is opaque before using it.
+  // This will blend texture with black color. Defaults to false.
+  void SetForceTextureToOpaque(bool opaque);
 
   // Code path for plugins which supply their own mailbox.
   void SetTransferableResource(
@@ -166,6 +171,11 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
   SharedBitmapIdRegistration RegisterSharedBitmapId(
       const viz::SharedBitmapId& id,
       scoped_refptr<CrossThreadSharedBitmap> bitmap) override;
+
+  viz::TransferableResource current_transferable_resource() const {
+    return holder_ref_ ? holder_ref_->holder()->resource()
+                       : viz::TransferableResource();
+  }
 
  protected:
   explicit TextureLayer(TextureLayerClient* client);
@@ -191,9 +201,9 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
   gfx::PointF uv_top_left_ = gfx::PointF();
   gfx::PointF uv_bottom_right_ = gfx::PointF(1.f, 1.f);
   // [bottom left, top left, top right, bottom right]
-  float vertex_opacity_[4] = {1.f, 1.f, 1.f, 1.f};
   bool premultiplied_alpha_ = true;
   bool blend_background_color_ = false;
+  bool force_texture_to_opaque_ = false;
 
   std::unique_ptr<TransferableResourceHolder::MainThreadReference> holder_ref_;
   bool needs_set_resource_ = false;
@@ -214,9 +224,7 @@ class CC_EXPORT TextureLayer : public Layer, SharedBitmapIdRegistrar {
   // TextureLayerImpl.
   std::vector<viz::SharedBitmapId> to_unregister_bitmap_ids_;
 
-  base::WeakPtrFactory<TextureLayer> weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(TextureLayer);
+  base::WeakPtrFactory<TextureLayer> weak_ptr_factory_{this};
 };
 
 }  // namespace cc

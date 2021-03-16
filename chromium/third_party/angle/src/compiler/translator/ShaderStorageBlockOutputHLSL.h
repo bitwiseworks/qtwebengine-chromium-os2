@@ -22,7 +22,7 @@ class TSymbolTable;
 
 struct TReferencedBlock : angle::NonCopyable
 {
-    POOL_ALLOCATOR_NEW_DELETE();
+    POOL_ALLOCATOR_NEW_DELETE
     TReferencedBlock(const TInterfaceBlock *block, const TVariable *instanceVariable);
     const TInterfaceBlock *block;
     const TVariable *instanceVariable;  // May be nullptr if the block is not instanced.
@@ -44,7 +44,7 @@ class ShaderStorageBlockOutputHLSL : public TIntermTraverser
                                  ResourcesHLSL *resourcesHLSL,
                                  const std::vector<InterfaceBlock> &shaderStorageBlocks);
 
-    ~ShaderStorageBlockOutputHLSL();
+    ~ShaderStorageBlockOutputHLSL() override;
 
     // This writes part of the function call to store a value to a SSBO to the output stream. After
     // calling this, ", <stored value>)" should be written to the output stream to complete the

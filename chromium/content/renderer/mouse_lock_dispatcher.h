@@ -7,9 +7,12 @@
 
 #include "base/macros.h"
 #include "content/common/content_export.h"
+#include "content/common/input/input_handler.mojom.h"
+#include "third_party/blink/public/web/web_widget_client.h"
 
 namespace blink {
 class WebMouseEvent;
+class WebLocalFrame;
 }  // namespace blink
 
 namespace content {
@@ -31,9 +34,17 @@ class CONTENT_EXPORT MouseLockDispatcher {
         const blink::WebMouseEvent& event) = 0;
   };
 
-  // Locks the mouse to the |target|. If true is returned, an asynchronous
-  // response to target->OnLockMouseACK() will follow.
-  bool LockMouse(LockTarget* target);
+  // Locks the mouse to |target| if |requester_frame| has transient user
+  // activation. If true is returned, an asynchronous response to
+  // target->OnLockMouseACK() will follow.
+  bool LockMouse(LockTarget* target,
+                 blink::WebLocalFrame* requester_frame,
+                 blink::WebWidgetClient::PointerLockCallback callback,
+                 bool request_unadjusted_movement);
+  bool ChangeMouseLock(LockTarget* target,
+                       blink::WebLocalFrame* requester_frame,
+                       blink::WebWidgetClient::PointerLockCallback callback,
+                       bool request_unadjusted_movement);
   // Request to unlock the mouse. An asynchronous response to
   // target->OnMouseLockLost() will follow.
   void UnlockMouse(LockTarget* target);
@@ -49,14 +60,22 @@ class CONTENT_EXPORT MouseLockDispatcher {
 
   // Subclasses or users have to call these methods to report mouse lock events
   // from the browser.
-  void OnLockMouseACK(bool succeeded);
+  void OnLockMouseACK(blink::mojom::PointerLockResult result);
+  void OnChangeLockAck(blink::mojom::PointerLockResult result);
   void OnMouseLockLost();
 
  protected:
   // Subclasses must implement these methods to send mouse lock requests to the
   // browser.
-  virtual void SendLockMouseRequest() = 0;
+  virtual void SendLockMouseRequest(blink::WebLocalFrame* requester_frame,
+                                    bool request_unadjusted_movement) = 0;
+  virtual void SendChangeLockRequest(blink::WebLocalFrame* requester_frame,
+                                     bool request_unadjusted_movement) {}
   virtual void SendUnlockMouseRequest() = 0;
+
+  base::WeakPtr<MouseLockDispatcher> AsWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
 
  private:
   bool MouseLockedOrPendingAction() const {
@@ -71,10 +90,14 @@ class CONTENT_EXPORT MouseLockDispatcher {
   bool pending_lock_request_;
   bool pending_unlock_request_;
 
+  blink::WebWidgetClient::PointerLockCallback lock_mouse_callback_;
+
   // |target_| is the pending or current owner of mouse lock. We retain a non
   // owning reference here that must be cleared by |OnLockTargetDestroyed|
   // when it is destroyed.
   LockTarget* target_;
+
+  base::WeakPtrFactory<MouseLockDispatcher> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MouseLockDispatcher);
 };

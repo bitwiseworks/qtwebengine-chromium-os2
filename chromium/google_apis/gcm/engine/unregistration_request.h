@@ -13,7 +13,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/time/time.h"
 #include "google_apis/gcm/base/gcm_export.h"
 #include "net/base/backoff_entry.h"
 #include "url/gurl.h"
@@ -61,7 +60,7 @@ class GCM_EXPORT UnregistrationRequest {
   };
 
   // Callback completing the unregistration request.
-  typedef base::Callback<void(Status success)> UnregistrationCallback;
+  using UnregistrationCallback = base::OnceCallback<void(Status success)>;
 
   // Defines the common info about an unregistration/token-deletion request.
   // All parameters are mandatory.
@@ -102,10 +101,8 @@ class GCM_EXPORT UnregistrationRequest {
     // UnregistrationRequest::ParseResponse to proceed the parsing.
     virtual Status ParseResponse(const std::string& response) = 0;
 
-    // Reports various UMAs, including status, retry count and completion time.
-    virtual void ReportUMAs(Status status,
-                            int retry_count,
-                            base::TimeDelta complete_time) = 0;
+    // Reports UMAs.
+    virtual void ReportUMAs(Status status) = 0;
   };
 
   // Creates an instance of UnregistrationRequest. |callback| will be called
@@ -116,9 +113,10 @@ class GCM_EXPORT UnregistrationRequest {
       const RequestInfo& request_info,
       std::unique_ptr<CustomRequestHandler> custom_request_handler,
       const net::BackoffEntry::Policy& backoff_policy,
-      const UnregistrationCallback& callback,
+      UnregistrationCallback callback,
       int max_retry_count,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
       GCMStatsRecorder* recorder,
       const std::string& source_to_record);
   ~UnregistrationRequest();
@@ -147,14 +145,15 @@ class GCM_EXPORT UnregistrationRequest {
   net::BackoffEntry backoff_entry_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
   std::unique_ptr<network::SimpleURLLoader> url_loader_;
-  base::TimeTicks request_start_time_;
   int retries_left_;
+
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
 
   // Recorder that records GCM activities for debugging purpose. Not owned.
   GCMStatsRecorder* recorder_;
   std::string source_to_record_;
 
-  base::WeakPtrFactory<UnregistrationRequest> weak_ptr_factory_;
+  base::WeakPtrFactory<UnregistrationRequest> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UnregistrationRequest);
 };

@@ -35,6 +35,7 @@ class AutofillProfile;
 class AutofillTableEncryptor;
 class AutofillTableTest;
 class CreditCard;
+struct CreditCardCloudTokenData;
 struct FormFieldData;
 struct PaymentsCustomerData;
 
@@ -170,13 +171,12 @@ struct PaymentsCustomerData;
 //   name_on_card
 //   network            Issuer network of the card. For example, "VISA". Renamed
 //                      from "type" in version 72.
-//   type               Card type. One of CreditCard::CardType enum values.
-//                      Added in version 74.
 //   last_four          Last four digits of the card number. For de-duping
 //                      with locally stored cards and generating descriptions.
 //   exp_month          Expiration month: 1-12
 //   exp_year           Four-digit year: 2017
 //   bank_name          Issuer bank name of the credit card.
+//   nickname           The card's nickname, if it exists. Added in version 84.
 //
 // unmasked_credit_cards
 //                      When a masked credit credit card is unmasked and the
@@ -193,6 +193,20 @@ struct PaymentsCustomerData;
 //                      TODO(crbug.com/682326): Remove deprecated columns.
 //   unmask_date        The date this card was unmasked in units of
 //                      Time::ToInternalValue. Added in version 64.
+//
+// server_card_cloud_token_data
+//                      Stores data related to Cloud Primary Account Number
+//                      (CPAN) of server credit cards. Each card can have
+//                      multiple entries.
+//
+//   id                 The server ID, which matches an ID from the
+//                      masked_credit_cards table.
+//   suffix             Last 4-5 digits of the Cloud Primary Account Number.
+//   exp_month          Expiration month associated with the CPAN.
+//   exp_year           Four-digit Expiration year associated with the CPAN.
+//   card_art_url       URL of the card art to be displayed for CPAN.
+//   instrument_token   Opaque identifier for the cloud token associated with
+//                      the payment instrument.
 //
 // server_card_metadata
 //                      Metadata (currently, usage data) about server credit
@@ -273,6 +287,11 @@ struct PaymentsCustomerData;
 //                      Contains Google Payments customer data.
 //
 //   customer_id        A string representing the Google Payments customer id.
+//
+// payments_upi_vpa     Contains saved UPI/VPA payment data.
+//                      https://en.wikipedia.org/wiki/Unified_Payments_Interface
+//
+//   vpa_id             A string representing the UPI ID (a.k.a. VPA) value.
 
 class AutofillTable : public WebDatabaseTable,
                       public syncer::SyncMetadataStore {
@@ -425,6 +444,14 @@ class AutofillTable : public WebDatabaseTable,
   void SetServerCardsData(const std::vector<CreditCard>& credit_cards);
   void SetServerAddressesData(const std::vector<AutofillProfile>& profiles);
 
+  // Setters and getters related to the CreditCardCloudTokenData of server
+  // cards. Used by AutofillWalletSyncBridge to interact with the stored data.
+  void SetCreditCardCloudTokenData(const std::vector<CreditCardCloudTokenData>&
+                                       credit_card_cloud_token_data);
+  bool GetCreditCardCloudTokenData(
+      std::vector<std::unique_ptr<CreditCardCloudTokenData>>*
+          credit_card_cloud_token_data);
+
   // Setters and getters related to the Google Payments customer data.
   // Passing null to the setter will clear the data.
   void SetPaymentsCustomerData(const PaymentsCustomerData* customer_data);
@@ -432,6 +459,12 @@ class AutofillTable : public WebDatabaseTable,
   // may return true but leave |customer_data| untouched if there is no data.
   bool GetPaymentsCustomerData(
       std::unique_ptr<PaymentsCustomerData>* customer_data) const;
+
+  // Adds |upi_id| to the saved UPI IDs.
+  bool InsertUpiId(const std::string& upi_id);
+
+  // Returns all the UPI IDs stored in the database.
+  std::vector<std::string> GetAllUpiIds();
 
   // Deletes all data from the server card and profile tables. Returns true if
   // any data was deleted, false if not (so false means "commit not needed"
@@ -452,8 +485,8 @@ class AutofillTable : public WebDatabaseTable,
   bool RemoveAutofillDataModifiedBetween(
       const base::Time& delete_begin,
       const base::Time& delete_end,
-      std::vector<std::string>* profile_guids,
-      std::vector<std::string>* credit_card_guids);
+      std::vector<std::unique_ptr<AutofillProfile>>* profiles,
+      std::vector<std::unique_ptr<CreditCard>>* credit_cards);
 
   // Removes origin URLs from the autofill_profiles and credit_cards tables if
   // they were written on or after |delete_begin| and strictly before
@@ -465,17 +498,6 @@ class AutofillTable : public WebDatabaseTable,
       const base::Time& delete_begin,
       const base::Time& delete_end,
       std::vector<std::unique_ptr<AutofillProfile>>* profiles);
-
-  // Retrieves all profiles in the database that have been deleted since last
-  // "empty" of the trash.
-  bool GetAutofillProfilesInTrash(std::vector<std::string>* guids);
-
-  // Empties the Autofill profiles "trash can".
-  bool EmptyAutofillProfilesTrash();
-
-  // Retrieves all profiles in the database that have been deleted since last
-  // "empty" of the trash.
-  bool AddAutofillGUIDToTrash(const std::string& guid);
 
   // Clear all profiles.
   bool ClearAutofillProfiles();
@@ -530,6 +552,8 @@ class AutofillTable : public WebDatabaseTable,
   bool MigrateToVersion78AddModelTypeColumns();
   bool MigrateToVersion80AddIsClientValidityStatesUpdatedColumn();
   bool MigrateToVersion81CleanUpWrongModelTypeData();
+  bool MigrateToVersion83RemoveServerCardTypeColumn();
+  bool MigrateToVersion84AddNicknameColumn();
   // Max data length saved in the table, AKA the maximum length allowed for
   // form data.
   // Copied to components/autofill/ios/browser/resources/autofill_controller.js.
@@ -561,11 +585,9 @@ class AutofillTable : public WebDatabaseTable,
       AutofillTableTest,
       Autofill_RemoveFormElementsAddedBetween_OlderThan30Days);
   FRIEND_TEST_ALL_PREFIXES(AutofillTableTest,
-                           RemoveExpiredFormElements_FlagOff_Removes);
+                           RemoveExpiredFormElements_Expires_DeleteEntry);
   FRIEND_TEST_ALL_PREFIXES(AutofillTableTest,
-                           RemoveExpiredFormElements_FlagOn_Expires);
-  FRIEND_TEST_ALL_PREFIXES(AutofillTableTest,
-                           RemoveExpiredFormElements_FlagOn_NotOldEnough);
+                           RemoveExpiredFormElements_NotOldEnough);
   FRIEND_TEST_ALL_PREFIXES(AutofillTableTest, Autofill_AddFormFieldValues);
   FRIEND_TEST_ALL_PREFIXES(AutofillTableTest, AutofillProfile);
   FRIEND_TEST_ALL_PREFIXES(AutofillTableTest, UpdateAutofillProfile);
@@ -637,6 +659,8 @@ class AutofillTable : public WebDatabaseTable,
   bool InitAutofillSyncMetadataTable();
   bool InitModelTypeStateTable();
   bool InitPaymentsCustomerDataTable();
+  bool InitPaymentsUPIVPATable();
+  bool InitServerCreditCardCloudTokenDataTable();
 
   std::unique_ptr<AutofillTableEncryptor> autofill_table_encryptor_;
 

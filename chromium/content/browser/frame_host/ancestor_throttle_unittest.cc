@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/frame_host/ancestor_throttle.h"
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
-#include "content/browser/frame_host/ancestor_throttle.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_renderer_host.h"
 #include "net/http/http_response_headers.h"
+#include "services/network/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -128,6 +130,13 @@ TEST_F(AncestorThrottleTest, ErrorsParsingXFrameOptions) {
 }
 
 TEST_F(AncestorThrottleTest, IgnoreWhenFrameAncestorsPresent) {
+  // When OutOfBlinkFrameAncestors is enabled frame-ancestors is processed in
+  // the AncestorThrottle and XFO will not be parsed.
+  if (base::FeatureList::IsEnabled(
+          network::features::kOutOfBlinkFrameAncestors)) {
+    return;
+  }
+
   struct TestCase {
     const char* csp;
     AncestorThrottle::HeaderDisposition expected;

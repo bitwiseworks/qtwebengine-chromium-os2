@@ -9,6 +9,7 @@
 #include "base/optional.h"
 #include "third_party/blink/renderer/core/css/css_property_name.h"
 #include "third_party/blink/renderer/core/css/cssom/css_style_value.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -23,28 +24,16 @@ namespace blink {
 // * Tied to no CSS property at all, in which case it's not valid for any
 //   property.
 
-class CORE_EXPORT CSSUnsupportedStyleValue final : public CSSStyleValue {
+class CORE_EXPORT CSSUnsupportedStyleValue : public CSSStyleValue {
  public:
-  static CSSUnsupportedStyleValue* Create(const CSSValue& value) {
-    return MakeGarbageCollected<CSSUnsupportedStyleValue>(value.CssText());
-  }
-  static CSSUnsupportedStyleValue* Create(const String& css_text) {
-    return MakeGarbageCollected<CSSUnsupportedStyleValue>(css_text);
-  }
-  static CSSUnsupportedStyleValue* Create(const CSSPropertyName& name,
-                                          const String& css_text) {
-    return MakeGarbageCollected<CSSUnsupportedStyleValue>(name, css_text);
-  }
-  static CSSUnsupportedStyleValue* Create(const CSSPropertyName& name,
-                                          const CSSValue& value) {
-    return MakeGarbageCollected<CSSUnsupportedStyleValue>(name,
-                                                          value.CssText());
-  }
-
   CSSUnsupportedStyleValue(const String& css_text) { SetCSSText(css_text); }
   CSSUnsupportedStyleValue(const CSSPropertyName& name, const String& css_text)
       : name_(name) {
     SetCSSText(css_text);
+  }
+  CSSUnsupportedStyleValue(const CSSPropertyName& name, const CSSValue& value)
+      : name_(name) {
+    SetCSSText(value.CssText());
   }
 
   StyleValueType GetType() const override {
@@ -66,13 +55,14 @@ class CORE_EXPORT CSSUnsupportedStyleValue final : public CSSStyleValue {
   DISALLOW_COPY_AND_ASSIGN(CSSUnsupportedStyleValue);
 };
 
-DEFINE_TYPE_CASTS(CSSUnsupportedStyleValue,
-                  CSSStyleValue,
-                  value,
-                  value->GetType() ==
-                      CSSStyleValue::StyleValueType::kUnknownType,
-                  value.GetType() ==
-                      CSSStyleValue::StyleValueType::kUnknownType);
+template <>
+struct DowncastTraits<CSSUnsupportedStyleValue> {
+  static bool AllowFrom(const CSSStyleValue& value) {
+    return value.GetType() == CSSStyleValue::StyleValueType::kUnknownType ||
+           value.GetType() ==
+               CSSStyleValue::StyleValueType::kUnsupportedColorType;
+  }
+};
 
 }  // namespace blink
 

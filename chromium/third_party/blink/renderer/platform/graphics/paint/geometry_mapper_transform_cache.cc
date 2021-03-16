@@ -27,9 +27,8 @@ void GeometryMapperTransformCache::Update(
   cache_generation_ = s_global_generation;
 
   if (node.IsRoot()) {
-    DCHECK(node.Matrix().IsIdentity());
-    to_2d_translation_root_.MakeIdentity();
-    from_2d_translation_root_.MakeIdentity();
+    DCHECK(node.IsIdentity());
+    to_2d_translation_root_ = FloatSize();
     root_of_2d_translation_ = &node;
     plane_root_transform_ = nullptr;
     screen_transform_ = nullptr;
@@ -43,30 +42,40 @@ void GeometryMapperTransformCache::Update(
   screen_transform_ = nullptr;
 
   if (node.IsIdentityOr2DTranslation()) {
+    // We always use full matrix for animating transforms.
+    DCHECK(!node.HasActiveTransformAnimation());
     root_of_2d_translation_ = parent.root_of_2d_translation_;
     to_2d_translation_root_ = parent.to_2d_translation_root_;
-    to_2d_translation_root_.Translate(node.Matrix().E(), node.Matrix().F());
-    from_2d_translation_root_ = parent.from_2d_translation_root_;
-    from_2d_translation_root_.Translate(-node.Matrix().E(), -node.Matrix().F());
+    const auto& translation = node.Translation2D();
+    to_2d_translation_root_ += translation;
 
-    if (!parent.plane_root_transform_) {
-      // The parent doesn't have plane root transform means that the parent's
+    if (parent.plane_root_transform_) {
+      if (!plane_root_transform_)
+        plane_root_transform_.reset(new PlaneRootTransform());
+      plane_root_transform_->plane_root = parent.plane_root();
+      plane_root_transform_->to_plane_root = parent.to_plane_root();
+      plane_root_transform_->to_plane_root.Translate(translation.Width(),
+                                                     translation.Height());
+      plane_root_transform_->from_plane_root = parent.from_plane_root();
+      plane_root_transform_->from_plane_root.PostTranslate(
+          -translation.Width(), -translation.Height());
+      plane_root_transform_->has_animation =
+          parent.plane_root_transform_->has_animation ||
+          node.HasActiveTransformAnimation();
+    } else {
+      // The parent doesn't have plane_root_transform_ means that the parent's
       // plane root is the same as the 2d translation root, so this node
       // which is a 2d translation also doesn't need plane root transform
       // because the plane root is still the same as the 2d translation root.
       plane_root_transform_ = nullptr;
-      return;
     }
-  } else {
-    root_of_2d_translation_ = &node;
-    to_2d_translation_root_.MakeIdentity();
-    from_2d_translation_root_.MakeIdentity();
+    return;
   }
 
-  TransformationMatrix local = node.Matrix();
-  if (!node.IsIdentityOr2DTranslation())
-    local.ApplyTransformOrigin(node.Origin());
+  root_of_2d_translation_ = &node;
+  to_2d_translation_root_ = FloatSize();
 
+  TransformationMatrix local = node.MatrixWithOriginApplied();
   bool is_plane_root = !local.IsFlat() || !local.IsInvertible();
   if (is_plane_root && root_of_2d_translation_ == &node) {
     // We don't need plane root transform because the plane root is the same
@@ -82,12 +91,17 @@ void GeometryMapperTransformCache::Update(
     plane_root_transform_->plane_root = &node;
     plane_root_transform_->to_plane_root.MakeIdentity();
     plane_root_transform_->from_plane_root.MakeIdentity();
+    plane_root_transform_->has_animation = false;
   } else {
     plane_root_transform_->plane_root = parent.plane_root();
-    plane_root_transform_->to_plane_root = parent.to_plane_root();
+    plane_root_transform_->to_plane_root.MakeIdentity();
+    parent.ApplyToPlaneRoot(plane_root_transform_->to_plane_root);
     plane_root_transform_->to_plane_root.Multiply(local);
     plane_root_transform_->from_plane_root = local.Inverse();
-    plane_root_transform_->from_plane_root.Multiply(parent.from_plane_root());
+    parent.ApplyFromPlaneRoot(plane_root_transform_->from_plane_root);
+    plane_root_transform_->has_animation =
+        parent.has_animation_to_plane_root() ||
+        node.HasActiveTransformAnimation();
   }
 }
 
@@ -107,14 +121,17 @@ void GeometryMapperTransformCache::UpdateScreenTransform(
   node.Parent()->UpdateScreenTransform();
   const auto& parent = node.Parent()->GetTransformCache();
 
-  TransformationMatrix local = node.Matrix();
-  local.ApplyTransformOrigin(node.Origin());
-
   screen_transform_.reset(new ScreenTransform());
-  screen_transform_->to_screen = parent.to_screen();
+  parent.ApplyToScreen(screen_transform_->to_screen);
   if (node.FlattensInheritedTransform())
     screen_transform_->to_screen.FlattenTo2d();
-  screen_transform_->to_screen.Multiply(local);
+  if (node.IsIdentityOr2DTranslation()) {
+    const auto& translation = node.Translation2D();
+    screen_transform_->to_screen.Translate(translation.Width(),
+                                           translation.Height());
+  } else {
+    screen_transform_->to_screen.Multiply(node.MatrixWithOriginApplied());
+  }
 
   auto to_screen_flattened = screen_transform_->to_screen;
   to_screen_flattened.FlattenTo2d();
@@ -122,6 +139,8 @@ void GeometryMapperTransformCache::UpdateScreenTransform(
       to_screen_flattened.IsInvertible();
   if (screen_transform_->projection_from_screen_is_valid)
     screen_transform_->projection_from_screen = to_screen_flattened.Inverse();
+
+  screen_transform_->has_animation |= node.HasActiveTransformAnimation();
 }
 
 #if DCHECK_IS_ON()

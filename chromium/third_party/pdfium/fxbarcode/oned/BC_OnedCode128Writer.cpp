@@ -25,6 +25,7 @@
 #include <cctype>
 #include <memory>
 
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "fxbarcode/BC_Writer.h"
 #include "fxbarcode/oned/BC_OneDimWriter.h"
 
@@ -186,7 +187,7 @@ int32_t CBC_OnedCode128Writer::Encode128C(const ByteString& contents,
     char ch = contents[position];
     if (std::isdigit(ch)) {
       patternIndex = FXSYS_atoi(
-          contents.Mid(position, contents.IsValidIndex(position + 1) ? 2 : 1)
+          contents.Substr(position, contents.IsValidIndex(position + 1) ? 2 : 1)
               .c_str());
       ++position;
       if (position < contents.GetLength() && std::isdigit(contents[position]))

@@ -12,10 +12,11 @@
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/ozone/evdev/keyboard_util_evdev.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine.h"
 #include "ui/events/ozone/layout/keyboard_layout_engine_manager.h"
-#include "ui/events/ozone/layout/layout_util.h"
+#include "ui/events/types/event_type.h"
 
 namespace ui {
 
@@ -25,8 +26,7 @@ KeyboardEvdev::KeyboardEvdev(EventModifiers* modifiers,
     : callback_(callback),
       modifiers_(modifiers),
       keyboard_layout_engine_(keyboard_layout_engine),
-      auto_repeat_handler_(this),
-      weak_ptr_factory_(this) {}
+      auto_repeat_handler_(this) {}
 
 KeyboardEvdev::~KeyboardEvdev() {
 }
@@ -35,7 +35,8 @@ void KeyboardEvdev::OnKeyChange(unsigned int key,
                                 bool down,
                                 bool suppress_auto_repeat,
                                 base::TimeTicks timestamp,
-                                int device_id) {
+                                int device_id,
+                                int flags) {
   if (key > KEY_MAX)
     return;
 
@@ -47,7 +48,7 @@ void KeyboardEvdev::OnKeyChange(unsigned int key,
   key_state_.set(key, down);
   auto_repeat_handler_.UpdateKeyRepeat(key, down, suppress_auto_repeat,
                                        device_id);
-  DispatchKey(key, down, is_repeat, timestamp, device_id);
+  DispatchKey(key, down, is_repeat, timestamp, device_id, flags);
 }
 
 void KeyboardEvdev::SetCapsLockEnabled(bool enabled) {
@@ -136,15 +137,17 @@ void KeyboardEvdev::DispatchKey(unsigned int key,
                                 bool down,
                                 bool repeat,
                                 base::TimeTicks timestamp,
-                                int device_id) {
+                                int device_id,
+                                int flags) {
   DomCode dom_code =
       KeycodeConverter::NativeKeycodeToDomCode(EvdevCodeToNativeCode(key));
   if (dom_code == DomCode::NONE)
     return;
-  int flags = modifiers_->GetModifierFlags();
+  int modifier_flags = modifiers_->GetModifierFlags();
   DomKey dom_key;
   KeyboardCode key_code;
-  if (!keyboard_layout_engine_->Lookup(dom_code, flags, &dom_key, &key_code))
+  if (!keyboard_layout_engine_->Lookup(dom_code, modifier_flags, &dom_key,
+                                       &key_code))
     return;
   if (!repeat) {
     int flag = ModifierDomKeyToEventFlag(dom_key);
@@ -152,7 +155,7 @@ void KeyboardEvdev::DispatchKey(unsigned int key,
   }
 
   KeyEvent event(down ? ET_KEY_PRESSED : ET_KEY_RELEASED, key_code, dom_code,
-                 modifiers_->GetModifierFlags(), dom_key, timestamp);
+                 flags | modifiers_->GetModifierFlags(), dom_key, timestamp);
   event.set_source_device_id(device_id);
   callback_.Run(&event);
 }

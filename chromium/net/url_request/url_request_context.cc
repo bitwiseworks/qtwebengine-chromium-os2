@@ -18,12 +18,12 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "net/base/http_user_agent_settings.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/host_resolver.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/socket/ssl_client_socket_impl.h"
-#include "net/url_request/http_user_agent_settings.h"
 #include "net/url_request/url_request.h"
 
 namespace net {
@@ -32,7 +32,6 @@ URLRequestContext::URLRequestContext()
     : net_log_(nullptr),
       host_resolver_(nullptr),
       cert_verifier_(nullptr),
-      channel_id_service_(nullptr),
       http_auth_handler_factory_(nullptr),
       proxy_resolution_service_(nullptr),
       proxy_delegate_(nullptr),
@@ -47,6 +46,7 @@ URLRequestContext::URLRequestContext()
       http_transaction_factory_(nullptr),
       job_factory_(nullptr),
       throttler_manager_(nullptr),
+      quic_context_(nullptr),
       network_quality_estimator_(nullptr),
 #if BUILDFLAG(ENABLE_REPORTING)
       reporting_service_(nullptr),
@@ -65,35 +65,6 @@ URLRequestContext::~URLRequestContext() {
   AssertNoURLRequests();
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
       this);
-}
-
-void URLRequestContext::CopyFrom(const URLRequestContext* other) {
-  // Copy URLRequestContext parameters.
-  set_net_log(other->net_log_);
-  set_host_resolver(other->host_resolver_);
-  set_cert_verifier(other->cert_verifier_);
-  set_channel_id_service(other->channel_id_service_);
-  set_http_auth_handler_factory(other->http_auth_handler_factory_);
-  set_proxy_resolution_service(other->proxy_resolution_service_);
-  set_proxy_delegate(other->proxy_delegate_);
-  set_ssl_config_service(other->ssl_config_service_);
-  set_network_delegate(other->network_delegate_);
-  set_http_server_properties(other->http_server_properties_);
-  set_cookie_store(other->cookie_store_);
-  set_transport_security_state(other->transport_security_state_);
-  set_cert_transparency_verifier(other->cert_transparency_verifier_);
-  set_ct_policy_enforcer(other->ct_policy_enforcer_);
-  set_http_transaction_factory(other->http_transaction_factory_);
-  set_job_factory(other->job_factory_);
-  set_throttler_manager(other->throttler_manager_);
-  set_http_user_agent_settings(other->http_user_agent_settings_);
-  set_network_quality_estimator(other->network_quality_estimator_);
-#if BUILDFLAG(ENABLE_REPORTING)
-  set_reporting_service(other->reporting_service_);
-  set_network_error_logging_service(other->network_error_logging_service_);
-#endif  // BUILDFLAG(ENABLE_REPORTING)
-  set_enable_brotli(other->enable_brotli_);
-  set_check_cleartext_permitted(other->check_cleartext_permitted_);
 }
 
 const HttpNetworkSession::Params* URLRequestContext::GetNetworkSessionParams(
@@ -118,12 +89,14 @@ const HttpNetworkSession::Context* URLRequestContext::GetNetworkSessionContext()
   return &network_session->context();
 }
 
+#if (!defined(OS_WIN) && !defined(OS_LINUX)) || defined(OS_CHROMEOS)
 std::unique_ptr<URLRequest> URLRequestContext::CreateRequest(
     const GURL& url,
     RequestPriority priority,
     URLRequest::Delegate* delegate) const {
   return CreateRequest(url, priority, delegate, MISSING_TRAFFIC_ANNOTATION);
 }
+#endif
 
 std::unique_ptr<URLRequest> URLRequestContext::CreateRequest(
     const GURL& url,
@@ -156,8 +129,6 @@ void URLRequestContext::AssertNoURLRequests() const {
 bool URLRequestContext::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  SSLClientSocketImpl::DumpSSLClientSessionMemoryStats(pmd);
-
   std::string dump_name =
       base::StringPrintf("net/url_request_context/%s/0x%" PRIxPTR,
                          name_.c_str(), reinterpret_cast<uintptr_t>(this));

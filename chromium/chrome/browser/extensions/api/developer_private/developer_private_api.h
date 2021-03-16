@@ -14,7 +14,6 @@
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
@@ -30,12 +29,16 @@
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_prefs_observer.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
+#include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_manager_observer.h"
 #include "extensions/browser/warning_service.h"
-#include "storage/browser/fileapi/file_system_context.h"
-#include "storage/browser/fileapi/file_system_operation.h"
+#include "extensions/common/extension_id.h"
+#include "storage/browser/file_system/file_system_context.h"
+#include "storage/browser/file_system/file_system_operation.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 
 class Profile;
@@ -45,10 +48,14 @@ namespace extensions {
 class EventRouter;
 class ExtensionError;
 class ExtensionInfoGenerator;
-class ExtensionRegistry;
-class ProcessManager;
 
 namespace api {
+
+namespace developer_private {
+
+struct ProfileInfo;
+
+}
 
 class EntryPickerClient;
 
@@ -138,20 +145,21 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
       std::vector<api::developer_private::ExtensionInfo> infos);
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      extension_registry_observer_;
-  ScopedObserver<ErrorConsole, ErrorConsole::Observer> error_console_observer_;
+      extension_registry_observer_{this};
+  ScopedObserver<ErrorConsole, ErrorConsole::Observer> error_console_observer_{
+      this};
   ScopedObserver<ProcessManager, ProcessManagerObserver>
-      process_manager_observer_;
+      process_manager_observer_{this};
   ScopedObserver<AppWindowRegistry, AppWindowRegistry::Observer>
-      app_window_registry_observer_;
+      app_window_registry_observer_{this};
   ScopedObserver<WarningService, WarningService::Observer>
-      warning_service_observer_;
+      warning_service_observer_{this};
   ScopedObserver<ExtensionPrefs, ExtensionPrefsObserver>
-      extension_prefs_observer_;
+      extension_prefs_observer_{this};
   ScopedObserver<ExtensionManagement, ExtensionManagement::Observer>
-      extension_management_observer_;
+      extension_management_observer_{this};
   ScopedObserver<CommandService, CommandService::Observer>
-      command_service_observer_;
+      command_service_observer_{this};
 
   Profile* profile_;
 
@@ -169,7 +177,7 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
 
   content::NotificationRegistrar notification_registrar_;
 
-  base::WeakPtrFactory<DeveloperPrivateEventRouter> weak_factory_;
+  base::WeakPtrFactory<DeveloperPrivateEventRouter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateEventRouter);
 };
@@ -182,6 +190,9 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
 
   static BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>*
       GetFactoryInstance();
+
+  static std::unique_ptr<api::developer_private::ProfileInfo> CreateProfileInfo(
+      Profile* profile);
 
   // Convenience method to get the DeveloperPrivateAPI for a profile.
   static DeveloperPrivateAPI* Get(content::BrowserContext* context);
@@ -274,7 +285,7 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
   // Created lazily upon OnListenerAdded.
   std::unique_ptr<DeveloperPrivateEventRouter> developer_private_event_router_;
 
-  base::WeakPtrFactory<DeveloperPrivateAPI> weak_factory_;
+  base::WeakPtrFactory<DeveloperPrivateAPI> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateAPI);
 };
@@ -285,7 +296,7 @@ void BrowserContextKeyedAPIFactory<
 
 namespace api {
 
-class DeveloperPrivateAPIFunction : public UIThreadExtensionFunction {
+class DeveloperPrivateAPIFunction : public ExtensionFunction {
  protected:
   ~DeveloperPrivateAPIFunction() override;
 
@@ -335,7 +346,7 @@ class DeveloperPrivateGetExtensionsInfoFunction
  public:
   DeveloperPrivateGetExtensionsInfoFunction();
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionsInfo",
-                             DEVELOPERPRIVATE_GETEXTENSIONSINFO);
+                             DEVELOPERPRIVATE_GETEXTENSIONSINFO)
 
  private:
   ~DeveloperPrivateGetExtensionsInfoFunction() override;
@@ -354,7 +365,7 @@ class DeveloperPrivateGetExtensionInfoFunction
  public:
   DeveloperPrivateGetExtensionInfoFunction();
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionInfo",
-                             DEVELOPERPRIVATE_GETEXTENSIONINFO);
+                             DEVELOPERPRIVATE_GETEXTENSIONINFO)
 
  private:
   ~DeveloperPrivateGetExtensionInfoFunction() override;
@@ -373,7 +384,7 @@ class DeveloperPrivateGetExtensionSizeFunction
  public:
   DeveloperPrivateGetExtensionSizeFunction();
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getExtensionSize",
-                             DEVELOPERPRIVATE_GETEXTENSIONSIZE);
+                             DEVELOPERPRIVATE_GETEXTENSIONSIZE)
 
  private:
   ~DeveloperPrivateGetExtensionSizeFunction() override;
@@ -388,7 +399,7 @@ class DeveloperPrivateGetProfileConfigurationFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.getProfileConfiguration",
-                             DEVELOPERPRIVATE_GETPROFILECONFIGURATION);
+                             DEVELOPERPRIVATE_GETPROFILECONFIGURATION)
 
  private:
   ~DeveloperPrivateGetProfileConfigurationFunction() override;
@@ -399,7 +410,7 @@ class DeveloperPrivateUpdateProfileConfigurationFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.updateProfileConfiguration",
-                             DEVELOPERPRIVATE_UPDATEPROFILECONFIGURATION);
+                             DEVELOPERPRIVATE_UPDATEPROFILECONFIGURATION)
 
  private:
   ~DeveloperPrivateUpdateProfileConfigurationFunction() override;
@@ -410,7 +421,7 @@ class DeveloperPrivateUpdateExtensionConfigurationFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.updateExtensionConfiguration",
-                             DEVELOPERPRIVATE_UPDATEEXTENSIONCONFIGURATION);
+                             DEVELOPERPRIVATE_UPDATEEXTENSIONCONFIGURATION)
 
  protected:
   ~DeveloperPrivateUpdateExtensionConfigurationFunction() override;
@@ -421,8 +432,7 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
                                        public ExtensionRegistryObserver,
                                        public LoadErrorReporter::Observer {
  public:
-  DECLARE_EXTENSION_FUNCTION("developerPrivate.reload",
-                             DEVELOPERPRIVATE_RELOAD);
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.reload", DEVELOPERPRIVATE_RELOAD)
 
   DeveloperPrivateReloadFunction();
 
@@ -456,9 +466,9 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
   base::FilePath reloading_extension_path_;
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
-      registry_observer_;
+      registry_observer_{this};
   ScopedObserver<LoadErrorReporter, LoadErrorReporter::Observer>
-      error_reporter_observer_;
+      error_reporter_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateReloadFunction);
 };
@@ -467,7 +477,7 @@ class DeveloperPrivateShowPermissionsDialogFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.showPermissionsDialog",
-                             DEVELOPERPRIVATE_PERMISSIONS);
+                             DEVELOPERPRIVATE_PERMISSIONS)
   DeveloperPrivateShowPermissionsDialogFunction();
 
  protected:
@@ -480,7 +490,7 @@ class DeveloperPrivateShowPermissionsDialogFunction
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateShowPermissionsDialogFunction);
 };
 
-class DeveloperPrivateChooseEntryFunction : public UIThreadExtensionFunction,
+class DeveloperPrivateChooseEntryFunction : public ExtensionFunction,
                                             public EntryPickerClient {
  protected:
   ~DeveloperPrivateChooseEntryFunction() override;
@@ -490,12 +500,11 @@ class DeveloperPrivateChooseEntryFunction : public UIThreadExtensionFunction,
                   int file_type_index);
 };
 
-
 class DeveloperPrivateLoadUnpackedFunction
     : public DeveloperPrivateChooseEntryFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.loadUnpacked",
-                             DEVELOPERPRIVATE_LOADUNPACKED);
+                             DEVELOPERPRIVATE_LOADUNPACKED)
   DeveloperPrivateLoadUnpackedFunction();
 
  protected:
@@ -532,7 +541,7 @@ class DeveloperPrivateInstallDroppedFileFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.installDroppedFile",
-                             DEVELOPERPRIVATE_INSTALLDROPPEDFILE);
+                             DEVELOPERPRIVATE_INSTALLDROPPEDFILE)
   DeveloperPrivateInstallDroppedFileFunction();
 
  private:
@@ -548,7 +557,7 @@ class DeveloperPrivateNotifyDragInstallInProgressFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.notifyDragInstallInProgress",
-                             DEVELOPERPRIVATE_NOTIFYDRAGINSTALLINPROGRESS);
+                             DEVELOPERPRIVATE_NOTIFYDRAGINSTALLINPROGRESS)
 
   DeveloperPrivateNotifyDragInstallInProgressFunction();
 
@@ -566,7 +575,7 @@ class DeveloperPrivateChoosePathFunction
     : public DeveloperPrivateChooseEntryFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.choosePath",
-                             DEVELOPERPRIVATE_CHOOSEPATH);
+                             DEVELOPERPRIVATE_CHOOSEPATH)
 
  protected:
   ~DeveloperPrivateChoosePathFunction() override;
@@ -583,7 +592,7 @@ class DeveloperPrivatePackDirectoryFunction
 
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.packDirectory",
-                             DEVELOPERPRIVATE_PACKDIRECTORY);
+                             DEVELOPERPRIVATE_PACKDIRECTORY)
 
   DeveloperPrivatePackDirectoryFunction();
 
@@ -603,11 +612,10 @@ class DeveloperPrivatePackDirectoryFunction
   std::string key_path_str_;
 };
 
-class DeveloperPrivateIsProfileManagedFunction
-    : public UIThreadExtensionFunction {
+class DeveloperPrivateIsProfileManagedFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.isProfileManaged",
-                             DEVELOPERPRIVATE_ISPROFILEMANAGED);
+                             DEVELOPERPRIVATE_ISPROFILEMANAGED)
 
  protected:
   ~DeveloperPrivateIsProfileManagedFunction() override;
@@ -616,11 +624,10 @@ class DeveloperPrivateIsProfileManagedFunction
   ResponseAction Run() override;
 };
 
-class DeveloperPrivateLoadDirectoryFunction
-    : public ChromeAsyncExtensionFunction {
+class DeveloperPrivateLoadDirectoryFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.loadDirectory",
-                             DEVELOPERPRIVATE_LOADUNPACKEDCROS);
+                             DEVELOPERPRIVATE_LOADUNPACKEDCROS)
 
   DeveloperPrivateLoadDirectoryFunction();
 
@@ -628,9 +635,10 @@ class DeveloperPrivateLoadDirectoryFunction
   ~DeveloperPrivateLoadDirectoryFunction() override;
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
-  bool LoadByFileSystemAPI(const ::storage::FileSystemURL& directory_url);
+  ResponseAction LoadByFileSystemAPI(
+      const ::storage::FileSystemURL& directory_url);
 
   void ClearExistingDirectoryContent(const base::FilePath& project_path);
 
@@ -670,13 +678,16 @@ class DeveloperPrivateLoadDirectoryFunction
   // This is set to false if any of the copyFile operations fail on
   // call of the API. It is returned as a response of the API call.
   bool success_;
+
+  // Error string if |success_| is false.
+  std::string error_;
 };
 
 class DeveloperPrivateRequestFileSourceFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.requestFileSource",
-                             DEVELOPERPRIVATE_REQUESTFILESOURCE);
+                             DEVELOPERPRIVATE_REQUESTFILESOURCE)
   DeveloperPrivateRequestFileSourceFunction();
 
  protected:
@@ -693,7 +704,7 @@ class DeveloperPrivateOpenDevToolsFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.openDevTools",
-                             DEVELOPERPRIVATE_OPENDEVTOOLS);
+                             DEVELOPERPRIVATE_OPENDEVTOOLS)
   DeveloperPrivateOpenDevToolsFunction();
 
  protected:
@@ -705,7 +716,7 @@ class DeveloperPrivateDeleteExtensionErrorsFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.deleteExtensionErrors",
-                             DEVELOPERPRIVATE_DELETEEXTENSIONERRORS);
+                             DEVELOPERPRIVATE_DELETEEXTENSIONERRORS)
 
  protected:
   ~DeveloperPrivateDeleteExtensionErrorsFunction() override;
@@ -716,7 +727,7 @@ class DeveloperPrivateRepairExtensionFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.repairExtension",
-                             DEVELOPERPRIVATE_REPAIREXTENSION);
+                             DEVELOPERPRIVATE_REPAIREXTENSION)
 
  protected:
   ~DeveloperPrivateRepairExtensionFunction() override;
@@ -730,7 +741,7 @@ class DeveloperPrivateRepairExtensionFunction
 class DeveloperPrivateShowOptionsFunction : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.showOptions",
-                             DEVELOPERPRIVATE_SHOWOPTIONS);
+                             DEVELOPERPRIVATE_SHOWOPTIONS)
 
  protected:
   ~DeveloperPrivateShowOptionsFunction() override;
@@ -740,7 +751,7 @@ class DeveloperPrivateShowOptionsFunction : public DeveloperPrivateAPIFunction {
 class DeveloperPrivateShowPathFunction : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.showPath",
-                             DEVELOPERPRIVATE_SHOWPATH);
+                             DEVELOPERPRIVATE_SHOWPATH)
 
  protected:
   ~DeveloperPrivateShowPathFunction() override;
@@ -751,7 +762,7 @@ class DeveloperPrivateSetShortcutHandlingSuspendedFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.setShortcutHandlingSuspended",
-                             DEVELOPERPRIVATE_SETSHORTCUTHANDLINGSUSPENDED);
+                             DEVELOPERPRIVATE_SETSHORTCUTHANDLINGSUSPENDED)
 
  protected:
   ~DeveloperPrivateSetShortcutHandlingSuspendedFunction() override;
@@ -762,7 +773,7 @@ class DeveloperPrivateUpdateExtensionCommandFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.updateExtensionCommand",
-                             DEVELOPERPRIVATE_UPDATEEXTENSIONCOMMAND);
+                             DEVELOPERPRIVATE_UPDATEEXTENSIONCOMMAND)
 
  protected:
   ~DeveloperPrivateUpdateExtensionCommandFunction() override;
@@ -773,7 +784,7 @@ class DeveloperPrivateAddHostPermissionFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.addHostPermission",
-                             DEVELOPERPRIVATE_ADDHOSTPERMISSION);
+                             DEVELOPERPRIVATE_ADDHOSTPERMISSION)
   DeveloperPrivateAddHostPermissionFunction();
 
  private:
@@ -790,7 +801,7 @@ class DeveloperPrivateRemoveHostPermissionFunction
     : public DeveloperPrivateAPIFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.removeHostPermission",
-                             DEVELOPERPRIVATE_REMOVEHOSTPERMISSION);
+                             DEVELOPERPRIVATE_REMOVEHOSTPERMISSION)
   DeveloperPrivateRemoveHostPermissionFunction();
 
  private:

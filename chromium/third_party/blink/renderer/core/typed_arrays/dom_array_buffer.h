@@ -5,56 +5,79 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_TYPED_ARRAYS_DOM_ARRAY_BUFFER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_TYPED_ARRAYS_DOM_ARRAY_BUFFER_H_
 
+#include "base/allocator/partition_allocator/oom.h"
+#include "base/containers/span.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/typed_arrays/array_buffer/array_buffer_contents.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_buffer_base.h"
-#include "third_party/blink/renderer/platform/wtf/typed_arrays/array_buffer.h"
+#include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
-
-class SharedBuffer;
 
 class CORE_EXPORT DOMArrayBuffer final : public DOMArrayBufferBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMArrayBuffer* Create(scoped_refptr<WTF::ArrayBuffer> buffer) {
-    return MakeGarbageCollected<DOMArrayBuffer>(std::move(buffer));
+  static DOMArrayBuffer* Create(ArrayBufferContents contents) {
+    return MakeGarbageCollected<DOMArrayBuffer>(std::move(contents));
   }
-  static DOMArrayBuffer* Create(unsigned num_elements,
-                                unsigned element_byte_size) {
-    return Create(WTF::ArrayBuffer::Create(num_elements, element_byte_size));
+  static DOMArrayBuffer* Create(size_t num_elements, size_t element_byte_size) {
+    ArrayBufferContents contents(num_elements, element_byte_size,
+                                 ArrayBufferContents::kNotShared,
+                                 ArrayBufferContents::kZeroInitialize);
+    if (UNLIKELY(!contents.Data())) {
+      OOM_CRASH(num_elements * element_byte_size);
+    }
+    return Create(std::move(contents));
   }
-  static DOMArrayBuffer* Create(const void* source, unsigned byte_length) {
-    return Create(WTF::ArrayBuffer::Create(source, byte_length));
+  static DOMArrayBuffer* Create(const void* source, size_t byte_length) {
+    ArrayBufferContents contents(byte_length, 1,
+                                 ArrayBufferContents::kNotShared,
+                                 ArrayBufferContents::kDontInitialize);
+    if (UNLIKELY(!contents.Data())) {
+      OOM_CRASH(byte_length);
+    }
+    memcpy(contents.Data(), source, byte_length);
+    return Create(std::move(contents));
   }
-  static DOMArrayBuffer* Create(WTF::ArrayBufferContents& contents) {
-    return Create(WTF::ArrayBuffer::Create(contents));
-  }
+
   static DOMArrayBuffer* Create(scoped_refptr<SharedBuffer>);
+  static DOMArrayBuffer* Create(const Vector<base::span<const char>>&);
 
-  // Only for use by XMLHttpRequest::responseArrayBuffer and
-  // Internals::serializeObject.
-  static DOMArrayBuffer* CreateUninitializedOrNull(unsigned num_elements,
-                                                   unsigned element_byte_size);
+  static DOMArrayBuffer* CreateOrNull(size_t num_elements,
+                                      size_t element_byte_size);
 
-  explicit DOMArrayBuffer(scoped_refptr<WTF::ArrayBuffer> buffer)
-      : DOMArrayBufferBase(std::move(buffer)) {}
+  // Only for use by XMLHttpRequest::responseArrayBuffer,
+  // Internals::serializeObject, and
+  // FetchDataLoaderAsArrayBuffer::OnStateChange.
+  static DOMArrayBuffer* CreateUninitializedOrNull(size_t num_elements,
+                                                   size_t element_byte_size);
 
-  DOMArrayBuffer* Slice(int begin, int end) const {
-    return Create(Buffer()->Slice(begin, end));
-  }
-  DOMArrayBuffer* Slice(int begin) const {
-    return Create(Buffer()->Slice(begin));
-  }
+  explicit DOMArrayBuffer(ArrayBufferContents contents)
+      : DOMArrayBufferBase(std::move(contents)) {}
 
-  bool IsNeuterable(v8::Isolate*);
+  DOMArrayBuffer* Slice(size_t begin, size_t end) const;
 
-  // Transfer the ArrayBuffer if it is neuterable, otherwise make a copy and
+  bool IsDetachable(v8::Isolate*);
+
+  // Transfer the ArrayBuffer if it is detachable, otherwise make a copy and
   // transfer that.
-  bool Transfer(v8::Isolate*, WTF::ArrayBufferContents& result);
+  bool Transfer(v8::Isolate*, ArrayBufferContents& result);
 
-  v8::Local<v8::Object> Wrap(v8::Isolate*,
-                             v8::Local<v8::Object> creation_context) override;
+  // Share the ArrayBuffer, even if it is non-shared. Such sharing is necessary
+  // for e.g. WebAudio which uses a separate thread for processing the
+  // ArrayBuffer while at the same time exposing a NonShared Float32Array.
+  bool ShareNonSharedForInternalUse(ArrayBufferContents& result) {
+    if (!Content()->BackingStore()) {
+      result.Detach();
+      return false;
+    }
+    Content()->ShareNonSharedForInternalUse(result);
+    return true;
+  }
+
+  v8::Local<v8::Value> Wrap(v8::Isolate*,
+                            v8::Local<v8::Object> creation_context) override;
 };
 
 }  // namespace blink

@@ -10,17 +10,23 @@
 
 #include "api/video/video_stream_encoder_create.h"
 
-#include "absl/memory/memory.h"
-#include "video/overuse_frame_detector.h"
+#include <memory>
+
+#include "video/adaptation/overuse_frame_detector.h"
 #include "video/video_stream_encoder.h"
 
 namespace webrtc {
+
 std::unique_ptr<VideoStreamEncoderInterface> CreateVideoStreamEncoder(
+    Clock* clock,
+    TaskQueueFactory* task_queue_factory,
     uint32_t number_of_cores,
     VideoStreamEncoderObserver* encoder_stats_observer,
     const VideoStreamEncoderSettings& settings) {
-  return absl::make_unique<VideoStreamEncoder>(
-      number_of_cores, encoder_stats_observer, settings,
-      absl::make_unique<OveruseFrameDetector>(encoder_stats_observer));
+  return std::make_unique<VideoStreamEncoder>(
+      clock, number_of_cores, encoder_stats_observer, settings,
+      std::make_unique<OveruseFrameDetector>(encoder_stats_observer),
+      task_queue_factory);
 }
+
 }  // namespace webrtc

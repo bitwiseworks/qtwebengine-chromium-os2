@@ -8,8 +8,8 @@
 #include <memory>
 #include <set>
 
-#include "ui/events/event_constants.h"
 #include "ui/events/event_observer.h"
+#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
@@ -21,7 +21,7 @@ namespace views {
 // EventObservers cannot modify events nor alter dispatch.
 class VIEWS_EXPORT EventMonitor {
  public:
-  virtual ~EventMonitor() {}
+  virtual ~EventMonitor() = default;
 
   // Create an instance for monitoring application events. This includes all
   // events on ChromeOS, but only events targeting Chrome on desktop platforms.

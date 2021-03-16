@@ -35,14 +35,17 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "mojo/public/cpp/bindings/strong_binding_set.h"
-#include "third_party/blink/public/mojom/blob/blob_url_store.mojom-blink.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "third_party/blink/public/mojom/blob/blob_url_store.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/worker/shared_worker_client.mojom-blink.h"
 #include "third_party/blink/public/mojom/worker/shared_worker_connector.mojom-blink.h"
+#include "third_party/blink/public/mojom/worker/shared_worker_info.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/document.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_unique_receiver_set.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
 namespace blink {
@@ -59,9 +62,8 @@ class SharedWorker;
 // SharedWorkerClientHolder is a per-Document object and owned by Document via
 // Supplement<Document>.
 class CORE_EXPORT SharedWorkerClientHolder final
-    : public GarbageCollectedFinalized<SharedWorkerClientHolder>,
-      public Supplement<Document>,
-      public ContextLifecycleObserver {
+    : public GarbageCollected<SharedWorkerClientHolder>,
+      public Supplement<Document> {
   USING_GARBAGE_COLLECTED_MIXIN(SharedWorkerClientHolder);
 
  public:
@@ -75,17 +77,16 @@ class CORE_EXPORT SharedWorkerClientHolder final
   void Connect(SharedWorker*,
                MessagePortChannel,
                const KURL&,
-               mojom::blink::BlobURLTokenPtr,
-               const String& name);
-
-  // Overrides ContextLifecycleObserver.
-  void ContextDestroyed(ExecutionContext*) override;
+               mojo::PendingRemote<mojom::blink::BlobURLToken>,
+               mojom::blink::WorkerOptionsPtr options);
 
   void Trace(Visitor* visitor) override;
 
  private:
-  mojom::blink::SharedWorkerConnectorPtr connector_;
-  mojo::StrongBindingSet<mojom::blink::SharedWorkerClient> client_set_;
+  HeapMojoRemote<mojom::blink::SharedWorkerConnector> connector_;
+  HeapMojoUniqueReceiverSet<mojom::blink::SharedWorkerClient> client_receivers_;
+
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedWorkerClientHolder);
 };

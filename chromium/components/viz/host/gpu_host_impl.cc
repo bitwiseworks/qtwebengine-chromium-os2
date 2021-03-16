@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
@@ -16,6 +17,7 @@
 #include "build/build_config.h"
 #include "components/viz/common/features.h"
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
+#include "gpu/config/gpu_extra_info.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_info.h"
@@ -83,77 +85,7 @@ FontRenderParams& GetFontRenderParams() {
   return *instance;
 }
 
-#if defined(USE_OZONE)
-// Helper to register Mus/conventional thread bouncers for ozone startup.
-void OzoneRegisterStartupCallbackHelper(
-    scoped_refptr<base::SingleThreadTaskRunner> host_thread_task_runner,
-    base::OnceCallback<void(ui::OzonePlatform*)> callback) {
-  // The callback registered in ozone can be called in any thread. So use an
-  // intermediary callback that bounces to the GpuHost thread if needed, before
-  // running the callback.
-  auto bounce_callback = base::BindOnce(
-      [](base::SingleThreadTaskRunner* host_thread_task_runner,
-         base::OnceCallback<void(ui::OzonePlatform*)> callback,
-         ui::OzonePlatform* platform) {
-        if (host_thread_task_runner->BelongsToCurrentThread()) {
-          std::move(callback).Run(platform);
-        } else {
-          host_thread_task_runner->PostTask(
-              FROM_HERE, base::BindOnce(std::move(callback), platform));
-        }
-      },
-      base::RetainedRef(host_thread_task_runner), std::move(callback));
-  ui::OzonePlatform::RegisterStartupCallback(std::move(bounce_callback));
-}
-#endif  // defined(USE_OZONE)
-
 }  // namespace
-
-VizMainWrapper::VizMainWrapper(mojom::VizMainPtr viz_main_ptr)
-    : viz_main_ptr_(std::move(viz_main_ptr)) {}
-
-VizMainWrapper::VizMainWrapper(
-    mojom::VizMainAssociatedPtr viz_main_associated_ptr)
-    : viz_main_associated_ptr_(std::move(viz_main_associated_ptr)) {}
-
-VizMainWrapper::~VizMainWrapper() = default;
-
-void VizMainWrapper::CreateGpuService(
-    mojom::GpuServiceRequest request,
-    mojom::GpuHostPtr gpu_host,
-    discardable_memory::mojom::DiscardableSharedMemoryManagerPtr
-        discardable_memory_manager,
-    mojo::ScopedSharedBufferHandle activity_flags,
-    gfx::FontRenderParams::SubpixelRendering subpixel_rendering) {
-  if (viz_main_ptr_) {
-    viz_main_ptr_->CreateGpuService(std::move(request), std::move(gpu_host),
-                                    std::move(discardable_memory_manager),
-                                    std::move(activity_flags),
-                                    subpixel_rendering);
-  } else {
-    viz_main_associated_ptr_->CreateGpuService(
-        std::move(request), std::move(gpu_host),
-        std::move(discardable_memory_manager), std::move(activity_flags),
-        subpixel_rendering);
-  }
-}
-
-#if defined(USE_VIZ_DEVTOOLS)
-void VizMainWrapper::CreateVizDevTools(mojom::VizDevToolsParamsPtr params) {
-  if (viz_main_ptr_)
-    viz_main_ptr_->CreateVizDevTools(std::move(params));
-  else
-    viz_main_associated_ptr_->CreateVizDevTools(std::move(params));
-}
-#endif
-
-void VizMainWrapper::CreateFrameSinkManager(
-    mojom::FrameSinkManagerParamsPtr params) {
-  if (viz_main_ptr_)
-    viz_main_ptr_->CreateFrameSinkManager(std::move(params));
-  else
-    viz_main_associated_ptr_->CreateFrameSinkManager(std::move(params));
-}
 
 GpuHostImpl::InitParams::InitParams() = default;
 
@@ -162,28 +94,25 @@ GpuHostImpl::InitParams::InitParams(InitParams&&) = default;
 GpuHostImpl::InitParams::~InitParams() = default;
 
 GpuHostImpl::GpuHostImpl(Delegate* delegate,
-                         std::unique_ptr<VizMainWrapper> viz_main_ptr,
+                         mojo::PendingAssociatedRemote<mojom::VizMain> viz_main,
                          InitParams params)
     : delegate_(delegate),
-      viz_main_ptr_(std::move(viz_main_ptr)),
+      viz_main_(std::move(viz_main)),
       params_(std::move(params)),
-      host_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      gpu_host_binding_(this),
-      weak_ptr_factory_(this) {
+      host_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   DCHECK(delegate_);
-  mojom::GpuHostPtr host_proxy;
-  gpu_host_binding_.Bind(mojo::MakeRequest(&host_proxy));
 
-  discardable_memory::mojom::DiscardableSharedMemoryManagerPtr
-      discardable_manager_ptr;
-  auto discardable_request = mojo::MakeRequest(&discardable_manager_ptr);
-  delegate_->BindDiscardableMemoryRequest(std::move(discardable_request));
+  mojo::PendingRemote<discardable_memory::mojom::DiscardableSharedMemoryManager>
+      discardable_manager_remote;
+  delegate_->BindDiscardableMemoryReceiver(
+      discardable_manager_remote.InitWithNewPipeAndPassReceiver());
 
   DCHECK(GetFontRenderParams().Get());
-  viz_main_ptr_->CreateGpuService(
-      mojo::MakeRequest(&gpu_service_ptr_), std::move(host_proxy),
-      std::move(discardable_manager_ptr), activity_flags_.CloneHandle(),
-      GetFontRenderParams().Get()->subpixel_rendering);
+  viz_main_->CreateGpuService(gpu_service_remote_.BindNewPipeAndPassReceiver(),
+                              gpu_host_receiver_.BindNewPipeAndPassRemote(),
+                              std::move(discardable_manager_remote),
+                              activity_flags_.CloneHandle(),
+                              GetFontRenderParams().Get()->subpixel_rendering);
 
 #if defined(USE_OZONE)
   InitOzone();
@@ -206,7 +135,7 @@ void GpuHostImpl::ResetFontRenderParams() {
   GetFontRenderParams().Reset();
 }
 
-void GpuHostImpl::OnProcessLaunched(base::ProcessId pid) {
+void GpuHostImpl::SetProcessId(base::ProcessId pid) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_EQ(base::kNullProcessId, pid_);
   DCHECK_NE(base::kNullProcessId, pid);
@@ -247,8 +176,8 @@ void GpuHostImpl::BlockLiveOffscreenContexts() {
 }
 
 void GpuHostImpl::ConnectFrameSinkManager(
-    mojom::FrameSinkManagerRequest request,
-    mojom::FrameSinkManagerClientPtrInfo client) {
+    mojo::PendingReceiver<mojom::FrameSinkManager> receiver,
+    mojo::PendingRemote<mojom::FrameSinkManagerClient> client) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TRACE_EVENT0("gpu", "GpuHostImpl::ConnectFrameSinkManager");
 
@@ -259,14 +188,14 @@ void GpuHostImpl::ConnectFrameSinkManager(
       params_.deadline_to_synchronize_surfaces.has_value();
   params->activation_deadline_in_frames =
       params_.deadline_to_synchronize_surfaces.value_or(0u);
-  params->frame_sink_manager = std::move(request);
+  params->frame_sink_manager = std::move(receiver);
   params->frame_sink_manager_client = std::move(client);
-  viz_main_ptr_->CreateFrameSinkManager(std::move(params));
+  viz_main_->CreateFrameSinkManager(std::move(params));
 }
 
-#if defined(USE_VIZ_DEVTOOLS)
+#if BUILDFLAG(USE_VIZ_DEVTOOLS)
 void GpuHostImpl::ConnectVizDevTools(mojom::VizDevToolsParamsPtr params) {
-  viz_main_ptr_->CreateVizDevTools(std::move(params));
+  viz_main_->CreateVizDevTools(std::move(params));
 }
 #endif
 
@@ -276,6 +205,8 @@ void GpuHostImpl::EstablishGpuChannel(int client_id,
                                       EstablishChannelCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TRACE_EVENT0("gpu", "GpuHostImpl::EstablishGpuChannel");
+
+  shutdown_timeout_.Stop();
 
   // If GPU features are already blacklisted, no need to establish the channel.
   if (!delegate_->GpuAccessAllowed()) {
@@ -299,7 +230,7 @@ void GpuHostImpl::EstablishGpuChannel(int client_id,
       delegate_->GetShaderCacheFactory()->Get(client_id) != nullptr;
 
   channel_requests_.push(std::move(callback));
-  gpu_service_ptr_->EstablishGpuChannel(
+  gpu_service_remote_->EstablishGpuChannel(
       client_id, client_tracing_id, is_gpu_host, cache_shaders_on_disk,
       base::BindOnce(&GpuHostImpl::OnChannelEstablished,
                      weak_ptr_factory_.GetWeakPtr(), client_id));
@@ -330,26 +261,30 @@ void GpuHostImpl::BindInterface(const std::string& interface_name,
   delegate_->BindInterface(interface_name, std::move(interface_pipe));
 }
 
+void GpuHostImpl::RunService(
+    const std::string& service_name,
+    mojo::PendingReceiver<service_manager::mojom::Service> receiver) {
+  delegate_->RunService(service_name, std::move(receiver));
+}
+
 mojom::GpuService* GpuHostImpl::gpu_service() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(gpu_service_ptr_.is_bound());
-  return gpu_service_ptr_.get();
+  DCHECK(gpu_service_remote_.is_bound());
+  return gpu_service_remote_.get();
 }
 
 #if defined(USE_OZONE)
+
 void GpuHostImpl::InitOzone() {
   // Ozone needs to send the primary DRM device to GPU service as early as
   // possible to ensure the latter always has a valid device.
   // https://crbug.com/608839
-  // If the OzonePlatform is not created yet, defer the callback until
-  // OzonePlatform instance is created.
   //
   // The Ozone/Wayland requires mojo communication to be established to be
   // functional with a separate gpu process. Thus, using the PlatformProperties,
   // check if there is such a requirement.
-  if (features::IsOzoneDrmMojo() || ui::OzonePlatform::EnsureInstance()
-                                        ->GetPlatformProperties()
-                                        .requires_mojo) {
+  if (features::IsOzoneDrmMojo() ||
+      ui::OzonePlatform::GetInstance()->GetPlatformProperties().requires_mojo) {
     // TODO(rjkroege): Remove the legacy IPC code paths when no longer
     // necessary. https://crbug.com/806092
     auto interface_binder = base::BindRepeating(&GpuHostImpl::BindInterface,
@@ -357,23 +292,12 @@ void GpuHostImpl::InitOzone() {
     auto terminate_callback = base::BindOnce(&GpuHostImpl::TerminateGpuProcess,
                                              weak_ptr_factory_.GetWeakPtr());
 
-    auto startup_callback = base::BindOnce(
-        [](const base::RepeatingCallback<void(const std::string&,
-                                              mojo::ScopedMessagePipeHandle)>&
-               interface_binder,
-           base::OnceCallback<void(const std::string&)> terminate_callback,
-           scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner,
-           scoped_refptr<base::SingleThreadTaskRunner> host_thread_task_runner,
-           ui::OzonePlatform* platform) {
-          DCHECK(host_thread_task_runner->BelongsToCurrentThread());
-          platform->GetGpuPlatformSupportHost()->OnGpuServiceLaunched(
-              main_thread_task_runner, host_thread_task_runner,
-              interface_binder, std::move(terminate_callback));
-        },
-        interface_binder, std::move(terminate_callback),
-        params_.main_thread_task_runner, host_thread_task_runner_);
-    OzoneRegisterStartupCallbackHelper(host_thread_task_runner_,
-                                       std::move(startup_callback));
+    ui::OzonePlatform::GetInstance()
+        ->GetGpuPlatformSupportHost()
+        ->OnGpuServiceLaunched(params_.restart_id,
+                               params_.main_thread_task_runner,
+                               host_thread_task_runner_, interface_binder,
+                               std::move(terminate_callback));
   } else {
     auto send_callback = base::BindRepeating(
         [](base::WeakPtr<GpuHostImpl> host, IPC::Message* message) {
@@ -383,22 +307,11 @@ void GpuHostImpl::InitOzone() {
             delete message;
         },
         weak_ptr_factory_.GetWeakPtr());
-    // Create the callback that should run on the current thread.
-    auto startup_callback = base::BindOnce(
-        [](int host_id,
-           const base::RepeatingCallback<void(IPC::Message*)>& send_callback,
-           scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner,
-           scoped_refptr<base::SingleThreadTaskRunner> host_thread_task_runner,
-           ui::OzonePlatform* platform) {
-          DCHECK(host_thread_task_runner->BelongsToCurrentThread());
-          platform->GetGpuPlatformSupportHost()->OnGpuProcessLaunched(
-              host_id, main_thread_task_runner, host_thread_task_runner,
-              send_callback);
-        },
-        params_.restart_id, send_callback, params_.main_thread_task_runner,
-        host_thread_task_runner_);
-    OzoneRegisterStartupCallbackHelper(host_thread_task_runner_,
-                                       std::move(startup_callback));
+    ui::OzonePlatform::GetInstance()
+        ->GetGpuPlatformSupportHost()
+        ->OnGpuProcessLaunched(params_.restart_id,
+                               params_.main_thread_task_runner,
+                               host_thread_task_runner_, send_callback);
   }
 }
 
@@ -438,7 +351,7 @@ void GpuHostImpl::LoadedShader(int32_t client_id,
   if (prefix_ok) {
     // Remove the prefix from the key before load.
     std::string key_no_prefix = key.substr(prefix.length() + 1);
-    gpu_service_ptr_->LoadedShader(client_id, key_no_prefix, data);
+    gpu_service_remote_->LoadedShader(client_id, key_no_prefix, data);
   }
 }
 
@@ -470,7 +383,7 @@ void GpuHostImpl::OnChannelEstablished(
   // Currently if any of the GPU features are blacklisted, we don't establish a
   // GPU channel.
   if (channel_handle.is_valid() && !delegate_->GpuAccessAllowed()) {
-    gpu_service_ptr_->CloseChannel(client_id);
+    gpu_service_remote_->CloseChannel(client_id);
     std::move(callback).Run(mojo::ScopedMessagePipeHandle(), gpu::GPUInfo(),
                             gpu::GpuFeatureInfo(),
                             EstablishChannelStatus::kGpuAccessDenied);
@@ -489,7 +402,8 @@ void GpuHostImpl::DidInitialize(
     const gpu::GpuFeatureInfo& gpu_feature_info,
     const base::Optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
     const base::Optional<gpu::GpuFeatureInfo>&
-        gpu_feature_info_for_hardware_gpu) {
+        gpu_feature_info_for_hardware_gpu,
+    const gpu::GpuExtraInfo& gpu_extra_info) {
   UMA_HISTOGRAM_BOOLEAN("GPU.GPUProcessInitialized", true);
 
   // Set GPU driver bug workaround flags that are checked on the browser side.
@@ -501,22 +415,14 @@ void GpuHostImpl::DidInitialize(
 
   delegate_->DidInitialize(gpu_info, gpu_feature_info,
                            gpu_info_for_hardware_gpu,
-                           gpu_feature_info_for_hardware_gpu);
-
-  // Remove entries so that GPU process shader caches get populated on any
-  // GPU process start.
-  client_id_to_shader_cache_.clear();
+                           gpu_feature_info_for_hardware_gpu, gpu_extra_info);
 
   if (!params_.disable_gpu_shader_disk_cache) {
-    bool oopd_enabled =
-        base::FeatureList::IsEnabled(features::kVizDisplayCompositor);
-    if (oopd_enabled)
-      CreateChannelCache(gpu::kInProcessCommandBufferClientId);
+    CreateChannelCache(gpu::kInProcessCommandBufferClientId);
 
-    bool use_gr_shader_cache =
-        base::FeatureList::IsEnabled(
-            features::kDefaultEnableOopRasterization) ||
-        base::FeatureList::IsEnabled(features::kUseSkiaRenderer);
+    bool use_gr_shader_cache = base::FeatureList::IsEnabled(
+                                   features::kDefaultEnableOopRasterization) ||
+                               features::IsUsingSkiaRenderer();
     if (use_gr_shader_cache)
       CreateChannelCache(gpu::kGrShaderCacheClientId);
   }
@@ -546,6 +452,22 @@ void GpuHostImpl::DidDestroyOffscreenContext(const GURL& url) {
 void GpuHostImpl::DidDestroyChannel(int32_t client_id) {
   TRACE_EVENT0("gpu", "GpuHostImpl::DidDestroyChannel");
   client_id_to_shader_cache_.erase(client_id);
+}
+
+void GpuHostImpl::DidDestroyAllChannels() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  if (!channel_requests_.empty())
+    return;
+  constexpr base::TimeDelta kShutDownTimeout = base::TimeDelta::FromSeconds(10);
+  shutdown_timeout_.Start(FROM_HERE, kShutDownTimeout,
+                          base::BindOnce(&GpuHostImpl::MaybeShutdownGpuProcess,
+                                         base::Unretained(this)));
+}
+
+void GpuHostImpl::MaybeShutdownGpuProcess() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(channel_requests_.empty());
+  delegate_->MaybeShutdownGpuProcess();
 }
 
 void GpuHostImpl::DidLoseContext(bool offscreen,
@@ -596,6 +518,10 @@ void GpuHostImpl::DisableGpuCompositing() {
 }
 
 #if defined(OS_WIN)
+void GpuHostImpl::DidUpdateOverlayInfo(const gpu::OverlayInfo& overlay_info) {
+  delegate_->DidUpdateOverlayInfo(overlay_info);
+}
+
 void GpuHostImpl::SetChildSurface(gpu::SurfaceHandle parent,
                                   gpu::SurfaceHandle child) {
   if (pid_ != base::kNullProcessId) {

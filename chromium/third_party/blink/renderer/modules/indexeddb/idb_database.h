@@ -29,24 +29,26 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/mojom/feature_observer/feature_observer.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/string_or_string_sequence.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_idb_object_store_parameters.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_idb_transaction_options.h"
 #include "third_party/blink/renderer/core/dom/dom_string_list.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database_callbacks.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_metadata.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_object_store.h"
-#include "third_party/blink/renderer/modules/indexeddb/idb_object_store_parameters.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_transaction.h"
 #include "third_party/blink/renderer/modules/indexeddb/indexed_db.h"
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_database.h"
 #include "third_party/blink/renderer/modules/indexeddb/web_idb_database_callbacks.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/scheduler/public/frame_or_worker_scheduler.h"
 
 namespace blink {
 
@@ -59,23 +61,20 @@ class IDBObserver;
 class MODULES_EXPORT IDBDatabase final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<IDBDatabase>,
-      public ContextLifecycleObserver {
+      public ExecutionContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(IDBDatabase);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static IDBDatabase* Create(ExecutionContext*,
-                             std::unique_ptr<WebIDBDatabase>,
-                             IDBDatabaseCallbacks*,
-                             v8::Isolate*);
-
-  IDBDatabase(ExecutionContext*,
-              std::unique_ptr<WebIDBDatabase>,
-              IDBDatabaseCallbacks*,
-              v8::Isolate*);
+  IDBDatabase(
+      ExecutionContext*,
+      std::unique_ptr<WebIDBDatabase>,
+      IDBDatabaseCallbacks*,
+      v8::Isolate*,
+      mojo::PendingRemote<mojom::blink::ObservedFeature> connection_lifetime);
   ~IDBDatabase() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // Overwrites the database metadata, including object store and index
   // metadata. Used to pass metadata to the database when it is opened.
@@ -97,7 +96,7 @@ class MODULES_EXPORT IDBDatabase final
 
   // Implement the IDL
   const String& name() const { return metadata_.name; }
-  unsigned long long version() const { return metadata_.version; }
+  uint64_t version() const { return metadata_.version; }
   DOMStringList* objectStoreNames() const;
 
   IDBObjectStore* createObjectStore(const String& name,
@@ -110,13 +109,18 @@ class MODULES_EXPORT IDBDatabase final
                               const StringOrStringSequence& store_names,
                               const String& mode,
                               ExceptionState&);
+  IDBTransaction* transaction(ScriptState*,
+                              const StringOrStringSequence& store_names,
+                              const String& mode,
+                              const IDBTransactionOptions* options,
+                              ExceptionState&);
   void deleteObjectStore(const String& name, ExceptionState&);
   void close();
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(abort, kAbort);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(close, kClose);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(versionchange, kVersionchange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(abort, kAbort)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(close, kClose)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error, kError)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(versionchange, kVersionchange)
 
   // IDBDatabaseCallbacks
   void OnVersionChange(int64_t old_version, int64_t new_version);
@@ -129,8 +133,8 @@ class MODULES_EXPORT IDBDatabase final
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
   // EventTarget
   const AtomicString& InterfaceName() const override;
@@ -190,7 +194,10 @@ class MODULES_EXPORT IDBDatabase final
   std::unique_ptr<WebIDBDatabase> backend_;
   Member<IDBTransaction> version_change_transaction_;
   HeapHashMap<int64_t, Member<IDBTransaction>> transactions_;
-  HeapHashMap<int32_t, TraceWrapperMember<IDBObserver>> observers_;
+  HeapHashMap<int32_t, Member<IDBObserver>> observers_;
+  // No interface here, so no need to bind it.  This is only for
+  // lifetime observation of the use of IndexedDB from the browser.
+  mojo::PendingRemote<mojom::blink::ObservedFeature> connection_lifetime_;
 
   bool close_pending_ = false;
 
@@ -200,6 +207,9 @@ class MODULES_EXPORT IDBDatabase final
   // Maintain the isolate so that all externally allocated memory can be
   // registered against it.
   v8::Isolate* isolate_;
+
+  FrameOrWorkerScheduler::SchedulingAffectingFeatureHandle
+      feature_handle_for_scheduler_;
 };
 
 }  // namespace blink

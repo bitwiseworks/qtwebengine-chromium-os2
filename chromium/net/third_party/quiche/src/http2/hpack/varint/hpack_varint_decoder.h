@@ -13,36 +13,28 @@
 // For details of the encoding, see:
 //        http://httpwg.org/specs/rfc7541.html#integer.representation
 //
-// If GetHttp2ReloadableFlag(http2_varint_decode_64_bits) is true, then this
-// decoder supports decoding any integer that can be represented on uint64_t,
-// thereby exceeding the requirements for QPACK: "QPACK implementations MUST be
-// able to decode integers up to 62 bits long."  See
+// HpackVarintDecoder supports decoding any integer that can be represented on
+// uint64_t, thereby exceeding the requirements for QPACK: "QPACK
+// implementations MUST be able to decode integers up to 62 bits long."  See
 // https://quicwg.org/base-drafts/draft-ietf-quic-qpack.html#rfc.section.5.1.1
 //
-// If GetHttp2ReloadableFlag(http2_varint_decode_64_bits) is false, then this
-// decoder supports decoding integers up to 2^28 + 2^prefix_length - 2.
-//
 // This decoder supports at most 10 extension bytes (bytes following the prefix,
-// also called continuation bytes) if
-// GetHttp2ReloadableFlag(http2_varint_decode_64_bits) is true, and at most 5
-// extension bytes if GetHttp2ReloadableFlag(http2_varint_decode_64_bits) is
-// false.  An encoder is allowed to zero pad the encoded integer on the left,
-// thereby increasing the number of extension bytes.  If an encoder uses so much
-// padding that the number of extension bytes exceeds the limit, then this
-// decoder signals an error.
+// also called continuation bytes).  An encoder is allowed to zero pad the
+// encoded integer on the left, thereby increasing the number of extension
+// bytes.  If an encoder uses so much padding that the number of extension bytes
+// exceeds the limit, then this decoder signals an error.
 
 #ifndef QUICHE_HTTP2_HPACK_VARINT_HPACK_VARINT_DECODER_H_
 #define QUICHE_HTTP2_HPACK_VARINT_HPACK_VARINT_DECODER_H_
 
 #include <cstdint>
 #include <limits>
+#include <string>
 
-#include "base/logging.h"
 #include "net/third_party/quiche/src/http2/decoder/decode_buffer.h"
 #include "net/third_party/quiche/src/http2/decoder/decode_status.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_export.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_flags.h"
-#include "net/third_party/quiche/src/http2/platform/api/http2_string.h"
+#include "net/third_party/quiche/src/http2/platform/api/http2_logging.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_export.h"
 
 namespace http2 {
 
@@ -63,7 +55,7 @@ const uint8_t kHpackVarintDecoderOffsetDone =
 // needed. Start and StartExtended handles the initialization of member
 // variables. This is necessary in order for HpackVarintDecoder to be part
 // of a union.
-class HTTP2_EXPORT_PRIVATE HpackVarintDecoder {
+class QUICHE_EXPORT_PRIVATE HpackVarintDecoder {
  public:
   // |prefix_value| is the first byte of the encoded varint.
   // |prefix_length| is number of bits in the first byte that are used for
@@ -91,7 +83,7 @@ class HTTP2_EXPORT_PRIVATE HpackVarintDecoder {
 
   // All the public methods below are for supporting assertions and tests.
 
-  Http2String DebugString() const;
+  std::string DebugString() const;
 
   // For benchmarking, these methods ensure the decoder
   // is NOT inlined into the caller.
@@ -118,12 +110,6 @@ class HTTP2_EXPORT_PRIVATE HpackVarintDecoder {
     DCHECK_EQ(kHpackVarintDecoderOffsetDone, offset_);
 #endif
   }
-
-  // If true, decode integers up to 2^64 - 1, and accept at most 10 extension
-  // bytes (some of which might be padding).
-  // If false, decode integers up to 2^28 + 2^prefix_length - 2, and accept at
-  // most 5 extension bytes (some of which might be padding).
-  bool decode_64_bits_ = GetHttp2ReloadableFlag(http2_varint_decode_64_bits);
 
   // These fields are initialized just to keep ASAN happy about reading
   // them from DebugString().

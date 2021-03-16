@@ -44,6 +44,8 @@ using ModeStringPair = std::pair<CBC_QRCoderMode*, ByteString>;
 
 namespace {
 
+CBC_ReedSolomonGF256* g_QRCodeField = nullptr;
+
 struct QRCoderBlockPair {
   std::vector<uint8_t> data;
   std::vector<uint8_t> ecc;
@@ -222,7 +224,7 @@ bool InitQRCode(int32_t numInputBytes,
   return false;
 }
 
-std::vector<uint8_t> GenerateECBytes(const std::vector<uint8_t>& dataBytes,
+std::vector<uint8_t> GenerateECBytes(pdfium::span<const uint8_t> dataBytes,
                                      size_t numEcBytesInBlock) {
   // If |numEcBytesInBlock| is 0, the encoder will fail anyway.
   ASSERT(numEcBytesInBlock > 0);
@@ -230,7 +232,7 @@ std::vector<uint8_t> GenerateECBytes(const std::vector<uint8_t>& dataBytes,
   std::copy(dataBytes.begin(), dataBytes.end(), toEncode.begin());
 
   std::vector<uint8_t> ecBytes;
-  CBC_ReedSolomonEncoder encoder(CBC_ReedSolomonGF256::QRCodeField);
+  CBC_ReedSolomonEncoder encoder(g_QRCodeField);
   if (encoder.Encode(&toEncode, numEcBytesInBlock)) {
     ecBytes = std::vector<uint8_t>(toEncode.begin() + dataBytes.size(),
                                    toEncode.end());
@@ -398,6 +400,18 @@ bool InterleaveWithECBytes(CBC_QRCoderBitVector* bits,
 }
 
 }  // namespace
+
+// static
+void CBC_QRCoderEncoder::Initialize() {
+  g_QRCodeField = new CBC_ReedSolomonGF256(0x011D);
+  g_QRCodeField->Init();
+}
+
+// static
+void CBC_QRCoderEncoder::Finalize() {
+  delete g_QRCodeField;
+  g_QRCodeField = nullptr;
+}
 
 // static
 bool CBC_QRCoderEncoder::Encode(WideStringView content,

@@ -43,9 +43,9 @@ BluetoothLocalGattServiceBlueZ::BluetoothLocalGattServiceBlueZ(
                               "/service")),
       uuid_(uuid),
       is_primary_(is_primary),
-      delegate_(delegate),
-      weak_ptr_factory_(this) {
-  VLOG(1) << "Creating local GATT service with identifier: " << GetIdentifier();
+      delegate_(delegate) {
+  DVLOG(1) << "Creating local GATT service with identifier: "
+           << GetIdentifier();
   adapter->AddLocalGattService(base::WrapUnique(this));
 }
 
@@ -59,17 +59,16 @@ bool BluetoothLocalGattServiceBlueZ::IsPrimary() const {
   return is_primary_;
 }
 
-void BluetoothLocalGattServiceBlueZ::Register(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
-  GetAdapter()->RegisterGattService(this, callback, error_callback);
+void BluetoothLocalGattServiceBlueZ::Register(const base::Closure& callback,
+                                              ErrorCallback error_callback) {
+  GetAdapter()->RegisterGattService(this, callback, std::move(error_callback));
 }
 
-void BluetoothLocalGattServiceBlueZ::Unregister(
-    const base::Closure& callback,
-    const ErrorCallback& error_callback) {
+void BluetoothLocalGattServiceBlueZ::Unregister(const base::Closure& callback,
+                                                ErrorCallback error_callback) {
   DCHECK(GetAdapter());
-  GetAdapter()->UnregisterGattService(this, callback, error_callback);
+  GetAdapter()->UnregisterGattService(this, callback,
+                                      std::move(error_callback));
 }
 
 bool BluetoothLocalGattServiceBlueZ::IsRegistered() {
@@ -86,7 +85,7 @@ BluetoothLocalGattServiceBlueZ::GetCharacteristic(
     const std::string& identifier) {
   const auto& service = characteristics_.find(dbus::ObjectPath(identifier));
   return service == characteristics_.end() ? nullptr : service->second.get();
-};
+}
 
 const std::map<dbus::ObjectPath,
                std::unique_ptr<BluetoothLocalGattCharacteristicBlueZ>>&

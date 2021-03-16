@@ -35,7 +35,7 @@ namespace rx
 class LinkEvent : angle::NonCopyable
 {
   public:
-    virtual ~LinkEvent(){};
+    virtual ~LinkEvent() {}
 
     // Please be aware that these methods may be called under a gl::Context other
     // than the one where the LinkEvent was created.
@@ -75,9 +75,9 @@ class ProgramImpl : angle::NonCopyable
     virtual ~ProgramImpl() {}
     virtual void destroy(const gl::Context *context) {}
 
-    virtual angle::Result load(const gl::Context *context,
-                               gl::InfoLog &infoLog,
-                               gl::BinaryInputStream *stream)                     = 0;
+    virtual std::unique_ptr<LinkEvent> load(const gl::Context *context,
+                                            gl::BinaryInputStream *stream,
+                                            gl::InfoLog &infoLog)                 = 0;
     virtual void save(const gl::Context *context, gl::BinaryOutputStream *stream) = 0;
     virtual void setBinaryRetrievableHint(bool retrievable)                       = 0;
     virtual void setSeparable(bool separable)                                     = 0;
@@ -144,13 +144,6 @@ class ProgramImpl : angle::NonCopyable
     virtual void getUniformuiv(const gl::Context *context,
                                GLint location,
                                GLuint *params) const                                           = 0;
-
-    // CHROMIUM_path_rendering
-    // Set parameters to control fragment shader input variable interpolation
-    virtual void setPathFragmentInputGen(const std::string &inputName,
-                                         GLenum genMode,
-                                         GLint components,
-                                         const GLfloat *coeffs) = 0;
 
     // Implementation-specific method for ignoring unreferenced uniforms. Some implementations may
     // perform more extensive analysis and ignore some locations that ANGLE doesn't detect as

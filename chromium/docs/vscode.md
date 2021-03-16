@@ -4,7 +4,7 @@ Visual Studio Code is a free, lightweight and powerful code editor for Windows,
 Mac and Linux, based on Electron/Chromium. It has built-in support for
 JavaScript, TypeScript and Node.js and a rich extension ecosystem that adds
 intellisense, debugging, syntax highlighting etc. for many languages (C++,
-Python, Go). It works without too much setup. Get started
+Python, Go, Java). It works without too much setup. Get started
 [here](https://code.visualstudio.com/docs).
 
 It is NOT a full-fledged IDE like Visual Studio. The two are completely
@@ -30,6 +30,10 @@ Here's what works well:
 *   Building works well. Build tools are easy to integrate. Warnings and errors
     are displayed on a separate page and you can click to jump to the
     corresponding line of code.
+*   VSCode Remote, which allows you to edit remotely-hosted code, and even run
+    computationally expensive plugins like vscode-clangd on the remote
+    server/workstation (see the [Remote section](#Remote)). Great for working-
+    from-home. (Googlers: See [go/vscode-remote](http://go/vscode-remote)].)
 
 [TOC]
 
@@ -55,16 +59,36 @@ terminal. The argument to `code` is the base directory of the workspace. VS
 Code does not require project or solution files. However, it does store
 workspace settings in a `.vscode` folder in your base directory.
 
-### Git on Windows
+### Fixes for Known Issues
+
+#### Git on Windows
 
 If you only have the `depot_tools` Git installed on your machine, even though it
 is in your PATH, VS Code will ignore it as it seems to be looking for `git.exe`.
 You will have to add the following to your settings in order for the Git
 integration to work:
 
-```
+```json
 {
   "git.path": "C:\\src\\depot_tools\\git.bat"
+}
+```
+
+#### Rendering of underscore on Linux
+
+As mentioned in [#35901](https://github.com/Microsoft/vscode/issues/35901), VS
+Code will not show underscore (`_`) properly on Linux by default. You can work
+around this issue by forcing another font such as the default `monospace` or
+changing the font size in your settings:
+
+```json
+{
+  // If you want to use the default "monospace" font:
+  //"terminal.integrated.fontFamily": "monospace"
+  // If you would rather just increase the size of the font:
+  //"terminal.integrated.fontSize": 15
+  // If you would rather decrease the size of the font:
+  //"terminal.integrated.fontSize": 13
 }
 ```
 
@@ -89,6 +113,9 @@ every day:
     YouCompleteMe code completion for VS Code. It works fairly well in Chromium.
 *   ***Rewrap*** -
     Wrap lines at 80 characters with `Alt+Q`.
+*   ***Remote*** -
+    Remotely connect to your workstation through SSH using your laptop. See the
+    [Remote](#Remote) section for more information about how to set this up.
 
 To install You-Complete-Me, enter these commands in a terminal:
 
@@ -130,6 +157,16 @@ The following extensions might be useful for you as well:
     format-on-save (see `C_Cpp.clang_format_formatOnSave` setting). This
     extension adds the ability to format a document or the current selection on
     demand.
+*   ***vscode-clangd*** -
+    If you do not plan to use VSCode for debugging, vscode-clangd is a great
+    alternative to C/C++ IntelliSense. It knows about how to compile Chromium,
+    enabling it to provide smarter autocomplete than C/C++ IntelliSense as well
+    as allowing you to jump from functions to their definitions. See
+    [clangd.md](clangd.md) for details.
+
+    If you need to debug, disable the vscode-clangd extension, enable C/C++
+    Intellisense, and restart VSCode.
+
 
 Also be sure to take a look at the
 [VS Code marketplace](https://marketplace.visualstudio.com/VSCode) to check out other
@@ -163,6 +200,57 @@ marketplace](https://marketplace.visualstudio.com/search?target=VSCode&category=
     current editor visible.
 *   `Ctrl+X` without anything selected cuts the current line. `Ctrl+V` pastes
     the line.
+
+### Java/Android Support
+To get Java support in VS Code, you'll need to install the
+'Java Extension Pack' extension, but you'll want to immediately uninstall or
+disable the Maven for Java extension so it stops nagging you as we won't need
+it.
+
+#### Setting up code completion/reference finding/etc.
+You'll need to generate a placeholder .classpath file and locate it. In order
+to generate it, right click on any Java source folder in the left panel and
+choose "Add folder to java source path". Its location will depend on whether
+you're doing local or remote development. Local path on linux will look
+something like:
+
+`~/.vscode/data/User/workspaceStorage/<hash>/redhat.java/jdt_ws/<project>/.classpath`
+
+You might find multiple folders when looking for `<project>`. Choose anything except
+`jdt.ls-java-project`. If you only see `jdt.ls-java-project`, try using the
+"Add folder to java source path" option again.
+
+If doing remote development, the file will be under `~/.vscode-server/` on your
+remote machine.
+
+You'll need to replace all of the contents of that file with the contents of
+`tools/android/eclipse/.classpath` (external) or
+`clank/development/ide/eclipse/.classpath` (generated by gclient runhooks for
+Chrome developers), and then replace some paths as vscode interprets some paths
+differently from eclipse.
+*   Replace: `kind="src" path="` with `kind="src" path="_/`
+    * eg. `<classpathentry kind="src" path="_/android_webview/glue/java/src"/>`
+*   Replace: `kind="lib" path="../src` with `kind="lib" path="_`
+    * eg.
+`<classpathentry kind="lib" path="_/out/Debug/lib.java/base/base_java.jar"/>`
+*   Remove all nested paths (or exclude them from their parents). At time of
+writing:
+    * `third_party/android_protobuf/src/java/src/main/java`
+    * `third_party/junit/src/src/main/java`
+
+Also, make sure
+`export ANDROID_HOME=/usr/local/google/home/{your_ldap}/Android/Sdk` is in the
+remote machine's `~/.bashrc`.
+
+Then restart vscode, open a Java file, and wait for a bit.
+
+Debugging tips:
+*   Right clicking on a folder in vscode and clicking "Add folder to java source
+path" will error if there are syntax problems with your classpath. (Don't use
+this actually add new paths to your classpath as it won't work correctly)
+    * If there are no syntax errors, ensure the correct .classpath file is being
+    used by seeing if the folder was actually added to the .classpath file you
+    edited.
 
 ## Setup For Chromium
 
@@ -232,6 +320,51 @@ wholesale, enter the following command into your terminal:
 $ cp tools/vscode/keybindings.json5 .vscode/keybindings.json
 ```
 
+### Remote
+VSCode now has a
+[Remote](https://code.visualstudio.com/docs/remote/remote-overview) framework
+that allows you to use VSCode on your laptop while your code is hosted
+elsewhere. This really shines when used in conjunction with the vscode-clangd plugin,
+which allows clangd to run remotely as well.
+
+To get this to run, install the Remote pack extension, and then make sure your
+ssh config file has your remote connection:
+
+`~/.ssh/config`:
+```
+Host my-connection
+  HostName my-remote-host.corp.company.com
+```
+
+VSCode will then list this connection in the 'Remote Explorer' section on the
+left. To launch VSCode with this connection, click on the '+window' icon next
+to the listed hostname. It has you choose a folder - use the 'src' folder root.
+This will open a new VSCode window in 'Remote' mode. ***Now you can install
+extensions specifically for your remote connection, like vscode-clangd, etc.***
+
+#### Windows & SSH
+This currently is difficult on Windows because VSCode remote tools assumes
+'sshd' is installed, which isn't the case on Windows. If someone figures out
+how to get vscode remote working on windows with ssh please update this
+document :)
+
+### Snippets
+There are some useful snippets provided in
+[//tools/vscode/cpp.json5](/tools/vscode/cpp.json5).
+
+You can either install them in your user profile (path may vary depending on the
+platform):
+```
+$ cp tools/vscode/cpp.json5 ~/.config/Code/User/snippets/cpp.json
+```
+
+Or install them as project snippets after installing the [Project
+Snippets](https://marketplace.visualstudio.com/items?itemName=rebornix.project-snippets)
+extension:
+```
+$ cp tools/vscode/cpp.json5 .vscode/snippets/cpp.json
+```
+
 ### Tips
 
 #### The `out` folder
@@ -279,7 +412,6 @@ might want to disable git status autorefresh as well.
 ```
 "git.autorefresh": false,
 "C_Cpp.autocomplete": "Disabled",
-"C_Cpp.addWorkspaceRootToIncludePath": false
 ```
 
 ### Unable to open $File resource is not available when debugging Chromium on Linux

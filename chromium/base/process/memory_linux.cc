@@ -18,14 +18,9 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 
-#if defined(USE_TCMALLOC)
-#if BUILDFLAG(USE_NEW_TCMALLOC)
+#if BUILDFLAG(USE_TCMALLOC)
 #include "third_party/tcmalloc/chromium/src/config.h"
 #include "third_party/tcmalloc/chromium/src/gperftools/tcmalloc.h"
-#else
-#include "third_party/tcmalloc/gperftools-2.0/chromium/src/config.h"
-#include "third_party/tcmalloc/gperftools-2.0/chromium/src/gperftools/tcmalloc.h"
-#endif
 #endif
 
 namespace base {
@@ -42,8 +37,16 @@ void OnNoMemorySize(size_t size) {
   LOG(FATAL) << "Out of memory.";
 }
 
-void OnNoMemory() {
+// NOINLINE as base::`anonymous namespace`::OnNoMemory() is recognized by the
+// crash server.
+NOINLINE void OnNoMemory() {
   OnNoMemorySize(0);
+}
+
+void ReleaseReservationOrTerminate() {
+  if (internal::ReleaseAddressSpaceReservation())
+    return;
+  OnNoMemory();
 }
 
 }  // namespace
@@ -54,7 +57,7 @@ void EnableTerminationOnHeapCorruption() {
 
 void EnableTerminationOnOutOfMemory() {
   // Set the new-out of memory handler.
-  std::set_new_handler(&OnNoMemory);
+  std::set_new_handler(&ReleaseReservationOrTerminate);
   // If we're using glibc's allocator, the above functions will override
   // malloc and friends and make them die on out of memory.
 
@@ -93,7 +96,7 @@ bool AdjustOOMScoreHelper::AdjustOOMScore(ProcessId process, int score) {
   // Attempt to write the newer oom_score_adj file first.
   FilePath oom_file = oom_path.AppendASCII("oom_score_adj");
   if (PathExists(oom_file)) {
-    std::string score_str = IntToString(score);
+    std::string score_str = NumberToString(score);
     DVLOG(1) << "Adjusting oom_score_adj of " << process << " to "
              << score_str;
     int score_len = static_cast<int>(score_str.length());
@@ -109,7 +112,7 @@ bool AdjustOOMScoreHelper::AdjustOOMScore(ProcessId process, int score) {
     const int kMaxOldOomScore = 15;
 
     int converted_score = score * kMaxOldOomScore / kMaxOomScore;
-    std::string score_str = IntToString(converted_score);
+    std::string score_str = NumberToString(converted_score);
     DVLOG(1) << "Adjusting oom_adj of " << process << " to " << score_str;
     int score_len = static_cast<int>(score_str.length());
     return (score_len == WriteFile(oom_file, score_str.c_str(), score_len));

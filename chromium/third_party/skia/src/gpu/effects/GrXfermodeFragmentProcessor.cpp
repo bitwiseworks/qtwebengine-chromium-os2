@@ -5,15 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "GrXfermodeFragmentProcessor.h"
+#include "src/gpu/effects/GrXfermodeFragmentProcessor.h"
 
-#include "GrConstColorProcessor.h"
-#include "GrFragmentProcessor.h"
-#include "glsl/GrGLSLFragmentProcessor.h"
-#include "glsl/GrGLSLBlend.h"
-#include "glsl/GrGLSLFragmentShaderBuilder.h"
-#include "SkGr.h"
-#include "SkXfermodePriv.h"
+#include "src/core/SkXfermodePriv.h"
+#include "src/gpu/GrFragmentProcessor.h"
+#include "src/gpu/SkGr.h"
+#include "src/gpu/effects/generated/GrConstColorProcessor.h"
+#include "src/gpu/glsl/GrGLSLBlend.h"
+#include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
+#include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 
 // Some of the cpu implementations of blend modes differ too much from the GPU enough that
 // we can't use the cpu implementation to implement constantOutputForConstantInput.
@@ -220,11 +220,9 @@ void GLComposeTwoFragmentProcessor::emitCode(EmitArgs& args) {
     }
 
     // declare outputColor and emit the code for each of the two children
-    SkString srcColor("xfer_src");
-    this->emitChild(0, inputColor, &srcColor, args);
+    SkString srcColor = this->invokeChild(0, inputColor, args);
 
-    SkString dstColor("xfer_dst");
-    this->emitChild(1, inputColor, &dstColor, args);
+    SkString dstColor = this->invokeChild(1, inputColor, args);
 
     // emit blend code
     SkBlendMode mode = cs.getMode();
@@ -326,17 +324,8 @@ private:
             case SkBlendMode::kSrcIn:
             case SkBlendMode::kDstIn:
             case SkBlendMode::kModulate:
-                if (fp->compatibleWithCoverageAsAlpha()) {
-                    if (fp->preservesOpaqueInput()) {
-                        flags = kPreservesOpaqueInput_OptimizationFlag |
-                                kCompatibleWithCoverageAsAlpha_OptimizationFlag;
-                    } else {
-                        flags = kCompatibleWithCoverageAsAlpha_OptimizationFlag;
-                    }
-                } else {
-                    flags = fp->preservesOpaqueInput() ? kPreservesOpaqueInput_OptimizationFlag
-                                                       : kNone_OptimizationFlags;
-                }
+                flags = ProcessorOptimizationFlags(fp) &
+                        ~kConstantOutputForConstantInput_OptimizationFlag;
                 break;
 
             // Produces zero when both are opaque, indeterminate if one is opaque.
@@ -396,7 +385,7 @@ private:
     }
 
     void onGetGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override {
-        GR_STATIC_ASSERT(((int)SkBlendMode::kLastMode & UINT16_MAX) == (int)SkBlendMode::kLastMode);
+        static_assert(((int)SkBlendMode::kLastMode & UINT16_MAX) == (int)SkBlendMode::kLastMode, "");
         b->add32((int)fMode | (fChild << 16));
     }
 
@@ -447,8 +436,7 @@ public:
         SkBlendMode mode = args.fFp.cast<ComposeOneFragmentProcessor>().mode();
         ComposeOneFragmentProcessor::Child child =
             args.fFp.cast<ComposeOneFragmentProcessor>().child();
-        SkString childColor("child");
-        this->emitChild(0, &childColor, args);
+        SkString childColor = this->invokeChild(0, args);
 
         // emit blend code
         fragBuilder->codeAppendf("// Compose Xfer Mode: %s\n", SkBlendMode_Name(mode));

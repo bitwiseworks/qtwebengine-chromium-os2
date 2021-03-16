@@ -16,6 +16,11 @@ namespace {
 static base::LazyInstance<GamepadIdList>::Leaky g_singleton =
     LAZY_INSTANCE_INITIALIZER;
 
+// Information about all game input devices known to Chrome, including
+// unsupported devices. Must be sorted by vendor and product ID.
+//
+// When recording metrics for connected gamepads, vendor and product IDs will
+// only be recorded for devices that are in kGamepadInfo.
 constexpr struct GamepadInfo {
   uint16_t vendor;
   uint16_t product;
@@ -74,14 +79,17 @@ constexpr struct GamepadInfo {
     {0x045e, 0x02a1, kXInputTypeXbox360},
     {0x045e, 0x02d1, kXInputTypeXboxOne},
     {0x045e, 0x02dd, kXInputTypeXboxOne},
-    {0x045e, 0x02e0, kXInputTypeXboxOne},
+    {0x045e, 0x02e0, kXInputTypeNone},
     {0x045e, 0x02e3, kXInputTypeXboxOne},
     {0x045e, 0x02e6, kXInputTypeXbox360},
     {0x045e, 0x02ea, kXInputTypeXboxOne},
-    {0x045e, 0x02fd, kXInputTypeXboxOne},
+    {0x045e, 0x02fd, kXInputTypeNone},
     {0x045e, 0x02ff, kXInputTypeXboxOne},
     {0x045e, 0x0719, kXInputTypeXbox360},
-    {0x045e, 0x0b0a, kXInputTypeXbox360},
+    {0x045e, 0x0b00, kXInputTypeXboxOne},
+    {0x045e, 0x0b05, kXInputTypeNone},
+    {0x045e, 0x0b0a, kXInputTypeXboxOne},
+    {0x045e, 0x0b0c, kXInputTypeNone},
     // Logitech, Inc.
     {0x046d, 0xc208, kXInputTypeNone},
     {0x046d, 0xc209, kXInputTypeNone},
@@ -154,8 +162,6 @@ constexpr struct GamepadInfo {
     {0x0583, 0xb031, kXInputTypeNone},
     // Vetronix Corp.
     {0x05a0, 0x3232, kXInputTypeNone},
-    // Apple, Inc.
-    {0x05ac, 0x3232, kXInputTypeNone},
     // Genesys Logic, Inc.
     {0x05e3, 0x0596, kXInputTypeNone},
     // InterAct, Inc.
@@ -446,6 +452,8 @@ constexpr struct GamepadInfo {
     {0x1781, 0x057e, kXInputTypeNone},
     // Google Inc.
     {0x18d1, 0x2c40, kXInputTypeNone},
+    {0x18d1, 0x502e, kXInputTypeNone},
+    {0x18d1, 0x9400, kXInputTypeNone},
     // Lab126, Inc.
     {0x1949, 0x0402, kXInputTypeNone},
     // Gampaq Co.Ltd
@@ -580,6 +588,7 @@ constexpr struct GamepadInfo {
     {0x2dc8, 0x3820, kXInputTypeNone},
     {0x2dc8, 0x9001, kXInputTypeNone},
     {0x2dfa, 0x0001, kXInputTypeNone},
+    {0x2e95, 0x7725, kXInputTypeNone},
     {0x3767, 0x0101, kXInputTypeXbox},
     {0x3820, 0x0009, kXInputTypeNone},
     {0x4c50, 0x5453, kXInputTypeNone},

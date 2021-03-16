@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "ppapi/c/dev/ppp_video_capture_dev.h"
 #include "ppapi/proxy/dispatch_reply_message.h"
 #include "ppapi/proxy/plugin_dispatcher.h"
@@ -148,9 +149,14 @@ void VideoCaptureResource::OnPluginMsgOnDeviceInfo(
   if (!ppp_video_capture_impl_)
     return;
 
-  std::vector<base::SharedMemoryHandle> handles;
-  params.TakeAllSharedMemoryHandles(&handles);
-  CHECK(handles.size() == buffers.size());
+  std::vector<base::UnsafeSharedMemoryRegion> regions;
+  for (size_t i = 0; i < params.handles().size(); ++i) {
+    base::UnsafeSharedMemoryRegion region;
+    params.TakeUnsafeSharedMemoryRegionAtIndex(i, &region);
+    DCHECK_EQ(buffer_size, region.GetSize());
+    regions.push_back(std::move(region));
+  }
+  CHECK(regions.size() == buffers.size());
 
   PluginResourceTracker* tracker =
       PluginGlobals::Get()->plugin_resource_tracker();
@@ -159,7 +165,7 @@ void VideoCaptureResource::OnPluginMsgOnDeviceInfo(
     // We assume that the browser created a new set of resources.
     DCHECK(!tracker->PluginResourceForHostResource(buffers[i]));
     resources[i] = ppapi::proxy::PPB_Buffer_Proxy::AddProxyResource(
-        buffers[i], handles[i], buffer_size);
+        buffers[i], std::move(regions[i]));
   }
 
   buffer_in_use_ = std::vector<bool>(buffers.size());

@@ -4,6 +4,7 @@
 
 #include "content/browser/media/media_devices_permission_checker.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -26,7 +27,7 @@ class TestWebContentsDelegate : public content::WebContentsDelegate {
 
   bool CheckMediaAccessPermission(RenderFrameHost* render_Frame_host,
                                   const GURL& security_origin,
-                                  blink::MediaStreamType type) override {
+                                  blink::mojom::MediaStreamType type) override {
     return true;
   }
 };
@@ -35,11 +36,6 @@ class TestWebContentsDelegate : public content::WebContentsDelegate {
 
 class MediaDevicesPermissionCheckerTest : public RenderViewHostImplTestHarness {
  public:
-  MediaDevicesPermissionCheckerTest()
-      : origin_(url::Origin::Create(GURL("https://www.google.com"))),
-        callback_run_(false),
-        callback_result_(false) {}
-
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
     NavigateAndCommit(origin_.GetURL());
@@ -52,11 +48,11 @@ class MediaDevicesPermissionCheckerTest : public RenderViewHostImplTestHarness {
   void RefreshPageAndSetHeaderPolicy(blink::mojom::FeaturePolicyFeature feature,
                                      bool enabled) {
     NavigateAndCommit(origin_.GetURL());
-    std::vector<url::Origin> whitelist;
+    std::vector<url::Origin> allowlist;
     if (enabled)
-      whitelist.push_back(origin_);
+      allowlist.push_back(origin_);
     RenderFrameHostTester::For(main_rfh())
-        ->SimulateFeaturePolicyHeader(feature, whitelist);
+        ->SimulateFeaturePolicyHeader(feature, allowlist);
   }
 
   bool CheckPermission(blink::MediaDeviceType device_type) {
@@ -70,24 +66,20 @@ class MediaDevicesPermissionCheckerTest : public RenderViewHostImplTestHarness {
             base::Unretained(this)));
     run_loop.Run();
 
-    EXPECT_TRUE(callback_run_);
-    callback_run_ = false;
+    EXPECT_FALSE(quit_closure_);  // It was Run() via CheckPermissionCallback().
     return callback_result_;
   }
 
  private:
   void CheckPermissionCallback(bool result) {
-    callback_run_ = true;
     callback_result_ = result;
-    quit_closure_.Run();
+    std::move(quit_closure_).Run();
   }
 
-  url::Origin origin_;
+  url::Origin origin_ = url::Origin::Create(GURL("https://www.google.com"));
 
-  base::Closure quit_closure_;
-
-  bool callback_run_;
-  bool callback_result_;
+  base::OnceClosure quit_closure_;
+  bool callback_result_ = false;
 
   MediaDevicesPermissionChecker checker_;
   TestWebContentsDelegate delegate_;

@@ -1,5 +1,7 @@
 # Dumping the compiled code from a chrome binary
 
+[Rendered](https://chromium.googlesource.com/chromium/src/+/master/docs/disassemble_code.md)
+
 ## Background
 
 Sometimes you want to look at the disassembled code of a method,
@@ -191,6 +193,6 @@ NextSibling():
 
 ## Further reading
 
-https://chromium.googlesource.com/chromium/src/+/master/docs/linux_minidump_to_core.md#Source-debugging
+https://chromium.googlesource.com/chromium/src/+/master/docs/linux/minidump_to_core.md#Source-debugging
 
 https://www.chromium.org/developers/how-tos/debugging-on-windows

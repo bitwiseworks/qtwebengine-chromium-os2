@@ -44,11 +44,6 @@ WebGLExtensionName ANGLEInstancedArrays::GetName() const {
   return kANGLEInstancedArraysName;
 }
 
-ANGLEInstancedArrays* ANGLEInstancedArrays::Create(
-    WebGLRenderingContextBase* context) {
-  return MakeGarbageCollected<ANGLEInstancedArrays>(context);
-}
-
 bool ANGLEInstancedArrays::Supported(WebGLRenderingContextBase* context) {
   return context->ExtensionsUtil()->SupportsExtension(
       "GL_ANGLE_instanced_arrays");
@@ -72,7 +67,7 @@ void ANGLEInstancedArrays::drawArraysInstancedANGLE(GLenum mode,
 void ANGLEInstancedArrays::drawElementsInstancedANGLE(GLenum mode,
                                                       GLsizei count,
                                                       GLenum type,
-                                                      long long offset,
+                                                      int64_t offset,
                                                       GLsizei primcount) {
   WebGLExtensionScopedContext scoped(this);
   if (scoped.IsLost())

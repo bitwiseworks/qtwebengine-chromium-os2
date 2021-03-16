@@ -21,8 +21,7 @@ PepperGamepadHost::PepperGamepadHost(BrowserPpapiHost* host,
                                      PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       gamepad_service_(device::GamepadService::GetInstance()),
-      is_started_(false),
-      weak_factory_(this) {}
+      is_started_(false) {}
 
 PepperGamepadHost::PepperGamepadHost(device::GamepadService* gamepad_service,
                                      BrowserPpapiHost* host,
@@ -30,8 +29,7 @@ PepperGamepadHost::PepperGamepadHost(device::GamepadService* gamepad_service,
                                      PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource),
       gamepad_service_(gamepad_service),
-      is_started_(false),
-      weak_factory_(this) {}
+      is_started_(false) {}
 
 PepperGamepadHost::~PepperGamepadHost() {
   if (is_started_)
@@ -59,10 +57,9 @@ int32_t PepperGamepadHost::OnRequestMemory(
   // Don't send the shared memory back until the user has interacted with the
   // gamepad. This is to prevent fingerprinting and matches what the web
   // platform does.
-  gamepad_service_->RegisterForUserGesture(
-      base::Bind(&PepperGamepadHost::GotUserGesture,
-                 weak_factory_.GetWeakPtr(),
-                 context->MakeReplyMessageContext()));
+  gamepad_service_->RegisterForUserGesture(base::BindOnce(
+      &PepperGamepadHost::GotUserGesture, weak_factory_.GetWeakPtr(),
+      context->MakeReplyMessageContext()));
   return PP_OK_COMPLETIONPENDING;
 }
 

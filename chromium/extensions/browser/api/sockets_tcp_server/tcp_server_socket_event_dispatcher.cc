@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/task/post_task.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -126,7 +127,7 @@ void TCPServerSocketEventDispatcher::StartAccept(const AcceptParams& params) {
 void TCPServerSocketEventDispatcher::AcceptCallback(
     const AcceptParams& params,
     int result_code,
-    network::mojom::TCPConnectedSocketPtr socket,
+    mojo::PendingRemote<network::mojom::TCPConnectedSocket> socket,
     const base::Optional<net::IPEndPoint>& remote_addr,
     mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,
     mojo::ScopedDataPipeProducerHandle send_pipe_handle) {
@@ -153,9 +154,9 @@ void TCPServerSocketEventDispatcher::AcceptCallback(
 
     // Post a task to delay the "accept" until the socket is available, as
     // calling StartAccept at this point would error with ERR_IO_PENDING.
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {params.thread_id},
-        base::Bind(&TCPServerSocketEventDispatcher::StartAccept, params));
+        base::BindOnce(&TCPServerSocketEventDispatcher::StartAccept, params));
   } else {
     // Dispatch "onAcceptError" event but don't start another accept to avoid
     // potential infinite "accepts" if we have a persistent network error.
@@ -184,10 +185,9 @@ void TCPServerSocketEventDispatcher::PostEvent(const AcceptParams& params,
                                                std::unique_ptr<Event> event) {
   DCHECK_CURRENTLY_ON(params.thread_id);
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::Bind(&DispatchEvent, params.browser_context_id, params.extension_id,
-                 base::Passed(std::move(event))));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&DispatchEvent, params.browser_context_id,
+                                params.extension_id, std::move(event)));
 }
 
 // static

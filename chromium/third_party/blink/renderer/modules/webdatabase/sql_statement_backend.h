@@ -42,20 +42,14 @@ class SQLErrorData;
 class SQLResultSet;
 class SQLStatement;
 
-class SQLStatementBackend final
-    : public GarbageCollectedFinalized<SQLStatementBackend> {
+class SQLStatementBackend final : public GarbageCollected<SQLStatementBackend> {
  public:
-  static SQLStatementBackend* Create(SQLStatement*,
-                                     const String& sql_statement,
-                                     const Vector<SQLValue>& arguments,
-                                     int permissions);
-
   SQLStatementBackend(SQLStatement*,
                       const String& statement,
                       const Vector<SQLValue>& arguments,
                       int permissions);
 
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   bool Execute(Database*);
   bool LastExecutionFailedDueToQuota() const;

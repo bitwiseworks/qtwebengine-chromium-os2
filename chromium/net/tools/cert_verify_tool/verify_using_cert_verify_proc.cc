@@ -19,6 +19,7 @@
 #include "net/cert/test_root_certs.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
+#include "net/log/net_log_with_source.h"
 #include "net/tools/cert_verify_tool/cert_verify_tool_util.h"
 
 namespace {
@@ -78,6 +79,7 @@ void PrintCertStatus(int cert_status) {
 }
 
 void PrintCertVerifyResult(const net::CertVerifyResult& result) {
+  PrintDebugData(&result);
   PrintCertStatus(result.cert_status);
   if (result.has_md2)
     std::cout << "has_md2\n";
@@ -170,11 +172,12 @@ bool VerifyUsingCertVerifyProc(
     x509_additional_trust_anchors.clear();
   }
 
+  // TODO(crbug.com/634484): use a real netlog and print the results?
   net::CertVerifyResult result;
-  int rv =
-      cert_verify_proc->Verify(x509_target_and_intermediates.get(), hostname,
-                               std::string() /* ocsp_response */, flags,
-                               crl_set, x509_additional_trust_anchors, &result);
+  int rv = cert_verify_proc->Verify(
+      x509_target_and_intermediates.get(), hostname,
+      /*ocsp_response=*/std::string(), /*sct_list=*/std::string(), flags,
+      crl_set, x509_additional_trust_anchors, &result, net::NetLogWithSource());
 
   // Remove any temporary trust anchors.
   test_root_certs->Clear();

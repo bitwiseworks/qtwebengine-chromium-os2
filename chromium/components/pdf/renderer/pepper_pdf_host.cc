@@ -46,15 +46,12 @@ PepperPDFHost::PepperPDFHost(content::RendererPpapiHost* host,
                              PP_Instance instance,
                              PP_Resource resource)
     : ppapi::host::ResourceHost(host->GetPpapiHost(), instance, resource),
-      host_(host),
-      binding_(this) {
+      host_(host) {
   mojom::PdfService* service = GetRemotePdfService();
   if (!service)
     return;
 
-  mojom::PdfListenerPtr listener;
-  binding_.Bind(mojo::MakeRequest(&listener));
-  service->SetListener(std::move(listener));
+  service->SetListener(receiver_.BindNewPipeAndPassRemote());
 }
 
 PepperPDFHost::~PepperPDFHost() {}
@@ -111,6 +108,8 @@ int32_t PepperPDFHost::OnResourceMessageReceived(
         OnHostMsgSetAccessibilityPageInfo)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SelectionChanged,
                                       OnHostMsgSelectionChanged)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SetPluginCanSave,
+                                      OnHostMsgSetPluginCanSave)
   PPAPI_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
@@ -275,13 +274,14 @@ int32_t PepperPDFHost::OnHostMsgSetAccessibilityDocInfo(
 int32_t PepperPDFHost::OnHostMsgSetAccessibilityPageInfo(
     ppapi::host::HostMessageContext* context,
     const PP_PrivateAccessibilityPageInfo& page_info,
-    const std::vector<PP_PrivateAccessibilityTextRunInfo>& text_run_info,
-    const std::vector<PP_PrivateAccessibilityCharInfo>& chars) {
+    const std::vector<ppapi::PdfAccessibilityTextRunInfo>& text_run_info,
+    const std::vector<PP_PrivateAccessibilityCharInfo>& chars,
+    const ppapi::PdfAccessibilityPageObjects& page_objects) {
   if (!host_->GetPluginInstance(pp_instance()))
     return PP_ERROR_FAILED;
   CreatePdfAccessibilityTreeIfNeeded();
-  pdf_accessibility_tree_->SetAccessibilityPageInfo(
-      page_info, text_run_info, chars);
+  pdf_accessibility_tree_->SetAccessibilityPageInfo(page_info, text_run_info,
+                                                    chars, page_objects);
   return PP_OK;
 }
 
@@ -297,6 +297,17 @@ int32_t PepperPDFHost::OnHostMsgSelectionChanged(
 
   service->SelectionChanged(gfx::PointF(left.x, left.y), left_height,
                             gfx::PointF(right.x, right.y), right_height);
+  return PP_OK;
+}
+
+int32_t PepperPDFHost::OnHostMsgSetPluginCanSave(
+    ppapi::host::HostMessageContext* context,
+    bool can_save) {
+  mojom::PdfService* service = GetRemotePdfService();
+  if (!service)
+    return PP_ERROR_FAILED;
+
+  service->SetPluginCanSave(can_save);
   return PP_OK;
 }
 
@@ -320,7 +331,7 @@ mojom::PdfService* PepperPDFHost::GetRemotePdfService() {
 
   if (!remote_pdf_service_) {
     render_frame->GetRemoteAssociatedInterfaces()->GetInterface(
-        &remote_pdf_service_);
+        remote_pdf_service_.BindNewEndpointAndPassReceiver());
   }
   return remote_pdf_service_.get();
 }

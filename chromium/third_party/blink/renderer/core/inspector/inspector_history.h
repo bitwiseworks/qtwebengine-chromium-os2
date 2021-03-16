@@ -43,11 +43,11 @@ class ExceptionState;
 
 class InspectorHistory final : public GarbageCollected<InspectorHistory> {
  public:
-  class Action : public GarbageCollectedFinalized<Action> {
+  class Action : public GarbageCollected<Action> {
    public:
     explicit Action(const String& name);
     virtual ~Action();
-    virtual void Trace(blink::Visitor*);
+    virtual void Trace(Visitor*);
     virtual String ToString();
 
     virtual String MergeId();
@@ -67,7 +67,7 @@ class InspectorHistory final : public GarbageCollected<InspectorHistory> {
   };
 
   InspectorHistory();
-  void Trace(blink::Visitor*);
+  void Trace(Visitor*);
 
   bool Perform(Action*, ExceptionState&);
   void AppendPerformedAction(Action*);

@@ -37,10 +37,11 @@
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
 #include "third_party/blink/renderer/core/dom/node_computed_style.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
@@ -49,14 +50,18 @@
 #include "third_party/blink/renderer/core/html/html_table_cell_element.h"
 #include "third_party/blink/renderer/core/html/media/html_media_element.h"
 #include "third_party/blink/renderer/core/html_names.h"
+#include "third_party/blink/renderer/core/layout/layout_list_marker.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
+#include "third_party/blink/renderer/core/mathml/mathml_fraction_element.h"
+#include "third_party/blink/renderer/core/mathml/mathml_space_element.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/svg/svg_svg_element.h"
 #include "third_party/blink/renderer/core/svg_names.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/transforms/transform_operations.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
@@ -72,62 +77,8 @@ TouchAction AdjustTouchActionForElement(TouchAction touch_action,
       element && element == element->GetDocument().documentElement() &&
       element->GetDocument().LocalOwner();
   if (style.ScrollsOverflow() || is_child_document)
-    return touch_action | TouchAction::kTouchActionPan;
+    return touch_action | TouchAction::kPan;
   return touch_action;
-}
-
-bool ShouldForceLegacyLayout(const ComputedStyle& style,
-                             const ComputedStyle& layout_parent_style,
-                             const Element& element) {
-  // Form controls are not supported yet.
-  if (element.ShouldForceLegacyLayout())
-    return true;
-
-  // When the actual parent (to inherit style from) doesn't have a layout box
-  // (display:contents), it may not have been switched over to forcing legacy
-  // layout, even if it's inside a subtree that should use legacy. Check with
-  // the layout parent as well, so that we don't risk switching back to LayoutNG
-  // when we shouldn't.
-  if (layout_parent_style.ForceLegacyLayout())
-    return true;
-
-  const Document& document = element.GetDocument();
-
-  // TODO(layout-dev): Once LayoutNG handles inline content editable, we
-  // should get rid of following code fragment.
-  if (!RuntimeEnabledFeatures::EditingNGEnabled()) {
-    if (style.UserModify() != EUserModify::kReadOnly || document.InDesignMode())
-      return true;
-  }
-
-  if (style.Display() == EDisplay::kWebkitBox ||
-      style.Display() == EDisplay::kWebkitInlineBox)
-    return true;
-
-  if (!RuntimeEnabledFeatures::LayoutNGBlockFragmentationEnabled()) {
-    // Disable NG for the entire subtree if we're establishing a block
-    // fragmentation context.
-    if (style.SpecifiesColumns() || style.IsOverflowPaged())
-      return true;
-    if (document.Printing()) {
-      // This needs to be discovered on the root element.
-      DCHECK_EQ(element, document.documentElement());
-      return true;
-    }
-  }
-
-  // The custom container is laid out by the legacy engine. Its children may
-  // not establish new formatting contexts, so we need to protect against
-  // re-entering LayoutNG there.
-  if (style.Display() == EDisplay::kLayoutCustom ||
-      style.Display() == EDisplay::kInlineLayoutCustom)
-    return true;
-
-  // 'text-combine-upright' property is not supported yet.
-  if (style.HasTextCombine() && !style.IsHorizontalWritingMode())
-    return true;
-
-  return false;
 }
 
 }  // namespace
@@ -139,6 +90,7 @@ static EDisplay EquivalentBlockDisplay(EDisplay display) {
     case EDisplay::kWebkitBox:
     case EDisplay::kFlex:
     case EDisplay::kGrid:
+    case EDisplay::kMath:
     case EDisplay::kListItem:
     case EDisplay::kFlowRoot:
     case EDisplay::kLayoutCustom:
@@ -151,6 +103,8 @@ static EDisplay EquivalentBlockDisplay(EDisplay display) {
       return EDisplay::kFlex;
     case EDisplay::kInlineGrid:
       return EDisplay::kGrid;
+    case EDisplay::kInlineMath:
+      return EDisplay::kMath;
     case EDisplay::kInlineLayoutCustom:
       return EDisplay::kLayoutCustom;
 
@@ -175,32 +129,44 @@ static EDisplay EquivalentBlockDisplay(EDisplay display) {
 }
 
 static bool IsOutermostSVGElement(const Element* element) {
-  return element && element->IsSVGElement() &&
-         ToSVGElement(*element).IsOutermostSVGSVGElement();
+  auto* svg_element = DynamicTo<SVGElement>(element);
+  return svg_element && svg_element->IsOutermostSVGSVGElement();
 }
 
-// CSS requires text-decoration to be reset at each DOM element for
-// inline blocks, inline tables, shadow DOM crossings, floating elements,
-// and absolute or relatively positioned elements. Outermost <svg> roots are
-// considered to be atomic inline-level.
-static bool DoesNotInheritTextDecoration(const ComputedStyle& style,
+static bool IsAtMediaUAShadowBoundary(const Element* element) {
+  if (!element)
+    return false;
+  if (ContainerNode* parent = element->parentNode()) {
+    if (auto* shadow_root = DynamicTo<ShadowRoot>(parent))
+      return shadow_root->host().IsMediaElement();
+  }
+  return false;
+}
+
+// CSS requires text-decoration to be reset at each DOM element for inline
+// blocks, inline tables, floating elements, and absolute or relatively
+// positioned elements. Outermost <svg> roots are considered to be atomic
+// inline-level. Media elements have a special rendering where the media
+// controls do not use a proper containing block model which means we need
+// to manually stop text-decorations to apply to text inside media controls.
+static bool StopPropagateTextDecorations(const ComputedStyle& style,
                                          const Element* element) {
   return style.Display() == EDisplay::kInlineTable ||
          style.Display() == EDisplay::kInlineBlock ||
          style.Display() == EDisplay::kWebkitInlineBox ||
-         IsAtShadowBoundary(element) || style.IsFloating() ||
+         IsAtMediaUAShadowBoundary(element) || style.IsFloating() ||
          style.HasOutOfFlowPosition() || IsOutermostSVGElement(element) ||
-         IsHTMLRTElement(element);
+         IsA<HTMLRTElement>(element);
 }
 
 // Certain elements (<a>, <font>) override text decoration colors.  "The font
 // element is expected to override the color of any text decoration that spans
 // the text of the element to the used value of the element's 'color' property."
-// (https://html.spec.whatwg.org/multipage/rendering.html#phrasing-content-3)
+// (https://html.spec.whatwg.org/C/#phrasing-content-3)
 // The <a> behavior is non-standard.
 static bool OverridesTextDecorationColors(const Element* element) {
   return element &&
-         (IsHTMLFontElement(element) || IsHTMLAnchorElement(element));
+         (IsA<HTMLFontElement>(element) || IsA<HTMLAnchorElement>(element));
 }
 
 // FIXME: This helper is only needed because pseudoStyleForElement passes a null
@@ -238,14 +204,45 @@ static void AdjustStyleForFirstLetter(ComputedStyle& style) {
   style.SetPosition(EPosition::kStatic);
 }
 
+static void AdjustStyleForMarker(ComputedStyle& style,
+                                 const ComputedStyle& parent_style,
+                                 const Element& parent_element) {
+  if (style.StyleType() != kPseudoIdMarker)
+    return;
+
+  bool is_inside =
+      parent_style.ListStylePosition() == EListStylePosition::kInside ||
+      (IsA<HTMLLIElement>(parent_element) &&
+       !parent_style.IsInsideListElement());
+
+  if (is_inside) {
+    auto margins = LayoutListMarker::InlineMarginsForInside(
+        style, parent_style.GeneratesMarkerImage());
+    style.SetMarginStart(Length::Fixed(margins.first));
+    style.SetMarginEnd(Length::Fixed(margins.second));
+  } else {
+    // Outside list markers should generate a block container.
+    style.SetDisplay(EDisplay::kInlineBlock);
+
+    // Do not break inside the marker, and honor the trailing spaces.
+    style.SetWhiteSpace(EWhiteSpace::kPre);
+
+    // Compute margins for 'outside' during layout, because it requires the
+    // layout size of the marker.
+    // TODO(kojii): absolute position looks more reasonable, and maybe required
+    // in some cases, but this is currently blocked by crbug.com/734554
+    // style.SetPosition(EPosition::kAbsolute);
+  }
+}
+
 static void AdjustStyleForHTMLElement(ComputedStyle& style,
                                       HTMLElement& element) {
   // <div> and <span> are the most common elements on the web, we skip all the
   // work for them.
-  if (IsHTMLDivElement(element) || IsHTMLSpanElement(element))
+  if (IsA<HTMLDivElement>(element) || IsA<HTMLSpanElement>(element))
     return;
 
-  if (IsHTMLTableCellElement(element)) {
+  if (IsA<HTMLTableCellElement>(element)) {
     if (style.WhiteSpace() == EWhiteSpace::kWebkitNowrap) {
       // Figure out if we are really nowrapping or if we should just
       // use normal instead. If the width of the cell is fixed, then
@@ -258,13 +255,13 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (auto* image = ToHTMLImageElementOrNull(element)) {
+  if (auto* image = DynamicTo<HTMLImageElement>(element)) {
     if (image->IsCollapsed() || style.Display() == EDisplay::kContents)
       style.SetDisplay(EDisplay::kNone);
     return;
   }
 
-  if (IsHTMLTableElement(element)) {
+  if (IsA<HTMLTableElement>(element)) {
     // Tables never support the -webkit-* values for text-align and will reset
     // back to the default.
     if (style.GetTextAlign() == ETextAlign::kWebkitLeft ||
@@ -274,7 +271,7 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLFrameElement(element) || IsHTMLFrameSetElement(element)) {
+  if (IsA<HTMLFrameElement>(element) || IsA<HTMLFrameSetElement>(element)) {
     // Frames and framesets never honor position:relative or position:absolute.
     // This is necessary to fix a crash where a site tries to position these
     // objects. They also never honor display nor floating.
@@ -284,7 +281,7 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLFrameElementBase(element)) {
+  if (IsA<HTMLFrameElementBase>(element)) {
     if (style.Display() == EDisplay::kContents) {
       style.SetDisplay(EDisplay::kNone);
       return;
@@ -296,7 +293,7 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLRTElement(element)) {
+  if (IsA<HTMLRTElement>(element)) {
     // Ruby text does not support float or position. This might change with
     // evolution of the specification.
     style.SetPosition(EPosition::kStatic);
@@ -304,7 +301,8 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLLegendElement(element) && style.Display() != EDisplay::kContents) {
+  if (IsA<HTMLLegendElement>(element) &&
+      style.Display() != EDisplay::kContents) {
     // Allow any blockified display value for legends. Note that according to
     // the spec, this shouldn't affect computed style (like we do here).
     // Instead, the display override should be determined during box creation,
@@ -316,14 +314,14 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLMarqueeElement(element)) {
+  if (IsA<HTMLMarqueeElement>(element)) {
     // For now, <marquee> requires an overflow clip to work properly.
     style.SetOverflowX(EOverflow::kHidden);
     style.SetOverflowY(EOverflow::kHidden);
     return;
   }
 
-  if (IsHTMLTextAreaElement(element)) {
+  if (IsA<HTMLTextAreaElement>(element)) {
     // Textarea considers overflow visible as auto.
     style.SetOverflowX(style.OverflowX() == EOverflow::kVisible
                            ? EOverflow::kAuto
@@ -336,28 +334,44 @@ static void AdjustStyleForHTMLElement(ComputedStyle& style,
     return;
   }
 
-  if (IsHTMLPlugInElement(element)) {
+  if (auto* html_plugin_element = DynamicTo<HTMLPlugInElement>(element)) {
     style.SetRequiresAcceleratedCompositingForExternalReasons(
-        ToHTMLPlugInElement(element).ShouldAccelerate());
+        html_plugin_element->ShouldAccelerate());
     if (style.Display() == EDisplay::kContents)
       style.SetDisplay(EDisplay::kNone);
+    return;
+  }
+
+  if (IsA<HTMLUListElement>(element) || IsA<HTMLOListElement>(element)) {
+    style.SetIsInsideListElement();
+    return;
+  }
+
+  if (IsA<HTMLSummaryElement>(element)) {
+    // <summary> should be a list item by default, but currently it's a block
+    // and the disclosure symbol is not a ::marker (bug 590014). If an author
+    // specifies 'display: list-item', the <summary> would seem to have two
+    // markers (the real one and the disclosure symbol). To avoid this, compute
+    // to 'display: block'. This adjustment should go away with bug 590014.
+    if (style.Display() == EDisplay::kListItem)
+      style.SetDisplay(EDisplay::kBlock);
     return;
   }
 
   if (style.Display() == EDisplay::kContents) {
     // See https://drafts.csswg.org/css-display/#unbox-html
     // Some of these elements are handled with other adjustments above.
-    if (IsHTMLBRElement(element) || IsHTMLWBRElement(element) ||
-        IsHTMLMeterElement(element) || IsHTMLProgressElement(element) ||
-        IsHTMLCanvasElement(element) || IsHTMLMediaElement(element) ||
-        IsHTMLInputElement(element) || IsHTMLTextAreaElement(element) ||
-        IsHTMLSelectElement(element)) {
+    if (IsA<HTMLBRElement>(element) || IsA<HTMLWBRElement>(element) ||
+        IsA<HTMLMeterElement>(element) || IsA<HTMLProgressElement>(element) ||
+        IsA<HTMLCanvasElement>(element) || IsA<HTMLMediaElement>(element) ||
+        IsA<HTMLInputElement>(element) || IsA<HTMLTextAreaElement>(element) ||
+        IsA<HTMLSelectElement>(element)) {
       style.SetDisplay(EDisplay::kNone);
     }
   }
 }
 
-static void AdjustOverflow(ComputedStyle& style) {
+void StyleAdjuster::AdjustOverflow(ComputedStyle& style) {
   DCHECK(style.OverflowX() != EOverflow::kVisible ||
          style.OverflowY() != EOverflow::kVisible);
 
@@ -382,26 +396,26 @@ static void AdjustOverflow(ComputedStyle& style) {
   } else if (style.OverflowX() == EOverflow::kVisible &&
              style.OverflowY() != EOverflow::kVisible) {
     // If either overflow value is not visible, change to auto.
-    // FIXME: Once we implement pagination controls, overflow-x should default
-    // to hidden if overflow-y is set to -webkit-paged-x or -webkit-page-y. For
-    // now, we'll let it default to auto so we can at least scroll through the
-    // pages.
     style.SetOverflowX(EOverflow::kAuto);
   } else if (style.OverflowY() == EOverflow::kVisible &&
              style.OverflowX() != EOverflow::kVisible) {
     style.SetOverflowY(EOverflow::kAuto);
-  }
-
-  // Menulists should have visible overflow
-  if (style.Appearance() == kMenulistPart) {
-    style.SetOverflowX(EOverflow::kVisible);
-    style.SetOverflowY(EOverflow::kVisible);
   }
 }
 
 static void AdjustStyleForDisplay(ComputedStyle& style,
                                   const ComputedStyle& layout_parent_style,
                                   Document* document) {
+  // Blockify the children of flex, grid or LayoutCustom containers.
+  if (layout_parent_style.BlockifiesChildren()) {
+    style.SetIsInBlockifyingDisplay();
+    if (style.Display() != EDisplay::kContents) {
+      style.SetDisplay(EquivalentBlockDisplay(style.Display()));
+      if (!style.HasOutOfFlowPosition())
+        style.SetIsFlexOrGridOrCustomItem();
+    }
+  }
+
   if (style.Display() == EDisplay::kBlock && !style.IsFloating())
     return;
 
@@ -454,15 +468,19 @@ static void AdjustStyleForDisplay(ComputedStyle& style,
   // setting of block-flow to anything other than TopToBottomWritingMode.
   // https://bugs.webkit.org/show_bug.cgi?id=46418 - Flexible box support.
   if (style.GetWritingMode() != WritingMode::kHorizontalTb &&
-      (style.Display() == EDisplay::kWebkitBox ||
-       style.Display() == EDisplay::kWebkitInlineBox)) {
+      style.IsDeprecatedWebkitBox()) {
     style.SetWritingMode(WritingMode::kHorizontalTb);
     style.UpdateFontOrientation();
   }
 
+  // Disable editing custom layout elements, until EditingNG is ready.
+  if (!RuntimeEnabledFeatures::EditingNGEnabled() &&
+      (style.Display() == EDisplay::kLayoutCustom ||
+       style.Display() == EDisplay::kInlineLayoutCustom))
+    style.SetUserModify(EUserModify::kReadOnly);
+
   if (layout_parent_style.IsDisplayFlexibleOrGridBox()) {
     style.SetFloating(EFloat::kNone);
-    style.SetDisplay(EquivalentBlockDisplay(style.Display()));
 
     // We want to count vertical percentage paddings/margins on flex items
     // because our current behavior is different from the spec and we want to
@@ -476,9 +494,6 @@ static void AdjustStyleForDisplay(ComputedStyle& style,
         style.MarginAfter().IsPercentOrCalc()) {
       UseCounter::Count(document, WebFeature::kFlexboxPercentageMarginVertical);
     }
-  } else if (layout_parent_style.IsDisplayLayoutCustomBox()) {
-    // Blockify the children of a LayoutCustom.
-    style.SetDisplay(EquivalentBlockDisplay(style.Display()));
   }
 }
 
@@ -489,18 +504,18 @@ static void AdjustEffectiveTouchAction(ComputedStyle& style,
   TouchAction inherited_action = parent_style.GetEffectiveTouchAction();
 
   bool is_replaced_canvas =
-      element && IsHTMLCanvasElement(element) &&
+      element && IsA<HTMLCanvasElement>(element) &&
       element->GetDocument().GetFrame() &&
       element->GetDocument().CanExecuteScripts(kNotAboutToExecuteScript);
   bool is_non_replaced_inline_elements =
       style.IsDisplayInlineType() &&
       !(style.IsDisplayReplacedType() || is_svg_root ||
-        IsHTMLImageElement(element) || is_replaced_canvas);
+        IsA<HTMLImageElement>(element) || is_replaced_canvas);
   bool is_table_row_or_column = style.IsDisplayTableRowOrColumnType();
   bool is_layout_object_needed =
       element && element->LayoutObjectIsNeeded(style);
 
-  TouchAction element_touch_action = TouchAction::kTouchActionAuto;
+  TouchAction element_touch_action = TouchAction::kAuto;
   // Touch actions are only supported by elements that support both the CSS
   // width and height properties.
   // See https://www.w3.org/TR/pointerevents/#the-touch-action-css-property.
@@ -519,7 +534,7 @@ static void AdjustEffectiveTouchAction(ComputedStyle& style,
   // Apply touch action inherited from parent frame.
   if (is_child_document && element->GetDocument().GetFrame()) {
     inherited_action &=
-        TouchAction::kTouchActionPan |
+        TouchAction::kPan |
         element->GetDocument().GetFrame()->InheritedEffectiveTouchAction();
   }
 
@@ -533,22 +548,40 @@ static void AdjustEffectiveTouchAction(ComputedStyle& style,
   inherited_action =
       AdjustTouchActionForElement(inherited_action, style, element);
 
-  TouchAction enforced_by_policy = TouchAction::kTouchActionNone;
+  TouchAction enforced_by_policy = TouchAction::kNone;
   if (element->GetDocument().IsVerticalScrollEnforced())
-    enforced_by_policy = TouchAction::kTouchActionPanY;
+    enforced_by_policy = TouchAction::kPanY;
 
   // Apply the adjusted parent effective touch actions.
   style.SetEffectiveTouchAction((element_touch_action & inherited_action) |
                                 enforced_by_policy);
 
   // Propagate touch action to child frames.
-  if (element->IsFrameOwnerElement()) {
-    Frame* content_frame = ToHTMLFrameOwnerElement(element)->ContentFrame();
+  if (auto* frame_owner = DynamicTo<HTMLFrameOwnerElement>(element)) {
+    Frame* content_frame = frame_owner->ContentFrame();
     if (content_frame) {
       content_frame->SetInheritedEffectiveTouchAction(
           style.GetEffectiveTouchAction());
     }
   }
+}
+
+static void AdjustStateForSubtreeVisibility(ComputedStyle& style,
+                                            Element* element) {
+  if (!element)
+    return;
+  auto* context = element->GetDisplayLockContext();
+  // The common case for most elements is that we don't have a context and have
+  // the default (visible) subtree-visibility value.
+  if (LIKELY(!context &&
+             style.SubtreeVisibility() == ESubtreeVisibility::kVisible)) {
+    return;
+  }
+
+  if (!context)
+    context = &element->EnsureDisplayLockContext();
+  context->SetRequestedState(style.SubtreeVisibility());
+  context->AdjustElementStyle(&style);
 }
 
 void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
@@ -559,10 +592,10 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
   const ComputedStyle& parent_style = *state.ParentStyle();
   const ComputedStyle& layout_parent_style = *state.LayoutParentStyle();
 
-  if (element && element->IsHTMLElement() &&
-      (style.Display() != EDisplay::kNone ||
-       element->LayoutObjectIsNeeded(style))) {
-    AdjustStyleForHTMLElement(style, ToHTMLElement(*element));
+  auto* html_element = DynamicTo<HTMLElement>(element);
+  if (html_element && (style.Display() != EDisplay::kNone ||
+                       element->LayoutObjectIsNeeded(style))) {
+    AdjustStyleForHTMLElement(style, *html_element);
   }
   if (style.Display() != EDisplay::kNone) {
     bool is_document_element =
@@ -588,19 +621,29 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
     // We don't adjust the first letter style earlier because we may change the
     // display setting in adjustStyeForTagName() above.
     AdjustStyleForFirstLetter(style);
+    AdjustStyleForMarker(style, parent_style, state.GetElement());
 
     AdjustStyleForDisplay(style, layout_parent_style,
                           element ? &element->GetDocument() : nullptr);
 
-    // If this is a child of a LayoutCustom, we need the name of the parent
+    // If this is a child of a LayoutNGCustom, we need the name of the parent
     // layout function for invalidation purposes.
     if (layout_parent_style.IsDisplayLayoutCustomBox()) {
       style.SetDisplayLayoutCustomParentName(
           layout_parent_style.DisplayLayoutCustomName());
     }
+
+    bool is_in_main_frame = element && element->GetDocument().IsInMainFrame();
+    // The root element of the main frame has no backdrop, so don't allow
+    // it to have a backdrop filter either.
+    if (is_document_element && is_in_main_frame && style.HasBackdropFilter())
+      style.MutableBackdropFilter().clear();
   } else {
     AdjustStyleForFirstLetter(style);
   }
+
+  if (RuntimeEnabledFeatures::CSSSubtreeVisibilityEnabled())
+    AdjustStateForSubtreeVisibility(style, element);
 
   // Make sure our z-index value is only applied if the object is positioned.
   if (style.GetPosition() == EPosition::kStatic &&
@@ -618,7 +661,7 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
       style.OverflowY() != EOverflow::kVisible)
     AdjustOverflow(style);
 
-  if (DoesNotInheritTextDecoration(style, element))
+  if (StopPropagateTextDecorations(style, element))
     style.ClearAppliedTextDecorations();
   else
     style.RestoreParentTextDecorations(parent_style);
@@ -632,16 +675,15 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
   style.AdjustMaskLayers();
 
   // Let the theme also have a crack at adjusting the style.
-  if (style.HasAppearance())
-    LayoutTheme::GetTheme().AdjustStyle(style, element);
+  LayoutTheme::GetTheme().AdjustStyle(style, element);
 
   AdjustStyleForEditing(style);
 
   bool is_svg_root = false;
-  bool is_svg_element = element && element->IsSVGElement();
+  auto* svg_element = DynamicTo<SVGElement>(element);
 
-  if (is_svg_element) {
-    is_svg_root = ToSVGElement(element)->IsOutermostSVGSVGElement();
+  if (svg_element) {
+    is_svg_root = svg_element->IsOutermostSVGSVGElement();
     if (!is_svg_root) {
       // Only the root <svg> element in an SVG document fragment tree honors css
       // position.
@@ -650,8 +692,8 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
 
     if (style.Display() == EDisplay::kContents &&
         (is_svg_root ||
-         (!IsSVGSVGElement(element) && !IsSVGGElement(element) &&
-          !IsSVGUseElement(element) && !IsSVGTSpanElement(element)))) {
+         (!IsA<SVGSVGElement>(element) && !IsA<SVGGElement>(element) &&
+          !IsA<SVGUseElement>(element) && !IsA<SVGTSpanElement>(element)))) {
       // According to the CSS Display spec[1], nested <svg> elements, <g>,
       // <use>, and <tspan> elements are not rendered and their children are
       // "hoisted". For other elements display:contents behaves as display:none.
@@ -661,13 +703,31 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
     }
 
     // SVG text layout code expects us to be a block-level style element.
-    if ((IsSVGForeignObjectElement(*element) || IsSVGTextElement(*element)) &&
+    if ((IsA<SVGForeignObjectElement>(*element) ||
+         IsA<SVGTextElement>(*element)) &&
         style.IsDisplayInlineType())
       style.SetDisplay(EDisplay::kBlock);
 
     // Columns don't apply to svg text elements.
-    if (IsSVGTextElement(*element))
+    if (IsA<SVGTextElement>(*element))
       style.ClearMultiCol();
+  } else if (element && element->IsMathMLElement()) {
+    if (style.Display() == EDisplay::kContents) {
+      // https://drafts.csswg.org/css-display/#unbox-mathml
+      style.SetDisplay(EDisplay::kNone);
+    }
+    if (auto* space = DynamicTo<MathMLSpaceElement>(*element)) {
+      space->AddMathBaselineIfNeeded(style, state.CssToLengthConversionData());
+    } else if (auto* fraction = DynamicTo<MathMLFractionElement>(*element)) {
+      fraction->AddMathFractionBarThicknessIfNeeded(
+          style, state.CssToLengthConversionData());
+    }
+    if (style.GetWritingMode() != WritingMode::kHorizontalTb) {
+      // TODO(rbuis): this will not work with logical CSS properties.
+      // Disable vertical writing-mode for now.
+      style.SetWritingMode(WritingMode::kHorizontalTb);
+      style.UpdateFontOrientation();
+    }
   }
 
   // If this node is sticky it marks the creation of a sticky subtree, which we
@@ -691,7 +751,7 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
 
   bool is_media_control =
       element && element->ShadowPseudoId().StartsWith("-webkit-media-controls");
-  if (is_media_control && style.Appearance() == kNoControlPart) {
+  if (is_media_control && !style.HasEffectiveAppearance()) {
     // For compatibility reasons if the element is a media control and the
     // -webkit-appearance is none then we should clear the background image.
     if (!StyleResolver::HasAuthorBackground(state)) {
@@ -717,10 +777,16 @@ void StyleAdjuster::AdjustComputedStyle(StyleResolverState& state,
     }
   }
 
-  if (RuntimeEnabledFeatures::LayoutNGEnabled() && !style.ForceLegacyLayout() &&
-      element &&
-      ShouldForceLegacyLayout(style, layout_parent_style, *element)) {
-    style.SetForceLegacyLayout(true);
+  if (RuntimeEnabledFeatures::LayoutNGBlockFragmentationEnabled()) {
+    // When establishing a block fragmentation context for LayoutNG, we require
+    // that everything fragmentable inside can be laid out by NG natively, since
+    // NG and legacy layout cannot cooperate within the same fragmentation
+    // context. Set a flag, so that we can quickly determine whether we need to
+    // check that an element is compatible with the NG block fragmentation
+    // machinery.
+    if (style.SpecifiesColumns() ||
+        (element && element->GetDocument().Printing()))
+      style.SetInsideNGFragmentationContext(true);
   }
 }
 }  // namespace blink

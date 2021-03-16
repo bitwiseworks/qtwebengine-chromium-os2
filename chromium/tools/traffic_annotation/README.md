@@ -7,26 +7,26 @@ requires annotation, is annotated, and annotations are sound and complete.
 
 # Traffic Annotation Auditor
 This is the main executable for all the tests. It runs Traffic Annotation
-Extractor clang tool to check the repository, extract annotations, and perform
-required tests and maintanance. See more details in
+Extractor python script to check the repository, extract annotations, and
+perform required tests and maintenance. See more details in
 `tools/traffic_annotation/auditor/README.md`.
 
 # Traffic Annotation Extractor
-Traffic Annotation Auditor uses this clang tool (located in
-`tools\clang\traffic_annotation_extractor`) to parse the code and extract
-required data for testing and maintanance.
+Traffic Annotation Auditor uses this python script (located in
+`tools/traffic_annotation/scripts/extractor.py`) to parse the code and extract
+required data for testing and maintenance.
 
 # Building the Checkers
-We do not want every developer to have to build clang tool and auditor, and so
-we store pre-built binaries in a Google Cloud Storage bucket and retrieve them
-via gclient hooks. The binaries are in `tools/traffic_annotation/bin/[platform]`
+We do not want every developer to have to build the auditor, and so we store
+pre-built binaries in a Google Cloud Storage bucket and retrieve them via
+gclient hooks. The binaries are in `tools/traffic_annotation/bin/[platform]`
 folder. To roll new versions of the binaries, please see
 `tools/traffic_annotation/bin/README.md`.
 
 # Automatic Annotation Tests
 Network traffic annotations are tested in commit queue using
 `tools/traffic_annotation/scripts/check_annotations.py`. This test is currently
-run on Linux and Windows trybots, but may expand in future to other platfroms.
+run on Linux and Windows trybots, but may expand in future to other platforms.
 To perform this test fast enough for a trybot and to avoid spamming the commit
 queue if an unexpected general failure happens (see next item), trybot tests are
 run in error resilient mode and only on the changed files. A more complete test

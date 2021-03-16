@@ -28,7 +28,6 @@ config("mini_installer_compiler_flags") {
 source_set("lib") {
   sources = [
     "appid.h",
-    "chrome.release",
     "chrome_appid.cc",
     "configuration.cc",
     "configuration.h",
@@ -49,10 +48,14 @@ source_set("lib") {
     "regkey.h",
   ]
 
+  deps = [ "//build:branding_buildflags" ]
+
   if (skip_archive_compression) {
     defines = [ "SKIP_ARCHIVE_COMPRESSION" ]
   }
 
+  # Initialization may insert unexpected memset calls.
+  configs -= [ "//build/config/compiler:default_init_stack_vars" ]
   configs += [ ":mini_installer_compiler_flags" ]
 }
 
@@ -71,12 +74,11 @@ source_set("unit_tests") {
     "mini_string_test.cc",
   ]
 
-  public_deps = [
-    ":lib",
-  ]
+  public_deps = [ ":lib" ]
   deps = [
     "//base",
     "//base/test:test_support",
+    "//build:branding_buildflags",
     "//chrome/install_static:install_static_util",
     "//chrome/installer/util:with_no_strings",
     "//testing/gtest",
@@ -98,9 +100,7 @@ group("chrome_runtime_deps") {
 
 group("setup_runtime_deps") {
   write_runtime_deps = setup_runtime_deps
-  data_deps = [
-    "//chrome/installer/setup",
-  ]
+  data_deps = [ "//chrome/installer/setup" ]
 }
 
 # Generates a mini installer.
@@ -171,7 +171,7 @@ template("generate_mini_installer") {
       #'--diff_algorithm=COURGETTE',
 
       # Optional argument for verbose archiving output.
-      #'--verbose',
+      #"--verbose",
     ]
 
     deps = [
@@ -179,6 +179,7 @@ template("generate_mini_installer") {
       ":setup_runtime_deps",
       "//chrome",
       "//chrome/browser/extensions/default_extensions",
+      "//chrome/common/win:eventlog_provider",
       "//chrome/installer/setup",
       "//third_party/icu:icudata",
       chrome_dll_target,
@@ -216,13 +217,13 @@ template("generate_mini_installer") {
     }
 
     if (v8_use_external_startup_data) {
-      inputs += [ "$root_out_dir/natives_blob.bin" ]
       deps += [ "//v8" ]
       if (use_v8_context_snapshot) {
         inputs += [ "$root_out_dir/v8_context_snapshot.bin" ]
         deps += [ "//tools/v8_context_snapshot" ]
       } else {
         inputs += [ "$root_out_dir/snapshot_blob.bin" ]
+        args += [ "--include_snapshotblob=1" ]
       }
     }
 
@@ -241,16 +242,15 @@ template("generate_mini_installer") {
     ]
 
     # This target is special so we manually override most linker flags and
-    # specify our own to keep the size down. Also make sure that we don't use
-    # WPO as it's not supported by the mini installer.
+    # specify our own to keep the size down.
     configs -= [
-      "//build/config/compiler:default_optimization",
+      # Initialization may insert unexpected memset calls.
+      "//build/config/compiler:default_init_stack_vars",
       "//build/config:executable_config",
       "//build/config/win:console",
     ]
     configs += [
       ":mini_installer_compiler_flags",
-      "//build/config/compiler:optimize_no_wpo",
       "//build/config/sanitizers:link_executable",
       "//build/config/win:sdk_link",
       "//build/config/win:windowed",
@@ -279,6 +279,9 @@ template("generate_mini_installer") {
     #      dependency on //buildtools/third_party/libc++ in builds that set
     #      use_custom_libcxx=true.
     #
+    # The net result is similar to linking with /NODEFAULTLIB, but more precise
+    # as it just excludes the CRT.
+    #
     # But in asan builds we need to link against the asan runtime library, which
     # in turn depends on the standard library and relies on it to run
     # initializers.
@@ -303,20 +306,36 @@ if (!(is_component_build && is_debug && target_cpu == "x86") &&
   action("previous_version_mini_installer") {
     script = "generate_previous_version_mini_installer.py"
     testonly = true
+    if (target_cpu == "arm64") {
+      select_toolchain = host_toolchain
+    } else {
+      select_toolchain = current_toolchain
+    }
+    alternate_version_generator_target =
+        "//chrome/installer/test:alternate_version_generator($select_toolchain)"
+    alternate_version_generator_rel_path =
+        rebase_path(
+            get_label_info(alternate_version_generator_target, "root_out_dir") +
+                "/alternate_version_generator.exe",
+            root_out_dir)
     inputs = [
-      "$root_out_dir/alternate_version_generator.exe",
+      "$root_out_dir/" + alternate_version_generator_rel_path,
       "$root_out_dir/mini_installer.exe",
     ]
-    outputs = [
-      "$root_out_dir/$target_name.exe",
-    ]
+    outputs = [ "$root_out_dir/$target_name.exe" ]
     args = [
+      "--alternate_version_generator",
+      alternate_version_generator_rel_path,
+      "--mini_installer",
+      "mini_installer.exe",
       "--out",
       "$target_name.exe",
+      "--path_7za",
+      "../../third_party/lzma_sdk/Executable",
     ]
     deps = [
       ":mini_installer",
-      "//chrome/installer/test:alternate_version_generator",
+      alternate_version_generator_target,
     ]
   }
 }

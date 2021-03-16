@@ -24,6 +24,7 @@
 #include <inttypes.h>
 
 #include "build/build_config.h"
+#include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_screen_info.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -34,7 +35,9 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/html_iframe_element.h"
+#include "third_party/blink/renderer/core/html/plugin_document.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
+#include "third_party/blink/renderer/core/layout/geometry/transform_state.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
@@ -52,11 +55,10 @@
 #include "third_party/blink/renderer/core/svg/svg_document_extensions.h"
 #include "third_party/blink/renderer/platform/geometry/float_quad.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/traced_value.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/transforms/transform_state.h"
 
 #if defined(OS_LINUX) || defined(OS_CHROMEOS)
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
@@ -69,11 +71,11 @@ namespace {
 class HitTestLatencyRecorder {
  public:
   HitTestLatencyRecorder(bool allows_child_frame_content)
-      : start_(CurrentTimeTicks()),
+      : start_(base::TimeTicks::Now()),
         allows_child_frame_content_(allows_child_frame_content) {}
 
   ~HitTestLatencyRecorder() {
-    TimeDelta duration = CurrentTimeTicks() - start_;
+    base::TimeDelta duration = base::TimeTicks::Now() - start_;
     if (allows_child_frame_content_) {
       DEFINE_STATIC_LOCAL(CustomCountHistogram, recursive_latency_histogram,
                           ("Event.Latency.HitTestRecursive", 0, 10000000, 100));
@@ -86,7 +88,7 @@ class HitTestLatencyRecorder {
   }
 
  private:
-  TimeTicks start_;
+  base::TimeTicks start_;
   bool allows_child_frame_content_;
 };
 
@@ -96,20 +98,20 @@ LayoutView::LayoutView(Document* document)
     : LayoutBlockFlow(document),
       frame_view_(document->View()),
       layout_state_(nullptr),
+      compositor_(RuntimeEnabledFeatures::CompositeAfterPaintEnabled()
+                      ? nullptr
+                      : std::make_unique<PaintLayerCompositor>(*this)),
       layout_quote_head_(nullptr),
       layout_counter_count_(0),
       hit_test_count_(0),
       hit_test_cache_hits_(0),
-      hit_test_cache_(HitTestCache::Create()),
-      autosize_h_scrollbar_mode_(kScrollbarAuto),
-      autosize_v_scrollbar_mode_(kScrollbarAuto) {
+      hit_test_cache_(MakeGarbageCollected<HitTestCache>()),
+      autosize_h_scrollbar_mode_(mojom::blink::ScrollbarMode::kAuto),
+      autosize_v_scrollbar_mode_(mojom::blink::ScrollbarMode::kAuto) {
   // init LayoutObject attributes
   SetInline(false);
 
-  min_preferred_logical_width_ = LayoutUnit();
-  max_preferred_logical_width_ = LayoutUnit();
-
-  SetPreferredLogicalWidthsDirty(kMarkOnlyThis);
+  SetIntrinsicLogicalWidthsDirty(kMarkOnlyThis);
 
   SetPositionState(EPosition::kAbsolute);  // to 0,0 :)
 
@@ -133,7 +135,8 @@ bool LayoutView::HitTest(const HitTestLocation& location,
   // Note that if an iframe has its render pipeline throttled, it will not
   // update layout here, and it will also not propagate the hit test into the
   // iframe's inner document.
-  if (!GetFrameView()->UpdateAllLifecyclePhasesExceptPaint())
+  if (!GetFrameView()->UpdateAllLifecyclePhasesExceptPaint(
+          DocumentUpdateReason::kHitTest))
     return false;
   HitTestLatencyRecorder hit_test_latency_recorder(
       result.GetHitTestRequest().AllowsChildFrameContent());
@@ -155,14 +158,14 @@ bool LayoutView::HitTestNoLifecycleUpdate(const HitTestLocation& location,
     result = cache_result;
   } else {
     LocalFrameView* frame_view = GetFrameView();
-    LayoutRect hit_test_area;
+    PhysicalRect hit_test_area;
     if (frame_view) {
       // Start with a rect sized to the frame, to ensure we include the
       // scrollbars.
-      hit_test_area = LayoutRect(LayoutPoint(), LayoutSize(frame_view->Size()));
+      hit_test_area.size = PhysicalSize(frame_view->Size());
       if (result.GetHitTestRequest().IgnoreClipping()) {
         hit_test_area.Unite(
-            frame_view->DocumentToFrame(LayoutRect(DocumentRect())));
+            frame_view->DocumentToFrame(PhysicalRect(DocumentRect())));
       }
     }
 
@@ -238,7 +241,8 @@ bool LayoutView::CanHaveChildren() const {
   // the PluginDocument's <embed> element to have an EmbeddedContentView, which
   // it acquires during LocalFrameView::UpdatePlugins, which operates on the
   // <embed> element's layout object (LayoutEmbeddedObject).
-  if (GetDocument().IsPluginDocument())
+  if (IsA<PluginDocument>(GetDocument()) ||
+      GetDocument().IsForExternalHandler())
     return true;
   return !owner->IsDisplayNone();
 }
@@ -306,8 +310,7 @@ void LayoutView::UpdateLayout() {
     SetPageLogicalHeight(LayoutUnit());
 
   if (PageLogicalHeight() && ShouldUsePrintingLayout()) {
-    min_preferred_logical_width_ = max_preferred_logical_width_ =
-        LogicalWidth();
+    intrinsic_logical_widths_ = LogicalWidth();
     if (!fragmentation_context_) {
       fragmentation_context_ =
           std::make_unique<ViewFragmentationContext>(*this);
@@ -329,11 +332,10 @@ void LayoutView::UpdateLayout() {
   // to date DSF when layout happens, we plumb this through to the FontCache, so
   // that we can correctly retrieve RenderStyleForStrike from out of
   // process. crbug.com/845468
-  FontCache::SetDeviceScaleFactor(GetFrameView()
-                                      ->GetFrame()
-                                      .GetChromeClient()
-                                      .GetScreenInfo()
-                                      .device_scale_factor);
+  LocalFrame& frame = GetFrameView()->GetFrame();
+  ChromeClient& chrome_client = frame.GetChromeClient();
+  FontCache::SetDeviceScaleFactor(
+      chrome_client.GetScreenInfo(frame).device_scale_factor);
 #endif
 
   LayoutBlockFlow::UpdateLayout();
@@ -344,19 +346,19 @@ void LayoutView::UpdateLayout() {
   ClearNeedsLayout();
 }
 
-LayoutRect LayoutView::LocalVisualRectIgnoringVisibility() const {
-  LayoutRect rect = VisualOverflowRect();
-  rect.Unite(LayoutRect(rect.Location(), ViewRect().Size()));
+PhysicalRect LayoutView::LocalVisualRectIgnoringVisibility() const {
+  PhysicalRect rect = PhysicalVisualOverflowRect();
+  rect.Unite(PhysicalRect(rect.offset, ViewRect().size));
   return rect;
 }
 
 void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
                                     TransformState& transform_state,
                                     MapCoordinatesFlags mode) const {
-  if (!ancestor && mode & kUseTransforms &&
+  if (!ancestor && !(mode & kIgnoreTransforms) &&
       ShouldUseTransformFromContainer(nullptr)) {
     TransformationMatrix t;
-    GetTransformFromContainer(nullptr, LayoutSize(), t);
+    GetTransformFromContainer(nullptr, PhysicalOffset(), t);
     transform_state.ApplyTransform(t);
   }
 
@@ -377,7 +379,9 @@ void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
       parent_doc_layout_object->MapLocalToAncestor(ancestor, transform_state,
                                                    mode);
     } else {
-      GetFrameView()->ApplyTransformForTopFrameSpace(transform_state);
+      DCHECK(!ancestor);
+      if (mode & kApplyRemoteRootFrameOffset)
+        GetFrameView()->MapLocalToRemoteRootFrame(transform_state);
     }
   }
 }
@@ -385,7 +389,7 @@ void LayoutView::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
 const LayoutObject* LayoutView::PushMappingToContainer(
     const LayoutBoxModelObject* ancestor_to_stop_at,
     LayoutGeometryMap& geometry_map) const {
-  LayoutSize offset;
+  PhysicalOffset offset;
   LayoutObject* container = nullptr;
 
   if (geometry_map.GetMapCoordinatesFlags() & kTraverseDocumentBoundaries) {
@@ -402,7 +406,7 @@ const LayoutObject* LayoutView::PushMappingToContainer(
   if ((!ancestor_to_stop_at || container) &&
       ShouldUseTransformFromContainer(container)) {
     TransformationMatrix t;
-    GetTransformFromContainer(container, LayoutSize(), t);
+    GetTransformFromContainer(container, PhysicalOffset(), t);
     geometry_map.Push(this, t, kContainsFixedPosition,
                       OffsetForFixedPosition());
   } else {
@@ -424,6 +428,12 @@ void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
 
       transform_state.Move(
           parent_doc_layout_object->PhysicalContentBoxOffset());
+    } else {
+      DCHECK(!ancestor);
+      // Note that MapLocalToAncestorRootFrame is correct here because
+      // transform_state will be set to kUnapplyInverseTransformDirection.
+      if (mode & kApplyRemoteRootFrameOffset)
+        GetFrameView()->MapLocalToRemoteRootFrame(transform_state);
     }
   } else {
     DCHECK(this == ancestor || !ancestor);
@@ -433,22 +443,12 @@ void LayoutView::MapAncestorToLocal(const LayoutBoxModelObject* ancestor,
     transform_state.Move(OffsetForFixedPosition());
 }
 
-void LayoutView::ComputeSelfHitTestRects(Vector<LayoutRect>& rects,
-                                         const LayoutPoint&) const {
-  // Record the entire size of the contents of the frame. Note that we don't
-  // just use the viewport size (containing block) here because we want to
-  // ensure this includes all children (so we can avoid walking them
-  // explicitly).
-  rects.push_back(
-      LayoutRect(LayoutPoint::Zero(), LayoutSize(GetFrameView()->Size())));
-}
-
 void LayoutView::Paint(const PaintInfo& paint_info) const {
   ViewPainter(*this).Paint(paint_info);
 }
 
 void LayoutView::PaintBoxDecorationBackground(const PaintInfo& paint_info,
-                                              const LayoutPoint&) const {
+                                              const PhysicalOffset&) const {
   ViewPainter(*this).PaintBoxDecorationBackground(paint_info);
 }
 
@@ -471,17 +471,16 @@ void LayoutView::SetShouldDoFullPaintInvalidationForViewAndAllDescendants() {
 void LayoutView::InvalidatePaintForViewAndCompositedLayers() {
   SetSubtreeShouldDoFullPaintInvalidation();
 
-  // The only way we know how to hit these ASSERTS below this point is via the
-  // Chromium OS login screen.
-  DisableCompositingQueryAsserts disabler;
-
-  if (Compositor()->InCompositingMode())
-    Compositor()->FullyInvalidatePaint();
+  if (!RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
+    DisableCompositingQueryAsserts disabler;
+    if (Compositor()->InCompositingMode())
+      Compositor()->FullyInvalidatePaint();
+  }
 }
 
 bool LayoutView::MapToVisualRectInAncestorSpace(
     const LayoutBoxModelObject* ancestor,
-    LayoutRect& rect,
+    PhysicalRect& rect,
     MapCoordinatesFlags mode,
     VisualRectFlags visual_rect_flags) const {
   bool intersects = true;
@@ -494,7 +493,8 @@ bool LayoutView::MapToVisualRectInAncestorSpace(
   intersects = MapToVisualRectInAncestorSpaceInternal(ancestor, transform_state,
                                                       mode, visual_rect_flags);
   transform_state.Flatten();
-  rect = LayoutRect(transform_state.LastPlanarQuad().BoundingBox());
+  rect = PhysicalRect::EnclosingRect(
+      transform_state.LastPlanarQuad().BoundingBox());
   return intersects;
 }
 
@@ -527,15 +527,18 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
 
   Element* owner = GetDocument().LocalOwner();
   if (!owner) {
-    LayoutRect rect(transform_state.LastPlanarQuad().BoundingBox());
-    bool retval = GetFrameView()->MapToVisualRectInTopFrameSpace(rect);
+    PhysicalRect rect = PhysicalRect::EnclosingRect(
+        transform_state.LastPlanarQuad().BoundingBox());
+    bool retval = GetFrameView()->MapToVisualRectInRemoteRootFrame(
+        rect, !(visual_rect_flags & kDontApplyMainFrameOverflowClip));
     transform_state.SetQuad(FloatQuad(FloatRect(rect)));
     return retval;
   }
 
   if (LayoutBox* obj = owner->GetLayoutBox()) {
-    LayoutRect rect(transform_state.LastPlanarQuad().BoundingBox());
-    LayoutRect view_rectangle = ViewRect();
+    PhysicalRect rect = PhysicalRect::EnclosingRect(
+        transform_state.LastPlanarQuad().BoundingBox());
+    PhysicalRect view_rectangle = ViewRect();
     if (visual_rect_flags & kEdgeInclusive) {
       if (!rect.InclusiveIntersect(view_rectangle)) {
         transform_state.SetQuad(FloatQuad(FloatRect(rect)));
@@ -549,7 +552,7 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
     // compute the subpixel offset of painting at this point in a a bottom-up
     // walk, round to the enclosing int rect, which will enclose the actual
     // visible rect.
-    rect = LayoutRect(EnclosingIntRect(rect));
+    rect.ExpandEdgesToPixelBoundaries();
 
     // Adjust for frame border.
     rect.Move(obj->PhysicalContentBoxOffset());
@@ -564,20 +567,20 @@ bool LayoutView::MapToVisualRectInAncestorSpaceInternal(
   return false;
 }
 
-LayoutSize LayoutView::OffsetForFixedPosition() const {
-  return HasOverflowClip() ? LayoutSize(ScrolledContentOffset()) : LayoutSize();
+PhysicalOffset LayoutView::OffsetForFixedPosition() const {
+  return HasOverflowClip() ? PhysicalOffset(ScrolledContentOffset())
+                           : PhysicalOffset();
 }
 
-void LayoutView::AbsoluteRects(Vector<IntRect>& rects,
-                               const LayoutPoint& accumulated_offset) const {
-  rects.push_back(
-      PixelSnappedIntRect(accumulated_offset, LayoutSize(Layer()->Size())));
+PhysicalOffset LayoutView::PixelSnappedOffsetForFixedPosition() const {
+  return PhysicalOffset(FlooredIntPoint(OffsetForFixedPosition()));
 }
 
 void LayoutView::AbsoluteQuads(Vector<FloatQuad>& quads,
                                MapCoordinatesFlags mode) const {
-  quads.push_back(LocalToAbsoluteQuad(
-      FloatRect(FloatPoint(), FloatSize(Layer()->Size())), mode));
+  quads.push_back(LocalRectToAbsoluteQuad(
+      PhysicalRect(PhysicalOffset(), PhysicalSizeToBeNoop(Layer()->Size())),
+      mode));
 }
 
 void LayoutView::CommitPendingSelection() {
@@ -592,39 +595,41 @@ bool LayoutView::ShouldUsePrintingLayout() const {
   return frame_view_->GetFrame().ShouldUsePrintingLayout();
 }
 
-LayoutRect LayoutView::ViewRect() const {
+PhysicalRect LayoutView::ViewRect() const {
   if (ShouldUsePrintingLayout())
-    return LayoutRect(LayoutPoint(), Size());
+    return PhysicalRect(PhysicalOffset(), Size());
   if (frame_view_)
-    return LayoutRect(LayoutPoint(), LayoutSize(frame_view_->Size()));
-  return LayoutRect();
+    return PhysicalRect(PhysicalOffset(), PhysicalSize(frame_view_->Size()));
+  return PhysicalRect();
 }
 
-LayoutRect LayoutView::OverflowClipRect(
-    const LayoutPoint& location,
+PhysicalRect LayoutView::OverflowClipRect(
+    const PhysicalOffset& location,
     OverlayScrollbarClipBehavior overlay_scrollbar_clip_behavior) const {
-  LayoutRect rect = ViewRect();
+  PhysicalRect rect = ViewRect();
   if (rect.IsEmpty()) {
     return LayoutBox::OverflowClipRect(location,
                                        overlay_scrollbar_clip_behavior);
   }
 
-  rect.SetLocation(location);
+  rect.offset = location;
   if (HasOverflowClip())
     ExcludeScrollbars(rect, overlay_scrollbar_clip_behavior);
 
   return rect;
 }
 
-void LayoutView::SetAutosizeScrollbarModes(ScrollbarMode h_mode,
-                                           ScrollbarMode v_mode) {
-  DCHECK_EQ(v_mode == kScrollbarAuto, h_mode == kScrollbarAuto);
+void LayoutView::SetAutosizeScrollbarModes(mojom::blink::ScrollbarMode h_mode,
+                                           mojom::blink::ScrollbarMode v_mode) {
+  DCHECK_EQ(v_mode == mojom::blink::ScrollbarMode::kAuto,
+            h_mode == mojom::blink::ScrollbarMode::kAuto);
   autosize_v_scrollbar_mode_ = v_mode;
   autosize_h_scrollbar_mode_ = h_mode;
 }
 
-void LayoutView::CalculateScrollbarModes(ScrollbarMode& h_mode,
-                                         ScrollbarMode& v_mode) const {
+void LayoutView::CalculateScrollbarModes(
+    mojom::blink::ScrollbarMode& h_mode,
+    mojom::blink::ScrollbarMode& v_mode) const {
 #define RETURN_SCROLLBAR_MODE(mode) \
   {                                 \
     h_mode = v_mode = mode;         \
@@ -633,8 +638,8 @@ void LayoutView::CalculateScrollbarModes(ScrollbarMode& h_mode,
 
   // FrameViewAutoSizeInfo manually controls the appearance of the main frame's
   // scrollbars so defer to those if we're in AutoSize mode.
-  if (AutosizeVerticalScrollbarMode() != kScrollbarAuto ||
-      AutosizeHorizontalScrollbarMode() != kScrollbarAuto) {
+  if (AutosizeVerticalScrollbarMode() != mojom::blink::ScrollbarMode::kAuto ||
+      AutosizeHorizontalScrollbarMode() != mojom::blink::ScrollbarMode::kAuto) {
     h_mode = AutosizeHorizontalScrollbarMode();
     v_mode = AutosizeVerticalScrollbarMode();
     return;
@@ -642,59 +647,60 @@ void LayoutView::CalculateScrollbarModes(ScrollbarMode& h_mode,
 
   LocalFrame* frame = GetFrame();
   if (!frame)
-    RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+    RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
 
   if (FrameOwner* owner = frame->Owner()) {
     // Setting scrolling="no" on an iframe element disables scrolling.
-    if (owner->ScrollingMode() == kScrollbarAlwaysOff)
-      RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+    if (owner->ScrollbarMode() == mojom::blink::ScrollbarMode::kAlwaysOff)
+      RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
   Document& document = GetDocument();
   if (Node* body = document.body()) {
     // Framesets can't scroll.
     if (body->GetLayoutObject() && body->GetLayoutObject()->IsFrameSet())
-      RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+      RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
-  if (document.Printing()) {
-    // When printing, frame-level scrollbars are never displayed.
+  if (document.IsCapturingLayout()) {
+    // When capturing layout (e.g. printing), frame-level scrollbars are never
+    // displayed.
     // TODO(szager): Figure out the right behavior when printing an overflowing
     // iframe.  https://bugs.chromium.org/p/chromium/issues/detail?id=777528
-    RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+    RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
   if (LocalFrameView* frameView = GetFrameView()) {
     // Scrollbars can be disabled by LocalFrameView::setCanHaveScrollbars.
     if (!frameView->CanHaveScrollbars())
-      RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+      RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
   Element* viewportDefiningElement = document.ViewportDefiningElement();
   if (!viewportDefiningElement)
-    RETURN_SCROLLBAR_MODE(kScrollbarAuto);
+    RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
   LayoutObject* viewport = viewportDefiningElement->GetLayoutObject();
   if (!viewport)
-    RETURN_SCROLLBAR_MODE(kScrollbarAuto);
+    RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
   const ComputedStyle* style = viewport->Style();
   if (!style)
-    RETURN_SCROLLBAR_MODE(kScrollbarAuto);
+    RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
   if (viewport->IsSVGRoot()) {
     // Don't allow overflow to affect <img> and css backgrounds
     if (ToLayoutSVGRoot(viewport)->IsEmbeddedThroughSVGImage())
-      RETURN_SCROLLBAR_MODE(kScrollbarAuto);
+      RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAuto);
 
     // FIXME: evaluate if we can allow overflow for these cases too.
     // Overflow is always hidden when stand-alone SVG documents are embedded.
     if (ToLayoutSVGRoot(viewport)
             ->IsEmbeddedThroughFrameContainingSVGDocument())
-      RETURN_SCROLLBAR_MODE(kScrollbarAlwaysOff);
+      RETURN_SCROLLBAR_MODE(mojom::blink::ScrollbarMode::kAlwaysOff);
   }
 
-  h_mode = v_mode = kScrollbarAuto;
+  h_mode = v_mode = mojom::blink::ScrollbarMode::kAuto;
 
   EOverflow overflow_x = style->OverflowX();
   EOverflow overflow_y = style->OverflowY();
@@ -707,30 +713,21 @@ void LayoutView::CalculateScrollbarModes(ScrollbarMode& h_mode,
   }
   if (!shouldIgnoreOverflowHidden) {
     if (overflow_x == EOverflow::kHidden)
-      h_mode = kScrollbarAlwaysOff;
+      h_mode = mojom::blink::ScrollbarMode::kAlwaysOff;
     if (overflow_y == EOverflow::kHidden)
-      v_mode = kScrollbarAlwaysOff;
+      v_mode = mojom::blink::ScrollbarMode::kAlwaysOff;
   }
 
   if (overflow_x == EOverflow::kScroll)
-    h_mode = kScrollbarAlwaysOn;
+    h_mode = mojom::blink::ScrollbarMode::kAlwaysOn;
   if (overflow_y == EOverflow::kScroll)
-    v_mode = kScrollbarAlwaysOn;
+    v_mode = mojom::blink::ScrollbarMode::kAlwaysOn;
 
 #undef RETURN_SCROLLBAR_MODE
 }
 
-void LayoutView::MayUpdateHoverWhenContentUnderMouseChanged(
-    EventHandler& event_handler) {
-  event_handler.MayUpdateHoverWhenContentUnderMouseChanged(
-      MouseEventManager::UpdateHoverReason::kScrollOffsetChanged);
-}
-
-IntRect LayoutView::DocumentRect() const {
-  LayoutRect overflow_rect(LayoutOverflowRect());
-  FlipForWritingMode(overflow_rect);
-  // TODO(crbug.com/650768): The pixel snapping looks incorrect.
-  return PixelSnappedIntRect(overflow_rect);
+PhysicalRect LayoutView::DocumentRect() const {
+  return FlipForWritingMode(LayoutOverflowRect());
 }
 
 IntSize LayoutView::GetLayoutSize(
@@ -795,13 +792,15 @@ void LayoutView::UpdateAfterLayout() {
 }
 
 void LayoutView::UpdateHitTestResult(HitTestResult& result,
-                                     const LayoutPoint& point) const {
+                                     const PhysicalOffset& point) const {
   if (result.InnerNode())
     return;
 
   Node* node = GetDocument().documentElement();
   if (node) {
-    LayoutPoint adjusted_point = point;
+    PhysicalOffset adjusted_point = point;
+    if (const auto* layout_box = node->GetLayoutBox())
+      adjusted_point -= layout_box->PhysicalLocation();
     OffsetForContents(adjusted_point);
     result.SetNodeAndPosition(node, adjusted_point);
   }
@@ -812,15 +811,12 @@ bool LayoutView::UsesCompositing() const {
 }
 
 PaintLayerCompositor* LayoutView::Compositor() {
-  if (!compositor_)
-    compositor_ = std::make_unique<PaintLayerCompositor>(*this);
-
   return compositor_.get();
 }
 
-void LayoutView::SetIsInWindow(bool is_in_window) {
-  if (compositor_)
-    compositor_->SetIsInWindow(is_in_window);
+void LayoutView::CleanUpCompositor() {
+  DCHECK(compositor_);
+  compositor_->CleanUp();
 }
 
 IntervalArena* LayoutView::GetIntervalArena() {
@@ -829,7 +825,7 @@ IntervalArena* LayoutView::GetIntervalArena() {
   return interval_arena_.get();
 }
 
-bool LayoutView::BackgroundIsKnownToBeOpaqueInRect(const LayoutRect&) const {
+bool LayoutView::BackgroundIsKnownToBeOpaqueInRect(const PhysicalRect&) const {
   // FIXME: Remove this main frame check. Same concept applies to subframes too.
   if (!GetFrame()->IsMainFrame())
     return false;
@@ -881,16 +877,9 @@ bool LayoutView::RecalcLayoutOverflow() {
   return result;
 }
 
-LayoutRect LayoutView::DebugRect() const {
-  LayoutRect rect;
-  LayoutBlock* block = ContainingBlock();
-  if (block)
-    block->AdjustChildDebugRect(rect);
-
-  rect.SetWidth(LayoutUnit(ViewWidth(kIncludeScrollbars)));
-  rect.SetHeight(LayoutUnit(ViewHeight(kIncludeScrollbars)));
-
-  return rect;
+PhysicalRect LayoutView::DebugRect() const {
+  return PhysicalRect(IntRect(0, 0, ViewWidth(kIncludeScrollbars),
+                              ViewHeight(kIncludeScrollbars)));
 }
 
 bool LayoutView::UpdateLogicalWidthAndColumnWidth() {
@@ -915,6 +904,11 @@ void LayoutView::UpdateCounters() {
 
     ToLayoutCounter(layout_object)->UpdateCounter();
   }
+}
+
+bool LayoutView::HasTickmarks() const {
+  return !tickmarks_override_.IsEmpty() ||
+         GetDocument().Markers().PossiblyHasTextMatchMarkers();
 }
 
 Vector<IntRect> LayoutView::GetTickmarks() const {

@@ -5,19 +5,22 @@
 #include <memory>
 
 #include "base/at_exit.h"
+#include "base/callback.h"
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/message_loop/message_pump_type.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/power_monitor/power_monitor_device_source.h"
 #include "base/run_loop.h"
-#include "base/task/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "build/build_config.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "mojo/core/embedder/embedder.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/aura/client/default_capture_client.h"
 #include "ui/aura/client/window_parenting_client.h"
@@ -27,14 +30,16 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/aura/window_tree_host_observer.h"
 #include "ui/base/hit_test.h"
-#include "ui/base/ime/input_method_initializer.h"
+#include "ui/base/ime/init/input_method_initializer.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/compositor/test/in_process_context_factory.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/gl/gl_switches.h"
 #include "ui/gl/init/gl_factory.h"
 
 #if defined(USE_X11)
@@ -129,6 +134,29 @@ class DemoWindowParentingClient : public aura::client::WindowParentingClient {
   DISALLOW_COPY_AND_ASSIGN(DemoWindowParentingClient);
 };
 
+// Runs a base::RunLoop until receiving OnHostCloseRequested from |host|.
+void RunRunLoopUntilOnHostCloseRequested(aura::WindowTreeHost* host) {
+  class Observer : public aura::WindowTreeHostObserver {
+   public:
+    explicit Observer(base::OnceClosure quit_closure)
+        : quit_closure_(std::move(quit_closure)) {}
+
+    void OnHostCloseRequested(aura::WindowTreeHost* host) override {
+      std::move(quit_closure_).Run();
+    }
+
+   private:
+    base::OnceClosure quit_closure_;
+    DISALLOW_COPY_AND_ASSIGN(Observer);
+  };
+
+  base::RunLoop run_loop;
+  Observer observer(run_loop.QuitClosure());
+  host->AddObserver(&observer);
+  run_loop.Run();
+  host->RemoveObserver(&observer);
+}
+
 int DemoMain() {
 #if defined(USE_X11)
   // This demo uses InProcessContextFactory which uses X on a separate Gpu
@@ -142,9 +170,9 @@ int DemoMain() {
   display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
 
-  // Create the message-loop here before creating the root window.
-  base::MessageLoopForUI message_loop;
-  base::TaskScheduler::CreateAndStartWithDefaultParams("demo");
+  // Create the task executor here before creating the root window.
+  base::SingleThreadTaskExecutor main_task_executor(base::MessagePumpType::UI);
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("demo");
   ui::InitializeInputMethodForTesting();
 
   // The ContextFactory must exist before any Compositors are created.
@@ -157,21 +185,18 @@ int DemoMain() {
       &host_frame_sink_manager, &frame_sink_manager);
   context_factory->set_use_test_surface(false);
 
-  base::PowerMonitor power_monitor(
-      base::WrapUnique(new base::PowerMonitorDeviceSource));
+  base::PowerMonitor::Initialize(
+      std::make_unique<base::PowerMonitorDeviceSource>());
 
   std::unique_ptr<aura::Env> env = aura::Env::CreateInstance();
   env->set_context_factory(context_factory.get());
-  env->set_context_factory_private(context_factory.get());
   std::unique_ptr<aura::TestScreen> test_screen(
       aura::TestScreen::Create(gfx::Size()));
   display::Screen::SetScreenInstance(test_screen.get());
   std::unique_ptr<aura::WindowTreeHost> host(
       test_screen->CreateHostForPrimaryDisplay());
-  std::unique_ptr<DemoWindowParentingClient> window_parenting_client(
-      new DemoWindowParentingClient(host->window()));
-  aura::test::TestFocusClient focus_client;
-  aura::client::SetFocusClient(host->window(), &focus_client);
+  DemoWindowParentingClient window_parenting_client(host->window());
+  aura::test::TestFocusClient focus_client(host->window());
 
   // Create a hierarchy of test windows.
   gfx::Rect window1_bounds(100, 100, 400, 400);
@@ -202,7 +227,12 @@ int DemoMain() {
   window2.AddChild(&window3);
 
   host->Show();
-  base::RunLoop().Run();
+
+  RunRunLoopUntilOnHostCloseRequested(host.get());
+
+  // Input method shutdown needs to happen before thread cleanup while the
+  // sequence manager is still valid.
+  ui::ShutdownInputMethodForTesting();
 
   return 0;
 }
@@ -212,8 +242,16 @@ int DemoMain() {
 int main(int argc, char** argv) {
   base::CommandLine::Init(argc, argv);
 
+  // Disabling Direct Composition works around the limitation that
+  // InProcessContextFactory doesn't work with Direct Composition, causing the
+  // window to not render. See http://crbug.com/936249.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableDirectComposition);
+
   // The exit manager is in charge of calling the dtors of singleton objects.
   base::AtExitManager exit_manager;
+
+  mojo::core::Init();
 
   base::i18n::InitializeICU();
 

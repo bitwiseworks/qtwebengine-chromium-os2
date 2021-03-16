@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "ui/base/ime/text_input_client.h"
 
 namespace ui {
@@ -24,7 +25,7 @@ class DummyTextInputClient : public TextInputClient {
 
   // Overriden from TextInputClient.
   void SetCompositionText(const CompositionText& composition) override;
-  void ConfirmCompositionText() override;
+  void ConfirmCompositionText(bool) override;
   void ClearCompositionText() override;
   void InsertText(const base::string16& text) override;
   void InsertChar(const KeyEvent& event) override;
@@ -54,6 +55,22 @@ class DummyTextInputClient : public TextInputClient {
   void SetTextEditCommandForNextKeyEvent(TextEditCommand command) override;
   ukm::SourceId GetClientSourceForMetrics() const override;
   bool ShouldDoLearning() override;
+
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+  bool SetCompositionFromExistingText(
+      const gfx::Range& range,
+      const std::vector<ui::ImeTextSpan>& ui_ime_text_spans) override;
+#endif
+
+#if defined(OS_WIN)
+  void GetActiveTextInputControlLayoutBounds(
+      base::Optional<gfx::Rect>* control_bounds,
+      base::Optional<gfx::Rect>* selection_bounds) override;
+  void SetActiveCompositionForAccessibility(
+      const gfx::Range& range,
+      const base::string16& active_composition_text,
+      bool is_composition_committed) override;
+#endif
 
   int insert_char_count() const { return insert_char_count_; }
   base::char16 last_insert_char() const { return last_insert_char_; }

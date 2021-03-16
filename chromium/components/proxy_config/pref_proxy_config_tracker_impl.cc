@@ -166,9 +166,10 @@ PrefProxyConfigTrackerImpl::PrefProxyConfigTrackerImpl(
   active_config_ = pref_config_;
 
   proxy_prefs_.Init(pref_service);
-  proxy_prefs_.Add(proxy_config::prefs::kProxy,
-                   base::Bind(&PrefProxyConfigTrackerImpl::OnProxyPrefChanged,
-                              base::Unretained(this)));
+  proxy_prefs_.Add(
+      proxy_config::prefs::kProxy,
+      base::BindRepeating(&PrefProxyConfigTrackerImpl::OnProxyPrefChanged,
+                          base::Unretained(this)));
 }
 
 PrefProxyConfigTrackerImpl::~PrefProxyConfigTrackerImpl() {
@@ -236,17 +237,15 @@ PrefProxyConfigTrackerImpl::GetEffectiveProxyConfig(
 
 // static
 void PrefProxyConfigTrackerImpl::RegisterPrefs(PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(
-      proxy_config::prefs::kProxy,
-      std::make_unique<base::Value>(ProxyConfigDictionary::CreateSystem()));
+  registry->RegisterDictionaryPref(proxy_config::prefs::kProxy,
+                                   ProxyConfigDictionary::CreateSystem());
 }
 
 // static
 void PrefProxyConfigTrackerImpl::RegisterProfilePrefs(
     PrefRegistrySimple* registry) {
-  registry->RegisterDictionaryPref(
-      proxy_config::prefs::kProxy,
-      std::make_unique<base::Value>(ProxyConfigDictionary::CreateSystem()));
+  registry->RegisterDictionaryPref(proxy_config::prefs::kProxy,
+                                   ProxyConfigDictionary::CreateSystem());
   registry->RegisterBooleanPref(proxy_config::prefs::kUseSharedProxies, false);
 }
 

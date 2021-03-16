@@ -8,8 +8,9 @@
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -59,10 +60,8 @@ class MockMapper : public QuotaLimitHeuristic::BucketMapper {
 
 class MockFunction : public ExtensionFunction {
  public:
-  explicit MockFunction(const char* name) { set_name(name); }
+  explicit MockFunction(const char* name) { SetName(name); }
 
-  void SetArgs(const base::ListValue* args) override {}
-  void Destruct() const override { delete this; }
   ResponseAction Run() override { return RespondLater(); }
 
  protected:
@@ -74,8 +73,8 @@ class TimedLimitMockFunction : public MockFunction {
   explicit TimedLimitMockFunction(const char* name) : MockFunction(name) {}
   void GetQuotaLimitHeuristics(
       QuotaLimitHeuristics* heuristics) const override {
-    heuristics->push_back(
-        std::make_unique<TimedLimit>(k2PerMinute, new Mapper(), kGenericName));
+    heuristics->push_back(std::make_unique<TimedLimit>(
+        k2PerMinute, std::make_unique<Mapper>(), kGenericName));
   }
 
  private:
@@ -88,7 +87,7 @@ class FrozenMockFunction : public MockFunction {
   void GetQuotaLimitHeuristics(
       QuotaLimitHeuristics* heuristics) const override {
     heuristics->push_back(std::make_unique<TimedLimit>(
-        kFrozenConfig, new Mapper(), kGenericName));
+        kFrozenConfig, std::make_unique<Mapper>(), kGenericName));
   }
 
  private:
@@ -111,7 +110,7 @@ class QuotaServiceTest : public testing::Test {
   std::string extension_b_;
   std::string extension_c_;
   std::unique_ptr<QuotaService> service_;
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 };
 
 class QuotaLimitHeuristicTest : public testing::Test {
@@ -142,7 +141,7 @@ class QuotaLimitHeuristicTest : public testing::Test {
 };
 
 TEST_F(QuotaLimitHeuristicTest, Timed) {
-  TimedLimit lim(k2PerMinute, new MockMapper(), kGenericName);
+  TimedLimit lim(k2PerMinute, std::make_unique<MockMapper>(), kGenericName);
   Bucket b;
 
   b.Reset(k2PerMinute, kStartTime);

@@ -2,13 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/jumbo.gni")
 import("../../pdfium.gni")
 import("../../testing/test.gni")
 
 assert(pdf_enable_xfa)
 
-jumbo_source_set("fde") {
+source_set("fde") {
   sources = [
     "cfde_data.h",
     "cfde_texteditengine.cpp",
@@ -32,11 +31,11 @@ jumbo_source_set("fde") {
 }
 
 pdfium_unittest_source_set("unittests") {
-  sources = [
-    "cfde_texteditengine_unittest.cpp",
-  ]
+  sources = [ "cfde_texteditengine_unittest.cpp" ]
   deps = [
     ":fde",
+    "../../core/fxge",
+    "../../testing:unit_test_support",
     "../fgas",
   ]
   pdfium_root_dir = "../../"

@@ -4,27 +4,56 @@
 
 #include "fuchsia/runners/cast/fake_application_config_manager.h"
 
+#include <string>
+#include <utility>
+
 #include "base/logging.h"
 
-const char FakeApplicationConfigManager::kTestCastAppId[] = "00000000";
+namespace {
+const char kAgentComponentUrl[] =
+    "fuchsia-pkg://fuchsia.com/cast_agent#meta/cast_agent.cmx";
+}  // namespace
 
-FakeApplicationConfigManager::FakeApplicationConfigManager(
-    net::EmbeddedTestServer* embedded_test_server)
-    : embedded_test_server_(embedded_test_server) {}
+// static
+chromium::cast::ApplicationConfig FakeApplicationConfigManager::CreateConfig(
+    const std::string& id,
+    const GURL& url) {
+  chromium::cast::ApplicationConfig app_config;
+  app_config.set_id(id);
+  app_config.set_display_name("Dummy test app");
+  app_config.set_web_url(url.spec());
+  app_config.set_agent_url(kAgentComponentUrl);
+
+  // Add a PROTECTED_MEDIA_IDENTIFIER permission. This is consistent with the
+  // real ApplicationConfigManager.
+  fuchsia::web::PermissionDescriptor permission;
+  permission.set_type(fuchsia::web::PermissionType::PROTECTED_MEDIA_IDENTIFIER);
+  app_config.mutable_permissions()->push_back(std::move(permission));
+
+  return app_config;
+}
+
+FakeApplicationConfigManager::FakeApplicationConfigManager() = default;
 FakeApplicationConfigManager::~FakeApplicationConfigManager() = default;
+
+void FakeApplicationConfigManager::AddAppConfig(
+    chromium::cast::ApplicationConfig app_config) {
+  id_to_config_[app_config.id()] = std::move(app_config);
+}
+
+void FakeApplicationConfigManager::AddApp(const std::string& id,
+                                          const GURL& url) {
+  AddAppConfig(CreateConfig(id, url));
+}
 
 void FakeApplicationConfigManager::GetConfig(std::string id,
                                              GetConfigCallback callback) {
-  if (id != kTestCastAppId) {
-    LOG(ERROR) << "Unknown Cast app Id: " << id;
-    callback(chromium::cast::ApplicationConfigPtr());
+  if (id_to_config_.find(id) == id_to_config_.end()) {
+    LOG(ERROR) << "Unknown Cast App ID: " << id;
+    callback(chromium::cast::ApplicationConfig());
     return;
   }
 
-  chromium::cast::ApplicationConfigPtr app_config =
-      chromium::cast::ApplicationConfig::New();
-  app_config->id = id;
-  app_config->display_name = "Dummy test app";
-  app_config->web_url = embedded_test_server_->base_url().spec();
-  callback(std::move(app_config));
+  callback(std::move(std::move(id_to_config_[id])));
+  id_to_config_.erase(id);
 }

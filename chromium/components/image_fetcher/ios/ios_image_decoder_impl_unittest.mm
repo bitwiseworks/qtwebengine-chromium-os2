@@ -8,7 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #include "ui/gfx/geometry/size.h"
@@ -65,7 +65,7 @@ class IOSImageDecoderImplTest : public PlatformTest {
 
   ~IOSImageDecoderImplTest() override {}
 
-  base::test::ScopedTaskEnvironment scoped_task_evironment_;
+  base::test::TaskEnvironment scoped_task_evironment_;
   std::unique_ptr<ImageDecoder> ios_image_decoder_impl_;
 
   gfx::Image decoded_image_;
@@ -78,8 +78,8 @@ TEST_F(IOSImageDecoderImplTest, JPGImage) {
       std::string(reinterpret_cast<char*>(kJPGImage), sizeof(kJPGImage));
   ios_image_decoder_impl_->DecodeImage(
       image_data, gfx::Size(),
-      base::Bind(&IOSImageDecoderImplTest::OnImageDecoded,
-                 base::Unretained(this)));
+      base::BindOnce(&IOSImageDecoderImplTest::OnImageDecoded,
+                     base::Unretained(this)));
 
   scoped_task_evironment_.RunUntilIdle();
 
@@ -93,8 +93,8 @@ TEST_F(IOSImageDecoderImplTest, WebpImage) {
       std::string(reinterpret_cast<char*>(kWEBPImage), sizeof(kWEBPImage));
   ios_image_decoder_impl_->DecodeImage(
       image_data, gfx::Size(),
-      base::Bind(&IOSImageDecoderImplTest::OnImageDecoded,
-                 base::Unretained(this)));
+      base::BindOnce(&IOSImageDecoderImplTest::OnImageDecoded,
+                     base::Unretained(this)));
 
   scoped_task_evironment_.RunUntilIdle();
 

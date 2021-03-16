@@ -14,25 +14,20 @@ const char kSessionManagerEmitLoginPromptVisible[] = "EmitLoginPromptVisible";
 const char kSessionManagerEmitAshInitialized[] = "EmitAshInitialized";
 const char kSessionManagerEnableChromeTesting[] = "EnableChromeTesting";
 const char kSessionManagerSaveLoginPassword[] = "SaveLoginPassword";
+const char kSessionManagerLoginScreenStorageStore[] = "LoginScreenStorageStore";
+const char kSessionManagerLoginScreenStorageRetrieve[] =
+    "LoginScreenStorageRetrieve";
+const char kSessionManagerLoginScreenStorageListKeys[] =
+    "LoginScreenStorageListKeys";
+const char kSessionManagerLoginScreenStorageDelete[] =
+    "LoginScreenStorageDelete";
 const char kSessionManagerStartSession[] = "StartSession";
 const char kSessionManagerStopSession[] = "StopSession";
+const char kSessionManagerStopSessionWithReason[] = "StopSessionWithReason";
 const char kSessionManagerRestartJob[] = "RestartJob";
-const char kSessionManagerStorePolicy[] = "StorePolicy";
 const char kSessionManagerStorePolicyEx[] = "StorePolicyEx";
-const char kSessionManagerStoreUnsignedPolicy[] = "StoreUnsignedPolicy";
 const char kSessionManagerStoreUnsignedPolicyEx[] = "StoreUnsignedPolicyEx";
-const char kSessionManagerRetrievePolicy[] = "RetrievePolicy";
 const char kSessionManagerRetrievePolicyEx[] = "RetrievePolicyEx";
-const char kSessionManagerStorePolicyForUser[] = "StorePolicyForUser";
-const char kSessionManagerStoreUnsignedPolicyForUser[] =
-    "StoreUnsignedPolicyForUser";
-const char kSessionManagerRetrievePolicyForUser[] = "RetrievePolicyForUser";
-const char kSessionManagerRetrievePolicyForUserWithoutSession[] =
-    "RetrievePolicyForUserWithoutSession";
-const char kSessionManagerStoreDeviceLocalAccountPolicy[] =
-    "StoreDeviceLocalAccountPolicy";
-const char kSessionManagerRetrieveDeviceLocalAccountPolicy[] =
-    "RetrieveDeviceLocalAccountPolicy";
 const char kSessionManagerListStoredComponentPolicies[] =
     "ListStoredComponentPolicies";
 const char kSessionManagerRetrieveSessionState[] = "RetrieveSessionState";
@@ -40,6 +35,7 @@ const char kSessionManagerRetrieveActiveSessions[] = "RetrieveActiveSessions";
 const char kSessionManagerRetrievePrimarySession[] = "RetrievePrimarySession";
 const char kSessionManagerStartTPMFirmwareUpdate[] = "StartTPMFirmwareUpdate";
 const char kSessionManagerStartDeviceWipe[] = "StartDeviceWipe";
+const char kSessionManagerStartRemoteDeviceWipe[] = "StartRemoteDeviceWipe";
 const char kSessionManagerClearForcedReEnrollmentVpd[] =
     "ClearForcedReEnrollmentVpd";
 const char kSessionManagerHandleSupervisedUserCreationStarting[] =
@@ -64,6 +60,8 @@ const char kSessionManagerEmitArcBooted[] = "EmitArcBooted";
 const char kSessionManagerGetArcStartTimeTicks[] = "GetArcStartTimeTicks";
 const char kSessionManagerStartContainer[] = "StartContainer";
 const char kSessionManagerStopContainer[] = "StopContainer";
+const char kSessionManagerEnableAdbSideload[] = "EnableAdbSideload";
+const char kSessionManagerQueryAdbSideload[] = "QueryAdbSideload";
 // Signals
 const char kLoginPromptVisibleSignal[] = "LoginPromptVisible";
 const char kSessionStateChangedSignal[] = "SessionStateChanged";
@@ -141,6 +139,144 @@ enum class ArcContainerStopReason {
   // Failed to upgrade ARC mini container into full container.
   // Note that this will be used if the reason is other than low-disk-space.
   UPGRADE_FAILURE = 5,
+};
+
+// The reason for stopping the session.
+enum class SessionStopReason {
+  // Force restart to restore active sessions.
+  RESTORE_ACTIVE_SESSIONS = 0,
+
+  // Stopped by user requesting sign out.
+  REQUEST_FROM_SESSION_MANAGER = 1,
+
+  // No owner found.
+  OWNER_REQUIRED = 2,
+
+  // Terms of service declined.
+  TERMS_DECLINED = 3,
+
+  // Failed to lock screen.
+  FAILED_TO_LOCK = 4,
+
+  // Suspend after Chrome restart.
+  SUSPEND_AFTER_RESTART = 5,
+
+  // ARC_ADB enabled.
+  CROSTINI_ENABLE_ARC_ADB_REQUESTED = 6,
+
+  // ARC requests device encryption update.
+  ARC_MIGRATION_REQUESTED = 7,
+
+  // ARC provision failed in kiosk mode.
+  ARC_KIOSK_PROVISION_FAILED = 8,
+
+  // Request to optimize memory usage.
+  BACKGROUND_OPTIMIZATION_REQUESTED = 9,
+
+  // Request to restart to apply updates.
+  UPDATE_REQUESTED = 10,
+
+  // Request to synchronize active directory credentials.
+  ACTIVE_DIRECTORY_AUTH_REFRESH_REQUESTED = 11,
+
+  // Request to apply new device requisition.
+  NEW_DEVICE_REQUISITION_SET = 12,
+
+  // Request to apply supervision.
+  SUPERVISION_ENABLED = 13,
+
+  // System locale changed.
+  LOCALE_CHANGED = 14,
+
+  // Special URL entered.
+  SPECIAL_URL_PROCESSED = 15,
+
+  // Demo app failed to launch.
+  DEMO_APP_LAUNCH_FAILED = 16,
+
+  // Browser shutted down or last browser window closed.
+  BROWSER_SHUTDOWN = 17,
+
+  // Interrupt signal (e.g. SIGINT) received.
+  INTERRUPT_SIGNAL_RECEIVED = 18,
+
+  // Enrollment failed.
+  ENROLLMENT_FAILED = 19,
+
+  // Enrollment finished.
+  ENROLLMENT_COMPLETED = 20,
+
+  // Failed to restore session.
+  SESSION_RESTORE_FAILED = 21,
+
+  // User is not allowed to start session.
+  SESSION_USER_IS_NOT_ALLOWED = 22,
+
+  // Session ended due to timeout.
+  SESSION_TIMEOUT_REACHED = 23,
+
+  // Request to apply new session flags.
+  SESSION_NEW_FLAGS_REQUESTED = 24,
+
+  // Multi-profiles session disabled for user.
+  MULTIPROFILES_SESSION_DISABLED = 25,
+
+  // Local account no longer available.
+  DEVICE_LOCAL_ACCOUNT_POLICIES_WANISHED = 26,
+
+  // User's policies were not loaded.
+  LOAD_POLICIES_FAILED = 27,
+
+  // Failed to lock to single user.
+  LOCK_TO_SINGLE_USER_FAILED = 28,
+
+  // Device was disabled.
+  DEVICE_DISABLED = 29,
+
+  // Request to start guest session.
+  GUEST_LOGIN = 30,
+
+  // Kiosk apps were removed.
+  KIOSK_APPS_REMOVED = 31,
+
+  // Kiosk app was closed.
+  KIOSK_APP_CLOSED = 32,
+
+  // Kiosk app launch was canceled.
+  KIOSK_APP_LAUNCH_CANCELED = 33,
+
+  // Kiosk app failed to start.
+  KIOSK_APP_LAUNCH_FAILED = 34,
+
+  // Kiosk app policy was not loaded.
+  KIOSK_APP_POLICY_LOAD_FAILED = 35,
+
+  // Kiosk app failed to authenticate.
+  KIOSK_APP_AUTH_FAILED = 36,
+
+  // Error received from Google Service.
+  GOOGLE_SERVICE_AUTH_FAILED = 37,
+
+  // User was removed.
+  USER_REMOVED = 38,
+
+  // User action to stop session.
+  USER_REQUESTS_SIGNOUT = 39,
+
+  // User action to stop session.
+  USER_REQUESTS_RESTART = 40,
+
+  // User action to stop session.
+  USER_REQUESTS_RELAUNCH = 41,
+
+  // User action to stop session.
+  USER_REQUESTS_FACTORY_RESET = 42,
+
+  // User action to stop session.
+  USER_REQUESTS_TPM_FIRMWARE_UPDATE = 43,
+
+  // Extension action to stop session.
+  EXTENSION_REQUESTS = 44,
 };
 
 }  // namespace login_manager

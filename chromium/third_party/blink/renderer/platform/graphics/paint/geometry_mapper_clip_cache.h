@@ -6,8 +6,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_GEOMETRY_MAPPER_CLIP_CACHE_H_
 
 #include "third_party/blink/renderer/platform/graphics/paint/float_clip_rect.h"
+#include "third_party/blink/renderer/platform/graphics/scroll_types.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -39,31 +39,35 @@ class PLATFORM_EXPORT GeometryMapperClipCache {
                      OverlayScrollbarClipBehavior clip_behavior_arg)
         : ancestor_clip(ancestor_clip_arg),
           ancestor_transform(ancestor_transform_arg),
-          clip_behavior(clip_behavior_arg) {}
+          clip_behavior(clip_behavior_arg) {
+      DCHECK(ancestor_clip);
+      DCHECK(ancestor_transform);
+    }
+  };
+
+  struct ClipCacheEntry {
+    const ClipAndTransform clip_and_transform;
+    // The clip visual rect of the associated clip node in the space of
+    // |clip_and_transform|.
+    const FloatClipRect clip_rect;
+    // Whether there is any transform animation between the transform space
+    // of the associated clip node and |clip_and_transform|.
+    const bool has_transform_animation;
   };
 
   // Returns the clip visual rect  of the owning
   // clip of |this| in the space of |ancestors|, if there is one cached.
   // Otherwise returns null.
-  const FloatClipRect* GetCachedClip(const ClipAndTransform& ancestors);
+  const ClipCacheEntry* GetCachedClip(const ClipAndTransform& ancestors);
 
-  // Stores the "clip visual rect" of |this in the space of |ancestors|,
+  // Stores cached the "clip visual rect" of |this| in the space of |ancestors|,
   // into a local cache.
-  void SetCachedClip(const ClipAndTransform&, const FloatClipRect&);
+  void SetCachedClip(const ClipCacheEntry&);
 
   static void ClearCache();
   bool IsValid() const;
 
  private:
-  struct ClipCacheEntry {
-    const ClipAndTransform clip_and_transform;
-    const FloatClipRect clip_rect;
-    ClipCacheEntry(const ClipAndTransform& clip_and_transform_arg,
-                   const FloatClipRect& clip_rect_arg)
-        : clip_and_transform(clip_and_transform_arg),
-          clip_rect(clip_rect_arg) {}
-  };
-
   void InvalidateCacheIfNeeded();
 
   Vector<ClipCacheEntry> clip_cache_;

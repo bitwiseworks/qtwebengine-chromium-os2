@@ -8,8 +8,10 @@
 
 #include <algorithm>
 
+#include "base/numerics/ranges.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/gesture_detection/gesture_listeners.h"
 #include "ui/events/gesture_detection/motion_event.h"
 #include "ui/gfx/geometry/angle_conversions.h"
@@ -50,6 +52,11 @@ GestureDetector::Config::Config()
       two_finger_tap_max_separation(300),
       two_finger_tap_timeout(base::TimeDelta::FromMilliseconds(700)),
       single_tap_repeat_interval(1),
+#if defined(OS_CHROMEOS)
+      stylus_button_accelerated_longpress_enabled(true),
+#else
+      stylus_button_accelerated_longpress_enabled(false),
+#endif
       velocity_tracker_strategy(VelocityTracker::Strategy::STRATEGY_DEFAULT) {
 }
 
@@ -134,6 +141,7 @@ GestureDetector::GestureDetector(
       last_focus_y_(0),
       down_focus_x_(0),
       down_focus_y_(0),
+      stylus_button_accelerated_longpress_enabled_(false),
       longpress_enabled_(true),
       showpress_enabled_(true),
       swipe_enabled_(false),
@@ -332,6 +340,11 @@ bool GestureDetector::OnTouchEvent(const MotionEvent& ev,
         last_focus_y_ = focus_y;
       }
 
+      if (stylus_button_accelerated_longpress_enabled_ &&
+          (ev.GetFlags() & ui::EF_LEFT_MOUSE_BUTTON)) {
+        OnStylusButtonPress(ev);
+      }
+
       if (!two_finger_tap_allowed_for_gesture_)
         break;
 
@@ -446,7 +459,7 @@ void GestureDetector::Init(const Config& config) {
   DCHECK_GT(config.maximum_swipe_deviation_angle, 0);
   DCHECK_LE(config.maximum_swipe_deviation_angle, 45);
   const float maximum_swipe_deviation_angle =
-      std::min(45.f, std::max(0.001f, config.maximum_swipe_deviation_angle));
+      base::ClampToRange(config.maximum_swipe_deviation_angle, 0.001f, 45.0f);
   min_swipe_direction_component_ratio_ =
       1.f / tan(gfx::DegToRad(maximum_swipe_deviation_angle));
 
@@ -457,6 +470,8 @@ void GestureDetector::Init(const Config& config) {
 
   DCHECK_GE(config.single_tap_repeat_interval, 1);
   single_tap_repeat_interval_ = config.single_tap_repeat_interval;
+  stylus_button_accelerated_longpress_enabled_ =
+      config.stylus_button_accelerated_longpress_enabled;
 }
 
 void GestureDetector::OnShowPressTimeout() {
@@ -480,7 +495,25 @@ void GestureDetector::OnTapTimeout() {
   }
 }
 
+void GestureDetector::OnStylusButtonPress(const MotionEvent& ev) {
+  if (!timeout_handler_->HasTimeout(LONG_PRESS))
+    return;
+  timeout_handler_->StopTimeout(TAP);
+  timeout_handler_->StopTimeout(SHOW_PRESS);
+  timeout_handler_->StopTimeout(LONG_PRESS);
+  defer_confirm_single_tap_ = false;
+  // This will generate a ET_GESTURE_LONG_PRESS event with EF_LEFT_MOUSE_BUTTON,
+  // which is consumed by MetalayerMode if that feature is enabled, because
+  // MetalayerMode is also activated by a stylus button press and has precedence
+  // over this press acceleration feature.
+  listener_->OnLongPress(ev);
+}
+
 void GestureDetector::Cancel() {
+  // Stop waiting for a second tap and send a GESTURE_TAP_CANCEL to keep the
+  // gesture stream valid.
+  if (timeout_handler_->HasTimeout(TAP))
+    listener_->OnTapCancel(*current_down_event_);
   CancelTaps();
   velocity_tracker_.Clear();
   all_pointers_within_slop_regions_ = false;

@@ -20,20 +20,24 @@
 #include "base/timer/timer.h"
 #include "components/cast_channel/cast_auth_util.h"
 #include "components/cast_channel/cast_channel_enum.h"
-#include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/cast_transport.h"
-#include "net/base/completion_callback.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/log/net_log_source.h"
 #include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/mojom/tls_socket.mojom.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace net {
 class X509Certificate;
 }
 
 namespace cast_channel {
-class CastMessage;
+
+using ::cast::channel::CastMessage;
+
 class Logger;
 class MojoDataPump;
 struct LastError;
@@ -91,7 +95,7 @@ class CastSocket {
   // be in READY_STATE_CLOSED.
   //
   // It is fine to delete this object in |callback|.
-  virtual void Close(const net::CompletionCallback& callback) = 0;
+  virtual void Close(net::CompletionOnceCallback callback) = 0;
 
   // The IP endpoint for the destination of the channel.
   virtual const net::IPEndPoint& ip_endpoint() const = 0;
@@ -195,7 +199,7 @@ class CastSocketImpl : public CastSocket {
   // CastSocket interface.
   void Connect(OnOpenCallback callback) override;
   CastTransport* transport() const override;
-  void Close(const net::CompletionCallback& callback) override;
+  void Close(net::CompletionOnceCallback callback) override;
   const net::IPEndPoint& ip_endpoint() const override;
   int id() const override;
   void set_id(int channel_id) override;
@@ -346,11 +350,11 @@ class CastSocketImpl : public CastSocket {
 
   NetworkContextGetter network_context_getter_;
 
-  // Owned ptr to the underlying TCP socket.
-  network::mojom::TCPConnectedSocketPtr tcp_socket_;
+  // Owned remote to the underlying TCP socket.
+  mojo::Remote<network::mojom::TCPConnectedSocket> tcp_socket_;
 
-  // Owned ptr to the underlying SSL socket.
-  network::mojom::TLSClientSocketPtr socket_;
+  // Owned remote to the underlying SSL socket.
+  mojo::Remote<network::mojom::TLSClientSocket> socket_;
 
   // Helper class to write to the SSL socket.
   std::unique_ptr<MojoDataPump> mojo_data_pump_;
@@ -369,7 +373,7 @@ class CastSocketImpl : public CastSocket {
   std::vector<OnOpenCallback> connect_callbacks_;
 
   // Callback invoked by |connect_timeout_timer_| to cancel the connection.
-  base::CancelableClosure connect_timeout_callback_;
+  base::CancelableOnceClosure connect_timeout_callback_;
 
   // Timer invoked when the connection has timed out.
   std::unique_ptr<base::OneShotTimer> connect_timeout_timer_;
@@ -417,7 +421,7 @@ class CastSocketImpl : public CastSocket {
   // List of socket observers.
   base::ObserverList<Observer>::Unchecked observers_;
 
-  base::WeakPtrFactory<CastSocketImpl> weak_factory_;
+  base::WeakPtrFactory<CastSocketImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastSocketImpl);
 };

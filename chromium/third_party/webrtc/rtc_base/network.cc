@@ -11,29 +11,22 @@
 #include "rtc_base/network.h"
 
 #if defined(WEBRTC_POSIX)
-// linux/if.h can't be included at the same time as the posix sys/if.h, and
-// it's transitively required by linux/route.h, so include that version on
-// linux instead of the standard posix one.
-#if defined(WEBRTC_LINUX)
-#include <linux/if.h>
-#include <linux/route.h>
-#elif !defined(__native_client__)
 #include <net/if.h>
-#endif
 #endif  // WEBRTC_POSIX
 
 #if defined(WEBRTC_WIN)
 #include <iphlpapi.h>
+
 #include "rtc_base/win32.h"
 #elif !defined(__native_client__)
 #include "rtc_base/ifaddrs_converter.h"
 #endif
 
-#include <stdio.h>
-
-#include <algorithm>
 #include <memory>
 
+#include "absl/algorithm/container.h"
+#include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/network_monitor.h"
@@ -92,29 +85,9 @@ bool SortNetworks(const Network* a, const Network* b) {
   return a->key() < b->key();
 }
 
-std::string AdapterTypeToString(AdapterType type) {
-  switch (type) {
-    case ADAPTER_TYPE_ANY:
-      return "Wildcard";
-    case ADAPTER_TYPE_UNKNOWN:
-      return "Unknown";
-    case ADAPTER_TYPE_ETHERNET:
-      return "Ethernet";
-    case ADAPTER_TYPE_WIFI:
-      return "Wifi";
-    case ADAPTER_TYPE_CELLULAR:
-      return "Cellular";
-    case ADAPTER_TYPE_VPN:
-      return "VPN";
-    case ADAPTER_TYPE_LOOPBACK:
-      return "Loopback";
-    default:
-      RTC_NOTREACHED() << "Invalid type " << type;
-      return std::string();
-  }
-}
-
 uint16_t ComputeNetworkCostByType(int type) {
+  // TODO(jonaso) : Rollout support for cellular network cost using A/B
+  // experiment to make sure it does not introduce regressions.
   switch (type) {
     case rtc::ADAPTER_TYPE_ETHERNET:
     case rtc::ADAPTER_TYPE_LOOPBACK:
@@ -122,7 +95,11 @@ uint16_t ComputeNetworkCostByType(int type) {
     case rtc::ADAPTER_TYPE_WIFI:
       return kNetworkCostLow;
     case rtc::ADAPTER_TYPE_CELLULAR:
-      return kNetworkCostHigh;
+    case rtc::ADAPTER_TYPE_CELLULAR_2G:
+    case rtc::ADAPTER_TYPE_CELLULAR_3G:
+    case rtc::ADAPTER_TYPE_CELLULAR_4G:
+    case rtc::ADAPTER_TYPE_CELLULAR_5G:
+      return kNetworkCostCellular;
     case rtc::ADAPTER_TYPE_ANY:
       // Candidates gathered from the any-address/wildcard ports, as backups,
       // are given the maximum cost so that if there are other candidates with
@@ -187,14 +164,13 @@ std::string MakeNetworkKey(const std::string& name,
 }
 // Test if the network name matches the type<number> pattern, e.g. eth0. The
 // matching is case-sensitive.
-bool MatchTypeNameWithIndexPattern(const std::string& network_name,
-                                   const std::string& type_name) {
-  if (network_name.find(type_name) != 0) {
+bool MatchTypeNameWithIndexPattern(absl::string_view network_name,
+                                   absl::string_view type_name) {
+  if (!absl::StartsWith(network_name, type_name)) {
     return false;
   }
-  return std::find_if(network_name.begin() + type_name.size(),
-                      network_name.end(),
-                      [](char c) { return !isdigit(c); }) == network_name.end();
+  return absl::c_none_of(network_name.substr(type_name.size()),
+                         [](char c) { return !isdigit(c); });
 }
 
 // A cautious note that this method may not provide an accurate adapter type
@@ -209,8 +185,13 @@ AdapterType GetAdapterTypeFromName(const char* network_name) {
     // an ifaddr struct. See ConvertIfAddrs in this file.
     return ADAPTER_TYPE_LOOPBACK;
   }
+
   if (MatchTypeNameWithIndexPattern(network_name, "eth")) {
     return ADAPTER_TYPE_ETHERNET;
+  }
+
+  if (MatchTypeNameWithIndexPattern(network_name, "wlan")) {
+    return ADAPTER_TYPE_WIFI;
   }
 
   if (MatchTypeNameWithIndexPattern(network_name, "ipsec") ||
@@ -235,11 +216,9 @@ AdapterType GetAdapterTypeFromName(const char* network_name) {
   if (MatchTypeNameWithIndexPattern(network_name, "rmnet") ||
       MatchTypeNameWithIndexPattern(network_name, "rmnet_data") ||
       MatchTypeNameWithIndexPattern(network_name, "v4-rmnet") ||
-      MatchTypeNameWithIndexPattern(network_name, "v4-rmnet_data")) {
+      MatchTypeNameWithIndexPattern(network_name, "v4-rmnet_data") ||
+      MatchTypeNameWithIndexPattern(network_name, "clat")) {
     return ADAPTER_TYPE_CELLULAR;
-  }
-  if (MatchTypeNameWithIndexPattern(network_name, "wlan")) {
-    return ADAPTER_TYPE_WIFI;
   }
 #endif
 
@@ -318,7 +297,7 @@ void NetworkManagerBase::MergeNetworkList(const NetworkList& new_networks,
   // with the same key.
   std::map<std::string, AddressList> consolidated_address_list;
   NetworkList list(new_networks);
-  std::sort(list.begin(), list.end(), CompareNetworks);
+  absl::c_sort(list, CompareNetworks);
   // First, build a set of network-keys to the ipaddresses.
   for (Network* network : list) {
     bool might_add_to_merged_list = false;
@@ -399,11 +378,10 @@ void NetworkManagerBase::MergeNetworkList(const NetworkList& new_networks,
     for (const auto& kv : networks_map_) {
       Network* network = kv.second;
       // If |network| is in the newly generated |networks_|, it is active.
-      bool found = std::find(networks_.begin(), networks_.end(), network) !=
-                   networks_.end();
+      bool found = absl::c_linear_search(networks_, network);
       network->set_active(found);
     }
-    std::sort(networks_.begin(), networks_.end(), SortNetworks);
+    absl::c_sort(networks_, SortNetworks);
     // Now network interfaces are sorted, we should set the preference value
     // for each of the interfaces we are planning to use.
     // Preference order of network interfaces might have changed from previous
@@ -458,10 +436,9 @@ Network* NetworkManagerBase::GetNetworkFromAddress(
     const rtc::IPAddress& ip) const {
   for (Network* network : networks_) {
     const auto& ips = network->GetIPs();
-    if (std::find_if(ips.begin(), ips.end(),
-                     [ip](const InterfaceAddress& existing_ip) {
-                       return ip == static_cast<rtc::IPAddress>(existing_ip);
-                     }) != ips.end()) {
+    if (absl::c_any_of(ips, [&](const InterfaceAddress& existing_ip) {
+          return ip == static_cast<rtc::IPAddress>(existing_ip);
+        })) {
       return network;
     }
   }
@@ -469,10 +446,7 @@ Network* NetworkManagerBase::GetNetworkFromAddress(
 }
 
 BasicNetworkManager::BasicNetworkManager()
-    : thread_(nullptr),
-      sent_first_update_(false),
-      start_count_(0),
-      ignore_non_default_routes_(false) {}
+    : thread_(nullptr), sent_first_update_(false), start_count_(0) {}
 
 BasicNetworkManager::~BasicNetworkManager() {}
 
@@ -703,7 +677,9 @@ bool BasicNetworkManager::CreateNetworks(bool include_ignored,
 
             break;
           }
-          default: { continue; }
+          default: {
+            continue;
+          }
         }
 
         IPAddress prefix;
@@ -762,33 +738,6 @@ bool BasicNetworkManager::CreateNetworks(bool include_ignored,
 }
 #endif  // WEBRTC_WIN
 
-#if defined(WEBRTC_LINUX)
-bool IsDefaultRoute(const std::string& network_name) {
-  FILE* f = fopen("/proc/net/route", "r");
-  if (!f) {
-    RTC_LOG(LS_WARNING)
-        << "Couldn't read /proc/net/route, skipping default "
-        << "route check (assuming everything is a default route).";
-    return true;
-  }
-  bool is_default_route = false;
-  char line[500];
-  while (fgets(line, sizeof(line), f)) {
-    char iface_name[256];
-    unsigned int iface_ip, iface_gw, iface_mask, iface_flags;
-    if (sscanf(line, "%255s %8X %8X %4X %*d %*u %*d %8X", iface_name, &iface_ip,
-               &iface_gw, &iface_flags, &iface_mask) == 5 &&
-        network_name == iface_name && iface_mask == 0 &&
-        (iface_flags & (RTF_UP | RTF_HOST)) == RTF_UP) {
-      is_default_route = true;
-      break;
-    }
-  }
-  fclose(f);
-  return is_default_route;
-}
-#endif
-
 bool BasicNetworkManager::IsIgnoredNetwork(const Network& network) const {
   // Ignore networks on the explicit ignore list.
   for (const std::string& ignored_name : network_ignore_list_) {
@@ -805,12 +754,6 @@ bool BasicNetworkManager::IsIgnoredNetwork(const Network& network) const {
       strncmp(network.name().c_str(), "vboxnet", 7) == 0) {
     return true;
   }
-#if defined(WEBRTC_LINUX)
-  // Make sure this is a default route, if we're ignoring non-defaults.
-  if (ignore_non_default_routes_ && !IsDefaultRoute(network.name())) {
-    return true;
-  }
-#endif
 #elif defined(WEBRTC_WIN)
   // Ignore any HOST side vmware adapters with a description like:
   // VMware Virtual Ethernet Adapter for VMnet1
@@ -1001,7 +944,7 @@ bool Network::SetIPs(const std::vector<InterfaceAddress>& ips, bool changed) {
   changed = changed || ips.size() != ips_.size();
   if (!changed) {
     for (const InterfaceAddress& ip : ips) {
-      if (std::find(ips_.begin(), ips_.end(), ip) == ips_.end()) {
+      if (!absl::c_linear_search(ips_, ip)) {
         changed = true;
         break;
       }

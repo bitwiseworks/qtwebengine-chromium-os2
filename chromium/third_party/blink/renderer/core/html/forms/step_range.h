@@ -22,7 +22,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_FORMS_STEP_RANGE_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/decimal.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 
@@ -74,6 +74,7 @@ class CORE_EXPORT StepRange {
             const Decimal& minimum,
             const Decimal& maximum,
             bool has_range_limitations,
+            bool supports_reversed_range,
             const Decimal& step,
             const StepDescription&);
 
@@ -83,8 +84,10 @@ class CORE_EXPORT StepRange {
   bool HasStep() const { return has_step_; }
   Decimal Maximum() const { return maximum_; }
   Decimal Minimum() const { return minimum_; }
-  // https://html.spec.whatwg.org/multipage/forms.html#have-range-limitations
+  // https://html.spec.whatwg.org/C/#have-range-limitations
   bool HasRangeLimitations() const { return has_range_limitations_; }
+  // https://html.spec.whatwg.org/C/#has-a-reversed-range
+  bool HasReversedRange() const;
   static Decimal ParseStep(AnyStepHandling,
                            const StepDescription&,
                            const String&);
@@ -123,6 +126,7 @@ class CORE_EXPORT StepRange {
   const StepDescription step_description_;
   const bool has_step_;
   const bool has_range_limitations_;
+  const bool supports_reversed_range_;
 };
 
 }  // namespace blink

@@ -29,10 +29,11 @@
 
 #include "base/memory/ptr_util.h"
 #include "third_party/blink/public/platform/web_audio_source_provider.h"
-#include "third_party/blink/public/platform/web_media_constraints.h"
 #include "third_party/blink/public/platform/web_media_stream.h"
 #include "third_party/blink/public/platform/web_media_stream_source.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
+#include "third_party/blink/renderer/platform/mediastream/media_constraints.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
 
@@ -52,12 +53,12 @@ WebMediaStreamTrack& WebMediaStreamTrack::operator=(
 }
 
 void WebMediaStreamTrack::Initialize(const WebMediaStreamSource& source) {
-  private_ = MediaStreamComponent::Create(source);
+  private_ = MakeGarbageCollected<MediaStreamComponent>(source);
 }
 
 void WebMediaStreamTrack::Initialize(const WebString& id,
                                      const WebMediaStreamSource& source) {
-  private_ = MediaStreamComponent::Create(id, source);
+  private_ = MakeGarbageCollected<MediaStreamComponent>(id, source);
 }
 
 void WebMediaStreamTrack::Reset() {
@@ -83,13 +84,12 @@ WebMediaStreamTrack::ContentHintType WebMediaStreamTrack::ContentHint() const {
   return private_->ContentHint();
 }
 
-WebMediaConstraints WebMediaStreamTrack::Constraints() const {
+MediaConstraints WebMediaStreamTrack::Constraints() const {
   DCHECK(!private_.IsNull());
   return private_->Constraints();
 }
 
-void WebMediaStreamTrack::SetConstraints(
-    const WebMediaConstraints& constraints) {
+void WebMediaStreamTrack::SetConstraints(const MediaConstraints& constraints) {
   DCHECK(!private_.IsNull());
   return private_->SetConstraints(constraints);
 }

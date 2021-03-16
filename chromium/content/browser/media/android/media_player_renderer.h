@@ -12,11 +12,15 @@
 #include "content/common/content_export.h"
 #include "content/public/browser/render_frame_host.h"
 #include "media/base/android/media_player_bridge.h"
-#include "media/base/android/media_player_manager.h"
 #include "media/base/media_log.h"
 #include "media/base/media_resource.h"
 #include "media/base/renderer.h"
 #include "media/base/renderer_client.h"
+#include "media/mojo/mojom/renderer_extensions.mojom.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -30,34 +34,35 @@ class MediaPlayerRendererWebContentsObserver;
 //
 // Each MediaPlayerRenderer is associated with one MediaPlayerRendererClient,
 // living in WMPI in the Renderer process.
-//
-// N.B: MediaPlayerRenderer implements MediaPlayerManager, since
-// MediaPlayerBridge is tightly coupled with the manager abstraction.
-// |player_id| is ignored in all MediaPlayerManager calls, as there is only one
-// MediaPlayer per MediaPlayerRenderer.
-//
-// TODO(tguilbert): Remove the MediaPlayerManager implementation and update
-// MediaPlayerBridge, once WMPA has been deleted. See http://crbug.com/580626
-class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
-                                           public media::MediaPlayerManager {
+class CONTENT_EXPORT MediaPlayerRenderer
+    : public media::Renderer,
+      public media::mojom::MediaPlayerRendererExtension,
+      public media::MediaPlayerBridge::Client {
  public:
+  using RendererExtension = media::mojom::MediaPlayerRendererExtension;
+  using ClientExtension = media::mojom::MediaPlayerRendererClientExtension;
+
   // Permits embedders to handle custom urls.
   static void RegisterMediaUrlInterceptor(
       media::MediaUrlInterceptor* media_url_interceptor);
 
-  MediaPlayerRenderer(int process_id,
-                      int routing_id,
-                      WebContents* web_contents);
+  MediaPlayerRenderer(
+      int process_id,
+      int routing_id,
+      WebContents* web_contents,
+      mojo::PendingReceiver<RendererExtension> renderer_extension_receiver,
+      mojo::PendingRemote<ClientExtension> client_extension_remote);
 
   ~MediaPlayerRenderer() override;
 
   // media::Renderer implementation
   void Initialize(media::MediaResource* media_resource,
                   media::RendererClient* client,
-                  const media::PipelineStatusCB& init_cb) override;
+                  media::PipelineStatusCallback init_cb) override;
   void SetCdm(media::CdmContext* cdm_context,
-              const media::CdmAttachedCB& cdm_attached_cb) override;
-  void Flush(const base::Closure& flush_cb) override;
+              media::CdmAttachedCB cdm_attached_cb) override;
+  void SetLatencyHint(base::Optional<base::TimeDelta> latency_hint) override;
+  void Flush(base::OnceClosure flush_cb) override;
   void StartPlayingFrom(base::TimeDelta time) override;
 
   // N.B: MediaPlayerBridge doesn't support variable playback rates (but it
@@ -68,32 +73,19 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   void SetVolume(float volume) override;
   base::TimeDelta GetMediaTime() override;
 
-  // media::MediaPlayerManager implementation
+  // media::MediaPlayerBridge::Client implementation
   media::MediaResourceGetter* GetMediaResourceGetter() override;
   media::MediaUrlInterceptor* GetMediaUrlInterceptor() override;
-  void OnTimeUpdate(int player_id,
-                    base::TimeDelta current_timestamp,
-                    base::TimeTicks current_time_ticks) override;
-  void OnMediaMetadataChanged(int player_id,
-                              base::TimeDelta duration,
-                              int width,
-                              int height,
-                              bool success) override;
-  void OnPlaybackComplete(int player_id) override;
-  void OnMediaInterrupted(int player_id) override;
-  void OnBufferingUpdate(int player_id, int percentage) override;
-  void OnSeekComplete(int player_id,
-                      const base::TimeDelta& current_time) override;
-  void OnError(int player_id, int error) override;
-  void OnVideoSizeChanged(int player_id, int width, int height) override;
-  media::MediaPlayerAndroid* GetPlayer(int player_id) override;
-  bool RequestPlay(int player_id,
-                   base::TimeDelta duration,
-                   bool has_audio) override;
+  void OnMediaDurationChanged(base::TimeDelta duration) override;
+  void OnPlaybackComplete() override;
+  void OnError(int error) override;
+  void OnVideoSizeChanged(int width, int height) override;
 
   void OnUpdateAudioMutingState(bool muted);
   void OnWebContentsDestroyed();
 
+  // media::mojom::MediaPlayerRendererExtension implementation.
+  //
   // Registers a request in the content::ScopedSurfaceRequestManager, and
   // returns the token associated to the request. The token can then be used to
   // complete the request via the gpu::ScopedSurfaceRequestConduit.
@@ -101,21 +93,22 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   //
   // NOTE: If a request is already pending, calling this method again will
   // safely cancel the pending request before registering a new one.
-  base::UnguessableToken InitiateScopedSurfaceRequest();
+  void InitiateScopedSurfaceRequest(
+      InitiateScopedSurfaceRequestCallback callback) override;
+
   void OnScopedSurfaceRequestCompleted(gl::ScopedJavaSurface surface);
 
  private:
   void CreateMediaPlayer(const media::MediaUrlParams& params,
-                         const media::PipelineStatusCB& init_cb);
-
-  // Used when creating |media_player_|.
-  void OnDecoderResourcesReleased(int player_id);
+                         media::PipelineStatusCallback init_cb);
 
   // Cancels the pending request started by InitiateScopedSurfaceRequest(), if
   // it exists. No-ops otherwise.
   void CancelScopedSurfaceRequest();
 
   void UpdateVolume();
+
+  mojo::Remote<ClientExtension> client_extension_;
 
   // Identifiers to find the RenderFrameHost that created |this|.
   // NOTE: We store these IDs rather than a RenderFrameHost* because we do not
@@ -143,8 +136,10 @@ class CONTENT_EXPORT MediaPlayerRenderer : public media::Renderer,
   MediaPlayerRendererWebContentsObserver* web_contents_observer_;
   float volume_;
 
+  mojo::Receiver<MediaPlayerRendererExtension> renderer_extension_receiver_;
+
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<MediaPlayerRenderer> weak_factory_;
+  base::WeakPtrFactory<MediaPlayerRenderer> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MediaPlayerRenderer);
 };

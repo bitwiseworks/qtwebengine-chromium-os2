@@ -11,16 +11,16 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/tracing/perfetto/producer_host.h"
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/producer.h"
-#include "third_party/perfetto/include/perfetto/tracing/core/tracing_service.h"
-
-namespace perfetto {
-class CommitDataRequest;
-}  // namespace perfetto
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/producer.h"
+#include "third_party/perfetto/include/perfetto/ext/tracing/core/tracing_service.h"
+#include "third_party/perfetto/include/perfetto/tracing/core/forward_decls.h"
 
 namespace tracing {
+
+class PerfettoTaskRunner;
 
 // This class is the service-side part of the Perfetto Producer pair
 // and is responsible for registering any available DataSources
@@ -34,15 +34,18 @@ namespace tracing {
 class ProducerHost : public tracing::mojom::ProducerHost,
                      public perfetto::Producer {
  public:
-  ProducerHost();
+  explicit ProducerHost(PerfettoTaskRunner*);
   ~ProducerHost() override;
 
-  // Called by the ProducerService to register the
-  // Producer with Perfetto and connect to the
-  // corresponding remote ProducerClient.
-  void Initialize(mojom::ProducerClientPtr producer_client,
+  // Called by the ProducerService to register the Producer with Perfetto,
+  // connect to the corresponding remote ProducerClient, and setup the provided
+  // shared memory buffer for tracing data exchange. Returns false if the
+  // service failed to connect the producer or adopt the provided SMB.
+  bool Initialize(mojo::PendingRemote<mojom::ProducerClient> producer_client,
                   perfetto::TracingService* service,
-                  const std::string& name);
+                  const std::string& name,
+                  mojo::ScopedSharedBufferHandle shared_memory,
+                  uint64_t shared_memory_buffer_page_size_bytes);
 
   // perfetto::Producer implementation.
   // Gets called by perfetto::TracingService to toggle specific data sources
@@ -61,21 +64,21 @@ class ProducerHost : public tracing::mojom::ProducerHost,
   void Flush(perfetto::FlushRequestID,
              const perfetto::DataSourceInstanceID* raw_data_source_ids,
              size_t num_data_sources) override;
+  void ClearIncrementalState(
+      const perfetto::DataSourceInstanceID* data_source_ids,
+      size_t num_data_sources) override;
 
   // mojom::ProducerHost implementation.
   // This interface gets called by the per-process ProducerClients
   // to signal that there's changes to be committed to the
   // Shared Memory buffer (like finished chunks).
-  void CommitData(mojom::CommitDataRequestPtr data_request) override;
+  void CommitData(const perfetto::CommitDataRequest& data_request,
+                  CommitDataCallback callback) override;
 
   // Called by the ProducerClient to signal the Host that it can
   // provide a specific data source.
   void RegisterDataSource(
-      mojom::DataSourceRegistrationPtr registration_info) override;
-
-  // Called to signal the Host that a specific flush request
-  // is finished.
-  void NotifyFlushComplete(uint64_t flush_request_id) override;
+      const perfetto::DataSourceDescriptor& registration_info) override;
 
   // Called by the ProducerClient to associate a TraceWriter with a target
   // buffer, which is required to support scraping of the SMB by the service.
@@ -83,13 +86,13 @@ class ProducerHost : public tracing::mojom::ProducerHost,
   void UnregisterTraceWriter(uint32_t writer_id) override;
 
  protected:
-  void OnConnectionError();
 
   base::RepeatingCallback<void(const perfetto::CommitDataRequest&)>
       on_commit_callback_for_testing_;
 
  private:
-  mojom::ProducerClientPtr producer_client_;
+  mojo::Remote<mojom::ProducerClient> producer_client_;
+  PerfettoTaskRunner* task_runner_;
 
  protected:
   // Perfetto guarantees that no OnXX callbacks are invoked on |this|

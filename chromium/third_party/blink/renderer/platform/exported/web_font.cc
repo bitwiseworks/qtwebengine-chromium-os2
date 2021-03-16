@@ -4,7 +4,6 @@
 
 #include "third_party/blink/public/platform/web_font.h"
 
-#include "third_party/blink/public/platform/web_float_point.h"
 #include "third_party/blink/public/platform/web_float_rect.h"
 #include "third_party/blink/public/platform/web_font_description.h"
 #include "third_party/blink/public/platform/web_rect.h"
@@ -17,6 +16,7 @@
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
 #include "third_party/blink/renderer/platform/text/text_run.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -25,9 +25,10 @@ WebFont* WebFont::Create(const WebFontDescription& description) {
 }
 
 class WebFont::Impl final {
+  USING_FAST_MALLOC(WebFont::Impl);
+
  public:
   explicit Impl(const WebFontDescription& description) : font_(description) {
-    font_.Update(nullptr);
   }
 
   const Font& GetFont() const { return font_; }
@@ -37,7 +38,7 @@ class WebFont::Impl final {
 };
 
 WebFont::WebFont(const WebFontDescription& description)
-    : private_(new Impl(description)) {}
+    : private_(std::make_unique<Impl>(description)) {}
 
 WebFont::~WebFont() = default;
 
@@ -79,14 +80,11 @@ float WebFont::XHeight() const {
 
 void WebFont::DrawText(cc::PaintCanvas* canvas,
                        const WebTextRun& run,
-                       const WebFloatPoint& left_baseline,
-                       SkColor color,
-                       const WebRect& clip) const {
+                       const gfx::PointF& left_baseline,
+                       SkColor color) const {
   FontCachePurgePreventer font_cache_purge_preventer;
-  FloatRect text_clip_rect(clip);
   TextRun text_run(run);
   TextRunPaintInfo run_info(text_run);
-  run_info.bounds = text_clip_rect;
 
   PaintRecordBuilder builder;
   GraphicsContext& context = builder.Context();
@@ -95,8 +93,8 @@ void WebFont::DrawText(cc::PaintCanvas* canvas,
     DrawingRecorder recorder(context, builder, DisplayItem::kWebFont);
     context.Save();
     context.SetFillColor(color);
-    context.Clip(text_clip_rect);
-    context.DrawText(private_->GetFont(), run_info, left_baseline);
+    context.DrawText(private_->GetFont(), run_info, FloatPoint(left_baseline),
+                     kInvalidDOMNodeId);
     context.Restore();
   }
 
@@ -113,12 +111,12 @@ int WebFont::OffsetForPosition(const WebTextRun& run, float position) const {
 }
 
 WebFloatRect WebFont::SelectionRectForText(const WebTextRun& run,
-                                           const WebFloatPoint& left_baseline,
+                                           const gfx::PointF& left_baseline,
                                            int height,
                                            int from,
                                            int to) const {
-  return private_->GetFont().SelectionRectForText(run, left_baseline, height,
-                                                  from, to);
+  return private_->GetFont().SelectionRectForText(
+      run, FloatPoint(left_baseline), height, from, to);
 }
 
 }  // namespace blink

@@ -36,18 +36,20 @@
 #include "third_party/blink/renderer/core/dom/events/event_path.h"
 #include "third_party/blink/renderer/core/dom/events/scoped_event_queue.h"
 #include "third_party/blink/renderer/core/dom/events/window_event_context.h"
+#include "third_party/blink/renderer/core/events/keyboard_event.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/frame/ad_tracker.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
+#include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/page/spatial_navigation_controller.h"
 #include "third_party/blink/renderer/core/timing/event_timing.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
@@ -62,7 +64,7 @@ DispatchEventResult EventDispatcher::DispatchEvent(Node& node, Event& event) {
 }
 
 EventDispatcher::EventDispatcher(Node& node, Event& event)
-    : node_(node), event_(event) {
+    : node_(&node), event_(&event) {
   view_ = node.GetDocument().View();
   event_->InitEventPath(*node_);
 }
@@ -76,7 +78,7 @@ void EventDispatcher::DispatchScopedEvent(Node& node, Event& event) {
 
 void EventDispatcher::DispatchSimulatedClick(
     Node& node,
-    Event* underlying_event,
+    const Event* underlying_event,
     SimulatedClickMouseEventOptions mouse_event_options,
     SimulatedClickCreationScope creation_scope) {
   // This persistent vector doesn't cause leaks, because added Nodes are removed
@@ -101,12 +103,14 @@ void EventDispatcher::DispatchSimulatedClick(
                                               underlying_event, creation_scope))
         .Dispatch();
 
+  Element* element = DynamicTo<Element>(node);
   if (mouse_event_options != kSendNoEvents) {
     EventDispatcher(node, *MouseEvent::Create(event_type_names::kMousedown,
                                               node.GetDocument().domWindow(),
                                               underlying_event, creation_scope))
         .Dispatch();
-    node.SetActive(true);
+    if (element)
+      element->SetActive(true);
     EventDispatcher(node, *MouseEvent::Create(event_type_names::kMouseup,
                                               node.GetDocument().domWindow(),
                                               underlying_event, creation_scope))
@@ -114,7 +118,8 @@ void EventDispatcher::DispatchSimulatedClick(
   }
   // Some elements (e.g. the color picker) may set active state to true before
   // calling this method and expect the state to be reset during the call.
-  node.SetActive(false);
+  if (element)
+    element->SetActive(false);
 
   // always send click
   EventDispatcher(node, *MouseEvent::Create(event_type_names::kClick,
@@ -135,20 +140,14 @@ DispatchEventResult EventDispatcher::Dispatch() {
   event_dispatched_ = true;
 #endif
   if (GetEvent().GetEventPath().IsEmpty()) {
-    // eventPath() can be empty if event path is shrinked by relataedTarget
-    // retargeting.
+    // eventPath() can be empty if relatedTarget retargeting has shrunk the
+    // path.
     return DispatchEventResult::kNotCanceled;
   }
   std::unique_ptr<EventTiming> eventTiming;
-  if (origin_trials::EventTimingEnabled(&node_->GetDocument())) {
-    LocalFrame* frame = node_->GetDocument().GetFrame();
-    if (frame && frame->DomWindow()) {
-      UseCounter::Count(node_->GetDocument(),
-                        WebFeature::kPerformanceEventTimingConstructor);
-      eventTiming = std::make_unique<EventTiming>(frame->DomWindow());
-      eventTiming->WillDispatchEvent(*event_);
-    }
-  }
+  LocalFrame* frame = node_->GetDocument().GetFrame();
+  if (frame && frame->DomWindow())
+    eventTiming = EventTiming::Create(frame->DomWindow(), *event_);
   event_->GetEventPath().EnsureWindowEventContext();
 
   const bool is_click =
@@ -156,12 +155,12 @@ DispatchEventResult EventDispatcher::Dispatch() {
 
   if (is_click && event_->isTrusted()) {
     Document& document = node_->GetDocument();
-    LocalFrame* frame = document.GetFrame();
     if (frame) {
       // A genuine mouse click cannot be triggered by script so we don't expect
       // there are any script in the stack.
       DCHECK(!frame->GetAdTracker() ||
-             !frame->GetAdTracker()->IsAdScriptInStack());
+             !frame->GetAdTracker()->IsAdScriptInStack(
+                 AdTracker::StackType::kBottomAndTop));
       if (frame->IsAdSubframe()) {
         UseCounter::Count(document, WebFeature::kAdClick);
       }
@@ -204,9 +203,6 @@ DispatchEventResult EventDispatcher::Dispatch() {
                               pre_dispatch_event_handler_result) ==
       kContinueDispatching) {
     if (DispatchEventAtCapturing() == kContinueDispatching) {
-      // TODO(crbug/882574): Remove these.
-      CHECK(event_->HasEventPath());
-      CHECK(!event_->GetEventPath().IsEmpty());
       if (DispatchEventAtTarget() == kContinueDispatching)
         DispatchEventAtBubbling();
     }
@@ -229,6 +225,7 @@ inline EventDispatchContinuation EventDispatcher::DispatchEventPreProcess(
     pre_dispatch_event_handler_result =
         activation_target->PreDispatchEventHandler(*event_);
   }
+
   return (event_->GetEventPath().IsEmpty() || event_->PropagationStopped())
              ? kDoneDispatching
              : kContinueDispatching;
@@ -247,9 +244,6 @@ inline EventDispatchContinuation EventDispatcher::DispatchEventAtCapturing() {
   for (wtf_size_t i = event_->GetEventPath().size() - 1; i > 0; --i) {
     const NodeEventContext& event_context = event_->GetEventPath()[i];
     if (event_context.CurrentTargetSameAsTarget()) {
-      if (!RuntimeEnabledFeatures::
-              CallCaptureListenersAtCapturePhaseAtShadowHostsEnabled())
-        continue;
       event_->SetEventPhase(Event::kAtTarget);
       event_->SetFireOnlyCaptureListenersAtTarget(true);
       event_context.HandleLocalEvents(*event_);
@@ -280,14 +274,9 @@ inline void EventDispatcher::DispatchEventAtBubbling() {
     if (event_context.CurrentTargetSameAsTarget()) {
       // TODO(hayato): Need to check cancelBubble() also here?
       event_->SetEventPhase(Event::kAtTarget);
-      if (RuntimeEnabledFeatures::
-              CallCaptureListenersAtCapturePhaseAtShadowHostsEnabled()) {
-        event_->SetFireOnlyNonCaptureListenersAtTarget(true);
-        event_context.HandleLocalEvents(*event_);
-        event_->SetFireOnlyNonCaptureListenersAtTarget(false);
-      } else {
-        event_context.HandleLocalEvents(*event_);
-      }
+      event_->SetFireOnlyNonCaptureListenersAtTarget(true);
+      event_context.HandleLocalEvents(*event_);
+      event_->SetFireOnlyNonCaptureListenersAtTarget(false);
     } else if (event_->bubbles() && !event_->cancelBubble()) {
       event_->SetEventPhase(Event::kBubblingPhase);
       event_context.HandleLocalEvents(*event_);
@@ -318,8 +307,9 @@ inline void EventDispatcher::DispatchEventPostProcess(
   // 17. Set event’s currentTarget attribute to null.
   event_->SetCurrentTarget(nullptr);
 
-  bool is_click = event_->IsMouseEvent() &&
-                  ToMouseEvent(*event_).type() == event_type_names::kClick;
+  auto* mouse_event = DynamicTo<MouseEvent>(event_);
+  bool is_click =
+      mouse_event && mouse_event->type() == event_type_names::kClick;
   if (is_click) {
     // Fire an accessibility event indicating a node was clicked on.  This is
     // safe if event_->target()->ToNode() returns null.
@@ -339,9 +329,7 @@ inline void EventDispatcher::DispatchEventPostProcess(
 
   // The DOM Events spec says that events dispatched by JS (other than "click")
   // should not have their default handlers invoked.
-  bool is_trusted_or_click =
-      !RuntimeEnabledFeatures::TrustedEventsDefaultActionEnabled() ||
-      event_->isTrusted() || is_click;
+  bool is_trusted_or_click = event_->isTrusted() || is_click;
 
   // For Android WebView (distinguished by wideViewportQuirkEnabled)
   // enable untrusted events for mouse down on select elements because
@@ -349,7 +337,7 @@ inline void EventDispatcher::DispatchEventPostProcess(
   // TODO(dtapuska): Change this to a target SDK quirk crbug.com/643705
   if (!is_trusted_or_click && event_->IsMouseEvent() &&
       event_->type() == event_type_names::kMousedown &&
-      IsHTMLSelectElement(*node_)) {
+      IsA<HTMLSelectElement>(*node_)) {
     if (Settings* settings = node_->GetDocument().GetSettings()) {
       is_trusted_or_click = settings->GetWideViewportQuirkEnabled();
     }
@@ -362,7 +350,6 @@ inline void EventDispatcher::DispatchEventPostProcess(
       is_trusted_or_click) {
     // Non-bubbling events call only one default event handler, the one for the
     // target.
-    node_->WillCallDefaultEventHandler(*event_);
     node_->DefaultEventHandler(*event_);
     DCHECK(!event_->defaultPrevented());
     // For bubbling events, call default event handlers on the same targets in
@@ -370,8 +357,6 @@ inline void EventDispatcher::DispatchEventPostProcess(
     if (!event_->DefaultHandled() && event_->bubbles()) {
       wtf_size_t size = event_->GetEventPath().size();
       for (wtf_size_t i = 1; i < size; ++i) {
-        event_->GetEventPath()[i].GetNode().WillCallDefaultEventHandler(
-            *event_);
         event_->GetEventPath()[i].GetNode().DefaultEventHandler(*event_);
         DCHECK(!event_->defaultPrevented());
         if (event_->DefaultHandled())
@@ -380,12 +365,22 @@ inline void EventDispatcher::DispatchEventPostProcess(
     }
   }
 
+  auto* keyboard_event = DynamicTo<KeyboardEvent>(event_);
+  if (Page* page = node_->GetDocument().GetPage()) {
+    if (page->GetSettings().GetSpatialNavigationEnabled() &&
+        is_trusted_or_click && keyboard_event &&
+        keyboard_event->key() == "Enter" &&
+        event_->type() == event_type_names::kKeyup) {
+      page->GetSpatialNavigationController().ResetEnterKeyState();
+    }
+  }
+
   // Track the usage of sending a mousedown event to a select element to force
   // it to open. This measures a possible breakage of not allowing untrusted
   // events to open select boxes.
   if (!event_->isTrusted() && event_->IsMouseEvent() &&
       event_->type() == event_type_names::kMousedown &&
-      IsHTMLSelectElement(*node_)) {
+      IsA<HTMLSelectElement>(*node_)) {
     UseCounter::Count(node_->GetDocument(),
                       WebFeature::kUntrustedMouseDownEventDispatchedToSelect);
   }

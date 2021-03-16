@@ -20,17 +20,16 @@
 #include <array>
 #include <limits>
 
-#include "perfetto/base/string_view.h"
-#include "perfetto/base/utils.h"
-#include "src/trace_processor/trace_storage.h"
+#include "perfetto/ext/base/string_view.h"
+#include "perfetto/ext/base/utils.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 class TraceProcessorContext;
 
-// This class takes sched events from the trace and processes them to store
-// as sched slices.
+// Tracks sched events, instants, and counters.
 class EventTracker {
  public:
   explicit EventTracker(TraceProcessorContext*);
@@ -38,62 +37,64 @@ class EventTracker {
   EventTracker& operator=(const EventTracker&) = delete;
   virtual ~EventTracker();
 
-  StringId GetThreadNameId(uint32_t tid, base::StringView comm);
+  // Adds a counter event to the counters table returning the index of the
+  // newly added row.
+  virtual base::Optional<CounterId> PushCounter(int64_t timestamp,
+                                                double value,
+                                                TrackId track_id);
 
-  // This method is called when a sched switch event is seen in the trace.
-  virtual void PushSchedSwitch(uint32_t cpu,
-                               int64_t timestamp,
-                               uint32_t prev_pid,
-                               int64_t prev_state,
-                               uint32_t next_pid,
-                               base::StringView next_comm,
-                               int32_t next_priority);
+  // Adds a counter event to the counters table for counter events which
+  // should be associated with a process but only have a thread context
+  // (e.g. rss_stat events).
+  //
+  // This function will resolve the utid to a upid when the events are
+  // flushed (see |FlushPendingEvents()|).
+  virtual base::Optional<CounterId> PushProcessCounterForThread(
+      int64_t timestamp,
+      double value,
+      StringId name_id,
+      UniqueTid utid);
 
-  // This method is called when a cpu freq event is seen in the trace.
-  virtual RowId PushCounter(int64_t timestamp,
-                            double value,
-                            StringId name_id,
-                            int64_t ref,
-                            RefType ref_type);
+  // This method is called when a instant event is seen in the trace.
+  virtual InstantId PushInstant(int64_t timestamp,
+                                StringId name_id,
+                                int64_t ref,
+                                RefType ref_type,
+                                bool resolve_utid_to_upid = false);
+
+  // Called at the end of trace to flush any events which are pending to the
+  // storage.
+  void FlushPendingEvents();
+
+  // For SchedEventTracker.
+  int64_t max_timestamp() const { return max_timestamp_; }
+  void UpdateMaxTimestamp(int64_t ts) {
+    max_timestamp_ = std::max(ts, max_timestamp_);
+  }
 
  private:
-  // Used as the key in |prev_counters_| to find the previous counter with the
-  // same ref and name_id.
-  struct CounterKey {
-    int64_t ref;       // cpu, utid, ...
-    StringId name_id;  // "cpufreq"
-
-    bool operator==(const CounterKey& other) const {
-      return (ref == other.ref && name_id == other.name_id);
-    }
-
-    struct Hasher {
-      size_t operator()(const CounterKey& c) const {
-        size_t const h1(std::hash<int64_t>{}(c.ref));
-        size_t const h2(std::hash<size_t>{}(c.name_id));
-        return h1 ^ (h2 << 1);
-      }
-    };
+  // Represents a counter event which is currently pending upid resolution.
+  struct PendingUpidResolutionCounter {
+    uint32_t row = 0;
+    StringId name_id = kNullStringId;
+    UniqueTid utid = 0;
   };
 
-  // Represents a slice which is currently pending.
-  struct PendingSchedSlice {
-    size_t storage_index = std::numeric_limits<size_t>::max();
-    uint32_t pid = 0;
+  // Represents a instant event which is currently pending upid resolution.
+  struct PendingUpidResolutionInstant {
+    uint32_t row = 0;
+    UniqueTid utid = 0;
   };
 
-  // Store pending sched slices for each CPU.
-  std::array<PendingSchedSlice, base::kMaxCpus> pending_sched_per_cpu_{};
+  // Store the rows in the counters table which need upids resolved.
+  std::vector<PendingUpidResolutionCounter> pending_upid_resolution_counter_;
 
-  // Store pending counters for each counter key.
-  std::unordered_map<CounterKey, size_t, CounterKey::Hasher>
-      pending_counters_per_key_;
+  // Store the rows in the instants table which need upids resolved.
+  std::vector<PendingUpidResolutionInstant> pending_upid_resolution_instant_;
 
   // Timestamp of the previous event. Used to discard events arriving out
   // of order.
-  int64_t prev_timestamp_ = 0;
-
-  StringId const idle_string_id_;
+  int64_t max_timestamp_ = 0;
 
   TraceProcessorContext* const context_;
 };

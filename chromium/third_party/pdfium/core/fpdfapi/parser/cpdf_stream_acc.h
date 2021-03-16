@@ -9,7 +9,7 @@
 
 #include <memory>
 
-#include "core/fpdfapi/parser/cpdf_stream.h"
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/maybe_owned.h"
@@ -17,6 +17,7 @@
 #include "third_party/base/span.h"
 
 class CPDF_Dictionary;
+class CPDF_Stream;
 
 class CPDF_StreamAcc final : public Retainable {
  public:
@@ -36,9 +37,9 @@ class CPDF_StreamAcc final : public Retainable {
 
   uint8_t* GetData() const;
   uint32_t GetSize() const;
-  pdfium::span<uint8_t> GetSpan() const {
-    return pdfium::make_span(GetData(), GetSize());
-  }
+  pdfium::span<uint8_t> GetSpan();
+  pdfium::span<const uint8_t> GetSpan() const;
+  ByteString ComputeDigest() const;
   ByteString GetImageDecoder() const { return m_ImageDecoder; }
   const CPDF_Dictionary* GetImageParam() const { return m_pImageParam.Get(); }
   std::unique_ptr<uint8_t, FxFreeDeleter> DetachData();
@@ -48,7 +49,6 @@ class CPDF_StreamAcc final : public Retainable {
   ~CPDF_StreamAcc() override;
 
   void LoadAllData(bool bRawAccess, uint32_t estimated_size, bool bImageAcc);
-
   void ProcessRawData();
   void ProcessFilteredData(uint32_t estimated_size, bool bImageAcc);
 
@@ -58,8 +58,8 @@ class CPDF_StreamAcc final : public Retainable {
   MaybeOwned<uint8_t, FxFreeDeleter> m_pData;
   uint32_t m_dwSize = 0;
   ByteString m_ImageDecoder;
-  UnownedPtr<const CPDF_Dictionary> m_pImageParam;
-  UnownedPtr<const CPDF_Stream> const m_pStream;
+  RetainPtr<const CPDF_Dictionary> m_pImageParam;
+  RetainPtr<const CPDF_Stream> const m_pStream;
 };
 
 #endif  // CORE_FPDFAPI_PARSER_CPDF_STREAM_ACC_H_

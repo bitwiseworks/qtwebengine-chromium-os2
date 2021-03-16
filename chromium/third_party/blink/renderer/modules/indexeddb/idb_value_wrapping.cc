@@ -87,12 +87,8 @@ void IDBValueWrapper::Clone(ScriptState* script_state, ScriptValue* clone) {
   DCHECK(!done_cloning_) << __func__ << " called after DoneCloning()";
 #endif  // DCHECK_IS_ON()
 
-  bool read_wasm_from_stream = true;
-  // It is safe to unconditionally enable WASM module decoding because the
-  // relevant checks were already performed in SerializedScriptValue::Serialize,
-  // called by the IDBValueWrapper constructor.
   *clone = DeserializeScriptValue(script_state, serialized_value_.get(),
-                                  &blob_info_, read_wasm_from_stream);
+                                  &blob_info_);
 }
 
 // static
@@ -143,7 +139,7 @@ bool IDBValueWrapper::WrapIfBiggerThan(unsigned max_bytes) {
 
   // TODO(pwnall): The MIME type should probably be an atomic string.
   String mime_type(kWrapMimeType);
-  std::unique_ptr<BlobData> wrapper_blob_data = BlobData::Create();
+  auto wrapper_blob_data = std::make_unique<BlobData>();
   wrapper_blob_data->SetContentType(String(kWrapMimeType));
   wrapper_blob_data->AppendBytes(wire_data_.data(), wire_data_size);
   scoped_refptr<BlobDataHandle> wrapper_handle =

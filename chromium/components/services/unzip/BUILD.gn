@@ -2,12 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//services/service_manager/public/service_manifest.gni")
-
 source_set("lib") {
   sources = [
-    "unzip_service.cc",
-    "unzip_service.h",
     "unzipper_impl.cc",
     "unzipper_impl.h",
   ]
@@ -19,9 +15,29 @@ source_set("lib") {
   ]
 
   public_deps = [
-    "//components/services/filesystem/public/interfaces",
-    "//components/services/unzip/public/interfaces",
-    "//services/service_manager/public/cpp",
+    "//components/services/filesystem/public/mojom",
+    "//components/services/unzip/public/mojom",
+  ]
+}
+
+source_set("in_process") {
+  # NOTE: In-process unzipping is unsafe! Unfortunately on iOS we have no other
+  # choice. On all other platforms, this target is restricted to tests.
+  testonly = !is_ios
+
+  sources = [
+    "in_process_unzipper.cc",
+    "in_process_unzipper.h",
+  ]
+
+  deps = [
+    ":lib",
+    "//base",
+  ]
+
+  public_deps = [
+    "//components/services/unzip/public/mojom",
+    "//mojo/public/cpp/bindings",
   ]
 }
 
@@ -32,18 +48,14 @@ bundle_data("unit_tests_bundle_data") {
     "//components/test/data/unzip_service/bad_archive.zip",
     "//components/test/data/unzip_service/good_archive.zip",
   ]
-  outputs = [
-    "{{bundle_resources_dir}}/" +
-        "{{source_root_relative_dir}}/{{source_file_part}}",
-  ]
+  outputs = [ "{{bundle_resources_dir}}/" +
+              "{{source_root_relative_dir}}/{{source_file_part}}" ]
 }
 
 source_set("unit_tests") {
   testonly = true
 
-  sources = [
-    "public/cpp/unzip_unittest.cc",
-  ]
+  sources = [ "public/cpp/unzip_unittest.cc" ]
 
   deps = [
     ":lib",
@@ -51,12 +63,6 @@ source_set("unit_tests") {
     "//base",
     "//base/test:test_support",
     "//components/services/unzip/public/cpp",
-    "//services/service_manager/public/cpp/test:test_support",
     "//testing/gtest",
   ]
-}
-
-service_manifest("manifest") {
-  name = "unzip_service"
-  source = "manifest.json"
 }

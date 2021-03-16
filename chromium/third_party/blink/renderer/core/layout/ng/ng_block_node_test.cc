@@ -4,13 +4,28 @@
 
 #include "third_party/blink/renderer/core/layout/ng/ng_block_node.h"
 
-#include "third_party/blink/renderer/core/layout/min_max_size.h"
+#include "third_party/blink/renderer/core/layout/min_max_sizes.h"
 #include "third_party/blink/renderer/core/layout/ng/ng_layout_test.h"
 
 namespace blink {
 namespace {
 
 using NGBlockNodeForTest = NGLayoutTest;
+
+TEST_F(NGBlockNodeForTest, IsFloatingForOutOfFlowFloating) {
+  SetBodyInnerHTML(R"HTML(
+    <!DOCTYPE html>
+    <style>
+    #container {
+      float: left;
+      position: absolute;
+    }
+    </style>
+    <div id=container></div>
+  )HTML");
+  NGBlockNode container(ToLayoutBox(GetLayoutObjectByElementId("container")));
+  EXPECT_FALSE(container.IsFloating());
+}
 
 TEST_F(NGBlockNodeForTest, ChildInlineAndBlock) {
   SetBodyInnerHTML(R"HTML(
@@ -97,7 +112,7 @@ TEST_F(NGBlockNodeForTest, ChildFloatOnly) {
   )HTML");
   NGBlockNode container(ToLayoutBox(GetLayoutObjectByElementId("container")));
   NGLayoutInputNode child1 = container.FirstChild();
-  EXPECT_TRUE(child1 && child1.IsInline());
+  EXPECT_TRUE(child1 && child1.IsBlock());
   NGLayoutInputNode child2 = child1.NextSibling();
   EXPECT_EQ(child2, nullptr);
 }
@@ -114,7 +129,7 @@ TEST_F(NGBlockNodeForTest, ChildFloatWithSpaces) {
   )HTML");
   NGBlockNode container(ToLayoutBox(GetLayoutObjectByElementId("container")));
   NGLayoutInputNode child1 = container.FirstChild();
-  EXPECT_TRUE(child1 && child1.IsInline());
+  EXPECT_TRUE(child1 && child1.IsBlock());
   NGLayoutInputNode child2 = child1.NextSibling();
   EXPECT_EQ(child2, nullptr);
 }
@@ -159,8 +174,9 @@ TEST_F(NGBlockNodeForTest, MinAndMaxContent) {
   const int kWidth = 30;
 
   NGBlockNode box(ToLayoutBox(GetLayoutObjectByElementId("box")));
-  MinMaxSize sizes =
-      box.ComputeMinMaxSize(WritingMode::kHorizontalTb, MinMaxSizeInput());
+  MinMaxSizes sizes = box.ComputeMinMaxSizes(
+      WritingMode::kHorizontalTb,
+      MinMaxSizesInput(/* percentage_resolution_block_size */ LayoutUnit()));
   EXPECT_EQ(LayoutUnit(kWidth), sizes.min_size);
   EXPECT_EQ(LayoutUnit(kWidth), sizes.max_size);
 }

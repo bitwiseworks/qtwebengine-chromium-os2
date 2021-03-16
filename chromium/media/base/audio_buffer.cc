@@ -82,6 +82,8 @@ AudioBuffer::AudioBuffer(SampleFormat sample_format,
   if (!create_buffer)
     return;
 
+  CHECK_NE(sample_format, kUnknownSampleFormat);
+
   int data_size_per_channel = frame_count * bytes_per_channel;
   if (IsPlanar(sample_format)) {
     DCHECK(!IsBitstreamFormat()) << sample_format_;
@@ -240,7 +242,7 @@ void AudioBuffer::AdjustSampleRate(int sample_rate) {
 void AudioBuffer::ReadFrames(int frames_to_copy,
                              int source_frame_offset,
                              int dest_frame_offset,
-                             AudioBus* dest) {
+                             AudioBus* dest) const {
   // Deinterleave each channel (if necessary) and convert to 32bit
   // floating-point with nominal range -1.0 -> +1.0 (if necessary).
 
@@ -411,7 +413,7 @@ void AudioBuffer::TrimRange(int start, int end) {
   TrimEnd(frames_to_trim);
 }
 
-bool AudioBuffer::IsBitstreamFormat() {
+bool AudioBuffer::IsBitstreamFormat() const {
   return IsBitstream(sample_format_);
 }
 

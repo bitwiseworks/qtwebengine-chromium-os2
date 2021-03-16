@@ -9,8 +9,8 @@
 #include "base/memory/scoped_refptr.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_localized_string.h"
 #include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/platform/fonts/font.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
@@ -75,9 +75,8 @@ void DrawImageExpectingGrayBoxOnly(PlaceholderImage& image,
   EXPECT_CALL(canvas, drawTextBlob(_, _, _, _)).Times(0);
 
   image.Draw(&canvas, PaintFlags(), dest_rect,
-             FloatRect(0.0f, 0.0f, 100.0f, 100.0f),
-             kDoNotRespectImageOrientation, Image::kClampImageToSourceRect,
-             Image::kUnspecifiedDecode);
+             FloatRect(0.0f, 0.0f, 100.0f, 100.0f), kRespectImageOrientation,
+             Image::kClampImageToSourceRect, Image::kUnspecifiedDecode);
 }
 
 void DrawImageExpectingIconOnly(PlaceholderImage& image,
@@ -134,7 +133,6 @@ float GetExpectedPlaceholderTextWidth(const StringView& text,
   description.SetWeight(FontSelectionValue(500));
 
   Font font(description);
-  font.Update(nullptr);
   return font.Width(TextRun(text));
 }
 
@@ -209,19 +207,19 @@ class TestingUnitsPlatform : public TestingPlatformSupport {
   TestingUnitsPlatform() {}
   ~TestingUnitsPlatform() override;
 
-  WebString QueryLocalizedString(WebLocalizedString::Name name,
+  WebString QueryLocalizedString(int resource_id,
                                  const WebString& parameter) override {
     String p = parameter;
-    switch (name) {
-      case WebLocalizedString::kUnitsKibibytes:
+    switch (resource_id) {
+      case IDS_UNITS_KIBIBYTES:
         return String(p + " KB");
-      case WebLocalizedString::kUnitsMebibytes:
+      case IDS_UNITS_MEBIBYTES:
         return String(p + " MB");
-      case WebLocalizedString::kUnitsGibibytes:
+      case IDS_UNITS_GIBIBYTES:
         return String(p + " GB");
-      case WebLocalizedString::kUnitsTebibytes:
+      case IDS_UNITS_TEBIBYTES:
         return String(p + " TB");
-      case WebLocalizedString::kUnitsPebibytes:
+      case IDS_UNITS_PEBIBYTES:
         return String(p + " PB");
       default:
         return WebString();

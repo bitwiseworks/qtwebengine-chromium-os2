@@ -4,7 +4,7 @@
 
 #include "net/base/net_errors.h"
 
-#include "net/third_party/quic/core/quic_error_codes.h"
+#include "net/third_party/quiche/src/quic/core/quic_error_codes.h"
 
 namespace net {
 
@@ -22,7 +22,7 @@ std::string ExtendedErrorToString(int error, int extended_error_code) {
 }
 
 std::string ErrorToShortString(int error) {
-  if (error == 0)
+  if (error == OK)
     return "OK";
 
   const char* error_string;
@@ -62,9 +62,9 @@ bool IsClientCertificateError(int error) {
   }
 }
 
-bool IsDnsError(int error) {
-  return (error == ERR_NAME_NOT_RESOLVED ||
-          error == ERR_NAME_RESOLUTION_FAILED);
+bool IsHostnameResolutionError(int error) {
+  DCHECK_NE(ERR_NAME_RESOLUTION_FAILED, error);
+  return error == ERR_NAME_NOT_RESOLVED;
 }
 
 Error FileErrorToNetError(base::File::Error file_error) {

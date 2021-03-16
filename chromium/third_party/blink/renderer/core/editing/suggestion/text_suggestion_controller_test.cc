@@ -12,8 +12,10 @@
 #include "third_party/blink/renderer/core/editing/spellcheck/spell_checker.h"
 #include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/editing/visible_selection.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 
-using ws::mojom::ImeTextSpanThickness;
+using ui::mojom::ImeTextSpanThickness;
+using ui::mojom::ImeTextSpanUnderlineStyle;
 
 namespace blink {
 
@@ -27,7 +29,7 @@ class TextSuggestionControllerTest : public EditingTestBase {
   }
 
   void ShowSuggestionMenu(
-      const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>&
+      const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
           node_suggestion_marker_pairs,
       size_t max_number_of_suggestions) {
     GetDocument().GetFrame()->GetTextSuggestionController().ShowSuggestionMenu(
@@ -56,7 +58,8 @@ TEST_F(TextSuggestionControllerTest, ApplySpellCheckSuggestion) {
 
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 0), Position(text, 8)), Color::kBlack,
-      ImeTextSpanThickness::kThin, Color::kBlack);
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid,
+      Color::kBlack, Color::kBlack);
   // Select immediately before misspelling
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -84,7 +87,7 @@ TEST_F(TextSuggestionControllerTest, ApplyTextSuggestion) {
       "word1 word2 word3 word4"
       "</div>");
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Add marker on "word1". This marker should *not* be cleared by the
   // replace operation.
@@ -169,8 +172,7 @@ TEST_F(TextSuggestionControllerTest, ApplyTextSuggestion) {
   EXPECT_EQ(6u, markers[2]->StartOffset());
   EXPECT_EQ(13u, markers[2]->EndOffset());
 
-  const SuggestionMarker* const suggestion_marker =
-      ToSuggestionMarker(markers[2]);
+  const auto* const suggestion_marker = To<SuggestionMarker>(markers[2].Get());
   EXPECT_EQ(1u, suggestion_marker->Suggestions().size());
   EXPECT_EQ(String("word2 word3"), suggestion_marker->Suggestions()[0]);
 
@@ -196,7 +198,7 @@ TEST_F(TextSuggestionControllerTest,
       "mispelled"
       "</div>");
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Add marker on "mispelled". This marker should be cleared by the replace
   // operation.
@@ -210,7 +212,8 @@ TEST_F(TextSuggestionControllerTest,
   // Check the tag for the marker that was just added (the current tag value is
   // not reset between test cases).
   int32_t marker_tag =
-      ToSuggestionMarker(GetDocument().Markers().MarkersFor(*text)[0])->Tag();
+      To<SuggestionMarker>(GetDocument().Markers().MarkersFor(*text)[0].Get())
+          ->Tag();
 
   // Select immediately before "mispelled".
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
@@ -237,7 +240,8 @@ TEST_F(TextSuggestionControllerTest, DeleteActiveSuggestionRange_DeleteAtEnd) {
   // Mark "word2" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 6), Position(text, 11)),
-      Color::kTransparent, ImeTextSpanThickness::kThin, Color::kBlack);
+      Color::kTransparent, ImeTextSpanThickness::kThin,
+      ImeTextSpanUnderlineStyle::kSolid, Color::kBlack, Color::kBlack);
   // Select immediately before word2
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -263,7 +267,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word2" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 6), Position(text, 11)),
-      Color::kTransparent, ImeTextSpanThickness::kThin, Color::kBlack);
+      Color::kTransparent, ImeTextSpanThickness::kThin,
+      ImeTextSpanUnderlineStyle::kSolid, Color::kBlack, Color::kBlack);
   // Select immediately before word2
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -290,7 +295,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word1" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 0), Position(text, 5)), Color::kTransparent,
-      ImeTextSpanThickness::kThin, Color::kBlack);
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid,
+      Color::kBlack, Color::kBlack);
   // Select immediately before word1
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -318,7 +324,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word1" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 0), Position(text, 5)), Color::kTransparent,
-      ImeTextSpanThickness::kThin, Color::kBlack);
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid,
+      Color::kBlack, Color::kBlack);
   // Select immediately before word1
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -349,7 +356,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word2" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 5), Position(text, 10)),
-      Color::kTransparent, ImeTextSpanThickness::kThin, Color::kBlack);
+      Color::kTransparent, ImeTextSpanThickness::kThin,
+      ImeTextSpanUnderlineStyle::kSolid, Color::kBlack, Color::kBlack);
   // Select immediately before word2
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -375,7 +383,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word2" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 6), Position(text, 11)),
-      Color::kTransparent, ImeTextSpanThickness::kThin, Color::kBlack);
+      Color::kTransparent, ImeTextSpanThickness::kThin,
+      ImeTextSpanUnderlineStyle::kSolid, Color::kBlack, Color::kBlack);
   // Select immediately before word2
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -401,7 +410,8 @@ TEST_F(TextSuggestionControllerTest,
   // Mark "word1" as the active suggestion range
   GetDocument().Markers().AddActiveSuggestionMarker(
       EphemeralRange(Position(text, 0), Position(text, 5)), Color::kTransparent,
-      ImeTextSpanThickness::kThin, Color::kBlack);
+      ImeTextSpanThickness::kThin, ImeTextSpanUnderlineStyle::kSolid,
+      Color::kBlack, Color::kBlack);
   // Select immediately before word1
   GetDocument().GetFrame()->Selection().SetSelectionAndEndTyping(
       SelectionInDOMTree::Builder()
@@ -460,7 +470,7 @@ TEST_F(TextSuggestionControllerTest,
 
 TEST_F(TextSuggestionControllerTest, CallbackHappensAfterDocumentDestroyed) {
   LocalFrame& frame = *GetDocument().GetFrame();
-  GetDocument().Shutdown();
+  frame.DomWindow()->FrameDestroyed();
 
   // Shouldn't crash
   frame.GetTextSuggestionController().SuggestionMenuTimeoutCallback(0);
@@ -472,7 +482,7 @@ TEST_F(TextSuggestionControllerTest, SuggestionMarkerWithEmptySuggestion) {
       "hello"
       "</div>");
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Set suggestion marker with empty suggestion list.
   GetDocument().Markers().AddSuggestionMarker(
@@ -504,7 +514,7 @@ TEST_F(TextSuggestionControllerTest, SuggestionMarkerWithEmptySuggestion) {
   const EphemeralRangeInFlatTree& range_to_check =
       ComputeRangeSurroundingCaret(selection.Start());
 
-  const HeapVector<std::pair<Member<Node>, Member<DocumentMarker>>>&
+  const HeapVector<std::pair<Member<const Text>, Member<DocumentMarker>>>&
       node_suggestion_marker_pairs =
           GetFrame().GetDocument()->Markers().MarkersIntersectingRange(
               range_to_check, DocumentMarker::MarkerTypes::Suggestion());
@@ -521,7 +531,7 @@ TEST_F(TextSuggestionControllerTest, SuggestionMarkerWithSuggestion) {
       "hello"
       "</div>");
   Element* div = GetDocument().QuerySelector("div");
-  Text* text = ToText(div->firstChild());
+  auto* text = To<Text>(div->firstChild());
 
   // Set suggestion marker with two suggestions.
   GetDocument().Markers().AddSuggestionMarker(

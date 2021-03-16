@@ -7,8 +7,10 @@
 #include <stddef.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/sys_byteorder.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "jingle/glue/fake_ssl_client_socket.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -57,8 +59,8 @@ P2PSocketTcp::SendBuffer::~SendBuffer() = default;
 
 P2PSocketTcpBase::P2PSocketTcpBase(
     Delegate* delegate,
-    mojom::P2PSocketClientPtr client,
-    mojom::P2PSocketRequest socket,
+    mojo::PendingRemote<mojom::P2PSocketClient> client,
+    mojo::PendingReceiver<mojom::P2PSocket> socket,
     P2PSocketType type,
     ProxyResolvingClientSocketFactory* proxy_resolving_socket_factory)
     : P2PSocket(delegate, std::move(client), std::move(socket), P2PSocket::TCP),
@@ -234,8 +236,16 @@ bool P2PSocketTcpBase::OnPacket(std::vector<int8_t> data) {
     }
   }
 
-  client_->DataReceived(remote_address_.ip_address, data,
-                        base::TimeTicks::Now());
+  if (data.size() == 0) {
+    // https://tools.ietf.org/html/rfc4571#section-2 allows null packets which
+    // are ignored.
+    LOG(WARNING) << "Ignoring empty RTP-over-TCP frame.";
+    return true;
+  }
+
+  client_->DataReceived(
+      remote_address_.ip_address, data,
+      base::TimeTicks() + base::TimeDelta::FromNanoseconds(rtc::TimeNanos()));
 
   delegate_->DumpPacket(
       base::make_span(reinterpret_cast<const uint8_t*>(&data[0]), data.size()),
@@ -295,9 +305,9 @@ bool P2PSocketTcpBase::HandleWriteResult(int result) {
 
   write_buffer_.buffer->DidConsume(result);
   if (write_buffer_.buffer->BytesRemaining() == 0) {
-    base::TimeTicks send_time = base::TimeTicks::Now();
+    int64_t send_time_ms = rtc::TimeMillis();
     client_->SendComplete(
-        P2PSendPacketMetrics(0, write_buffer_.rtc_packet_id, send_time));
+        P2PSendPacketMetrics(0, write_buffer_.rtc_packet_id, send_time_ms));
     if (write_queue_.empty()) {
       write_buffer_.buffer = nullptr;
       write_buffer_.rtc_packet_id = -1;
@@ -392,8 +402,8 @@ void P2PSocketTcpBase::SetOption(P2PSocketOption option, int32_t value) {
 
 P2PSocketTcp::P2PSocketTcp(
     Delegate* delegate,
-    mojom::P2PSocketClientPtr client,
-    mojom::P2PSocketRequest socket,
+    mojo::PendingRemote<mojom::P2PSocketClient> client,
+    mojo::PendingReceiver<mojom::P2PSocket> socket,
     P2PSocketType type,
     ProxyResolvingClientSocketFactory* proxy_resolving_socket_factory)
     : P2PSocketTcpBase(delegate,
@@ -442,8 +452,7 @@ void P2PSocketTcp::DoSend(
       reinterpret_cast<uint8_t*>(send_buffer.buffer->data()) +
           kPacketHeaderSize,
       send_buffer.buffer->BytesRemaining() - kPacketHeaderSize,
-      options.packet_time_params,
-      (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds());
+      options.packet_time_params, rtc::TimeMicros());
 
   WriteOrQueue(send_buffer);
 }
@@ -451,8 +460,8 @@ void P2PSocketTcp::DoSend(
 // P2PSocketStunTcp
 P2PSocketStunTcp::P2PSocketStunTcp(
     Delegate* delegate,
-    mojom::P2PSocketClientPtr client,
-    mojom::P2PSocketRequest socket,
+    mojo::PendingRemote<mojom::P2PSocketClient> client,
+    mojo::PendingReceiver<mojom::P2PSocket> socket,
     P2PSocketType type,
     ProxyResolvingClientSocketFactory* proxy_resolving_socket_factory)
     : P2PSocketTcpBase(delegate,
@@ -522,8 +531,7 @@ void P2PSocketStunTcp::DoSend(
 
   cricket::ApplyPacketOptions(
       reinterpret_cast<uint8_t*>(send_buffer.buffer->data()), data.size(),
-      options.packet_time_params,
-      (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds());
+      options.packet_time_params, rtc::TimeMicros());
 
   if (pad_bytes) {
     char padding[4] = {0};

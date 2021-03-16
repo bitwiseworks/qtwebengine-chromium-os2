@@ -8,7 +8,7 @@
 #include "third_party/blink/renderer/core/offscreencanvas/offscreen_canvas.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -24,8 +24,8 @@ class MODULES_EXPORT OffscreenCanvasModule {
                          OffscreenCanvas&,
                          const String&,
                          const CanvasContextCreationAttributesModule*,
-                         ExceptionState&,
-                         OffscreenRenderingContext&);
+                         OffscreenRenderingContext&,
+                         ExceptionState&);
 };
 
 }  // namespace blink

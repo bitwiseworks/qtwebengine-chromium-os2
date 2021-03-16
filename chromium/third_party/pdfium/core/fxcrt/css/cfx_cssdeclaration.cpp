@@ -6,6 +6,7 @@
 
 #include "core/fxcrt/css/cfx_cssdeclaration.h"
 
+#include <cmath>
 #include <utility>
 
 #include "core/fxcrt/css/cfx_csscolorvalue.h"
@@ -28,26 +29,26 @@ uint8_t Hex2Dec(uint8_t hexHigh, uint8_t hexLow) {
 
 bool ParseCSSNumber(const wchar_t* pszValue,
                     int32_t iValueLen,
-                    float& fValue,
-                    CFX_CSSNumberType& eUnit) {
+                    float* pValue,
+                    CFX_CSSNumberType* pOutUnit) {
   ASSERT(pszValue);
   ASSERT(iValueLen > 0);
 
   int32_t iUsedLen = 0;
-  fValue = FXSYS_wcstof(pszValue, iValueLen, &iUsedLen);
-  if (iUsedLen <= 0)
+  *pValue = FXSYS_wcstof(pszValue, iValueLen, &iUsedLen);
+  if (iUsedLen <= 0 || !std::isfinite(*pValue))
     return false;
 
   iValueLen -= iUsedLen;
   pszValue += iUsedLen;
-  eUnit = CFX_CSSNumberType::Number;
+  *pOutUnit = CFX_CSSNumberType::Number;
   if (iValueLen >= 1 && *pszValue == '%') {
-    eUnit = CFX_CSSNumberType::Percent;
+    *pOutUnit = CFX_CSSNumberType::Percent;
   } else if (iValueLen == 2) {
     const CFX_CSSData::LengthUnit* pUnit =
         CFX_CSSData::GetLengthUnitByName(WideStringView(pszValue, 2));
     if (pUnit)
-      eUnit = pUnit->type;
+      *pOutUnit = pUnit->type;
   }
   return true;
 }
@@ -117,12 +118,12 @@ bool CFX_CSSDeclaration::ParseCSSColor(const wchar_t* pszValue,
       if (eType != CFX_CSSPrimitiveType::Number)
         return false;
       CFX_CSSNumberType eNumType;
-      if (!ParseCSSNumber(pszValue, iValueLen, fValue, eNumType))
+      if (!ParseCSSNumber(pszValue, iValueLen, &fValue, &eNumType))
         return false;
 
       rgb[i] = eNumType == CFX_CSSNumberType::Percent
-                   ? FXSYS_round(fValue * 2.55f)
-                   : FXSYS_round(fValue);
+                   ? FXSYS_roundf(fValue * 2.55f)
+                   : FXSYS_roundf(fValue);
     }
     *dwColor = ArgbEncode(255, rgb[0], rgb[1], rgb[2]);
     return true;
@@ -181,8 +182,10 @@ void CFX_CSSDeclaration::AddProperty(const CFX_CSSData::Property* property,
   switch (dwType & 0x0F) {
     case CFX_CSSVALUETYPE_Primitive: {
       static constexpr CFX_CSSVALUETYPE kValueGuessOrder[] = {
-          CFX_CSSVALUETYPE_MaybeNumber, CFX_CSSVALUETYPE_MaybeEnum,
-          CFX_CSSVALUETYPE_MaybeColor, CFX_CSSVALUETYPE_MaybeString,
+          CFX_CSSVALUETYPE_MaybeNumber,
+          CFX_CSSVALUETYPE_MaybeEnum,
+          CFX_CSSVALUETYPE_MaybeColor,
+          CFX_CSSVALUETYPE_MaybeString,
       };
       for (uint32_t guess : kValueGuessOrder) {
         const uint32_t dwMatch = dwType & guess;
@@ -286,7 +289,7 @@ RetainPtr<CFX_CSSValue> CFX_CSSDeclaration::ParseNumber(const wchar_t* pszValue,
                                                         int32_t iValueLen) {
   float fValue;
   CFX_CSSNumberType eUnit;
-  if (!ParseCSSNumber(pszValue, iValueLen, fValue, eUnit))
+  if (!ParseCSSNumber(pszValue, iValueLen, &fValue, &eUnit))
     return nullptr;
   return pdfium::MakeRetain<CFX_CSSNumberValue>(eUnit, fValue);
 }
@@ -337,7 +340,7 @@ void CFX_CSSDeclaration::ParseValueListProperty(
         if (dwType & CFX_CSSVALUETYPE_MaybeNumber) {
           float fValue;
           CFX_CSSNumberType eNumType;
-          if (ParseCSSNumber(pszValue, iValueLen, fValue, eNumType))
+          if (ParseCSSNumber(pszValue, iValueLen, &fValue, &eNumType))
             list.push_back(
                 pdfium::MakeRetain<CFX_CSSNumberValue>(eNumType, fValue));
         }
@@ -459,7 +462,7 @@ bool CFX_CSSDeclaration::ParseBorderProperty(
 
         float fValue;
         CFX_CSSNumberType eNumType;
-        if (ParseCSSNumber(pszValue, iValueLen, fValue, eNumType))
+        if (ParseCSSNumber(pszValue, iValueLen, &fValue, &eNumType))
           pWidth = pdfium::MakeRetain<CFX_CSSNumberValue>(eNumType, fValue);
         break;
       }
@@ -571,7 +574,7 @@ void CFX_CSSDeclaration::ParseFontProperty(const wchar_t* pszValue,
       case CFX_CSSPrimitiveType::Number: {
         float fValue;
         CFX_CSSNumberType eNumType;
-        if (!ParseCSSNumber(pszValue, iValueLen, fValue, eNumType))
+        if (!ParseCSSNumber(pszValue, iValueLen, &fValue, &eNumType))
           break;
         if (eType == CFX_CSSPrimitiveType::Number) {
           switch ((int32_t)fValue) {

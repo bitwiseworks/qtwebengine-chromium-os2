@@ -44,7 +44,7 @@ struct GPU_EXPORT ContextCreationAttribs {
   ContextCreationAttribs& operator=(const ContextCreationAttribs& other);
 
   gfx::Size offscreen_framebuffer_size;
-  gl::GpuPreference gpu_preference = gl::PreferIntegratedGpu;
+  gl::GpuPreference gpu_preference = gl::GpuPreference::kLowPower;
   // -1 if invalid or unspecified.
   int32_t alpha_size = -1;
   int32_t blue_size = -1;
@@ -62,6 +62,7 @@ struct GPU_EXPORT ContextCreationAttribs {
   bool own_offscreen_surface = false;
   bool single_buffer = false;
   bool enable_gles2_interface = true;
+  bool enable_grcontext = false;
   bool enable_raster_interface = false;
   bool enable_oop_rasterization = false;
   bool enable_swap_timestamps_if_supported = false;

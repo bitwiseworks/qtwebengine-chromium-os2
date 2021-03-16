@@ -49,6 +49,14 @@ void LayoutTableRow::WillBeRemovedFromTree() {
   Section()->SetNeedsCellRecalc();
 }
 
+LayoutNGTableCellInterface* LayoutTableRow::FirstCellInterface() const {
+  return FirstCell();
+}
+
+LayoutNGTableCellInterface* LayoutTableRow::LastCellInterface() const {
+  return LastCell();
+}
+
 void LayoutTableRow::StyleDidChange(StyleDifference diff,
                                     const ComputedStyle* old_style) {
   DCHECK_EQ(StyleRef().Display(), EDisplay::kTableRow);
@@ -84,7 +92,7 @@ void LayoutTableRow::StyleDidChange(StyleDifference diff,
       // TODO(dgrogan) Add a web test showing that SetChildNeedsLayout is
       // needed instead of SetNeedsLayout.
       child_box->SetChildNeedsLayout();
-      child_box->SetPreferredLogicalWidthsDirty(kMarkOnlyThis);
+      child_box->SetIntrinsicLogicalWidthsDirty(kMarkOnlyThis);
     }
     // Most table componenents can rely on LayoutObject::styleDidChange
     // to mark the container chain dirty. But LayoutTableSection seems
@@ -92,7 +100,7 @@ void LayoutTableRow::StyleDidChange(StyleDifference diff,
     // anything under LayoutTableSection has to restart the propagation
     // at the table.
     // TODO(dgrogan): Make LayoutTableSection clear its dirty bit.
-    table->SetPreferredLogicalWidthsDirty();
+    table->SetIntrinsicLogicalWidthsDirty();
   }
 
   // When a row gets collapsed or uncollapsed, it's necessary to check all the
@@ -122,7 +130,7 @@ void LayoutTableRow::AddChild(LayoutObject* child, LayoutObject* before_child) {
       last = LastCell();
     if (last && last->IsAnonymous() && last->IsTableCell() &&
         !last->IsBeforeOrAfterContent()) {
-      LayoutTableCell* last_cell = ToLayoutTableCell(last);
+      LayoutTableCell* last_cell = To<LayoutTableCell>(last);
       if (before_child == last_cell)
         before_child = last_cell->FirstChild();
       last_cell->AddChild(child, before_child);
@@ -155,7 +163,7 @@ void LayoutTableRow::AddChild(LayoutObject* child, LayoutObject* before_child) {
   if (before_child && before_child->Parent() != this)
     before_child = SplitAnonymousBoxesAroundChild(before_child);
 
-  LayoutTableCell* cell = ToLayoutTableCell(child);
+  LayoutTableCell* cell = To<LayoutTableCell>(child);
 
   DCHECK(!before_child || before_child->IsTableCell());
   LayoutTableBoxComponent::AddChild(cell, before_child);
@@ -170,11 +178,11 @@ void LayoutTableRow::AddChild(LayoutObject* child, LayoutObject* before_child) {
     if (enclosing_table && enclosing_table->ShouldCollapseBorders()) {
       enclosing_table->InvalidateCollapsedBorders();
       if (LayoutTableCell* previous_cell = cell->PreviousCell()) {
-        previous_cell->SetNeedsLayoutAndPrefWidthsRecalc(
+        previous_cell->SetNeedsLayoutAndIntrinsicWidthsRecalc(
             layout_invalidation_reason::kTableChanged);
       }
       if (LayoutTableCell* next_cell = cell->NextCell()) {
-        next_cell->SetNeedsLayoutAndPrefWidthsRecalc(
+        next_cell->SetNeedsLayoutAndIntrinsicWidthsRecalc(
             layout_invalidation_reason::kTableChanged);
       }
     }
@@ -227,25 +235,26 @@ void LayoutTableRow::UpdateLayout() {
 
 // Hit Testing
 bool LayoutTableRow::NodeAtPoint(HitTestResult& result,
-                                 const HitTestLocation& location_in_container,
-                                 const LayoutPoint& accumulated_offset,
+                                 const HitTestLocation& hit_test_location,
+                                 const PhysicalOffset& accumulated_offset,
                                  HitTestAction action) {
+  // The row and the cells are all located in the section.
+  const auto* section = Section();
+  PhysicalOffset section_accumulated_offset =
+      accumulated_offset - PhysicalLocation(section);
+
   // Table rows cannot ever be hit tested.  Effectively they do not exist.
   // Just forward to our children always.
   for (LayoutTableCell* cell = LastCell(); cell; cell = cell->PreviousCell()) {
-    // FIXME: We have to skip over inline flows, since they can show up inside
-    // table rows at the moment (a demoted inline <form> for example). If we
-    // ever implement a table-specific hit-test method (which we should do for
-    // performance reasons anyway), then we can remove this check.
-    if (!cell->HasSelfPaintingLayer()) {
-      LayoutPoint cell_point =
-          FlipForWritingModeForChild(cell, accumulated_offset);
-      if (cell->NodeAtPoint(result, location_in_container, cell_point,
-                            action)) {
-        UpdateHitTestResult(
-            result, location_in_container.Point() - ToLayoutSize(cell_point));
-        return true;
-      }
+    if (cell->HasSelfPaintingLayer())
+      continue;
+    PhysicalOffset cell_accumulated_offset =
+        section_accumulated_offset + cell->PhysicalLocation(section);
+    if (cell->NodeAtPoint(result, hit_test_location, cell_accumulated_offset,
+                          action)) {
+      UpdateHitTestResult(
+          result, hit_test_location.Point() - section_accumulated_offset);
+      return true;
     }
   }
 
@@ -331,8 +340,10 @@ void LayoutTableRow::AddLayoutOverflowFromCell(const LayoutTableCell* cell) {
 }
 
 void LayoutTableRow::AddVisualOverflowFromCell(const LayoutTableCell* cell) {
-  if (cell->HasSelfPaintingLayer())
-    return;
+  // Note: we include visual overflow of even self-painting cells,
+  // because the row needs to expand to contain their area in order to paint
+  // background and collapsed borders. This is different than any other
+  // LayoutObject subtype.
 
   // Table row paints its background behind cells. If the cell spans multiple
   // rows, the row's visual rect should be expanded to cover the cell.
@@ -363,13 +374,6 @@ void LayoutTableRow::AddVisualOverflowFromCell(const LayoutTableCell* cell) {
       cell->VisualOverflowRectForPropagation();
   cell_visual_overflow_rect.Move(cell_row_offset);
   AddContentsVisualOverflow(cell_visual_overflow_rect);
-}
-
-bool LayoutTableRow::PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const {
-  return LayoutTableBoxComponent::
-             PaintedOutputOfObjectHasNoEffectRegardlessOfSize() &&
-         // Row paints collapsed borders.
-         !Table()->HasCollapsedBorders();
 }
 
 }  // namespace blink

@@ -55,10 +55,6 @@ class SVGPreserveAspectRatio final
 
   typedef SVGPreserveAspectRatioTearOff TearOffType;
 
-  static SVGPreserveAspectRatio* Create() {
-    return MakeGarbageCollected<SVGPreserveAspectRatio>();
-  }
-
   SVGPreserveAspectRatio();
 
   virtual SVGPreserveAspectRatio* Clone() const;
@@ -76,7 +72,7 @@ class SVGPreserveAspectRatio final
   }
   SVGMeetOrSliceType MeetOrSlice() const { return meet_or_slice_; }
 
-  void TransformRect(FloatRect& dest_rect, FloatRect& src_rect);
+  void TransformRect(FloatRect& dest_rect, FloatRect& src_rect) const;
 
   AffineTransform ComputeTransform(float logical_x,
                                    float logical_y,
@@ -91,7 +87,7 @@ class SVGPreserveAspectRatio final
   bool Parse(const LChar*& ptr, const LChar* end, bool validate);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -116,8 +112,6 @@ class SVGPreserveAspectRatio final
   SVGPreserveAspectRatioType align_;
   SVGMeetOrSliceType meet_or_slice_;
 };
-
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGPreserveAspectRatio);
 
 }  // namespace blink
 

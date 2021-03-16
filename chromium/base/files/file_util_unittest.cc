@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/files/file_util.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,13 +25,13 @@
 #include "base/files/file.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
 #include "base/path_service.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/scoped_environment_variable_override.h"
@@ -37,6 +39,7 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
@@ -57,7 +60,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -111,7 +113,7 @@ typedef struct _REPARSE_DATA_BUFFER {
 // Sets a reparse point. |source| will now point to |target|. Returns true if
 // the call succeeds, false otherwise.
 bool SetReparsePoint(HANDLE source, const FilePath& target_path) {
-  std::wstring kPathPrefix = L"\\??\\";
+  std::wstring kPathPrefix = FILE_PATH_LITERAL("\\??\\");
   std::wstring target_str;
   // The juction will not work if the target path does not start with \??\ .
   if (kPathPrefix != target_path.value().substr(0, kPathPrefix.size()))
@@ -153,19 +155,34 @@ bool DeleteReparsePoint(HANDLE source) {
   return true;
 }
 
+// Method that wraps the win32 GetShortPathName API. Returns an empty path on
+// error.
+FilePath MakeShortFilePath(const FilePath& input) {
+  DWORD path_short_len = ::GetShortPathName(input.value().c_str(), nullptr, 0);
+  if (path_short_len == 0UL)
+    return FilePath();
+
+  std::wstring path_short_str;
+  path_short_len = ::GetShortPathName(
+      input.value().c_str(), WriteInto(&path_short_str, path_short_len),
+      path_short_len);
+  if (path_short_len == 0UL)
+    return FilePath();
+
+  return FilePath(path_short_str);
+}
+
 // Manages a reparse point for a test.
 class ReparsePoint {
  public:
   // Creates a reparse point from |source| (an empty directory) to |target|.
   ReparsePoint(const FilePath& source, const FilePath& target) {
     dir_.Set(
-      ::CreateFile(source.value().c_str(),
-                   GENERIC_READ | GENERIC_WRITE,
-                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                   NULL,
-                   OPEN_EXISTING,
-                   FILE_FLAG_BACKUP_SEMANTICS,  // Needed to open a directory.
-                   NULL));
+        ::CreateFile(source.value().c_str(), GENERIC_READ | GENERIC_WRITE,
+                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                     NULL, OPEN_EXISTING,
+                     FILE_FLAG_BACKUP_SEMANTICS,  // Needed to open a directory.
+                     NULL));
     created_ = dir_.IsValid() && SetReparsePoint(dir_.Get(), target);
   }
 
@@ -220,9 +237,12 @@ void SetReadOnly(const FilePath& path, bool read_only) {
              FILE_ATTRIBUTE_READONLY)
           : (attrs & (FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_DIRECTORY));
 
-  // Ignore FILE_ATTRIBUTE_NOT_CONTENT_INDEXED if present.
+  // Ignore FILE_ATTRIBUTE_NOT_CONTENT_INDEXED and FILE_ATTRIBUTE_COMPRESSED
+  // if present. These flags are set by the operating system, depending on
+  // local configurations, such as compressing the file system. Not filtering
+  // out these flags could cause tests to fail even though they should pass.
   attrs = GetFileAttributes(path.value().c_str()) &
-          ~FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+          ~(FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_ATTRIBUTE_COMPRESSED);
   ASSERT_EQ(expected, attrs);
 #else
   // On all other platforms, it involves removing/setting the write bit.
@@ -297,7 +317,11 @@ class FindResultCollector {
 void CreateTextFile(const FilePath& filename,
                     const std::wstring& contents) {
   std::wofstream file;
+#if defined(OS_WIN)
   file.open(filename.value().c_str());
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  file.open(filename.value());
+#endif  // OS_WIN
   ASSERT_TRUE(file.is_open());
   file << contents;
   file.close();
@@ -307,9 +331,13 @@ void CreateTextFile(const FilePath& filename,
 std::wstring ReadTextFile(const FilePath& filename) {
   wchar_t contents[64];
   std::wifstream file;
+#if defined(OS_WIN)
   file.open(filename.value().c_str());
+#elif defined(OS_POSIX) || defined(OS_FUCHSIA)
+  file.open(filename.value());
+#endif  // OS_WIN
   EXPECT_TRUE(file.is_open());
-  file.getline(contents, base::size(contents));
+  file.getline(contents, size(contents));
   file.close();
   return std::wstring(contents);
 }
@@ -387,7 +415,7 @@ TEST_F(FileUtilTest, NormalizeFilePathBasic) {
   ASSERT_TRUE(PathExists(file_b_path));
   ASSERT_TRUE(NormalizeFilePath(file_b_path, &normalized_file_b_path));
 
-  // Beacuse this test created |dir_path|, we know it is not a link
+  // Because this test created |dir_path|, we know it is not a link
   // or junction.  So, the real path of the directory holding file a
   // must be the parent of the path holding file b.
   ASSERT_TRUE(normalized_file_a_path.DirName()
@@ -395,6 +423,36 @@ TEST_F(FileUtilTest, NormalizeFilePathBasic) {
 }
 
 #if defined(OS_WIN)
+
+TEST_F(FileUtilTest, NormalizeFileEmptyFile) {
+  // Create a directory under the test dir.  Because we create it,
+  // we know it is not a link.
+  const wchar_t empty_content[] = L"";
+
+  FilePath file_a_path = temp_dir_.GetPath().Append(FPL("file_empty_a"));
+  FilePath dir_path = temp_dir_.GetPath().Append(FPL("dir"));
+  FilePath file_b_path = dir_path.Append(FPL("file_empty_b"));
+  ASSERT_TRUE(CreateDirectory(dir_path));
+
+  FilePath normalized_file_a_path, normalized_file_b_path;
+  ASSERT_FALSE(PathExists(file_a_path));
+  EXPECT_FALSE(NormalizeFilePath(file_a_path, &normalized_file_a_path))
+      << "NormalizeFilePath() should fail on nonexistent paths.";
+
+  CreateTextFile(file_a_path, empty_content);
+  ASSERT_TRUE(PathExists(file_a_path));
+  EXPECT_TRUE(NormalizeFilePath(file_a_path, &normalized_file_a_path));
+
+  CreateTextFile(file_b_path, empty_content);
+  ASSERT_TRUE(PathExists(file_b_path));
+  EXPECT_TRUE(NormalizeFilePath(file_b_path, &normalized_file_b_path));
+
+  // Because this test created |dir_path|, we know it is not a link
+  // or junction.  So, the real path of the directory holding file a
+  // must be the parent of the path holding file b.
+  EXPECT_TRUE(normalized_file_a_path.DirName().IsParent(
+      normalized_file_b_path.DirName()));
+}
 
 TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
   // Build the following directory structure:
@@ -414,12 +472,16 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
   FilePath base_a = temp_dir_.GetPath().Append(FPL("base_a"));
 #if defined(OS_WIN)
   // TEMP can have a lower case drive letter.
-  string16 temp_base_a = base_a.value();
+  std::wstring temp_base_a = base_a.value();
   ASSERT_FALSE(temp_base_a.empty());
-  *temp_base_a.begin() = ToUpperASCII(*temp_base_a.begin());
+  temp_base_a[0] = ToUpperASCII(char16{temp_base_a[0]});
   base_a = FilePath(temp_base_a);
 #endif
   ASSERT_TRUE(CreateDirectory(base_a));
+#if defined(OS_WIN)
+  // TEMP might be a short name which is not normalized.
+  base_a = MakeLongFilePath(base_a);
+#endif
 
   FilePath sub_a = base_a.Append(FPL("sub_a"));
   ASSERT_TRUE(CreateDirectory(sub_a));
@@ -456,6 +518,10 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
 
   FilePath base_b = temp_dir_.GetPath().Append(FPL("base_b"));
   ASSERT_TRUE(CreateDirectory(base_b));
+#if defined(OS_WIN)
+  // TEMP might be a short name which is not normalized.
+  base_b = MakeLongFilePath(base_b);
+#endif
 
   FilePath to_sub_a = base_b.Append(FPL("to_sub_a"));
   ASSERT_TRUE(CreateDirectory(to_sub_a));
@@ -476,13 +542,13 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
 
     // Normalize a junction free path: base_a\sub_a\file.txt .
     ASSERT_TRUE(NormalizeFilePath(file_txt, &normalized_path));
-    ASSERT_STREQ(file_txt.value().c_str(), normalized_path.value().c_str());
+    ASSERT_EQ(file_txt.value(), normalized_path.value());
 
     // Check that the path base_b\to_sub_a\file.txt can be normalized to exclude
     // the junction to_sub_a.
     ASSERT_TRUE(NormalizeFilePath(to_sub_a.Append(FPL("file.txt")),
                                              &normalized_path));
-    ASSERT_STREQ(file_txt.value().c_str(), normalized_path.value().c_str());
+    ASSERT_EQ(file_txt.value(), normalized_path.value());
 
     // Check that the path base_b\to_base_b\to_base_b\to_sub_a\file.txt can be
     // normalized to exclude junctions to_base_b and to_sub_a .
@@ -491,7 +557,7 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
                                                    .Append(FPL("to_sub_a"))
                                                    .Append(FPL("file.txt")),
                                              &normalized_path));
-    ASSERT_STREQ(file_txt.value().c_str(), normalized_path.value().c_str());
+    ASSERT_EQ(file_txt.value(), normalized_path.value());
 
     // A long enough path will cause NormalizeFilePath() to fail.  Make a long
     // path using to_base_b many times, and check that paths long enough to fail
@@ -521,8 +587,8 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
 
 TEST_F(FileUtilTest, DevicePathToDriveLetter) {
   // Get a drive letter.
-  string16 real_drive_letter =
-      ToUpperASCII(temp_dir_.GetPath().value().substr(0, 2));
+  std::wstring real_drive_letter = AsWString(
+      ToUpperASCII(AsStringPiece16(temp_dir_.GetPath().value().substr(0, 2))));
   if (!isalpha(real_drive_letter[0]) || ':' != real_drive_letter[1]) {
     LOG(ERROR) << "Can't get a drive letter to test with.";
     return;
@@ -546,7 +612,9 @@ TEST_F(FileUtilTest, DevicePathToDriveLetter) {
   ASSERT_TRUE(DevicePathToDriveLetterPath(
       actual_device_path.Append(kRelativePath),
       &win32_path));
-  EXPECT_EQ(FilePath(real_drive_letter + L"\\").Append(kRelativePath).value(),
+  EXPECT_EQ(FilePath(real_drive_letter + FILE_PATH_LITERAL("\\"))
+                .Append(kRelativePath)
+                .value(),
             win32_path.value());
 
   // Deform the real path so that it is invalid by removing the last four
@@ -594,24 +662,20 @@ TEST_F(FileUtilTest, CreateTemporaryFileInDirLongPathTest) {
   // - the filesystem at |temp_dir_| supports long filenames.
   // - the account has FILE_LIST_DIRECTORY permission for all ancestor
   //   directories of |temp_dir_|.
-  const FilePath::CharType kLongDirName[] = FPL("A long path");
-  const FilePath::CharType kTestSubDirName[] = FPL("test");
+  constexpr FilePath::CharType kLongDirName[] = FPL("A long path");
+  constexpr FilePath::CharType kTestSubDirName[] = FPL("test");
   FilePath long_test_dir = temp_dir_.GetPath().Append(kLongDirName);
   ASSERT_TRUE(CreateDirectory(long_test_dir));
 
-  // kLongDirName is not a 8.3 component. So GetShortName() should give us a
-  // different short name.
-  WCHAR path_buffer[MAX_PATH];
-  DWORD path_buffer_length = GetShortPathName(long_test_dir.value().c_str(),
-                                              path_buffer, MAX_PATH);
-  ASSERT_LT(path_buffer_length, DWORD(MAX_PATH));
-  ASSERT_NE(DWORD(0), path_buffer_length);
-  FilePath short_test_dir(path_buffer);
-  ASSERT_STRNE(kLongDirName, short_test_dir.BaseName().value().c_str());
+  // kLongDirName is not a 8.3 component. So ::GetShortPathName() should give us
+  // a different short name.
+  FilePath short_test_dir = MakeShortFilePath(long_test_dir);
+  ASSERT_FALSE(short_test_dir.empty());
+  ASSERT_NE(kLongDirName, short_test_dir.BaseName().value());
 
   FilePath temp_file;
   ASSERT_TRUE(CreateTemporaryFileInDir(short_test_dir, &temp_file));
-  EXPECT_STREQ(kLongDirName, temp_file.DirName().BaseName().value().c_str());
+  EXPECT_EQ(kLongDirName, temp_file.DirName().BaseName().value());
   EXPECT_TRUE(PathExists(temp_file));
 
   // Create a subdirectory of |long_test_dir| and make |long_test_dir|
@@ -633,9 +697,68 @@ TEST_F(FileUtilTest, CreateTemporaryFileInDirLongPathTest) {
   EXPECT_TRUE(short_test_dir.IsParent(temp_file.DirName()));
 
   // Check that the long path can't be determined for |temp_file|.
-  path_buffer_length = GetLongPathName(temp_file.value().c_str(),
-                                       path_buffer, MAX_PATH);
-  EXPECT_EQ(DWORD(0), path_buffer_length);
+  // Helper method base::MakeLongFilePath returns an empty path on error.
+  FilePath temp_file_long = MakeLongFilePath(temp_file);
+  ASSERT_TRUE(temp_file_long.empty());
+}
+
+TEST_F(FileUtilTest, MakeLongFilePathTest) {
+  // Tests helper function base::MakeLongFilePath
+
+  // If a username isn't a valid 8.3 short file name (even just a
+  // lengthy name like "user with long name"), Windows will set the TMP and TEMP
+  // environment variables to be 8.3 paths. ::GetTempPath (called in
+  // base::GetTempDir) just uses the value specified by TMP or TEMP, and so can
+  // return a short path. So from the start need to use MakeLongFilePath
+  // to normalize the path for such test environments.
+  FilePath temp_dir_long = MakeLongFilePath(temp_dir_.GetPath());
+  ASSERT_FALSE(temp_dir_long.empty());
+
+  FilePath long_test_dir = temp_dir_long.Append(FPL("A long directory name"));
+  ASSERT_TRUE(CreateDirectory(long_test_dir));
+
+  // Directory name is not a 8.3 component. So ::GetShortPathName() should give
+  // us a different short name.
+  FilePath short_test_dir = MakeShortFilePath(long_test_dir);
+  ASSERT_FALSE(short_test_dir.empty());
+
+  EXPECT_NE(long_test_dir, short_test_dir);
+  EXPECT_EQ(long_test_dir, MakeLongFilePath(short_test_dir));
+
+  FilePath long_test_file = long_test_dir.Append(FPL("A long file name.1234"));
+  CreateTextFile(long_test_file, bogus_content);
+  ASSERT_TRUE(PathExists(long_test_file));
+
+  // File name is not a 8.3 component. So ::GetShortPathName() should give us
+  // a different short name.
+  FilePath short_test_file = MakeShortFilePath(long_test_file);
+  ASSERT_FALSE(short_test_file.empty());
+
+  EXPECT_NE(long_test_file, short_test_file);
+  EXPECT_EQ(long_test_file, MakeLongFilePath(short_test_file));
+
+  // MakeLongFilePath should return empty path if file does not exist.
+  EXPECT_TRUE(DeleteFile(short_test_file, false));
+  EXPECT_TRUE(MakeLongFilePath(short_test_file).empty());
+
+  // MakeLongFilePath should return empty path if directory does not exist.
+  EXPECT_TRUE(DeleteFile(short_test_dir, false));
+  EXPECT_TRUE(MakeLongFilePath(short_test_dir).empty());
+}
+
+TEST_F(FileUtilTest, CreateWinHardlinkTest) {
+  // Link to a different file name in a sub-directory of |temp_dir_|.
+  FilePath test_dir = temp_dir_.GetPath().Append(FPL("test"));
+  ASSERT_TRUE(CreateDirectory(test_dir));
+  FilePath temp_file;
+  ASSERT_TRUE(CreateTemporaryFileInDir(temp_dir_.GetPath(), &temp_file));
+  FilePath link_to_file = test_dir.Append(FPL("linked_name"));
+  EXPECT_TRUE(CreateWinHardLink(link_to_file, temp_file));
+  EXPECT_TRUE(PathExists(link_to_file));
+
+  // Link two directories. This should fail. Verify that failure is returned
+  // by CreateWinHardLink.
+  EXPECT_FALSE(CreateWinHardLink(temp_dir_.GetPath(), test_dir));
 }
 
 #endif  // defined(OS_WIN)
@@ -907,7 +1030,7 @@ TEST_F(FileUtilTest, ChangeDirectoryPermissionsAndEnumerate) {
   EXPECT_EQ(1, c2.size());
 
   // Delete the file.
-  EXPECT_TRUE(DeleteFile(subdir_path, true));
+  EXPECT_TRUE(DeleteFileRecursively(subdir_path));
   EXPECT_FALSE(PathExists(subdir_path));
 }
 
@@ -1287,7 +1410,7 @@ TEST_F(FileUtilTest, DeleteNonExistent) {
 
   EXPECT_TRUE(DeleteFile(non_existent, false));
   ASSERT_FALSE(PathExists(non_existent));
-  EXPECT_TRUE(DeleteFile(non_existent, true));
+  EXPECT_TRUE(DeleteFileRecursively(non_existent));
   ASSERT_FALSE(PathExists(non_existent));
 }
 
@@ -1298,7 +1421,7 @@ TEST_F(FileUtilTest, DeleteNonExistentWithNonExistentParent) {
 
   EXPECT_TRUE(DeleteFile(non_existent, false));
   ASSERT_FALSE(PathExists(non_existent));
-  EXPECT_TRUE(DeleteFile(non_existent, true));
+  EXPECT_TRUE(DeleteFileRecursively(non_existent));
   ASSERT_FALSE(PathExists(non_existent));
 }
 
@@ -1318,9 +1441,36 @@ TEST_F(FileUtilTest, DeleteFile) {
   ASSERT_TRUE(PathExists(file_name));
 
   // Make sure it's deleted
-  EXPECT_TRUE(DeleteFile(file_name, true));
+  EXPECT_TRUE(DeleteFileRecursively(file_name));
   EXPECT_FALSE(PathExists(file_name));
 }
+
+#if defined(OS_ANDROID)
+TEST_F(FileUtilTest, DeleteContentUri) {
+  // Get the path to the test file.
+  FilePath data_dir;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &data_dir));
+  data_dir = data_dir.Append(FPL("file_util"));
+  ASSERT_TRUE(PathExists(data_dir));
+  FilePath image_file = data_dir.Append(FPL("red.png"));
+  ASSERT_TRUE(PathExists(image_file));
+
+  // Make a copy (we don't want to delete the original red.png when deleting the
+  // content URI).
+  FilePath image_copy = data_dir.Append(FPL("redcopy.png"));
+  ASSERT_TRUE(CopyFile(image_file, image_copy));
+
+  // Insert the image into MediaStore and get a content URI.
+  FilePath uri_path = InsertImageIntoMediaStore(image_copy);
+  ASSERT_TRUE(uri_path.IsContentUri());
+  ASSERT_TRUE(PathExists(uri_path));
+
+  // Try deleting the content URI.
+  EXPECT_TRUE(DeleteFile(uri_path, false));
+  EXPECT_FALSE(PathExists(image_copy));
+  EXPECT_FALSE(PathExists(uri_path));
+}
+#endif  // defined(OS_ANDROID)
 
 #if defined(OS_WIN)
 // Tests that the Delete function works for wild cards, especially
@@ -1347,7 +1497,7 @@ TEST_F(FileUtilTest, DeleteWildCard) {
   EXPECT_TRUE(PathExists(subdir_path));
 
   // Delete recursively and make sure all contents are deleted
-  EXPECT_TRUE(DeleteFile(directory_contents, true));
+  EXPECT_TRUE(DeleteFileRecursively(directory_contents));
   EXPECT_FALSE(PathExists(file_name));
   EXPECT_FALSE(PathExists(subdir_path));
 }
@@ -1369,7 +1519,7 @@ TEST_F(FileUtilTest, DeleteNonExistantWildCard) {
   EXPECT_TRUE(PathExists(subdir_path));
 
   // Delete recursively and check nothing got deleted
-  EXPECT_TRUE(DeleteFile(directory_contents, true));
+  EXPECT_TRUE(DeleteFileRecursively(directory_contents));
   EXPECT_TRUE(PathExists(subdir_path));
 }
 #endif
@@ -1425,11 +1575,11 @@ TEST_F(FileUtilTest, DeleteDirRecursive) {
   ASSERT_TRUE(PathExists(subdir_path2));
 
   // Delete recursively and check that the empty dir got deleted
-  EXPECT_TRUE(DeleteFile(subdir_path2, true));
+  EXPECT_TRUE(DeleteFileRecursively(subdir_path2));
   EXPECT_FALSE(PathExists(subdir_path2));
 
   // Delete recursively and check that everything got deleted
-  EXPECT_TRUE(DeleteFile(test_subdir, true));
+  EXPECT_TRUE(DeleteFileRecursively(test_subdir));
   EXPECT_FALSE(PathExists(file_name));
   EXPECT_FALSE(PathExists(subdir_path1));
   EXPECT_FALSE(PathExists(test_subdir));
@@ -1474,7 +1624,7 @@ TEST_F(FileUtilTest, DeleteDirRecursiveWithOpenFile) {
 
   // Delete recursively and check that at least the second file got deleted.
   // This ensures that un-deletable files don't impact those that can be.
-  DeleteFile(test_subdir, true);
+  DeleteFileRecursively(test_subdir);
   EXPECT_FALSE(PathExists(file_name2));
 
 #if defined(OS_LINUX)
@@ -2347,7 +2497,7 @@ TEST_F(FileUtilTest, GetTempDirTest) {
   ASSERT_EQ(0, ::_tdupenv_s(&original_tmp, &original_tmp_size, kTmpKey));
   // original_tmp may be NULL.
 
-  for (unsigned int i = 0; i < base::size(kTmpValues); ++i) {
+  for (unsigned int i = 0; i < size(kTmpValues); ++i) {
     FilePath path;
     ::_tputenv_s(kTmpKey, kTmpValues[i]);
     GetTempDir(&path);
@@ -2383,7 +2533,7 @@ TEST_F(FileUtilTest, OpenFileNoInheritance) {
     FILE* file = OpenFile(file_path, mode);
     ASSERT_NE(nullptr, file);
     {
-      ScopedClosureRunner file_closer(Bind(IgnoreResult(&CloseFile), file));
+      ScopedClosureRunner file_closer(BindOnce(IgnoreResult(&CloseFile), file));
       bool is_inheritable = true;
       ASSERT_NO_FATAL_FAILURE(GetIsInheritable(file, &is_inheritable));
       EXPECT_FALSE(is_inheritable);
@@ -2429,14 +2579,49 @@ TEST_F(FileUtilTest, CreateAndOpenTemporaryFileTest) {
   }
 }
 
-#if defined(OS_FUCHSIA)
-// TODO(crbug.com/851747): Re-enable when the Fuchsia-side fix for fdopen has
-// been rolled into Chromium.
-#define MAYBE_FileToFILE DISABLED_FileToFILE
-#else
-#define MAYBE_FileToFILE FileToFILE
-#endif
-TEST_F(FileUtilTest, MAYBE_FileToFILE) {
+TEST_F(FileUtilTest, GetUniquePathTest) {
+  // Create a unique temp directory and use it to generate a unique file path.
+  base::ScopedTempDir temp_dir;
+  EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
+  EXPECT_TRUE(temp_dir.IsValid());
+  FilePath base_name(FILE_PATH_LITERAL("Unique_Base_Name.txt"));
+  FilePath base_path = temp_dir.GetPath().Append(base_name);
+  EXPECT_FALSE(PathExists(base_path));
+
+  // GetUniquePath() should return unchanged path if file does not exist.
+  EXPECT_EQ(base_path, GetUniquePath(base_path));
+
+  // Create the file.
+  {
+    File file(base_path,
+              File::FLAG_CREATE | File::FLAG_READ | File::FLAG_WRITE);
+    EXPECT_TRUE(PathExists(base_path));
+  }
+
+  static const FilePath::CharType* const kExpectedNames[] = {
+      FILE_PATH_LITERAL("Unique_Base_Name (1).txt"),
+      FILE_PATH_LITERAL("Unique_Base_Name (2).txt"),
+      FILE_PATH_LITERAL("Unique_Base_Name (3).txt"),
+  };
+
+  // Call GetUniquePath() three times against this existing file name.
+  for (const FilePath::CharType* expected_name : kExpectedNames) {
+    FilePath expected_path = temp_dir.GetPath().Append(expected_name);
+    FilePath path = GetUniquePath(base_path);
+    EXPECT_EQ(expected_path, path);
+
+    // Verify that a file with this path indeed does not exist on the file
+    // system.
+    EXPECT_FALSE(PathExists(path));
+
+    // Create the file so it exists for the next call to GetUniquePath() in the
+    // loop.
+    File file(path, File::FLAG_CREATE | File::FLAG_READ | File::FLAG_WRITE);
+    EXPECT_TRUE(PathExists(path));
+  }
+}
+
+TEST_F(FileUtilTest, FileToFILE) {
   File file;
   FILE* stream = FileToFILE(std::move(file), "w");
   EXPECT_FALSE(stream);
@@ -2473,6 +2658,75 @@ TEST_F(FileUtilTest, GetShmemTempDirTest) {
   FilePath dir;
   EXPECT_TRUE(GetShmemTempDir(false, &dir));
   EXPECT_TRUE(DirectoryExists(dir));
+}
+
+TEST_F(FileUtilTest, AllocateFileRegionTest_ZeroOffset) {
+  const int kTestFileLength = 9;
+  char test_data[] = "test_data";
+  FilePath file_path = temp_dir_.GetPath().Append(
+      FILE_PATH_LITERAL("allocate_file_region_test_zero_offset"));
+  WriteFile(file_path, test_data, kTestFileLength);
+
+  File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ |
+                           base::File::FLAG_WRITE);
+  ASSERT_TRUE(file.IsValid());
+  ASSERT_EQ(file.GetLength(), kTestFileLength);
+
+  const int kExtendedFileLength = 23;
+  ASSERT_TRUE(AllocateFileRegion(&file, 0, kExtendedFileLength));
+  EXPECT_EQ(file.GetLength(), kExtendedFileLength);
+
+  char data_read[32];
+  int bytes_read = file.Read(0, data_read, kExtendedFileLength);
+  EXPECT_EQ(bytes_read, kExtendedFileLength);
+  for (int i = 0; i < kTestFileLength; ++i)
+    EXPECT_EQ(test_data[i], data_read[i]);
+  for (int i = kTestFileLength; i < kExtendedFileLength; ++i)
+    EXPECT_EQ(0, data_read[i]);
+}
+
+TEST_F(FileUtilTest, AllocateFileRegionTest_NonZeroOffset) {
+  const int kTestFileLength = 9;
+  char test_data[] = "test_data";
+  FilePath file_path = temp_dir_.GetPath().Append(
+      FILE_PATH_LITERAL("allocate_file_region_test_non_zero_offset"));
+  WriteFile(file_path, test_data, kTestFileLength);
+
+  File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ |
+                           base::File::FLAG_WRITE);
+  ASSERT_TRUE(file.IsValid());
+  ASSERT_EQ(file.GetLength(), kTestFileLength);
+
+  const int kExtensionOffset = 5;
+  const int kExtensionSize = 10;
+  ASSERT_TRUE(AllocateFileRegion(&file, kExtensionOffset, kExtensionSize));
+  const int kExtendedFileLength = kExtensionOffset + kExtensionSize;
+  EXPECT_EQ(file.GetLength(), kExtendedFileLength);
+
+  char data_read[32];
+  int bytes_read = file.Read(0, data_read, kExtendedFileLength);
+  EXPECT_EQ(bytes_read, kExtendedFileLength);
+  for (int i = 0; i < kTestFileLength; ++i)
+    EXPECT_EQ(test_data[i], data_read[i]);
+  for (int i = kTestFileLength; i < kExtendedFileLength; ++i)
+    EXPECT_EQ(0, data_read[i]);
+}
+
+TEST_F(FileUtilTest, AllocateFileRegionTest_DontTruncate) {
+  const int kTestFileLength = 9;
+  char test_data[] = "test_data";
+  FilePath file_path = temp_dir_.GetPath().Append(
+      FILE_PATH_LITERAL("allocate_file_region_test_dont_truncate"));
+  WriteFile(file_path, test_data, kTestFileLength);
+
+  File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ |
+                           base::File::FLAG_WRITE);
+  ASSERT_TRUE(file.IsValid());
+  ASSERT_EQ(file.GetLength(), kTestFileLength);
+
+  const int kTruncatedFileLength = 4;
+  ASSERT_TRUE(AllocateFileRegion(&file, 0, kTruncatedFileLength));
+  EXPECT_EQ(file.GetLength(), kTestFileLength);
 }
 #endif
 
@@ -2511,7 +2765,7 @@ TEST_F(FileUtilTest, CreateDirectoryTest) {
   EXPECT_TRUE(PathExists(test_path));
   EXPECT_FALSE(CreateDirectory(test_path));
 
-  EXPECT_TRUE(DeleteFile(test_root, true));
+  EXPECT_TRUE(DeleteFileRecursively(test_root));
   EXPECT_FALSE(PathExists(test_root));
   EXPECT_FALSE(PathExists(test_path));
 
@@ -2558,7 +2812,7 @@ TEST_F(FileUtilTest, DetectDirectoryTest) {
   EXPECT_FALSE(DirectoryExists(test_path));
   EXPECT_TRUE(DeleteFile(test_path, false));
 
-  EXPECT_TRUE(DeleteFile(test_root, true));
+  EXPECT_TRUE(DeleteFileRecursively(test_root));
 }
 
 TEST_F(FileUtilTest, FileEnumeratorTest) {
@@ -2715,13 +2969,13 @@ TEST_F(FileUtilTest, AppendToFile) {
 
   // Create a fresh, empty copy of this directory.
   if (PathExists(data_dir)) {
-    ASSERT_TRUE(DeleteFile(data_dir, true));
+    ASSERT_TRUE(DeleteFileRecursively(data_dir));
   }
   ASSERT_TRUE(CreateDirectory(data_dir));
 
   // Create a fresh, empty copy of this directory.
   if (PathExists(data_dir)) {
-    ASSERT_TRUE(DeleteFile(data_dir, true));
+    ASSERT_TRUE(DeleteFileRecursively(data_dir));
   }
   ASSERT_TRUE(CreateDirectory(data_dir));
   FilePath foobar(data_dir.Append(FILE_PATH_LITERAL("foobar.txt")));
@@ -2870,7 +3124,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithUnknownFileSize) {
 
 MULTIPROCESS_TEST_MAIN(ChildMain) {
   const char kTestData[] = "0123";
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
   const FilePath pipe_path = command_line->GetSwitchValuePath("pipe-path");
 
   int fd = open(pipe_path.value().c_str(), O_WRONLY);
@@ -2893,7 +3147,7 @@ MULTIPROCESS_TEST_MAIN(ChildMain) {
 
 MULTIPROCESS_TEST_MAIN(MoreThanBufferSizeChildMain) {
   std::string data(kLargeFileSize, 'c');
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
   const FilePath pipe_path = command_line->GetSwitchValuePath("pipe-path");
 
   int fd = open(pipe_path.value().c_str(), O_WRONLY);
@@ -2918,13 +3172,12 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
       temp_dir_.GetPath().Append(FILE_PATH_LITERAL("test_pipe"));
   ASSERT_EQ(0, mkfifo(pipe_path.value().c_str(), 0600));
 
-  base::CommandLine child_command_line(
-      base::GetMultiProcessTestChildBaseCommandLine());
+  CommandLine child_command_line(GetMultiProcessTestChildBaseCommandLine());
   child_command_line.AppendSwitchPath("pipe-path", pipe_path);
 
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        ChildMainString, child_command_line, base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        ChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -2937,8 +3190,8 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        ChildMainString, child_command_line, base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        ChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -2951,9 +3204,8 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        MoreThanBufferSizeChildMainString, child_command_line,
-        base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        MoreThanBufferSizeChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -2966,9 +3218,8 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        MoreThanBufferSizeChildMainString, child_command_line,
-        base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        MoreThanBufferSizeChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -2982,9 +3233,8 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        MoreThanBufferSizeChildMainString, child_command_line,
-        base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        MoreThanBufferSizeChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -2997,9 +3247,8 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
-        MoreThanBufferSizeChildMainString, child_command_line,
-        base::LaunchOptions());
+    Process child_process = SpawnMultiProcessTestChild(
+        MoreThanBufferSizeChildMainString, child_command_line, LaunchOptions());
     ASSERT_TRUE(child_process.IsValid());
 
     std::string data = "temp";
@@ -3024,7 +3273,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
 
 MULTIPROCESS_TEST_MAIN(ChildMain) {
   const char kTestData[] = "0123";
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
   const FilePath pipe_path = command_line->GetSwitchValuePath("pipe-path");
   std::string switch_string = command_line->GetSwitchValueASCII("sync_event");
   EXPECT_FALSE(switch_string.empty());
@@ -3051,7 +3300,7 @@ MULTIPROCESS_TEST_MAIN(ChildMain) {
 
 MULTIPROCESS_TEST_MAIN(MoreThanBufferSizeChildMain) {
   std::string data(kLargeFileSize, 'c');
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  CommandLine* command_line = CommandLine::ForCurrentProcess();
   const FilePath pipe_path = command_line->GetSwitchValuePath("pipe-path");
   std::string switch_string = command_line->GetSwitchValueASCII("sync_event");
   EXPECT_FALSE(switch_string.empty());
@@ -3076,17 +3325,16 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
   FilePath pipe_path(FILE_PATH_LITERAL("\\\\.\\pipe\\test_pipe"));
   win::ScopedHandle sync_event(CreateEvent(0, false, false, nullptr));
 
-  base::CommandLine child_command_line(
-      base::GetMultiProcessTestChildBaseCommandLine());
+  CommandLine child_command_line(GetMultiProcessTestChildBaseCommandLine());
   child_command_line.AppendSwitchPath("pipe-path", pipe_path);
   child_command_line.AppendSwitchASCII(
-      "sync_event", UintToString(win::HandleToUint32(sync_event.Get())));
+      "sync_event", NumberToString(win::HandleToUint32(sync_event.Get())));
 
-  base::LaunchOptions options;
+  LaunchOptions options;
   options.handles_to_inherit.push_back(sync_event.Get());
 
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         ChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3102,7 +3350,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         ChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3118,7 +3366,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         MoreThanBufferSizeChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3134,7 +3382,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         MoreThanBufferSizeChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3151,7 +3399,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         MoreThanBufferSizeChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3167,7 +3415,7 @@ TEST_F(FileUtilTest, ReadFileToStringWithNamedPipe) {
     ASSERT_EQ(0, rv);
   }
   {
-    base::Process child_process = base::SpawnMultiProcessTestChild(
+    Process child_process = SpawnMultiProcessTestChild(
         MoreThanBufferSizeChildMainString, child_command_line, options);
     ASSERT_TRUE(child_process.IsValid());
     // Wait for pipe creation in child process.
@@ -3237,7 +3485,7 @@ TEST_F(FileUtilTest, TouchFile) {
 
   // Create a fresh, empty copy of this directory.
   if (PathExists(data_dir)) {
-    ASSERT_TRUE(DeleteFile(data_dir, true));
+    ASSERT_TRUE(DeleteFileRecursively(data_dir));
   }
   ASSERT_TRUE(CreateDirectory(data_dir));
 
@@ -3294,8 +3542,8 @@ TEST_F(FileUtilTest, SetNonBlocking) {
   const int kBogusFd = 99999;
   EXPECT_FALSE(SetNonBlocking(kBogusFd));
 
-  base::FilePath path;
-  ASSERT_TRUE(PathService::Get(base::DIR_TEST_DATA, &path));
+  FilePath path;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &path));
   path = path.Append(FPL("file_util")).Append(FPL("original.txt"));
   ScopedFD fd(open(path.value().c_str(), O_RDONLY));
   ASSERT_GE(fd.get(), 0);
@@ -3306,8 +3554,8 @@ TEST_F(FileUtilTest, SetCloseOnExec) {
   const int kBogusFd = 99999;
   EXPECT_FALSE(SetCloseOnExec(kBogusFd));
 
-  base::FilePath path;
-  ASSERT_TRUE(PathService::Get(base::DIR_TEST_DATA, &path));
+  FilePath path;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &path));
   path = path.Append(FPL("file_util")).Append(FPL("original.txt"));
   ScopedFD fd(open(path.value().c_str(), O_RDONLY));
   ASSERT_GE(fd.get(), 0);
@@ -3346,8 +3594,8 @@ class VerifyPathControlledByUserTest : public FileUtilTest {
     CreateTextFile(text_file_, L"This text file has some text in it.");
 
     // Get the user and group files are created with from |base_dir_|.
-    struct stat stat_buf;
-    ASSERT_EQ(0, stat(base_dir_.value().c_str(), &stat_buf));
+    stat_wrapper_t stat_buf;
+    ASSERT_EQ(0, File::Stat(base_dir_.value().c_str(), &stat_buf));
     uid_ = stat_buf.st_uid;
     ok_gids_.insert(stat_buf.st_gid);
     bad_gids_.insert(stat_buf.st_gid + 1);
@@ -3602,8 +3850,9 @@ TEST_F(VerifyPathControlledByUserTest, WriteBitChecks) {
 
 #endif  // defined(OS_POSIX)
 
+// Flaky test: crbug/1054637
 #if defined(OS_ANDROID)
-TEST_F(FileUtilTest, ValidContentUriTest) {
+TEST_F(FileUtilTest, DISABLED_ValidContentUriTest) {
   // Get the test image path.
   FilePath data_dir;
   ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &data_dir));
@@ -3645,6 +3894,115 @@ TEST_F(FileUtilTest, NonExistentContentUriTest) {
   EXPECT_FALSE(file.IsValid());
 }
 #endif
+
+#if !defined(OS_NACL_NONSFI)
+TEST_F(FileUtilTest, GetUniquePathNumberNoFile) {
+  // This file does not exist.
+  const FilePath some_file = temp_dir_.GetPath().Append(FPL("SomeFile.txt"));
+
+  // The path is unique as-is.
+  EXPECT_EQ(GetUniquePathNumber(some_file), 0);
+}
+
+TEST_F(FileUtilTest, GetUniquePathNumberFileExists) {
+  // Create a file with the desired path.
+  const FilePath some_file = temp_dir_.GetPath().Append(FPL("SomeFile.txt"));
+  ASSERT_TRUE(File(some_file, File::FLAG_CREATE | File::FLAG_WRITE).IsValid());
+
+  // The file exists, so the number 1 is needed to make it unique.
+  EXPECT_EQ(GetUniquePathNumber(some_file), 1);
+}
+
+TEST_F(FileUtilTest, GetUniquePathNumberFilesExist) {
+  // Create a file with the desired path and with it suffixed with " (1)"
+  const FilePath some_file = temp_dir_.GetPath().Append(FPL("SomeFile.txt"));
+  ASSERT_TRUE(File(some_file, File::FLAG_CREATE | File::FLAG_WRITE).IsValid());
+  const FilePath some_file_one =
+      temp_dir_.GetPath().Append(FPL("SomeFile (1).txt"));
+  ASSERT_TRUE(
+      File(some_file_one, File::FLAG_CREATE | File::FLAG_WRITE).IsValid());
+
+  // This time the number 2 is needed to make it unique.
+  EXPECT_EQ(GetUniquePathNumber(some_file), 2);
+}
+
+TEST_F(FileUtilTest, GetUniquePathNumberTooManyFiles) {
+  // Create a file with the desired path.
+  const FilePath some_file = temp_dir_.GetPath().Append(FPL("SomeFile.txt"));
+  ASSERT_TRUE(File(some_file, File::FLAG_CREATE | File::FLAG_WRITE).IsValid());
+
+  // Now create 100 collisions.
+  for (int i = 1; i <= kMaxUniqueFiles; ++i) {
+    ASSERT_EQ(GetUniquePathNumber(some_file), i);
+    ASSERT_TRUE(File(temp_dir_.GetPath().AppendASCII(
+                         StringPrintf("SomeFile (%d).txt", i)),
+                     File::FLAG_CREATE | File::FLAG_WRITE)
+                    .IsValid());
+  }
+
+  // Verify that the limit has been reached.
+  EXPECT_EQ(GetUniquePathNumber(some_file), -1);
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingFile_NoSize) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, bogus_content);
+
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false));
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingFile_ExactSize) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, bogus_content);
+
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
+                          base::size(bogus_content)));
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingFile_OverSized) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, bogus_content);
+
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
+                          base::size(bogus_content) * 2));
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingFile_UnderSized) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, bogus_content);
+
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false,
+                          base::size(bogus_content) / 2));
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingFile_ZeroSize) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, bogus_content);
+
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_NoSize) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, L"");
+  // The test just asserts that this doesn't crash. The Windows implementation
+  // fails in this case, due to the base::MemoryMappedFile implementation and
+  // the limitations of ::MapViewOfFile().
+  PreReadFile(text_file, /*is_executable=*/false);
+}
+
+TEST_F(FileUtilTest, PreReadFile_ExistingEmptyFile_ZeroSize) {
+  FilePath text_file = temp_dir_.GetPath().Append(FPL("text_file"));
+  CreateTextFile(text_file, L"");
+  EXPECT_TRUE(PreReadFile(text_file, /*is_executable=*/false, /*max_bytes=*/0));
+}
+
+TEST_F(FileUtilTest, PreReadFile_InexistentFile) {
+  FilePath inexistent_file = temp_dir_.GetPath().Append(FPL("inexistent_file"));
+  EXPECT_FALSE(PreReadFile(inexistent_file, /*is_executable=*/false));
+}
+
+#endif  // !defined(OS_NACL_NONSFI)
 
 // Test that temp files obtained racily are all unique (no interference between
 // threads). Mimics file operations in DoLaunchChildTestProcess() to rule out

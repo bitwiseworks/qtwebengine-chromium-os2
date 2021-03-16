@@ -28,6 +28,8 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/synchronization/waitable_event.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
@@ -37,8 +39,9 @@
 
 namespace blink {
 
-class BaseAudioContext;
 class AudioBuffer;
+class BaseAudioContext;
+class SharedAudioBuffer;
 class WaitableEvent;
 
 // ScriptProcessorNode is an AudioNode which allows for arbitrary synthesis or
@@ -49,14 +52,18 @@ class WaitableEvent;
 // periodically with an AudioProcessingEvent which has AudioBuffers for each
 // input and output.
 
-class ScriptProcessorHandler final : public AudioHandler {
+class ScriptProcessorHandler final
+    : public AudioHandler,
+      public base::SupportsWeakPtr<ScriptProcessorHandler> {
  public:
   static scoped_refptr<ScriptProcessorHandler> Create(
       AudioNode&,
       float sample_rate,
       uint32_t buffer_size,
       uint32_t number_of_input_channels,
-      uint32_t number_of_output_channels);
+      uint32_t number_of_output_channels,
+      const HeapVector<Member<AudioBuffer>>& input_buffers,
+      const HeapVector<Member<AudioBuffer>>& output_buffers);
   ~ScriptProcessorHandler() override;
 
   // AudioHandler
@@ -77,23 +84,23 @@ class ScriptProcessorHandler final : public AudioHandler {
                          float sample_rate,
                          uint32_t buffer_size,
                          uint32_t number_of_input_channels,
-                         uint32_t number_of_output_channels);
+                         uint32_t number_of_output_channels,
+                         const HeapVector<Member<AudioBuffer>>& input_buffers,
+                         const HeapVector<Member<AudioBuffer>>& output_buffers);
   double TailTime() const override;
   double LatencyTime() const override;
   bool RequiresTailProcessing() const final;
 
   void FireProcessEvent(uint32_t);
-  void FireProcessEventForOfflineAudioContext(uint32_t, WaitableEvent*);
+  void FireProcessEventForOfflineAudioContext(uint32_t, base::WaitableEvent*);
 
   // Double buffering
   uint32_t DoubleBufferIndex() const { return double_buffer_index_; }
   void SwapBuffers() { double_buffer_index_ = 1 - double_buffer_index_; }
   uint32_t double_buffer_index_;
 
-  // These Persistent don't make reference cycles including the owner
-  // ScriptProcessorNode.
-  CrossThreadPersistent<HeapVector<Member<AudioBuffer>>> input_buffers_;
-  CrossThreadPersistent<HeapVector<Member<AudioBuffer>>> output_buffers_;
+  WTF::Vector<std::unique_ptr<SharedAudioBuffer>> shared_input_buffers_;
+  WTF::Vector<std::unique_ptr<SharedAudioBuffer>> shared_output_buffers_;
 
   uint32_t buffer_size_;
   uint32_t buffer_read_write_index_;
@@ -145,13 +152,23 @@ class ScriptProcessorNode final
                       uint32_t number_of_input_channels,
                       uint32_t number_of_output_channels);
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(audioprocess, kAudioprocess);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(audioprocess, kAudioprocess)
   uint32_t bufferSize() const;
+
+  void DispatchEvent(double playback_time, uint32_t double_buffer_index);
 
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  void Trace(blink::Visitor* visitor) override { AudioNode::Trace(visitor); }
+  void Trace(Visitor* visitor) override;
+
+  // InspectorHelperMixin
+  void ReportDidCreate() final;
+  void ReportWillBeDestroyed() final;
+
+ private:
+  HeapVector<Member<AudioBuffer>> input_buffers_;
+  HeapVector<Member<AudioBuffer>> output_buffers_;
 };
 
 }  // namespace blink

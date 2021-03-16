@@ -9,6 +9,7 @@ intel_drivers := i915 i965
 
 MINIGBM_SRC := \
 	amdgpu.c \
+	dri.c \
 	drv.c \
 	evdi.c \
 	exynos.c \
@@ -22,6 +23,7 @@ MINIGBM_SRC := \
 	nouveau.c \
 	radeon.c \
 	rockchip.c \
+	synaptics.c \
 	tegra.c \
 	udl.c \
 	vc4.c \

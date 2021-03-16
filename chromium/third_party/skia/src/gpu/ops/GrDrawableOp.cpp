@@ -5,19 +5,19 @@
  * found in the LICENSE file.
  */
 
-#include "GrDrawableOp.h"
+#include "src/gpu/ops/GrDrawableOp.h"
 
-#include "GrContext.h"
-#include "GrContextPriv.h"
-#include "GrGpuCommandBuffer.h"
-#include "GrMemoryPool.h"
-#include "GrOpFlushState.h"
-#include "SkDrawable.h"
+#include "include/core/SkDrawable.h"
+#include "include/private/GrRecordingContext.h"
+#include "src/gpu/GrMemoryPool.h"
+#include "src/gpu/GrOpFlushState.h"
+#include "src/gpu/GrOpsRenderPass.h"
+#include "src/gpu/GrRecordingContextPriv.h"
 
 std::unique_ptr<GrDrawableOp> GrDrawableOp::Make(
-        GrContext* context, std::unique_ptr<SkDrawable::GpuDrawHandler> drawable,
+        GrRecordingContext* context, std::unique_ptr<SkDrawable::GpuDrawHandler> drawable,
         const SkRect& bounds) {
-    GrOpMemoryPool* pool = context->contextPriv().opMemoryPool();
+    GrOpMemoryPool* pool = context->priv().opMemoryPool();
     return pool->allocate<GrDrawableOp>(std::move(drawable), bounds);
 }
 
@@ -25,10 +25,10 @@ GrDrawableOp::GrDrawableOp(std::unique_ptr<SkDrawable::GpuDrawHandler> drawable,
                            const SkRect& bounds)
         : INHERITED(ClassID())
         , fDrawable(std::move(drawable)) {
-        this->setBounds(bounds, HasAABloat::kNo, IsZeroArea::kNo);
+    this->setBounds(bounds, HasAABloat::kNo, IsHairline::kNo);
 }
 
 void GrDrawableOp::onExecute(GrOpFlushState* state, const SkRect& chainBounds) {
-    SkASSERT(state->commandBuffer());
-    state->rtCommandBuffer()->executeDrawable(std::move(fDrawable));
+    SkASSERT(state->opsRenderPass());
+    state->opsRenderPass()->executeDrawable(std::move(fDrawable));
 }

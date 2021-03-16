@@ -9,7 +9,8 @@
 
 #include <memory>
 
-#include "base/memory/shared_memory.h"
+#include "base/memory/read_only_shared_memory_region.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -62,16 +63,14 @@ TEST(DecoderBufferTest, CopyFrom) {
   EXPECT_FALSE(buffer3->is_key_frame());
 }
 
-TEST(DecoderBufferTest, FromSharedMemoryHandle) {
+TEST(DecoderBufferTest, FromArray) {
   const uint8_t kData[] = "hello";
   const size_t kDataSize = base::size(kData);
-
-  base::SharedMemory mem;
-  ASSERT_TRUE(mem.CreateAndMapAnonymous(kDataSize));
-  memcpy(mem.memory(), kData, kDataSize);
+  std::unique_ptr<uint8_t[]> ptr(new uint8_t[kDataSize]);
+  memcpy(ptr.get(), kData, kDataSize);
 
   scoped_refptr<DecoderBuffer> buffer(
-      DecoderBuffer::FromSharedMemoryHandle(mem.TakeHandle(), 0, kDataSize));
+      DecoderBuffer::FromArray(std::move(ptr), kDataSize));
   ASSERT_TRUE(buffer.get());
   EXPECT_EQ(buffer->data_size(), kDataSize);
   EXPECT_EQ(0, memcmp(buffer->data(), kData, kDataSize));
@@ -79,17 +78,40 @@ TEST(DecoderBufferTest, FromSharedMemoryHandle) {
   EXPECT_FALSE(buffer->is_key_frame());
 }
 
-TEST(DecoderBufferTest, FromSharedMemoryHandle_Unaligned) {
+TEST(DecoderBufferTest, FromPlatformSharedMemoryRegion) {
+  const uint8_t kData[] = "hello";
+  const size_t kDataSize = base::size(kData);
+
+  auto region = base::UnsafeSharedMemoryRegion::Create(kDataSize);
+  auto mapping = region.Map();
+  ASSERT_TRUE(mapping.IsValid());
+  memcpy(mapping.GetMemoryAs<uint8_t>(), kData, kDataSize);
+
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+          std::move(region)),
+      0, kDataSize));
+  ASSERT_TRUE(buffer.get());
+  EXPECT_EQ(buffer->data_size(), kDataSize);
+  EXPECT_EQ(0, memcmp(buffer->data(), kData, kDataSize));
+  EXPECT_FALSE(buffer->end_of_stream());
+  EXPECT_FALSE(buffer->is_key_frame());
+}
+
+TEST(DecoderBufferTest, FromPlatformSharedMemoryRegion_Unaligned) {
   const uint8_t kData[] = "XXXhello";
   const size_t kDataSize = base::size(kData);
   const off_t kDataOffset = 3;
 
-  base::SharedMemory mem;
-  ASSERT_TRUE(mem.CreateAndMapAnonymous(kDataSize));
-  memcpy(mem.memory(), kData, kDataSize);
+  auto region = base::UnsafeSharedMemoryRegion::Create(kDataSize);
+  auto mapping = region.Map();
+  ASSERT_TRUE(mapping.IsValid());
+  memcpy(mapping.GetMemoryAs<uint8_t>(), kData, kDataSize);
 
-  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryHandle(
-      mem.TakeHandle(), kDataOffset, kDataSize - kDataOffset));
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+          std::move(region)),
+      kDataOffset, kDataSize - kDataOffset));
   ASSERT_TRUE(buffer.get());
   EXPECT_EQ(buffer->data_size(), kDataSize - kDataOffset);
   EXPECT_EQ(
@@ -98,47 +120,71 @@ TEST(DecoderBufferTest, FromSharedMemoryHandle_Unaligned) {
   EXPECT_FALSE(buffer->is_key_frame());
 }
 
-TEST(DecoderBufferTest, FromSharedMemoryHandle_ZeroSize) {
+TEST(DecoderBufferTest, FromPlatformSharedMemoryRegion_ZeroSize) {
   const uint8_t kData[] = "hello";
   const size_t kDataSize = base::size(kData);
 
-  base::SharedMemory mem;
-  ASSERT_TRUE(mem.CreateAndMapAnonymous(kDataSize));
-  memcpy(mem.memory(), kData, kDataSize);
+  auto region = base::UnsafeSharedMemoryRegion::Create(kDataSize);
+  auto mapping = region.Map();
+  ASSERT_TRUE(mapping.IsValid());
+  memcpy(mapping.memory(), kData, kDataSize);
 
-  scoped_refptr<DecoderBuffer> buffer(
-      DecoderBuffer::FromSharedMemoryHandle(mem.TakeHandle(), 0, 0));
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      base::UnsafeSharedMemoryRegion::TakeHandleForSerialization(
+          std::move(region)),
+      0, 0));
   ASSERT_FALSE(buffer.get());
 }
 
-#if !defined(OS_ANDROID)
-TEST(DecoderBufferTest, PaddingAlignment) {
+TEST(DecoderBufferTest, FromSharedMemoryRegion) {
   const uint8_t kData[] = "hello";
   const size_t kDataSize = base::size(kData);
-  scoped_refptr<DecoderBuffer> buffer2(DecoderBuffer::CopyFrom(
-      reinterpret_cast<const uint8_t*>(&kData), kDataSize));
-  ASSERT_TRUE(buffer2.get());
 
-  // Padding data should always be zeroed.
-  for(int i = 0; i < DecoderBuffer::kPaddingSize; i++)
-    EXPECT_EQ((buffer2->data() + kDataSize)[i], 0);
+  auto mapping_region = base::ReadOnlySharedMemoryRegion::Create(kDataSize);
+  ASSERT_TRUE(mapping_region.IsValid());
+  memcpy(mapping_region.mapping.GetMemoryAs<uint8_t>(), kData, kDataSize);
 
-  // If the data is padded correctly we should be able to read and write past
-  // the end of the data by DecoderBuffer::kPaddingSize bytes without crashing
-  // or Valgrind/ASAN throwing errors.
-  const uint8_t kFillChar = 0xFF;
-  memset(
-      buffer2->writable_data() + kDataSize, kFillChar,
-      DecoderBuffer::kPaddingSize);
-  for(int i = 0; i < DecoderBuffer::kPaddingSize; i++)
-    EXPECT_EQ((buffer2->data() + kDataSize)[i], kFillChar);
-
-  EXPECT_EQ(0u, reinterpret_cast<uintptr_t>(
-      buffer2->data()) & (DecoderBuffer::kAlignmentSize - 1));
-
-  EXPECT_FALSE(buffer2->is_key_frame());
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      std::move(mapping_region.region), 0, kDataSize));
+  ASSERT_TRUE(buffer.get());
+  EXPECT_EQ(buffer->data_size(), kDataSize);
+  EXPECT_EQ(0, memcmp(buffer->data(), kData, kDataSize));
+  EXPECT_FALSE(buffer->end_of_stream());
+  EXPECT_FALSE(buffer->is_key_frame());
 }
-#endif
+
+TEST(DecoderBufferTest, FromSharedMemoryRegion_Unaligned) {
+  const uint8_t kData[] = "XXXhello";
+  const size_t kDataSize = base::size(kData);
+  const off_t kDataOffset = 3;
+
+  auto mapping_region = base::ReadOnlySharedMemoryRegion::Create(kDataSize);
+  ASSERT_TRUE(mapping_region.IsValid());
+  memcpy(mapping_region.mapping.GetMemoryAs<uint8_t>(), kData, kDataSize);
+
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      std::move(mapping_region.region), kDataOffset, kDataSize - kDataOffset));
+
+  ASSERT_TRUE(buffer.get());
+  EXPECT_EQ(buffer->data_size(), kDataSize - kDataOffset);
+  EXPECT_EQ(
+      0, memcmp(buffer->data(), kData + kDataOffset, kDataSize - kDataOffset));
+  EXPECT_FALSE(buffer->end_of_stream());
+  EXPECT_FALSE(buffer->is_key_frame());
+}
+
+TEST(DecoderBufferTest, FromSharedMemoryRegion_ZeroSize) {
+  const uint8_t kData[] = "hello";
+  const size_t kDataSize = base::size(kData);
+
+  auto mapping_region = base::ReadOnlySharedMemoryRegion::Create(kDataSize);
+  memcpy(mapping_region.mapping.GetMemoryAs<uint8_t>(), kData, kDataSize);
+
+  scoped_refptr<DecoderBuffer> buffer(DecoderBuffer::FromSharedMemoryRegion(
+      std::move(mapping_region.region), 0, 0));
+
+  ASSERT_FALSE(buffer.get());
+}
 
 TEST(DecoderBufferTest, ReadingWriting) {
   const char kData[] = "hello";

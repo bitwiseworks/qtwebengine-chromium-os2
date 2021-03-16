@@ -34,9 +34,11 @@
 #include "third_party/blink/renderer/core/svg/properties/svg_list_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/core/svg/svg_transform.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
+class CSSValue;
 class SVGTransformListTearOff;
 
 class SVGTransformList final
@@ -44,13 +46,8 @@ class SVGTransformList final
  public:
   typedef SVGTransformListTearOff TearOffType;
 
-  static SVGTransformList* Create() {
-    return MakeGarbageCollected<SVGTransformList>();
-  }
-
-  static SVGTransformList* Create(SVGTransformType, const String&);
-
   SVGTransformList();
+  SVGTransformList(SVGTransformType, const String&);
   ~SVGTransformList() override;
 
   SVGTransform* Consolidate();
@@ -65,7 +62,7 @@ class SVGTransformList final
   bool Parse(const LChar*& ptr, const LChar* end);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from_value,
@@ -84,7 +81,12 @@ class SVGTransformList final
   SVGParsingError ParseInternal(const CharType*& ptr, const CharType* end);
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGTransformList);
+template <>
+struct DowncastTraits<SVGTransformList> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGTransformList::ClassType();
+  }
+};
 
 SVGTransformType ParseTransformType(const String&);
 

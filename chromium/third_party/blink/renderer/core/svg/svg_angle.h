@@ -26,6 +26,7 @@
 #include "third_party/blink/renderer/core/svg/svg_enumeration.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -43,15 +44,11 @@ DECLARE_SVG_ENUM_MAP(SVGMarkerOrientType);
 class SVGMarkerOrientEnumeration final
     : public SVGEnumeration<SVGMarkerOrientType> {
  public:
-  static SVGMarkerOrientEnumeration* Create(SVGAngle* angle) {
-    return MakeGarbageCollected<SVGMarkerOrientEnumeration>(angle);
-  }
-
   SVGMarkerOrientEnumeration(SVGAngle*);
   ~SVGMarkerOrientEnumeration() override;
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float,
                               unsigned,
                               SVGPropertyBase*,
@@ -60,7 +57,7 @@ class SVGMarkerOrientEnumeration final
                               SVGElement*) override;
   float CalculateDistance(SVGPropertyBase*, SVGElement*) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void NotifyChange() override;
@@ -80,8 +77,6 @@ class SVGAngle final : public SVGPropertyHelper<SVGAngle> {
     kSvgAngletypeGrad = 4,
     kSvgAngletypeTurn = 5
   };
-
-  static SVGAngle* Create() { return MakeGarbageCollected<SVGAngle>(); }
 
   SVGAngle();
   SVGAngle(SVGAngleType, float, SVGMarkerOrientType);
@@ -124,7 +119,7 @@ class SVGAngle final : public SVGPropertyHelper<SVGAngle> {
   SVGParsingError SetValueAsString(const String&);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -136,7 +131,7 @@ class SVGAngle final : public SVGPropertyHelper<SVGAngle> {
 
   static AnimatedPropertyType ClassType() { return kAnimatedAngle; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void Assign(const SVGAngle&);
@@ -146,7 +141,12 @@ class SVGAngle final : public SVGPropertyHelper<SVGAngle> {
   Member<SVGMarkerOrientEnumeration> orient_type_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGAngle);
+template <>
+struct DowncastTraits<SVGAngle> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGAngle::ClassType();
+  }
+};
 
 }  // namespace blink
 

@@ -9,12 +9,18 @@ mojom_component("mojom") {
   macro_prefix = "TRACING_MOJOM"
 
   sources = [
-    "constants.mojom",
-    "perfetto_service.mojom",
-    "tracing.mojom",
+    "background_tracing_agent.mojom",
+    "traced_process.mojom",
+    "tracing_service.mojom",
   ]
 
-  public_deps = [
-    "//mojo/public/mojom/base",
-  ]
+  if (!is_nacl && !is_ios) {
+    enabled_features = [ "is_perfetto_supported_os" ]
+    sources += [
+      "constants.mojom",
+      "perfetto_service.mojom",
+    ]
+  }
+
+  public_deps = [ "//mojo/public/mojom/base" ]
 }

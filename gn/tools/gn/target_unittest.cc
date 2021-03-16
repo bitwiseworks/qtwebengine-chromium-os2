@@ -82,6 +82,52 @@ TEST_F(TargetTest, LibInheritance) {
   EXPECT_EQ(0u, exec.all_lib_dirs().size());
 }
 
+// Tests that framework[_dir]s are inherited across deps boundaries for static
+// libraries but not executables.
+TEST_F(TargetTest, FrameworkInheritance) {
+  TestWithScope setup;
+  Err err;
+
+  const std::string framework("Foo.framework");
+  const SourceDir frameworkdir("//out/foo/");
+
+  // Leaf target with ldflags set.
+  TestTarget z(setup, "//foo:z", Target::STATIC_LIBRARY);
+  z.config_values().frameworks().push_back(framework);
+  z.config_values().framework_dirs().push_back(frameworkdir);
+  ASSERT_TRUE(z.OnResolved(&err));
+
+  // All framework[_dir]s should be set when target is resolved.
+  ASSERT_EQ(1u, z.all_frameworks().size());
+  EXPECT_EQ(framework, z.all_frameworks()[0]);
+  ASSERT_EQ(1u, z.all_framework_dirs().size());
+  EXPECT_EQ(frameworkdir, z.all_framework_dirs()[0]);
+
+  // Shared library target should inherit the libs from the static library
+  // and its own. Its own flag should be before the inherited one.
+  const std::string second_framework("Bar.framework");
+  const SourceDir second_frameworkdir("//out/bar/");
+  TestTarget shared(setup, "//foo:shared", Target::SHARED_LIBRARY);
+  shared.config_values().frameworks().push_back(second_framework);
+  shared.config_values().framework_dirs().push_back(second_frameworkdir);
+  shared.private_deps().push_back(LabelTargetPair(&z));
+  ASSERT_TRUE(shared.OnResolved(&err));
+
+  ASSERT_EQ(2u, shared.all_frameworks().size());
+  EXPECT_EQ(second_framework, shared.all_frameworks()[0]);
+  EXPECT_EQ(framework, shared.all_frameworks()[1]);
+  ASSERT_EQ(2u, shared.all_framework_dirs().size());
+  EXPECT_EQ(second_frameworkdir, shared.all_framework_dirs()[0]);
+  EXPECT_EQ(frameworkdir, shared.all_framework_dirs()[1]);
+
+  // Executable target shouldn't get either by depending on shared.
+  TestTarget exec(setup, "//foo:exec", Target::EXECUTABLE);
+  exec.private_deps().push_back(LabelTargetPair(&shared));
+  ASSERT_TRUE(exec.OnResolved(&err));
+  EXPECT_EQ(0u, exec.all_frameworks().size());
+  EXPECT_EQ(0u, exec.all_framework_dirs().size());
+}
+
 // Test all_dependent_configs and public_config inheritance.
 TEST_F(TargetTest, DependentConfigs) {
   TestWithScope setup;
@@ -637,7 +683,8 @@ TEST_F(TargetTest, LinkAndDepOutputs) {
 
   Toolchain toolchain(setup.settings(), Label(SourceDir("//tc/"), "tc"));
 
-  std::unique_ptr<Tool> solink_tool = std::make_unique<Tool>();
+  std::unique_ptr<Tool> solink = Tool::CreateTool(CTool::kCToolSolink);
+  CTool* solink_tool = solink->AsC();
   solink_tool->set_output_prefix("lib");
   solink_tool->set_default_output_extension(".so");
 
@@ -656,7 +703,7 @@ TEST_F(TargetTest, LinkAndDepOutputs) {
   solink_tool->set_outputs(
       SubstitutionList::MakeForTest(kLinkPattern, kDependPattern));
 
-  toolchain.SetTool(Toolchain::TYPE_SOLINK, std::move(solink_tool));
+  toolchain.SetTool(std::move(solink));
 
   Target target(setup.settings(), Label(SourceDir("//a/"), "a"));
   target.set_output_type(Target::SHARED_LIBRARY);
@@ -678,7 +725,8 @@ TEST_F(TargetTest, RuntimeOuputs) {
 
   Toolchain toolchain(setup.settings(), Label(SourceDir("//tc/"), "tc"));
 
-  std::unique_ptr<Tool> solink_tool = std::make_unique<Tool>();
+  std::unique_ptr<Tool> solink = Tool::CreateTool(CTool::kCToolSolink);
+  CTool* solink_tool = solink->AsC();
   solink_tool->set_output_prefix("");
   solink_tool->set_default_output_extension(".dll");
 
@@ -699,7 +747,7 @@ TEST_F(TargetTest, RuntimeOuputs) {
   solink_tool->set_runtime_outputs(
       SubstitutionList::MakeForTest(kDllPattern, kPdbPattern));
 
-  toolchain.SetTool(Toolchain::TYPE_SOLINK, std::move(solink_tool));
+  toolchain.SetTool(std::move(solink));
 
   Target target(setup.settings(), Label(SourceDir("//a/"), "a"));
   target.set_output_type(Target::SHARED_LIBRARY);
@@ -1252,8 +1300,8 @@ TEST(TargetTest, CollectMetadataWithError) {
                   &err);
   EXPECT_TRUE(err.has_error());
   EXPECT_EQ(err.message(),
-            "I was expecting //foo:missing to be a dependency of "
-            "//foo:one(//toolchain:default). "
+            "I was expecting //foo:missing(//toolchain:default) to be a "
+            "dependency of //foo:one(//toolchain:default). "
             "Make sure it's included in the deps or data_deps, and that you've "
             "specified the appropriate toolchain.")
       << err.message();

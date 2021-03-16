@@ -7,7 +7,7 @@ int do_bt(int nArg, char **azArg){
     const char *zName;
     int bPgno;
     int eOpt;
-  } aOpt [] = {
+  } aOpt [] = { 
     { "dbhdr",          0, BT_INFO_HDRDUMP },
     { "filename",       0, BT_INFO_FILENAME },
     { "block_freelist", 0, BT_INFO_BLOCK_FREELIST },
@@ -16,7 +16,7 @@ int do_bt(int nArg, char **azArg){
     { "page",           1, BT_INFO_PAGEDUMP },
     { "page_ascii",     1, BT_INFO_PAGEDUMP_ASCII },
     { "leaks",          0, BT_INFO_PAGE_LEAKS },
-    { 0, 0 }
+    { 0, 0 } 
   };
   int iOpt;
   int rc;

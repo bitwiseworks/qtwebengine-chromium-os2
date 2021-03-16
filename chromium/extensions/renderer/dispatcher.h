@@ -21,7 +21,7 @@
 #include "components/version_info/version_info.h"
 #include "content/public/renderer/render_thread_observer.h"
 #include "extensions/common/event_filter.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_session_type.h"
@@ -45,10 +45,12 @@ struct ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params;
 
 namespace blink {
 class WebLocalFrame;
+class WebServiceWorkerContextProxy;
 }
 
 namespace base {
 class ListValue;
+class SingleThreadTaskRunner;
 }
 
 namespace content {
@@ -58,10 +60,13 @@ class RenderThread;
 namespace extensions {
 class ContentWatcher;
 class DispatcherDelegate;
-class ExtensionBindingsSystem;
+class Extension;
+class NativeExtensionBindingsSystem;
 class IPCMessageSender;
 class ScriptContext;
+class ScriptContextSetIterable;
 class ScriptInjectionManager;
+class WorkerScriptContextSet;
 struct EventFilteringInfo;
 struct Message;
 struct PortId;
@@ -74,8 +79,16 @@ class Dispatcher : public content::RenderThreadObserver,
   explicit Dispatcher(std::unique_ptr<DispatcherDelegate> delegate);
   ~Dispatcher() override;
 
+  // Returns Service Worker ScriptContexts belonging to current worker thread.
+  static WorkerScriptContextSet* GetWorkerScriptContextSet();
+
   const ScriptContextSet& script_context_set() const {
     return *script_context_set_;
+  }
+
+  // Returns iterator to iterate over all main thread ScriptContexts.
+  ScriptContextSetIterable* script_context_set_iterator() {
+    return script_context_set_.get();
   }
 
   V8SchemaRegistry* v8_schema_registry() { return v8_schema_registry_.get(); }
@@ -92,11 +105,31 @@ class Dispatcher : public content::RenderThreadObserver,
 
   void DidCreateScriptContext(blink::WebLocalFrame* frame,
                               const v8::Local<v8::Context>& context,
-                              int world_id);
+                              int32_t world_id);
 
-  // Runs on a different thread and should only use thread safe member
+  // This is called when a service worker is ready to evaluate the toplevel
+  // script. This method suspends the service worker if:
+  // * the service worker is background of a service worker based extension,
+  // and
+  // * the extension isn't loaded yet.
+  // Suspending background service worker is required because we need to
+  // install extension API bindings before executing the service worker.
+  // TODO(crbug.com/1000890): Figure out better way to coalesce them.
+  //
+  // Runs on the service worker thread and should only use thread-safe member
   // variables.
   void DidInitializeServiceWorkerContextOnWorkerThread(
+      blink::WebServiceWorkerContextProxy* context_proxy,
+      const GURL& service_worker_scope,
+      const GURL& script_url);
+
+  // This is called immediately before a service worker evaluates the
+  // toplevel script. This method installs extension API bindings.
+  //
+  // Runs on a different thread and should only use thread-safe member
+  // variables.
+  void WillEvaluateServiceWorkerOnWorkerThread(
+      blink::WebServiceWorkerContextProxy* context_proxy,
       v8::Local<v8::Context> v8_context,
       int64_t service_worker_version_id,
       const GURL& service_worker_scope,
@@ -104,16 +137,16 @@ class Dispatcher : public content::RenderThreadObserver,
 
   void WillReleaseScriptContext(blink::WebLocalFrame* frame,
                                 const v8::Local<v8::Context>& context,
-                                int world_id);
+                                int32_t world_id);
 
   // Runs on worker thread and should not use any member variables.
-  static void DidStartServiceWorkerContextOnWorkerThread(
+  void DidStartServiceWorkerContextOnWorkerThread(
       int64_t service_worker_version_id,
       const GURL& service_worker_scope,
       const GURL& script_url);
 
   // Runs on a different thread and should not use any member variables.
-  static void WillDestroyServiceWorkerContextOnWorkerThread(
+  void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> v8_context,
       int64_t service_worker_version_id,
       const GURL& service_worker_scope,
@@ -149,17 +182,19 @@ class Dispatcher : public content::RenderThreadObserver,
   struct JsResourceInfo {
     const char* name = nullptr;
     int id = 0;
-    bool gzipped = false;
   };
   // Returns a list of resources for the JS modules to add to the source map.
   static std::vector<JsResourceInfo> GetJsResources();
-  static void RegisterNativeHandlers(ModuleSystem* module_system,
-                                     ScriptContext* context,
-                                     Dispatcher* dispatcher,
-                                     ExtensionBindingsSystem* bindings_system,
-                                     V8SchemaRegistry* v8_schema_registry);
+  static void RegisterNativeHandlers(
+      ModuleSystem* module_system,
+      ScriptContext* context,
+      Dispatcher* dispatcher,
+      NativeExtensionBindingsSystem* bindings_system,
+      V8SchemaRegistry* v8_schema_registry);
 
-  ExtensionBindingsSystem* bindings_system() { return bindings_system_.get(); }
+  NativeExtensionBindingsSystem* bindings_system() {
+    return bindings_system_.get();
+  }
 
  private:
   // The RendererPermissionsPolicyDelegateTest.CannotScriptWebstore test needs
@@ -173,12 +208,16 @@ class Dispatcher : public content::RenderThreadObserver,
 
   void OnActivateExtension(const std::string& extension_id);
   void OnCancelSuspend(const std::string& extension_id);
-  void OnDeliverMessage(const PortId& target_port_id, const Message& message);
-  void OnDispatchOnConnect(const PortId& target_port_id,
+  void OnDeliverMessage(int worker_thread_id,
+                        const PortId& target_port_id,
+                        const Message& message);
+  void OnDispatchOnConnect(int worker_thread_id,
+                           const PortId& target_port_id,
                            const std::string& channel_name,
                            const ExtensionMsg_TabConnectionInfo& source,
                            const ExtensionMsg_ExternalConnectionInfo& info);
-  void OnDispatchOnDisconnect(const PortId& port_id,
+  void OnDispatchOnDisconnect(int worker_thread_id,
+                              const PortId& port_id,
                               const std::string& error_message);
   void OnLoaded(
       const std::vector<ExtensionMsg_Loaded_Params>& loaded_extensions);
@@ -230,20 +269,17 @@ class Dispatcher : public content::RenderThreadObserver,
   // Enable custom element whitelist in Apps.
   void EnableCustomElementWhiteList();
 
-  // Adds or removes bindings for every context belonging to |extension_id|, or
-  // or all contexts if |extension_id| is empty.
-  void UpdateBindings(const std::string& extension_id);
+  // Adds or removes bindings for all contexts.
+  void UpdateAllBindings();
 
-  void UpdateBindingsForContext(ScriptContext* context);
+  // Adds or removes bindings for every context belonging to |extension|, due to
+  // permissions change in the extension.
+  void UpdateBindingsForExtension(const Extension& extension);
 
   void RegisterNativeHandlers(ModuleSystem* module_system,
                               ScriptContext* context,
-                              ExtensionBindingsSystem* bindings_system,
+                              NativeExtensionBindingsSystem* bindings_system,
                               V8SchemaRegistry* v8_schema_registry);
-
-  // Updates a web page context with any content capabilities granted by active
-  // extensions.
-  void UpdateContentCapabilities(ScriptContext* context);
 
   // Inserts static source code into |source_map_|.
   void PopulateSourceMap();
@@ -255,11 +291,13 @@ class Dispatcher : public content::RenderThreadObserver,
   // |context|.
   void RequireGuestViewModules(ScriptContext* context);
 
-  // Creates the ExtensionBindingsSystem. Note: this may be called on any
+  // Creates the NativeExtensionBindingsSystem. Note: this may be called on any
   // thread, and thus cannot mutate any state or rely on state which can be
   // mutated in Dispatcher.
-  std::unique_ptr<ExtensionBindingsSystem> CreateBindingsSystem(
+  std::unique_ptr<NativeExtensionBindingsSystem> CreateBindingsSystem(
       std::unique_ptr<IPCMessageSender> ipc_sender);
+
+  void ResumeEvaluationOnWorkerThread(const ExtensionId& extension_id);
 
   // The delegate for this dispatcher to handle embedder-specific logic.
   std::unique_ptr<DispatcherDelegate> delegate_;
@@ -287,7 +325,7 @@ class Dispatcher : public content::RenderThreadObserver,
   std::unique_ptr<V8SchemaRegistry> v8_schema_registry_;
 
   // The bindings system associated with the main thread.
-  std::unique_ptr<ExtensionBindingsSystem> bindings_system_;
+  std::unique_ptr<NativeExtensionBindingsSystem> bindings_system_;
 
   // The platforms system font family and size;
   std::string system_font_family_;
@@ -305,6 +343,23 @@ class Dispatcher : public content::RenderThreadObserver,
   // if this renderer is a WebView guest render process. Otherwise, this will be
   // empty.
   std::string webview_partition_id_;
+
+  // Used to hold a service worker information which is ready to execute but the
+  // onloaded message haven't been received yet. We need to defer service worker
+  // execution until the ExtensionMsg_Loaded message is received because we can
+  // install extension bindings only after the onload message is received.
+  // TODO(bashi): Consider to have a separate class to put this logic?
+  struct PendingServiceWorker {
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner;
+    blink::WebServiceWorkerContextProxy* context_proxy;
+
+    PendingServiceWorker(blink::WebServiceWorkerContextProxy* context_proxy);
+    ~PendingServiceWorker();
+  };
+  // This will be accessed both from the main thread and worker threads.
+  std::map<ExtensionId, std::unique_ptr<PendingServiceWorker>>
+      service_workers_paused_for_on_loaded_message_;
+  base::Lock service_workers_paused_for_on_loaded_message_lock_;
 
   DISALLOW_COPY_AND_ASSIGN(Dispatcher);
 };

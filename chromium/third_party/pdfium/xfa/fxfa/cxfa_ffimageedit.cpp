@@ -24,23 +24,25 @@
 #include "xfa/fxfa/parser/cxfa_para.h"
 #include "xfa/fxfa/parser/cxfa_value.h"
 
-CXFA_FFImageEdit::CXFA_FFImageEdit(CXFA_Node* pNode)
-    : CXFA_FFField(pNode), m_pOldDelegate(nullptr) {}
+CXFA_FFImageEdit::CXFA_FFImageEdit(CXFA_Node* pNode) : CXFA_FFField(pNode) {}
 
 CXFA_FFImageEdit::~CXFA_FFImageEdit() {
   m_pNode->SetImageEditImage(nullptr);
 }
 
 bool CXFA_FFImageEdit::LoadWidget() {
+  ASSERT(!IsLoaded());
+
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   auto pNew = pdfium::MakeUnique<CFWL_PictureBox>(GetFWLApp());
   CFWL_PictureBox* pPictureBox = pNew.get();
-  m_pNormalWidget = std::move(pNew);
-  m_pNormalWidget->SetLayoutItem(this);
+  SetNormalWidget(std::move(pNew));
+  pPictureBox->SetAdapterIface(this);
 
-  CFWL_NoteDriver* pNoteDriver =
-      m_pNormalWidget->GetOwnerApp()->GetNoteDriver();
-  pNoteDriver->RegisterEventTarget(m_pNormalWidget.get(),
-                                   m_pNormalWidget.get());
+  CFWL_NoteDriver* pNoteDriver = pPictureBox->GetOwnerApp()->GetNoteDriver();
+  pNoteDriver->RegisterEventTarget(pPictureBox, pPictureBox);
   m_pOldDelegate = pPictureBox->GetDelegate();
   pPictureBox->SetDelegate(this);
 
@@ -53,21 +55,21 @@ bool CXFA_FFImageEdit::LoadWidget() {
 
 void CXFA_FFImageEdit::RenderWidget(CXFA_Graphics* pGS,
                                     const CFX_Matrix& matrix,
-                                    uint32_t dwStatus) {
-  if (!IsMatchVisibleStatus(dwStatus))
+                                    HighlightOption highlight) {
+  if (!HasVisibleStatus())
     return;
 
   CFX_Matrix mtRotate = GetRotateMatrix();
   mtRotate.Concat(matrix);
 
-  CXFA_FFWidget::RenderWidget(pGS, mtRotate, dwStatus);
+  CXFA_FFWidget::RenderWidget(pGS, mtRotate, highlight);
   DrawBorder(pGS, m_pNode->GetUIBorder(), m_rtUI, mtRotate);
   RenderCaption(pGS, &mtRotate);
   RetainPtr<CFX_DIBitmap> pDIBitmap = m_pNode->GetImageEditImage();
   if (!pDIBitmap)
     return;
 
-  CFX_RectF rtImage = m_pNormalWidget->GetWidgetRect();
+  CFX_RectF rtImage = GetNormalWidget()->GetWidgetRect();
   XFA_AttributeValue iHorzAlign = XFA_AttributeValue::Left;
   XFA_AttributeValue iVertAlign = XFA_AttributeValue::Top;
   CXFA_Para* para = m_pNode->GetParaIfExists();
@@ -102,26 +104,28 @@ bool CXFA_FFImageEdit::AcceptsFocusOnButtonDown(uint32_t dwFlags,
   return true;
 }
 
-void CXFA_FFImageEdit::OnLButtonDown(uint32_t dwFlags,
+bool CXFA_FFImageEdit::OnLButtonDown(uint32_t dwFlags,
                                      const CFX_PointF& point) {
-  SetButtonDown(true);
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
 
-  CFWL_MessageMouse ms(nullptr, m_pNormalWidget.get());
-  ms.m_dwCmd = FWL_MouseCommand::LeftButtonDown;
-  ms.m_dwFlags = dwFlags;
-  ms.m_pos = FWLToClient(point);
-  TranslateFWLMessage(&ms);
+  SetButtonDown(true);
+  SendMessageToFWLWidget(pdfium::MakeUnique<CFWL_MessageMouse>(
+      GetNormalWidget(), FWL_MouseCommand::LeftButtonDown, dwFlags,
+      FWLToClient(point)));
+
+  return true;
 }
 
 void CXFA_FFImageEdit::SetFWLRect() {
-  if (!m_pNormalWidget)
+  if (!GetNormalWidget())
     return;
 
   CFX_RectF rtUIMargin = m_pNode->GetUIMargin();
   CFX_RectF rtImage(m_rtUI);
   rtImage.Deflate(rtUIMargin.left, rtUIMargin.top, rtUIMargin.width,
                   rtUIMargin.height);
-  m_pNormalWidget->SetWidgetRect(rtImage);
+  GetNormalWidget()->SetWidgetRect(rtImage);
 }
 
 bool CXFA_FFImageEdit::CommitData() {
@@ -135,16 +139,25 @@ bool CXFA_FFImageEdit::UpdateFWLData() {
 }
 
 void CXFA_FFImageEdit::OnProcessMessage(CFWL_Message* pMessage) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnProcessMessage(pMessage);
 }
 
 void CXFA_FFImageEdit::OnProcessEvent(CFWL_Event* pEvent) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   CXFA_FFField::OnProcessEvent(pEvent);
   m_pOldDelegate->OnProcessEvent(pEvent);
 }
 
 void CXFA_FFImageEdit::OnDrawWidget(CXFA_Graphics* pGraphics,
                                     const CFX_Matrix& matrix) {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retainer(m_pLayoutItem.Get());
+
   m_pOldDelegate->OnDrawWidget(pGraphics, matrix);
 }
 

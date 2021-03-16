@@ -89,11 +89,11 @@ void LogVideoCaptureTimestamps(CastEnvironment* cast_environment,
 VideoSender::VideoSender(
     scoped_refptr<CastEnvironment> cast_environment,
     const FrameSenderConfig& video_config,
-    const StatusChangeCallback& status_change_cb,
+    StatusChangeCallback status_change_cb,
     const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
     const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb,
     CastTransport* const transport_sender,
-    const PlayoutDelayChangeCB& playout_delay_change_cb)
+    PlayoutDelayChangeCB playout_delay_change_cb)
     : FrameSender(
           cast_environment,
           transport_sender,
@@ -107,11 +107,10 @@ VideoSender::VideoSender(
                                              video_config.max_frame_rate)),
       frames_in_encoder_(0),
       last_bitrate_(0),
-      playout_delay_change_cb_(playout_delay_change_cb),
+      playout_delay_change_cb_(std::move(playout_delay_change_cb)),
       low_latency_mode_(false),
       last_reported_encoder_utilization_(-1.0),
-      last_reported_lossy_utilization_(-1.0),
-      weak_factory_(this) {
+      last_reported_lossy_utilization_(-1.0) {
   video_encoder_ = VideoEncoder::Create(
       cast_environment_,
       video_config,
@@ -120,16 +119,15 @@ VideoSender::VideoSender(
       create_video_encode_mem_cb);
   if (!video_encoder_) {
     cast_environment_->PostTask(
-        CastEnvironment::MAIN,
-        FROM_HERE,
-        base::Bind(status_change_cb, STATUS_UNSUPPORTED_CODEC));
+        CastEnvironment::MAIN, FROM_HERE,
+        base::BindOnce(std::move(status_change_cb), STATUS_UNSUPPORTED_CODEC));
   }
 }
 
 VideoSender::~VideoSender() = default;
 
 void VideoSender::InsertRawVideoFrame(
-    const scoped_refptr<media::VideoFrame>& video_frame,
+    scoped_refptr<media::VideoFrame> video_frame,
     const base::TimeTicks& reference_time) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
 
@@ -252,11 +250,11 @@ void VideoSender::InsertRawVideoFrame(
       MaybeRenderPerformanceMetricsOverlay(
           GetTargetPlayoutDelay(), low_latency_mode_, bitrate,
           frames_in_encoder_ + 1, last_reported_encoder_utilization_,
-          last_reported_lossy_utilization_, video_frame);
+          last_reported_lossy_utilization_, std::move(video_frame));
   if (video_encoder_->EncodeVideoFrame(
           frame_to_encode, reference_time,
-          base::Bind(&VideoSender::OnEncodedVideoFrame, AsWeakPtr(),
-                     frame_to_encode, bitrate))) {
+          base::BindOnce(&VideoSender::OnEncodedVideoFrame, AsWeakPtr(),
+                         frame_to_encode, bitrate))) {
     TRACE_EVENT_ASYNC_BEGIN1("cast.stream", "Video Encode",
                              frame_to_encode.get(), "rtp_timestamp",
                              rtp_timestamp.lower_32_bits());
@@ -295,7 +293,7 @@ base::TimeDelta VideoSender::GetInFlightMediaDuration() const {
 }
 
 void VideoSender::OnEncodedVideoFrame(
-    const scoped_refptr<media::VideoFrame>& video_frame,
+    scoped_refptr<media::VideoFrame> video_frame,
     int encoder_bitrate,
     std::unique_ptr<SenderEncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));

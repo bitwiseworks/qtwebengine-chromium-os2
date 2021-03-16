@@ -10,7 +10,7 @@
 
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/payments/core/payment_options_provider.h"
 
 namespace autofill {
@@ -60,19 +60,6 @@ base::string16 GetChooseShippingOptionButtonLabel(
 // given PaymentShippingType.
 base::string16 GetShippingOptionSectionString(
     PaymentShippingType shipping_type);
-
-// Returns the label "Accepted cards" that is customized based on the
-// accepted card |types|. For example, "Accepted debit cards". If |types| is
-// empty or contains all possible values, then returns the generic "Accepted
-// cards" string.
-base::string16 GetAcceptedCardTypesText(
-    const std::set<autofill::CreditCard::CardType>& types);
-
-// Returns the label "Cards are accepted" that is customized based on the
-// accepted card |types|. For example, "Debit cards are accepted". If |types| is
-// empty or contains all possible values, then returns an empty string.
-base::string16 GetCardTypesAreAcceptedText(
-    const std::set<autofill::CreditCard::CardType>& types);
 
 }  // namespace payments
 

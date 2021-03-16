@@ -20,16 +20,17 @@ FileVersionInfoMac::FileVersionInfoMac(NSBundle *bundle)
 FileVersionInfoMac::~FileVersionInfoMac() {}
 
 // static
-FileVersionInfo* FileVersionInfo::CreateFileVersionInfoForCurrentModule() {
+std::unique_ptr<FileVersionInfo>
+FileVersionInfo::CreateFileVersionInfoForCurrentModule() {
   return CreateFileVersionInfo(base::mac::FrameworkBundlePath());
 }
 
 // static
-FileVersionInfo* FileVersionInfo::CreateFileVersionInfo(
+std::unique_ptr<FileVersionInfo> FileVersionInfo::CreateFileVersionInfo(
     const base::FilePath& file_path) {
   NSString* path = base::SysUTF8ToNSString(file_path.value());
   NSBundle* bundle = [NSBundle bundleWithPath:path];
-  return new FileVersionInfoMac(bundle);
+  return std::make_unique<FileVersionInfoMac>(bundle);
 }
 
 base::string16 FileVersionInfoMac::company_name() {
@@ -52,14 +53,6 @@ base::string16 FileVersionInfoMac::product_short_name() {
   return GetString16Value(kCFBundleNameKey);
 }
 
-base::string16 FileVersionInfoMac::comments() {
-  return base::string16();
-}
-
-base::string16 FileVersionInfoMac::legal_copyright() {
-  return GetString16Value(CFSTR("CFBundleGetInfoString"));
-}
-
 base::string16 FileVersionInfoMac::product_version() {
   // On OS X, CFBundleVersion is used by LaunchServices, and must follow
   // specific formatting rules, so the four-part Chrome version is in
@@ -80,14 +73,6 @@ base::string16 FileVersionInfoMac::file_description() {
   return base::string16();
 }
 
-base::string16 FileVersionInfoMac::legal_trademarks() {
-  return base::string16();
-}
-
-base::string16 FileVersionInfoMac::private_build() {
-  return base::string16();
-}
-
 base::string16 FileVersionInfoMac::file_version() {
   return product_version();
 }
@@ -98,18 +83,6 @@ base::string16 FileVersionInfoMac::original_filename() {
 
 base::string16 FileVersionInfoMac::special_build() {
   return base::string16();
-}
-
-base::string16 FileVersionInfoMac::last_change() {
-  return GetString16Value(CFSTR("SCMRevision"));
-}
-
-bool FileVersionInfoMac::is_official_build() {
-#if defined (GOOGLE_CHROME_BUILD)
-  return true;
-#else
-  return false;
-#endif
 }
 
 base::string16 FileVersionInfoMac::GetString16Value(CFStringRef name) {

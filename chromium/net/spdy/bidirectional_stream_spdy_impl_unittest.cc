@@ -13,6 +13,7 @@
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "base/timer/mock_timer.h"
+#include "base/timer/timer.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/load_timing_info_test_util.h"
 #include "net/base/net_errors.h"
@@ -27,7 +28,7 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
-#include "net/test/test_with_scoped_task_environment.h"
+#include "net/test/test_with_task_environment.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -239,7 +240,7 @@ class TestDelegateBase : public BidirectionalStreamImpl::Delegate {
 }  // namespace
 
 class BidirectionalStreamSpdyImplTest : public testing::TestWithParam<bool>,
-                                        public WithScopedTaskEnvironment {
+                                        public WithTaskEnvironment {
  public:
   BidirectionalStreamSpdyImplTest()
       : default_url_(kDefaultUrl),
@@ -248,7 +249,9 @@ class BidirectionalStreamSpdyImplTest : public testing::TestWithParam<bool>,
              ProxyServer::Direct(),
              PRIVACY_MODE_DISABLED,
              SpdySessionKey::IsProxySession::kFalse,
-             SocketTag()),
+             SocketTag(),
+             NetworkIsolationKey(),
+             false /* disable_secure_dns */),
         ssl_data_(SSLSocketDataProvider(ASYNC, OK)) {
     ssl_data_.next_proto = kProtoHTTP2;
     ssl_data_.ssl_info.cert =
@@ -275,7 +278,7 @@ class BidirectionalStreamSpdyImplTest : public testing::TestWithParam<bool>,
     session_ = CreateSpdySession(http_session_.get(), key_, net_log_.bound());
   }
 
-  BoundTestNetLog net_log_;
+  RecordingBoundTestNetLog net_log_;
   SpdyTestUtil spdy_util_;
   SpdySessionDependencies session_deps_;
   const GURL default_url_;
@@ -431,7 +434,7 @@ TEST_F(BidirectionalStreamSpdyImplTest, SendDataAfterStreamFailed) {
   delegate->SendData(buf.get(), buf->size(), false);
   base::RunLoop().RunUntilIdle();
 
-  EXPECT_THAT(delegate->error(), IsError(ERR_SPDY_PROTOCOL_ERROR));
+  EXPECT_THAT(delegate->error(), IsError(ERR_HTTP2_PROTOCOL_ERROR));
   EXPECT_EQ(0, delegate->on_data_read_count());
   EXPECT_EQ(0, delegate->on_data_sent_count());
   EXPECT_EQ(kProtoHTTP2, delegate->GetProtocol());
@@ -442,9 +445,9 @@ TEST_F(BidirectionalStreamSpdyImplTest, SendDataAfterStreamFailed) {
   EXPECT_EQ(0, delegate->GetTotalReceivedBytes());
 }
 
-INSTANTIATE_TEST_CASE_P(BidirectionalStreamSpdyImplTests,
-                        BidirectionalStreamSpdyImplTest,
-                        ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(BidirectionalStreamSpdyImplTests,
+                         BidirectionalStreamSpdyImplTest,
+                         ::testing::Bool());
 
 // Tests that when received RST_STREAM with NO_ERROR, BidirectionalStream does
 // not crash when processing pending writes. See crbug.com/650438.

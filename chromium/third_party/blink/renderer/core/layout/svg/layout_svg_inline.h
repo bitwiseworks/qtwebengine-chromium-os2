@@ -38,20 +38,15 @@ class LayoutSVGInline : public LayoutInline {
 
   bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
 
-  // Chapter 10.4 of the SVG Specification say that we should use the
-  // object bounding box of the parent text element.
-  // We search for the root text element and take its bounding box.
-  // It is also necessary to take the stroke and visual rect of this element,
-  // since we need it for filters.
   FloatRect ObjectBoundingBox() const final;
   FloatRect StrokeBoundingBox() const final;
   FloatRect VisualRectInLocalSVGCoordinates() const final;
 
-  LayoutRect VisualRectInDocument() const final;
-  void MapLocalToAncestor(
-      const LayoutBoxModelObject* ancestor,
-      TransformState&,
-      MapCoordinatesFlags = kApplyContainerFlip) const final;
+  PhysicalRect VisualRectInDocument(
+      VisualRectFlags = kDefaultVisualRectFlags) const final;
+  void MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
+                          TransformState&,
+                          MapCoordinatesFlags) const final;
   const LayoutObject* PushMappingToContainer(
       const LayoutBoxModelObject* ancestor_to_stop_at,
       LayoutGeometryMap&) const final;

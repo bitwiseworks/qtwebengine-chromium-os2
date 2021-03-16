@@ -15,103 +15,106 @@
  */
 
 #include "src/trace_processor/event_tracker.h"
-#include "perfetto/base/utils.h"
-#include "src/trace_processor/ftrace_utils.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/stats.h"
-#include "src/trace_processor/trace_processor_context.h"
 
 #include <math.h>
+
+#include "perfetto/base/logging.h"
+#include "perfetto/ext/base/utils.h"
+#include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/process_tracker.h"
+#include "src/trace_processor/storage/stats.h"
+#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/track_tracker.h"
+#include "src/trace_processor/types/variadic.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 EventTracker::EventTracker(TraceProcessorContext* context)
-    : idle_string_id_(context->storage->InternString("idle")),
-      context_(context) {}
+    : context_(context) {}
 
 EventTracker::~EventTracker() = default;
 
-StringId EventTracker::GetThreadNameId(uint32_t tid, base::StringView comm) {
-  return tid == 0 ? idle_string_id_ : context_->storage->InternString(comm);
+base::Optional<CounterId> EventTracker::PushProcessCounterForThread(
+    int64_t timestamp,
+    double value,
+    StringId name_id,
+    UniqueTid utid) {
+  auto opt_id = PushCounter(timestamp, value, kInvalidTrackId);
+  if (opt_id) {
+    PendingUpidResolutionCounter pending;
+    pending.row = *context_->storage->counter_table().id().IndexOf(*opt_id);
+    pending.utid = utid;
+    pending.name_id = name_id;
+    pending_upid_resolution_counter_.emplace_back(pending);
+  }
+  return opt_id;
 }
 
-void EventTracker::PushSchedSwitch(uint32_t cpu,
-                                   int64_t timestamp,
-                                   uint32_t prev_pid,
-                                   int64_t prev_state,
-                                   uint32_t next_pid,
-                                   base::StringView next_comm,
-                                   int32_t next_priority) {
-  // At this stage all events should be globally timestamp ordered.
-  if (timestamp < prev_timestamp_) {
-    PERFETTO_ELOG("sched_switch event out of order by %.4f ms, skipping",
-                  (prev_timestamp_ - timestamp) / 1e6);
-    context_->storage->IncrementStats(stats::sched_switch_out_of_order);
-    return;
-  }
-  prev_timestamp_ = timestamp;
-  PERFETTO_DCHECK(cpu < base::kMaxCpus);
-
-  auto* slices = context_->storage->mutable_slices();
-  auto* pending_slice = &pending_sched_per_cpu_[cpu];
-  if (pending_slice->storage_index < std::numeric_limits<size_t>::max()) {
-    size_t idx = pending_slice->storage_index;
-    int64_t duration = timestamp - slices->start_ns()[idx];
-    slices->set_duration(idx, duration);
-
-    if (prev_pid == pending_slice->pid) {
-      // We store the state as a uint16 as we only consider values up to 2048
-      // when unpacking the information inside; this allows savings of 48 bits
-      // per slice.
-      slices->set_end_state(
-          idx, ftrace_utils::TaskState(static_cast<uint16_t>(prev_state)));
-    } else {
-      // If the this events previous pid does not match the previous event's
-      // next pid, make a note of this.
-      context_->storage->IncrementStats(stats::mismatched_sched_switch_tids);
-    }
-  }
-
-  StringId name_id = GetThreadNameId(next_pid, next_comm);
-  auto utid =
-      context_->process_tracker->UpdateThread(timestamp, next_pid, name_id);
-
-  pending_slice->storage_index =
-      slices->AddSlice(cpu, timestamp, 0 /* duration */, utid,
-                       ftrace_utils::TaskState(), next_priority);
-  pending_slice->pid = next_pid;
-}
-
-RowId EventTracker::PushCounter(int64_t timestamp,
-                                double value,
-                                StringId name_id,
-                                int64_t ref,
-                                RefType ref_type) {
-  if (timestamp < prev_timestamp_) {
-    PERFETTO_ELOG("counter event out of order by %.4f ms, skipping",
-                  (prev_timestamp_ - timestamp) / 1e6);
+base::Optional<CounterId> EventTracker::PushCounter(int64_t timestamp,
+                                                    double value,
+                                                    TrackId track_id) {
+  if (timestamp < max_timestamp_) {
+    PERFETTO_DLOG("counter event (ts: %" PRId64
+                  ") out of order by %.4f ms, skipping",
+                  timestamp, (max_timestamp_ - timestamp) / 1e6);
     context_->storage->IncrementStats(stats::counter_events_out_of_order);
-    return kInvalidRowId;
+    return base::nullopt;
   }
-  prev_timestamp_ = timestamp;
+  max_timestamp_ = timestamp;
 
-  auto* counters = context_->storage->mutable_counters();
-  const auto& key = CounterKey{ref, name_id};
-  auto counter_it = pending_counters_per_key_.find(key);
-  if (counter_it != pending_counters_per_key_.end()) {
-    size_t idx = counter_it->second;
-    int64_t duration = timestamp - counters->timestamps()[idx];
-    // Update duration of previously stored event.
-    counters->set_duration(idx, duration);
+  auto* counter_values = context_->storage->mutable_counter_table();
+  return counter_values->Insert({timestamp, track_id, value}).id;
+}
+
+InstantId EventTracker::PushInstant(int64_t timestamp,
+                                    StringId name_id,
+                                    int64_t ref,
+                                    RefType ref_type,
+                                    bool resolve_utid_to_upid) {
+  auto* instants = context_->storage->mutable_instant_table();
+  InstantId id;
+  if (resolve_utid_to_upid) {
+    auto ref_type_id = context_->storage->InternString(
+        GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefUpid)]);
+    auto id_and_row = instants->Insert({timestamp, name_id, 0, ref_type_id});
+    id = id_and_row.id;
+    PendingUpidResolutionInstant pending;
+    pending.row = id_and_row.row;
+    pending.utid = static_cast<UniqueTid>(ref);
+    pending_upid_resolution_instant_.emplace_back(pending);
+  } else {
+    auto ref_type_id = context_->storage->InternString(
+        GetRefTypeStringMap()[static_cast<size_t>(ref_type)]);
+    id = instants->Insert({timestamp, name_id, ref, ref_type_id}).id;
+  }
+  return id;
+}
+
+void EventTracker::FlushPendingEvents() {
+  const auto& thread_table = context_->storage->thread_table();
+  for (const auto& pending_counter : pending_upid_resolution_counter_) {
+    // TODO(lalitm): having upid == 0 is probably not the correct approach here
+    // but it's unclear what may be better.
+    UniqueTid utid = pending_counter.utid;
+    UniquePid upid = thread_table.upid()[utid].value_or(0);
+    TrackId id = context_->track_tracker->InternProcessCounterTrack(
+        pending_counter.name_id, upid);
+    context_->storage->mutable_counter_table()->mutable_track_id()->Set(
+        pending_counter.row, id);
   }
 
-  // At this point we don't know the duration so just store 0.
-  size_t idx = counters->AddCounter(timestamp, 0 /* duration */, name_id, value,
-                                    ref, ref_type);
-  pending_counters_per_key_[key] = idx;
-  return TraceStorage::CreateRowId(TableId::kCounters,
-                                   static_cast<uint32_t>(idx));
+  for (const auto& pending_instant : pending_upid_resolution_instant_) {
+    UniqueTid utid = pending_instant.utid;
+    // TODO(lalitm): having upid == 0 is probably not the correct approach here
+    // but it's unclear what may be better.
+    UniquePid upid = thread_table.upid()[utid].value_or(0);
+    context_->storage->mutable_instant_table()->mutable_ref()->Set(
+        pending_instant.row, upid);
+  }
+
+  pending_upid_resolution_counter_.clear();
+  pending_upid_resolution_instant_.clear();
 }
 
 }  // namespace trace_processor

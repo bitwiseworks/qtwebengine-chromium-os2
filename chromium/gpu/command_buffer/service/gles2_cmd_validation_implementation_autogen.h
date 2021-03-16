@@ -430,12 +430,8 @@ static const GLenum valid_g_l_state_table_es3[] = {
     GL_TRANSFORM_FEEDBACK_ACTIVE,
     GL_TRANSFORM_FEEDBACK_BUFFER_BINDING,
     GL_TRANSFORM_FEEDBACK_PAUSED,
-    GL_TRANSFORM_FEEDBACK_BUFFER_SIZE,
-    GL_TRANSFORM_FEEDBACK_BUFFER_START,
     GL_UNIFORM_BUFFER_BINDING,
     GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT,
-    GL_UNIFORM_BUFFER_SIZE,
-    GL_UNIFORM_BUFFER_START,
     GL_UNPACK_IMAGE_HEIGHT,
     GL_UNPACK_ROW_LENGTH,
     GL_UNPACK_SKIP_IMAGES,
@@ -541,132 +537,6 @@ bool Validators::MapBufferAccessValidator::IsValid(const GLenum value) const {
   return false;
 }
 
-bool Validators::MatrixModeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_PATH_PROJECTION_CHROMIUM:
-    case GL_PATH_MODELVIEW_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathCoordTypeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_BYTE:
-    case GL_UNSIGNED_BYTE:
-    case GL_SHORT:
-    case GL_UNSIGNED_SHORT:
-    case GL_FLOAT:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathCoverModeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_CONVEX_HULL_CHROMIUM:
-    case GL_BOUNDING_BOX_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathFillModeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_INVERT:
-    case GL_COUNT_UP_CHROMIUM:
-    case GL_COUNT_DOWN_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathFragmentInputGenModeValidator::IsValid(
-    const GLenum value) const {
-  switch (value) {
-    case GL_NONE:
-    case GL_EYE_LINEAR_CHROMIUM:
-    case GL_OBJECT_LINEAR_CHROMIUM:
-    case GL_CONSTANT_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathInstancedCoverModeValidator::IsValid(
-    const GLenum value) const {
-  switch (value) {
-    case GL_CONVEX_HULL_CHROMIUM:
-    case GL_BOUNDING_BOX_CHROMIUM:
-    case GL_BOUNDING_BOX_OF_BOUNDING_BOXES_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathNameTypeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_UNSIGNED_BYTE:
-    case GL_BYTE:
-    case GL_UNSIGNED_SHORT:
-    case GL_SHORT:
-    case GL_UNSIGNED_INT:
-    case GL_INT:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathParameterValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_PATH_STROKE_WIDTH_CHROMIUM:
-    case GL_PATH_END_CAPS_CHROMIUM:
-    case GL_PATH_JOIN_STYLE_CHROMIUM:
-    case GL_PATH_MITER_LIMIT_CHROMIUM:
-    case GL_PATH_STROKE_BOUND_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathParameterCapValuesValidator::IsValid(
-    const GLint value) const {
-  switch (value) {
-    case GL_FLAT:
-    case GL_SQUARE_CHROMIUM:
-    case GL_ROUND_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathParameterJoinValuesValidator::IsValid(
-    const GLint value) const {
-  switch (value) {
-    case GL_MITER_REVERT_CHROMIUM:
-    case GL_BEVEL_CHROMIUM:
-    case GL_ROUND_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
-bool Validators::PathTransformTypeValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_NONE:
-    case GL_TRANSLATE_X_CHROMIUM:
-    case GL_TRANSLATE_Y_CHROMIUM:
-    case GL_TRANSLATE_2D_CHROMIUM:
-    case GL_TRANSLATE_3D_CHROMIUM:
-    case GL_AFFINE_2D_CHROMIUM:
-    case GL_AFFINE_3D_CHROMIUM:
-    case GL_TRANSPOSE_AFFINE_2D_CHROMIUM:
-    case GL_TRANSPOSE_AFFINE_3D_CHROMIUM:
-      return true;
-  }
-  return false;
-}
-
 static const GLenum valid_pixel_store_table[] = {
     GL_PACK_ALIGNMENT,
     GL_UNPACK_ALIGNMENT,
@@ -749,10 +619,12 @@ bool Validators::QueryTargetValidator::IsValid(const GLenum value) const {
     case GL_ANY_SAMPLES_PASSED_EXT:
     case GL_ANY_SAMPLES_PASSED_CONSERVATIVE_EXT:
     case GL_COMMANDS_ISSUED_CHROMIUM:
+    case GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM:
     case GL_LATENCY_QUERY_CHROMIUM:
     case GL_ASYNC_PIXEL_PACK_COMPLETED_CHROMIUM:
     case GL_COMMANDS_COMPLETED_CHROMIUM:
     case GL_READBACK_SHADOW_COPIES_UPDATED_CHROMIUM:
+    case GL_PROGRAM_COMPLETION_QUERY_CHROMIUM:
       return true;
   }
   return false;
@@ -864,21 +736,11 @@ bool Validators::ResetStatusValidator::IsValid(const GLenum value) const {
   return false;
 }
 
-bool Validators::SamplerParameterValidator::IsValid(const GLenum value) const {
-  switch (value) {
-    case GL_TEXTURE_MAG_FILTER:
-    case GL_TEXTURE_MIN_FILTER:
-    case GL_TEXTURE_MIN_LOD:
-    case GL_TEXTURE_MAX_LOD:
-    case GL_TEXTURE_WRAP_S:
-    case GL_TEXTURE_WRAP_T:
-    case GL_TEXTURE_WRAP_R:
-    case GL_TEXTURE_COMPARE_MODE:
-    case GL_TEXTURE_COMPARE_FUNC:
-      return true;
-  }
-  return false;
-}
+static const GLenum valid_sampler_parameter_table[] = {
+    GL_TEXTURE_MAG_FILTER, GL_TEXTURE_MIN_FILTER,   GL_TEXTURE_MIN_LOD,
+    GL_TEXTURE_MAX_LOD,    GL_TEXTURE_WRAP_S,       GL_TEXTURE_WRAP_T,
+    GL_TEXTURE_WRAP_R,     GL_TEXTURE_COMPARE_MODE, GL_TEXTURE_COMPARE_FUNC,
+};
 
 static const GLenum valid_shader_parameter_table[] = {
     GL_SHADER_TYPE,          GL_DELETE_STATUS,
@@ -1457,6 +1319,8 @@ Validators::Validators()
                               base::size(valid_render_buffer_parameter_table)),
       render_buffer_target(valid_render_buffer_target_table,
                            base::size(valid_render_buffer_target_table)),
+      sampler_parameter(valid_sampler_parameter_table,
+                        base::size(valid_sampler_parameter_table)),
       shader_binary_format(),
       shader_parameter(valid_shader_parameter_table,
                        base::size(valid_shader_parameter_table)),

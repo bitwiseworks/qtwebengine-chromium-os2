@@ -7,10 +7,12 @@
 #include <ApplicationServices/ApplicationServices.h>
 #import <Cocoa/Cocoa.h>
 
+#include "ui/base/idle/idle_internal.h"
+
 @interface MacScreenMonitor : NSObject {
  @private
-  BOOL screensaverRunning_;
-  BOOL screenLocked_;
+  BOOL _screensaverRunning;
+  BOOL _screenLocked;
 }
 
 @property (readonly,
@@ -22,8 +24,8 @@
 
 @implementation MacScreenMonitor
 
-@synthesize screensaverRunning = screensaverRunning_;
-@synthesize screenLocked = screenLocked_;
+@synthesize screensaverRunning = _screensaverRunning;
+@synthesize screenLocked = _screenLocked;
 
 - (instancetype)init {
   if ((self = [super init])) {
@@ -55,19 +57,19 @@
 }
 
 - (void)onScreenSaverStarted:(NSNotification*)notification {
-   screensaverRunning_ = YES;
+   _screensaverRunning = YES;
 }
 
 - (void)onScreenSaverStopped:(NSNotification*)notification {
-   screensaverRunning_ = NO;
+   _screensaverRunning = NO;
 }
 
 - (void)onScreenLocked:(NSNotification*)notification {
-   screenLocked_ = YES;
+   _screenLocked = YES;
 }
 
 - (void)onScreenUnlocked:(NSNotification*)notification {
-   screenLocked_ = NO;
+   _screenLocked = NO;
 }
 
 @end
@@ -92,6 +94,9 @@ int CalculateIdleTime() {
 }
 
 bool CheckIdleStateIsLocked() {
+  if (IdleStateForTesting().has_value())
+    return IdleStateForTesting().value() == IDLE_STATE_LOCKED;
+
   return [g_screenMonitor isScreensaverRunning] ||
       [g_screenMonitor isScreenLocked];
 }

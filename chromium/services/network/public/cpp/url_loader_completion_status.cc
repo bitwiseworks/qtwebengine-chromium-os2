@@ -21,6 +21,12 @@ URLLoaderCompletionStatus::URLLoaderCompletionStatus(
   cors_error_status = error;
 }
 
+URLLoaderCompletionStatus::URLLoaderCompletionStatus(
+    const BlockedByResponseReason& reason)
+    : URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_RESPONSE) {
+  blocked_by_response_reason = reason;
+}
+
 URLLoaderCompletionStatus::~URLLoaderCompletionStatus() = default;
 
 bool URLLoaderCompletionStatus::operator==(
@@ -29,11 +35,11 @@ bool URLLoaderCompletionStatus::operator==(
          extended_error_code == rhs.extended_error_code &&
          exists_in_cache == rhs.exists_in_cache &&
          completion_time == rhs.completion_time &&
-         cors_preflight_timing_info == rhs.cors_preflight_timing_info &&
          encoded_data_length == rhs.encoded_data_length &&
          encoded_body_length == rhs.encoded_body_length &&
          decoded_body_length == rhs.decoded_body_length &&
          cors_error_status == rhs.cors_error_status &&
+         blocked_by_response_reason == rhs.blocked_by_response_reason &&
          should_report_corb_blocking == rhs.should_report_corb_blocking &&
          proxy_server == rhs.proxy_server;
 }

@@ -3,13 +3,13 @@
 // found in the LICENSE file.
 
 #include "components/viz/service/surfaces/surface.h"
+#include "base/bind.h"
 #include "cc/test/scheduler_test_common.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/surfaces/parent_local_surface_id_allocator.h"
 #include "components/viz/service/display_embedder/server_shared_bitmap_manager.h"
 #include "components/viz/service/frame_sinks/compositor_frame_sink_support.h"
 #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
-#include "components/viz/service/surfaces/surface_dependency_tracker.h"
 #include "components/viz/test/begin_frame_args_test.h"
 #include "components/viz/test/compositor_frame_helpers.h"
 #include "components/viz/test/fake_external_begin_frame_source.h"
@@ -22,7 +22,6 @@ namespace {
 
 constexpr FrameSinkId kArbitraryFrameSinkId(1, 1);
 constexpr bool kIsRoot = true;
-constexpr bool kNeedsSyncPoints = true;
 
 TEST(SurfaceTest, PresentationCallback) {
   constexpr gfx::Size kSurfaceSize(300, 300);
@@ -33,8 +32,7 @@ TEST(SurfaceTest, PresentationCallback) {
   FrameSinkManagerImpl frame_sink_manager(&shared_bitmap_manager);
   MockCompositorFrameSinkClient client;
   auto support = std::make_unique<CompositorFrameSinkSupport>(
-      &client, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot,
-      kNeedsSyncPoints);
+      &client, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot);
   uint32_t frame_token = 0;
   {
     CompositorFrame frame =
@@ -57,8 +55,8 @@ TEST(SurfaceTest, PresentationCallback) {
             .Build();
     EXPECT_CALL(client, DidReceiveCompositorFrameAck(testing::_)).Times(1);
     support->SubmitCompositorFrame(local_surface_id, std::move(frame));
-    ASSERT_EQ(1u, support->presentation_feedbacks().size());
-    EXPECT_EQ(frame_token, support->presentation_feedbacks().begin()->first);
+    ASSERT_EQ(1u, support->timing_details().size());
+    EXPECT_EQ(frame_token, support->timing_details().begin()->first);
     testing::Mock::VerifyAndClearExpectations(&client);
   }
 }
@@ -89,8 +87,7 @@ TEST(SurfaceTest, CopyRequestLifetime) {
   FrameSinkManagerImpl frame_sink_manager(&shared_bitmap_manager);
   SurfaceManager* surface_manager = frame_sink_manager.surface_manager();
   auto support = std::make_unique<CompositorFrameSinkSupport>(
-      nullptr, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot,
-      kNeedsSyncPoints);
+      nullptr, &frame_sink_manager, kArbitraryFrameSinkId, kIsRoot);
 
   LocalSurfaceId local_surface_id(6, base::UnguessableToken::Create());
   SurfaceId surface_id(kArbitraryFrameSinkId, local_surface_id);

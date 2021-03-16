@@ -32,54 +32,53 @@
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/html_names.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/script/script_loader.h"
 #include "third_party/blink/renderer/core/script/script_runner.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_types_util.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
-using namespace html_names;
-
-inline HTMLScriptElement::HTMLScriptElement(Document& document,
-                                            const CreateElementFlags flags)
-    : HTMLElement(kScriptTag, document),
+HTMLScriptElement::HTMLScriptElement(Document& document,
+                                     const CreateElementFlags flags)
+    : HTMLElement(html_names::kScriptTag, document),
+      children_changed_by_api_(false),
       loader_(InitializeScriptLoader(flags.IsCreatedByParser(),
                                      flags.WasAlreadyStarted())) {}
-
-HTMLScriptElement* HTMLScriptElement::Create(Document& document,
-                                             const CreateElementFlags flags) {
-  return MakeGarbageCollected<HTMLScriptElement>(document, flags);
-}
 
 const AttrNameToTrustedType& HTMLScriptElement::GetCheckedAttributeTypes()
     const {
   DEFINE_STATIC_LOCAL(AttrNameToTrustedType, attribute_map,
-                      ({{"src", SpecificTrustedType::kTrustedScriptURL}}));
+                      ({{"src", SpecificTrustedType::kScriptURL}}));
   return attribute_map;
 }
 
 bool HTMLScriptElement::IsURLAttribute(const Attribute& attribute) const {
-  return attribute.GetName() == kSrcAttr ||
+  return attribute.GetName() == html_names::kSrcAttr ||
          HTMLElement::IsURLAttribute(attribute);
 }
 
 bool HTMLScriptElement::HasLegalLinkAttribute(const QualifiedName& name) const {
-  return name == kSrcAttr || HTMLElement::HasLegalLinkAttribute(name);
+  return name == html_names::kSrcAttr ||
+         HTMLElement::HasLegalLinkAttribute(name);
 }
 
 const QualifiedName& HTMLScriptElement::SubResourceAttributeName() const {
-  return kSrcAttr;
+  return html_names::kSrcAttr;
 }
 
 void HTMLScriptElement::ChildrenChanged(const ChildrenChange& change) {
   HTMLElement::ChildrenChanged(change);
   if (change.IsChildInsertion())
     loader_->ChildrenChanged();
+
+  // We'll record whether the script element children were ever changed by
+  // the API (as opposed to the parser).
+  children_changed_by_api_ |= !change.ByParser();
 }
 
 void HTMLScriptElement::DidMoveToNewDocument(Document& old_document) {
@@ -89,13 +88,13 @@ void HTMLScriptElement::DidMoveToNewDocument(Document& old_document) {
 
 void HTMLScriptElement::ParseAttribute(
     const AttributeModificationParams& params) {
-  if (params.name == kSrcAttr) {
+  if (params.name == html_names::kSrcAttr) {
     loader_->HandleSourceAttribute(params.new_value);
     LogUpdateAttributeIfIsolatedWorldAndInDocument("script", params);
-  } else if (params.name == kAsyncAttr) {
+  } else if (params.name == html_names::kAsyncAttr) {
     loader_->HandleAsyncAttribute();
-  } else if (params.name == kImportanceAttr &&
-             origin_trials::PriorityHintsEnabled(&GetDocument())) {
+  } else if (params.name == html_names::kImportanceAttr &&
+             RuntimeEnabledFeatures::PriorityHintsEnabled(&GetDocument())) {
     // The only thing we need to do for the the importance attribute/Priority
     // Hints is count usage upon parsing. Processing the value happens when the
     // element loads.
@@ -107,16 +106,15 @@ void HTMLScriptElement::ParseAttribute(
 
 Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
     ContainerNode& insertion_point) {
-  mojom::ScriptType script_type = mojom::ScriptType::kClassic;
   if (insertion_point.isConnected() && HasSourceAttribute() &&
       !ScriptLoader::IsValidScriptTypeAndLanguage(
           TypeAttributeValue(), LanguageAttributeValue(),
-          ScriptLoader::kDisallowLegacyTypeInTypeAttribute, script_type)) {
+          ScriptLoader::kDisallowLegacyTypeInTypeAttribute)) {
     UseCounter::Count(GetDocument(),
                       WebFeature::kScriptElementWithInvalidTypeHasSrc);
   }
   HTMLElement::InsertedInto(insertion_point);
-  LogAddElementIfIsolatedWorldAndInDocument("script", kSrcAttr);
+  LogAddElementIfIsolatedWorldAndInDocument("script", html_names::kSrcAttr);
 
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }
@@ -125,10 +123,8 @@ void HTMLScriptElement::DidNotifySubtreeInsertionsToDocument() {
   loader_->DidNotifySubtreeInsertionsToDocument();
 }
 
-void HTMLScriptElement::setText(
-    const StringOrTrustedScript& string_or_trusted_script,
-    ExceptionState& exception_state) {
-  setTextContent(string_or_trusted_script, exception_state);
+void HTMLScriptElement::setText(const String& string) {
+  setTextContent(string);
 }
 
 void HTMLScriptElement::text(StringOrTrustedScript& result) {
@@ -138,94 +134,123 @@ void HTMLScriptElement::text(StringOrTrustedScript& result) {
 void HTMLScriptElement::setInnerText(
     const StringOrTrustedScript& string_or_trusted_script,
     ExceptionState& exception_state) {
-  String value = GetStringFromTrustedScript(string_or_trusted_script,
-                                            &GetDocument(), exception_state);
+  String value = TrustedTypesCheckForScript(
+      string_or_trusted_script, GetExecutionContext(), exception_state);
   if (!exception_state.HadException()) {
+    // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
+    // On setting, the innerText [...] perform the regular steps, and then set
+    // content object's [[ScriptText]] internal slot value [...].
     HTMLElement::setInnerText(value, exception_state);
+    script_text_internal_slot_ = ParkableString(value.Impl());
   }
+}
+
+void HTMLScriptElement::setTextContent(const String& string) {
+  // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
+  // On setting, [..] textContent [..] perform the regular steps, and then set
+  // content object's [[ScriptText]] internal slot value [...].
+  Node::setTextContent(string);
+  script_text_internal_slot_ = ParkableString(string.Impl());
 }
 
 void HTMLScriptElement::setTextContent(
     const StringOrTrustedScript& string_or_trusted_script,
     ExceptionState& exception_state) {
-  String value = GetStringFromTrustedScript(string_or_trusted_script,
-                                            &GetDocument(), exception_state);
+  String value = TrustedTypesCheckForScript(
+      string_or_trusted_script, GetExecutionContext(), exception_state);
   if (!exception_state.HadException()) {
+    // https://w3c.github.io/webappsec-trusted-types/dist/spec/#setting-slot-values
+    // On setting, [..] textContent [..] perform the regular steps, and then set
+    // content object's [[ScriptText]] internal slot value [...].
     Node::setTextContent(value);
+    script_text_internal_slot_ = ParkableString(value.Impl());
   }
 }
 
 void HTMLScriptElement::setAsync(bool async) {
-  SetBooleanAttribute(kAsyncAttr, async);
+  SetBooleanAttribute(html_names::kAsyncAttr, async);
   loader_->HandleAsyncAttribute();
 }
 
-bool HTMLScriptElement::async() const {
-  return FastHasAttribute(kAsyncAttr) || loader_->IsNonBlocking();
+void HTMLScriptElement::FinishParsingChildren() {
+  Element::FinishParsingChildren();
+
+  // We normally expect the parser to finish parsing before any script gets
+  // a chance to manipulate the script. However, if script parsing gets
+  // deferrred (or similar; see crbug.com/1033101) then a script might get
+  // access to the HTMLScriptElement before. In this case, we cannot blindly
+  // accept the current TextFromChildren as a parser result.
+  DCHECK(children_changed_by_api_ || !script_text_internal_slot_.length());
+  if (!children_changed_by_api_)
+    script_text_internal_slot_ = ParkableString(TextFromChildren().Impl());
 }
 
-KURL HTMLScriptElement::Src() const {
-  return GetDocument().CompleteURL(SourceAttributeValue());
+bool HTMLScriptElement::async() const {
+  return FastHasAttribute(html_names::kAsyncAttr) || loader_->IsNonBlocking();
 }
 
 String HTMLScriptElement::SourceAttributeValue() const {
-  return getAttribute(kSrcAttr).GetString();
+  return FastGetAttribute(html_names::kSrcAttr).GetString();
 }
 
 String HTMLScriptElement::CharsetAttributeValue() const {
-  return getAttribute(kCharsetAttr).GetString();
+  return FastGetAttribute(html_names::kCharsetAttr).GetString();
 }
 
 String HTMLScriptElement::TypeAttributeValue() const {
-  return getAttribute(kTypeAttr).GetString();
+  return FastGetAttribute(html_names::kTypeAttr).GetString();
 }
 
 String HTMLScriptElement::LanguageAttributeValue() const {
-  return getAttribute(kLanguageAttr).GetString();
+  return FastGetAttribute(html_names::kLanguageAttr).GetString();
 }
 
 bool HTMLScriptElement::NomoduleAttributeValue() const {
-  return FastHasAttribute(kNomoduleAttr);
+  return FastHasAttribute(html_names::kNomoduleAttr);
 }
 
 String HTMLScriptElement::ForAttributeValue() const {
-  return getAttribute(kForAttr).GetString();
+  return FastGetAttribute(html_names::kForAttr).GetString();
 }
 
 String HTMLScriptElement::EventAttributeValue() const {
-  return getAttribute(kEventAttr).GetString();
+  return FastGetAttribute(html_names::kEventAttr).GetString();
 }
 
 String HTMLScriptElement::CrossOriginAttributeValue() const {
-  return getAttribute(kCrossoriginAttr);
+  return FastGetAttribute(html_names::kCrossoriginAttr);
 }
 
 String HTMLScriptElement::IntegrityAttributeValue() const {
-  return getAttribute(kIntegrityAttr);
+  return FastGetAttribute(html_names::kIntegrityAttr);
 }
 
 String HTMLScriptElement::ReferrerPolicyAttributeValue() const {
-  return getAttribute(kReferrerpolicyAttr);
+  return FastGetAttribute(html_names::kReferrerpolicyAttr);
 }
 
 String HTMLScriptElement::ImportanceAttributeValue() const {
-  return getAttribute(kImportanceAttr);
+  return FastGetAttribute(html_names::kImportanceAttr);
 }
 
-String HTMLScriptElement::TextFromChildren() {
-  return Element::TextFromChildren();
+String HTMLScriptElement::ChildTextContent() {
+  return TextFromChildren();
+}
+
+String HTMLScriptElement::ScriptTextInternalSlot() const {
+  return script_text_internal_slot_.ToString();
 }
 
 bool HTMLScriptElement::AsyncAttributeValue() const {
-  return FastHasAttribute(kAsyncAttr);
+  return FastHasAttribute(html_names::kAsyncAttr);
 }
 
 bool HTMLScriptElement::DeferAttributeValue() const {
-  return FastHasAttribute(kDeferAttr);
+  return FastHasAttribute(html_names::kDeferAttr);
 }
 
 bool HTMLScriptElement::HasSourceAttribute() const {
-  return FastHasAttribute(kSrcAttr);
+  return FastHasAttribute(html_names::kSrcAttr);
 }
 
 bool HTMLScriptElement::IsConnected() const {
@@ -244,11 +269,10 @@ const AtomicString& HTMLScriptElement::GetNonceForElement() const {
 bool HTMLScriptElement::AllowInlineScriptForCSP(
     const AtomicString& nonce,
     const WTF::OrdinalNumber& context_line,
-    const String& script_content,
-    ContentSecurityPolicy::InlineType inline_type) {
-  return GetDocument().GetContentSecurityPolicy()->AllowInlineScript(
-      this, GetDocument().Url(), nonce, context_line, script_content,
-      inline_type);
+    const String& script_content) {
+  return GetDocument().GetContentSecurityPolicyForWorld()->AllowInline(
+      ContentSecurityPolicy::InlineType::kScript, this, script_content, nonce,
+      GetDocument().Url(), context_line);
 }
 
 Document& HTMLScriptElement::GetDocument() const {
@@ -269,12 +293,16 @@ void HTMLScriptElement::SetScriptElementForBinding(
     element.SetHTMLScriptElement(this);
 }
 
-Element* HTMLScriptElement::CloneWithoutAttributesAndChildren(
+ScriptElementBase::Type HTMLScriptElement::GetScriptElementType() {
+  return ScriptElementBase::Type::kHTMLScriptElement;
+}
+
+Element& HTMLScriptElement::CloneWithoutAttributesAndChildren(
     Document& factory) const {
   CreateElementFlags flags =
       CreateElementFlags::ByCloneNode().SetAlreadyStarted(
           loader_->AlreadyStarted());
-  return factory.CreateElement(TagQName(), flags, IsValue());
+  return *factory.CreateElement(TagQName(), flags, IsValue());
 }
 
 void HTMLScriptElement::Trace(Visitor* visitor) {

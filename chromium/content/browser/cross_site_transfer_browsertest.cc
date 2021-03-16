@@ -14,15 +14,12 @@
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
-#include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/frame_messages.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
-#include "content/public/browser/resource_dispatcher_host_delegate.h"
-#include "content/public/browser/resource_throttle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
@@ -411,14 +408,14 @@ IN_PROC_BROWSER_TEST_F(CrossSiteTransferTest, MaliciousPostWithFileData) {
       target_contents->GetMainFrame()->GetProcess()->GetID(), file_path));
 
   // Submit the form and wait until the malicious renderer gets killed.
-  RenderProcessHostKillWaiter kill_waiter(
+  RenderProcessHostBadIpcMessageWaiter kill_waiter(
       form_contents->GetMainFrame()->GetProcess());
   EXPECT_TRUE(ExecuteScript(
       form_contents,
       "setTimeout(\n"
       "  function() { document.getElementById('file-form').submit(); },\n"
       "  0);"));
-  EXPECT_EQ(bad_message::RFPH_ILLEGAL_UPLOAD_PARAMS, kill_waiter.Wait());
+  EXPECT_EQ(bad_message::ILLEGAL_UPLOAD_PARAMS, kill_waiter.Wait());
 
   // The target frame should still be at the original location - the malicious
   // navigation should have been stopped.

@@ -5,20 +5,17 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
-#include "base/observer_list.h"
-#include "base/task/post_task.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_policy_controller.h"
-#include "components/arc/arc_bridge_service.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_service_manager.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/arc/wake_lock/arc_wake_lock_bridge.h"
-#include "mojo/public/cpp/bindings/interface_request.h"
-#include "services/device/public/mojom/constants.mojom.h"
+#include "content/public/browser/device_service.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock_provider.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
 
 namespace arc {
 
@@ -49,13 +46,12 @@ class ArcWakeLockBridgeFactory
 
 // WakeLockRequester requests a wake lock from the device service in response
 // to wake lock requests of a given type from Android. A count is kept of
-// outstanding Android requests so that only a single actual wake lock is
-// used.
+// outstanding Android requests so that only a single actual wake lock is used.
 class ArcWakeLockBridge::WakeLockRequester {
  public:
   WakeLockRequester(device::mojom::WakeLockType type,
-                    service_manager::Connector* connector)
-      : type_(type), connector_(connector) {}
+                    device::mojom::WakeLockProvider* provider)
+      : type_(type), provider_(provider) {}
   ~WakeLockRequester() = default;
 
   // Increments the number of outstanding requests from Android and requests a
@@ -71,18 +67,12 @@ class ArcWakeLockBridge::WakeLockRequester {
     // Initialize |wake_lock_| if this is the first time we're using it.
     DVLOG(1) << "Partial wake lock new acquire. Count: " << wake_lock_count_;
     if (!wake_lock_) {
-      device::mojom::WakeLockProviderPtr provider;
-      connector_->BindInterface(device::mojom::kServiceName,
-                                mojo::MakeRequest(&provider));
-      provider->GetWakeLockWithoutContext(
+      provider_->GetWakeLockWithoutContext(
           type_, device::mojom::WakeLockReason::kOther, kWakeLockReason,
-          mojo::MakeRequest(&wake_lock_));
+          wake_lock_.BindNewPipeAndPassReceiver());
     }
 
     wake_lock_->RequestWakeLock();
-
-    for (auto& observer : observers_)
-      observer.OnWakeLockAcquire();
   }
 
   // Decrements the number of outstanding Android requests. Cancels the device
@@ -101,26 +91,9 @@ class ArcWakeLockBridge::WakeLockRequester {
     }
 
     DCHECK(wake_lock_);
-    DVLOG(1) << "Partial wake lock force release. Count: " << wake_lock_count_;
+    DVLOG(1) << "Partial wake force release. Count: " << wake_lock_count_;
     wake_lock_->CancelWakeLock();
-
-    for (auto& observer : observers_)
-      observer.OnWakeLockRelease();
   }
-
-  bool IsWakeLockHeld() const { return wake_lock_count_ > 0; }
-
-  void AddObserver(WakeLockObserver* observer) {
-    DCHECK(observer);
-    observers_.AddObserver(observer);
-  }
-
-  void RemoveObserver(WakeLockObserver* observer) {
-    DCHECK(observer);
-    observers_.RemoveObserver(observer);
-  }
-
-  bool HasObservers() const { return observers_.might_have_observers(); }
 
   // Runs the message loop until replies have been received for all pending
   // requests on |wake_lock_|.
@@ -131,18 +104,16 @@ class ArcWakeLockBridge::WakeLockRequester {
 
  private:
   // Type of wake lock to request.
-  device::mojom::WakeLockType type_;
+  const device::mojom::WakeLockType type_;
 
-  // Used to get services. Not owned.
-  service_manager::Connector* const connector_ = nullptr;
+  // Used to get wake locks. Not owned.
+  device::mojom::WakeLockProvider* const provider_;
 
   // Number of outstanding Android requests.
   int64_t wake_lock_count_ = 0;
 
   // Lazily initialized in response to first request.
-  device::mojom::WakeLockPtr wake_lock_;
-
-  base::ObserverList<WakeLockObserver>::Unchecked observers_;
+  mojo::Remote<device::mojom::WakeLock> wake_lock_;
 
   DISALLOW_COPY_AND_ASSIGN(WakeLockRequester);
 };
@@ -164,31 +135,26 @@ ArcWakeLockBridge* ArcWakeLockBridge::GetForBrowserContextForTesting(
   return ArcWakeLockBridgeFactory::GetForBrowserContextForTesting(context);
 }
 
-constexpr base::TimeDelta ArcWakeLockBridge::kDarkResumeWakeLockCheckTimeout;
-constexpr base::TimeDelta ArcWakeLockBridge::kDarkResumeHardTimeout;
-
 ArcWakeLockBridge::ArcWakeLockBridge(content::BrowserContext* context,
                                      ArcBridgeService* bridge_service)
-    : arc_bridge_service_(bridge_service),
-      binding_(this),
-      weak_ptr_factory_(this) {
+    : arc_bridge_service_(bridge_service) {
   arc_bridge_service_->wake_lock()->SetHost(this);
   arc_bridge_service_->wake_lock()->AddObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
 }
 
 ArcWakeLockBridge::~ArcWakeLockBridge() {
   arc_bridge_service_->wake_lock()->RemoveObserver(this);
   arc_bridge_service_->wake_lock()->SetHost(nullptr);
-  // In case some this wasn't cleared while handling a dark resume.
-  GetWakeLockRequester(device::mojom::WakeLockType::kPreventAppSuspension)
-      ->RemoveObserver(this);
 }
 
 void ArcWakeLockBridge::OnConnectionClosed() {
   DVLOG(1) << "OnConnectionClosed";
   wake_lock_requesters_.clear();
+}
+
+void ArcWakeLockBridge::FlushWakeLocksForTesting() {
+  for (const auto& it : wake_lock_requesters_)
+    it.second->FlushForTesting();
 }
 
 void ArcWakeLockBridge::AcquirePartialWakeLock(
@@ -205,118 +171,20 @@ void ArcWakeLockBridge::ReleasePartialWakeLock(
   std::move(callback).Run(true);
 }
 
-void ArcWakeLockBridge::DarkSuspendImminent() {
-  DVLOG(1) << __func__;
-  suspend_readiness_cb_ = chromeos::DBusThreadManager::Get()
-                              ->GetPowerManagerClient()
-                              ->GetSuspendReadinessCallback(FROM_HERE);
-  // Post task that will check for any wake locks acquired in dark resume.
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&ArcWakeLockBridge::HandleDarkResumeWakeLockCheckTimeout,
-                     dark_resume_weak_ptr_factory_.GetWeakPtr()),
-      kDarkResumeWakeLockCheckTimeout);
-}
-
-void ArcWakeLockBridge::SuspendDone(const base::TimeDelta& sleep_duration) {
-  DVLOG(1) << __func__;
-  // Clear any dark resume state when the device resumes.
-  ClearDarkResumeState();
-}
-
-void ArcWakeLockBridge::OnWakeLockRelease() {
-  // This observer is only registered once dark resume starts.
-  DCHECK(suspend_readiness_cb_);
-  DVLOG(1) << __func__;
-
-  // At this point the instance has done its work, tell the power daemon to
-  // re-suspend.
-  std::move(suspend_readiness_cb_).Run();
-  ClearDarkResumeState();
-}
-
-void ArcWakeLockBridge::FlushWakeLocksForTesting() {
-  for (const auto& it : wake_lock_requesters_)
-    it.second->FlushForTesting();
-}
-
-bool ArcWakeLockBridge::IsSuspendReadinessStateSetForTesting() const {
-  return !suspend_readiness_cb_.is_null();
-}
-
-bool ArcWakeLockBridge::WakeLockHasObserversForTesting(
-    device::mojom::WakeLockType type) {
-  return GetWakeLockRequester(
-             device::mojom::WakeLockType::kPreventAppSuspension)
-      ->HasObservers();
-}
-
-void ArcWakeLockBridge::HandleDarkResumeWakeLockCheckTimeout() {
-  DVLOG(1) << __func__;
-  DCHECK_CALLED_ON_VALID_SEQUENCE(dark_resume_tasks_sequence_checker_);
-  // Check if any wake locks are held at this point. If not, then it's assumed
-  // the instance either acquired and released one or had no reason to acquire
-  // one in the first place. If it wants to after this then too bad, tell the
-  // power daemon to re-suspend and invalidate any other state associated with
-  // dark resume.
-  if (!GetWakeLockRequester(device::mojom::WakeLockType::kPreventAppSuspension)
-           ->IsWakeLockHeld()) {
-    DVLOG(1) << "Wake lock not held during check";
-    std::move(suspend_readiness_cb_).Run();
-    ClearDarkResumeState();
-    return;
-  }
-
-  DVLOG(1) << "Wake lock held during check";
-  // If a wake lock is held then register for a wake lock release
-  // notification. As soon as it's released tell power daemon to re-suspend.
-  // If the instance takes a long time then tell powerd daemon to re-suspend
-  // after a hard timeout irrespective of wake locks held.
-  GetWakeLockRequester(device::mojom::WakeLockType::kPreventAppSuspension)
-      ->AddObserver(this);
-
-  // Post task that will tell the power daemon to re-suspend after a dark
-  // resume irrespective of any state. This is a last resort timeout to ensure
-  // the device doesn't stay up indefinitely in dark resume.
-  base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE,
-      base::BindOnce(&ArcWakeLockBridge::HandleDarkResumeHardTimeout,
-                     dark_resume_weak_ptr_factory_.GetWeakPtr()),
-      kDarkResumeHardTimeout);
-}
-
-void ArcWakeLockBridge::HandleDarkResumeHardTimeout() {
-  DVLOG(1) << __func__;
-  DCHECK_CALLED_ON_VALID_SEQUENCE(dark_resume_tasks_sequence_checker_);
-  // Enough is enough. Tell power daemon it's okay to suspend.
-  DCHECK(suspend_readiness_cb_);
-  std::move(suspend_readiness_cb_).Run();
-  ClearDarkResumeState();
-}
-
-void ArcWakeLockBridge::ClearDarkResumeState() {
-  DVLOG(1) << __func__;
-  // Invalidate all other state associated with dark resume.
-  suspend_readiness_cb_.Reset();
-  GetWakeLockRequester(device::mojom::WakeLockType::kPreventAppSuspension)
-      ->RemoveObserver(this);
-  dark_resume_weak_ptr_factory_.InvalidateWeakPtrs();
-}
-
 ArcWakeLockBridge::WakeLockRequester* ArcWakeLockBridge::GetWakeLockRequester(
     device::mojom::WakeLockType type) {
   auto it = wake_lock_requesters_.find(type);
   if (it != wake_lock_requesters_.end())
     return it->second.get();
 
-  service_manager::Connector* connector =
-      connector_for_test_
-          ? connector_for_test_
-          : content::ServiceManagerConnection::GetForProcess()->GetConnector();
-  DCHECK(connector);
+  if (!wake_lock_provider_) {
+    content::GetDeviceService().BindWakeLockProvider(
+        wake_lock_provider_.BindNewPipeAndPassReceiver());
+  }
 
   it = wake_lock_requesters_
-           .emplace(type, std::make_unique<WakeLockRequester>(type, connector))
+           .emplace(type, std::make_unique<WakeLockRequester>(
+                              type, wake_lock_provider_.get()))
            .first;
   return it->second.get();
 }

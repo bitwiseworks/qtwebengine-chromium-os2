@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/api/socket/socket.h"
 #include "extensions/browser/api/socket/tcp_socket.h"
@@ -28,7 +29,9 @@
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_interfaces.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/url_util.h"
+#include "net/dns/public/resolve_error_info.h"
 #include "net/log/net_log_with_source.h"
 
 namespace extensions {
@@ -124,10 +127,10 @@ void SocketAsyncApiFunction::OpenFirewallHole(const std::string& address,
                                          ? AppFirewallHole::PortType::TCP
                                          : AppFirewallHole::PortType::UDP;
 
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {BrowserThread::UI},
-        base::Bind(&SocketAsyncApiFunction::OpenFirewallHoleOnUIThread, this,
-                   type, local_address.port(), socket_id));
+        base::BindOnce(&SocketAsyncApiFunction::OpenFirewallHoleOnUIThread,
+                       this, type, local_address.port(), socket_id));
     return;
   }
 #endif
@@ -145,10 +148,9 @@ void SocketAsyncApiFunction::OpenFirewallHoleOnUIThread(
       AppFirewallHoleManager::Get(browser_context());
   std::unique_ptr<AppFirewallHole, BrowserThread::DeleteOnUIThread> hole(
       manager->Open(type, port, extension_id()).release());
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::IO},
-      base::Bind(&SocketAsyncApiFunction::OnFirewallHoleOpened, this, socket_id,
-                 base::Passed(&hole)));
+  base::PostTask(FROM_HERE, {BrowserThread::IO},
+                 base::BindOnce(&SocketAsyncApiFunction::OnFirewallHoleOpened,
+                                this, socket_id, std::move(hole)));
 }
 
 void SocketAsyncApiFunction::OnFirewallHoleOpened(
@@ -176,8 +178,8 @@ void SocketAsyncApiFunction::OnFirewallHoleOpened(
 
 #endif  // OS_CHROMEOS
 
-SocketExtensionWithDnsLookupFunction::SocketExtensionWithDnsLookupFunction()
-    : binding_(this) {}
+SocketExtensionWithDnsLookupFunction::SocketExtensionWithDnsLookupFunction() =
+    default;
 
 SocketExtensionWithDnsLookupFunction::~SocketExtensionWithDnsLookupFunction() {
 }
@@ -187,23 +189,25 @@ bool SocketExtensionWithDnsLookupFunction::PrePrepare() {
     return false;
   content::BrowserContext::GetDefaultStoragePartition(browser_context())
       ->GetNetworkContext()
-      ->CreateHostResolver(base::nullopt,
-                           mojo::MakeRequest(&host_resolver_info_));
+      ->CreateHostResolver(
+          base::nullopt,
+          pending_host_resolver_.InitWithNewPipeAndPassReceiver());
   return true;
 }
 
 void SocketExtensionWithDnsLookupFunction::StartDnsLookup(
     const net::HostPortPair& host_port_pair) {
-  DCHECK(host_resolver_info_);
-  DCHECK(!binding_);
-  network::mojom::ResolveHostClientPtr client_ptr;
-  binding_.Bind(mojo::MakeRequest(&client_ptr));
-  binding_.set_connection_error_handler(
+  DCHECK(pending_host_resolver_);
+  DCHECK(!receiver_.is_bound());
+  host_resolver_.Bind(std::move(pending_host_resolver_));
+  url::Origin origin = url::Origin::Create(extension_->url());
+  host_resolver_->ResolveHost(host_port_pair,
+                              net::NetworkIsolationKey(origin, origin), nullptr,
+                              receiver_.BindNewPipeAndPassRemote());
+  receiver_.set_disconnect_handler(
       base::BindOnce(&SocketExtensionWithDnsLookupFunction::OnComplete,
-                     base::Unretained(this), net::ERR_FAILED, base::nullopt));
-  host_resolver_ =
-      network::mojom::HostResolverPtr(std::move(host_resolver_info_));
-  host_resolver_->ResolveHost(host_port_pair, nullptr, std::move(client_ptr));
+                     base::Unretained(this), net::ERR_NAME_NOT_RESOLVED,
+                     net::ResolveErrorInfo(net::ERR_FAILED), base::nullopt));
 
   // Balanced in OnComplete().
   AddRef();
@@ -211,9 +215,10 @@ void SocketExtensionWithDnsLookupFunction::StartDnsLookup(
 
 void SocketExtensionWithDnsLookupFunction::OnComplete(
     int result,
+    const net::ResolveErrorInfo& resolve_error_info,
     const base::Optional<net::AddressList>& resolved_addresses) {
   host_resolver_.reset();
-  binding_.Close();
+  receiver_.reset();
   if (result == net::OK) {
     DCHECK(resolved_addresses && !resolved_addresses->empty());
     addresses_ = resolved_addresses.value();
@@ -241,12 +246,13 @@ bool SocketCreateFunction::Prepare() {
     case extensions::api::socket::SOCKET_TYPE_UDP: {
       socket_type_ = kSocketTypeUDP;
 
-      network::mojom::UDPSocketReceiverPtr receiver_ptr;
-      socket_receiver_request_ = mojo::MakeRequest(&receiver_ptr);
+      mojo::PendingRemote<network::mojom::UDPSocketListener> listener_remote;
+      socket_listener_receiver_ =
+          listener_remote.InitWithNewPipeAndPassReceiver();
       content::BrowserContext::GetDefaultStoragePartition(browser_context())
           ->GetNetworkContext()
-          ->CreateUDPSocket(mojo::MakeRequest(&socket_),
-                            std::move(receiver_ptr));
+          ->CreateUDPSocket(socket_.InitWithNewPipeAndPassReceiver(),
+                            std::move(listener_remote));
       break;
     }
     case extensions::api::socket::SOCKET_TYPE_NONE:
@@ -258,12 +264,12 @@ bool SocketCreateFunction::Prepare() {
 }
 
 void SocketCreateFunction::Work() {
-  Socket* socket = NULL;
+  Socket* socket = nullptr;
   if (socket_type_ == kSocketTypeTCP) {
     socket = new TCPSocket(browser_context(), extension_->id());
   } else if (socket_type_ == kSocketTypeUDP) {
     socket =
-        new UDPSocket(std::move(socket_), std::move(socket_receiver_request_),
+        new UDPSocket(std::move(socket_), std::move(socket_listener_receiver_),
                       extension_->id());
   }
   DCHECK(socket);
@@ -357,7 +363,7 @@ void SocketConnectFunction::StartConnect() {
   }
 
   socket->Connect(addresses_,
-                  base::BindRepeating(&SocketConnectFunction::OnConnect, this));
+                  base::BindOnce(&SocketConnectFunction::OnConnect, this));
 }
 
 void SocketConnectFunction::OnConnect(int result) {
@@ -509,7 +515,7 @@ void SocketAcceptFunction::AsyncWorkStart() {
     socket->Accept(base::BindOnce(&SocketAcceptFunction::OnAccept, this));
   } else {
     error_ = kSocketNotFoundError;
-    OnAccept(net::ERR_FAILED, nullptr, base::nullopt,
+    OnAccept(net::ERR_FAILED, mojo::NullRemote(), base::nullopt,
              mojo::ScopedDataPipeConsumerHandle(),
              mojo::ScopedDataPipeProducerHandle());
   }
@@ -517,7 +523,7 @@ void SocketAcceptFunction::AsyncWorkStart() {
 
 void SocketAcceptFunction::OnAccept(
     int result_code,
-    network::mojom::TCPConnectedSocketPtr socket,
+    mojo::PendingRemote<network::mojom::TCPConnectedSocket> socket,
     const base::Optional<net::IPEndPoint>& remote_addr,
     mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,
     mojo::ScopedDataPipeProducerHandle send_pipe_handle) {
@@ -574,7 +580,7 @@ void SocketReadFunction::OnCompleted(int bytes_read,
 }
 
 SocketWriteFunction::SocketWriteFunction()
-    : socket_id_(0), io_buffer_(NULL), io_buffer_size_(0) {}
+    : socket_id_(0), io_buffer_(nullptr), io_buffer_size_(0) {}
 
 SocketWriteFunction::~SocketWriteFunction() {}
 
@@ -603,7 +609,7 @@ void SocketWriteFunction::AsyncWorkStart() {
   }
 
   socket->Write(io_buffer_, io_buffer_size_,
-                base::BindRepeating(&SocketWriteFunction::OnCompleted, this));
+                base::BindOnce(&SocketWriteFunction::OnCompleted, this));
 }
 
 void SocketWriteFunction::OnCompleted(int bytes_written) {
@@ -632,9 +638,8 @@ void SocketRecvFromFunction::AsyncWorkStart() {
     return;
   }
 
-  socket->RecvFrom(
-      params_->buffer_size.get() ? *params_->buffer_size : 4096,
-      base::BindRepeating(&SocketRecvFromFunction::OnCompleted, this));
+  socket->RecvFrom(params_->buffer_size.get() ? *params_->buffer_size : 4096,
+                   base::BindOnce(&SocketRecvFromFunction::OnCompleted, this));
 }
 
 void SocketRecvFromFunction::OnCompleted(int bytes_read,
@@ -659,8 +664,7 @@ void SocketRecvFromFunction::OnCompleted(int bytes_read,
 }
 
 SocketSendToFunction::SocketSendToFunction()
-    : socket_id_(0), io_buffer_(NULL), io_buffer_size_(0), port_(0) {
-}
+    : socket_id_(0), io_buffer_(nullptr), io_buffer_size_(0), port_(0) {}
 
 SocketSendToFunction::~SocketSendToFunction() {}
 
@@ -734,7 +738,7 @@ void SocketSendToFunction::StartSendTo() {
   }
 
   socket->SendTo(io_buffer_, io_buffer_size_, addresses_.front(),
-                 base::BindRepeating(&SocketSendToFunction::OnCompleted, this));
+                 base::BindOnce(&SocketSendToFunction::OnCompleted, this));
 }
 
 void SocketSendToFunction::OnCompleted(int bytes_written) {
@@ -852,44 +856,23 @@ void SocketGetInfoFunction::Work() {
 }
 
 ExtensionFunction::ResponseAction SocketGetNetworkListFunction::Run() {
-  base::PostTaskWithTraits(
-      FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
-       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-      base::Bind(&SocketGetNetworkListFunction::GetNetworkListOnFileThread,
-                 this));
+  content::GetNetworkService()->GetNetworkList(
+      net::INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES,
+      base::BindOnce(&SocketGetNetworkListFunction::GotNetworkList, this));
   return RespondLater();
 }
 
-void SocketGetNetworkListFunction::GetNetworkListOnFileThread() {
-  net::NetworkInterfaceList interface_list;
-  if (GetNetworkList(&interface_list,
-                     net::INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES)) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::Bind(&SocketGetNetworkListFunction::SendResponseOnUIThread, this,
-                   interface_list));
+void SocketGetNetworkListFunction::GotNetworkList(
+    const base::Optional<net::NetworkInterfaceList>& interface_list) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!interface_list.has_value()) {
+    Respond(Error(kNetworkListError));
     return;
   }
 
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::Bind(&SocketGetNetworkListFunction::HandleGetNetworkListError,
-                 this));
-}
-
-void SocketGetNetworkListFunction::HandleGetNetworkListError() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  Respond(Error(kNetworkListError));
-}
-
-void SocketGetNetworkListFunction::SendResponseOnUIThread(
-    const net::NetworkInterfaceList& interface_list) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
   std::vector<api::socket::NetworkInterface> create_arg;
-  create_arg.reserve(interface_list.size());
-  for (const net::NetworkInterface& interface : interface_list) {
+  create_arg.reserve(interface_list->size());
+  for (const net::NetworkInterface& interface : interface_list.value()) {
     api::socket::NetworkInterface info;
     info.name = interface.name;
     info.address = interface.address.ToString();
@@ -943,7 +926,7 @@ void SocketJoinGroupFunction::AsyncWorkStart() {
 
   static_cast<UDPSocket*>(socket)->JoinGroup(
       params_->address,
-      base::BindRepeating(&SocketJoinGroupFunction::OnCompleted, this));
+      base::BindOnce(&SocketJoinGroupFunction::OnCompleted, this));
 }
 
 void SocketJoinGroupFunction::OnCompleted(int result) {
@@ -996,7 +979,7 @@ void SocketLeaveGroupFunction::AsyncWorkStart() {
 
   static_cast<UDPSocket*>(socket)->LeaveGroup(
       params_->address,
-      base::BindRepeating(&SocketLeaveGroupFunction::OnCompleted, this));
+      base::BindOnce(&SocketLeaveGroupFunction::OnCompleted, this));
 }
 
 void SocketLeaveGroupFunction::OnCompleted(int result) {
@@ -1162,7 +1145,7 @@ void SocketSecureFunction::AsyncWorkStart() {
 
 void SocketSecureFunction::TlsConnectDone(
     int result,
-    network::mojom::TLSClientSocketPtr tls_socket,
+    mojo::PendingRemote<network::mojom::TLSClientSocket> tls_socket,
     const net::IPEndPoint& local_addr,
     const net::IPEndPoint& peer_addr,
     mojo::ScopedDataPipeConsumerHandle receive_pipe_handle,

@@ -203,9 +203,11 @@ TEST(RetainPtr, Equals) {
   {
     RetainPtr<PseudoRetainable> null_ptr2;
     EXPECT_TRUE(null_ptr1 == null_ptr2);
+    EXPECT_TRUE(null_ptr1 == nullptr);
 
     RetainPtr<PseudoRetainable> obj1_ptr2(&obj1);
     EXPECT_TRUE(obj1_ptr1 == obj1_ptr2);
+    EXPECT_TRUE(obj1_ptr2 == &obj1);
 
     RetainPtr<PseudoRetainable> obj2_ptr2(&obj2);
     EXPECT_TRUE(obj2_ptr1 == obj2_ptr2);
@@ -213,6 +215,17 @@ TEST(RetainPtr, Equals) {
   EXPECT_FALSE(null_ptr1 == obj1_ptr1);
   EXPECT_FALSE(null_ptr1 == obj2_ptr1);
   EXPECT_FALSE(obj1_ptr1 == obj2_ptr1);
+}
+
+TEST(RetainPtr, EqualsReflexive) {
+  PseudoRetainable obj1;
+  PseudoRetainable obj2;
+  RetainPtr<PseudoRetainable> obj1_ptr(&obj1);
+  RetainPtr<PseudoRetainable> obj2_ptr(&obj2);
+  EXPECT_TRUE(&obj1 == obj1_ptr);
+  EXPECT_FALSE(&obj1 == obj2_ptr);
+  EXPECT_FALSE(&obj2 == obj1_ptr);
+  EXPECT_TRUE(&obj2 == obj2_ptr);
 }
 
 TEST(RetainPtr, NotEquals) {
@@ -232,6 +245,17 @@ TEST(RetainPtr, NotEquals) {
   EXPECT_TRUE(null_ptr1 != obj1_ptr1);
   EXPECT_TRUE(null_ptr1 != obj2_ptr1);
   EXPECT_TRUE(obj1_ptr1 != obj2_ptr1);
+}
+
+TEST(RetainPtr, NotEqualsReflexive) {
+  PseudoRetainable obj1;
+  PseudoRetainable obj2;
+  RetainPtr<PseudoRetainable> obj1_ptr(&obj1);
+  RetainPtr<PseudoRetainable> obj2_ptr(&obj2);
+  EXPECT_FALSE(&obj1 != obj1_ptr);
+  EXPECT_TRUE(&obj1 != obj2_ptr);
+  EXPECT_TRUE(&obj2 != obj1_ptr);
+  EXPECT_FALSE(&obj2 != obj2_ptr);
 }
 
 TEST(RetainPtr, LessThan) {

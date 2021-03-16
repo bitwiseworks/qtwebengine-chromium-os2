@@ -48,14 +48,15 @@
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/loader/resource/image_resource_content.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
+#include "third_party/blink/renderer/core/page/drag_image.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_painter.h"
-#include "third_party/blink/renderer/platform/drag_image.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/skia/include/core/SkSurface.h"
 
@@ -67,7 +68,7 @@ class DraggedNodeImageBuilder {
   STACK_ALLOCATED();
 
  public:
-  DraggedNodeImageBuilder(const LocalFrame& local_frame, Node& node)
+  DraggedNodeImageBuilder(LocalFrame& local_frame, Node& node)
       : local_frame_(&local_frame),
         node_(&node)
 #if DCHECK_IS_ON()
@@ -91,8 +92,9 @@ class DraggedNodeImageBuilder {
 #if DCHECK_IS_ON()
     DCHECK_EQ(dom_tree_version_, node_->GetDocument().DomTreeVersion());
 #endif
-    // Construct layout object for |m_node| with pseudo class "-webkit-drag"
-    local_frame_->View()->UpdateAllLifecyclePhasesExceptPaint();
+    // Construct layout object for |node_| with pseudo class "-webkit-drag"
+    local_frame_->View()->UpdateAllLifecyclePhasesExceptPaint(
+        DocumentUpdateReason::kDragImage);
     LayoutObject* const dragged_layout_object = node_->GetLayoutObject();
     if (!dragged_layout_object)
       return nullptr;
@@ -101,10 +103,9 @@ class DraggedNodeImageBuilder {
     // object contains transparency and there are other elements in the same
     // stacking context which stacked below.
     PaintLayer* layer = dragged_layout_object->EnclosingLayer();
-    if (!layer->GetLayoutObject().StyleRef().IsStackingContext()) {
-      layer =
-          PaintLayerStackingNode::AncestorStackingContextNode(layer)->Layer();
-    }
+    if (!layer->GetLayoutObject().StyleRef().IsStackingContext())
+      layer = layer->AncestorStackingContext();
+
     IntRect absolute_bounding_box =
         dragged_layout_object->AbsoluteBoundingBoxRectIncludingDescendants();
     // TODO(chrishtr): consider using the root frame's visible rect instead
@@ -119,14 +120,12 @@ class DraggedNodeImageBuilder {
 
     FloatRect bounding_box =
         layer->GetLayoutObject()
-            .AbsoluteToLocalQuad(FloatQuad(absolute_bounding_box),
-                                 kUseTransforms)
+            .AbsoluteToLocalQuad(FloatQuad(absolute_bounding_box))
             .BoundingBox();
     PaintLayerPaintingInfo painting_info(
         layer, CullRect(EnclosingIntRect(bounding_box)),
-        kGlobalPaintFlattenCompositingLayers, LayoutSize());
-    PaintLayerFlags flags = kPaintLayerHaveTransparency |
-                            kPaintLayerUncachedClipRects;
+        kGlobalPaintFlattenCompositingLayers, PhysicalOffset());
+    PaintLayerFlags flags = kPaintLayerHaveTransparency;
     PaintRecordBuilder builder;
 
     dragged_layout_object->GetDocument().Lifecycle().AdvanceTo(
@@ -150,8 +149,8 @@ class DraggedNodeImageBuilder {
   }
 
  private:
-  const Member<const LocalFrame> local_frame_;
-  const Member<Node> node_;
+  LocalFrame* const local_frame_;
+  Node* const node_;
 #if DCHECK_IS_ON()
   const uint64_t dom_tree_version_;
 #endif
@@ -159,7 +158,7 @@ class DraggedNodeImageBuilder {
 }  // namespace
 static DragOperation ConvertEffectAllowedToDragOperation(const String& op) {
   // Values specified in
-  // http://www.whatwg.org/specs/web-apps/current-work/multipage/dnd.html#dom-datatransfer-effectallowed
+  // https://html.spec.whatwg.org/multipage/dnd.html#dom-datatransfer-effectallowed
   if (op == "uninitialized")
     return kDragOperationEvery;
   if (op == "none")
@@ -205,11 +204,11 @@ static String ConvertDragOperationToEffectAllowed(DragOperation op) {
 }
 
 // We provide the IE clipboard types (URL and Text), and the clipboard types
-// specified in the WHATWG Web Applications 1.0 draft see
-// http://www.whatwg.org/specs/web-apps/current-work/ Section 6.3.5.3
+// specified in the HTML spec. See
+// https://html.spec.whatwg.org/multipage/dnd.html#the-datatransfer-interface
 static String NormalizeType(const String& type,
                             bool* convert_to_url = nullptr) {
-  String clean_type = type.StripWhiteSpace().DeprecatedLower();
+  String clean_type = type.StripWhiteSpace().LowerASCII();
   if (clean_type == kMimeTypeText ||
       clean_type.StartsWith(kMimeTypeTextPlainEtc))
     return kMimeTypeTextPlain;
@@ -221,6 +220,7 @@ static String NormalizeType(const String& type,
   return clean_type;
 }
 
+// static
 DataTransfer* DataTransfer::Create() {
   DataTransfer* data = Create(
       kCopyAndPaste, DataTransferAccessPolicy::kWritable, DataObject::Create());
@@ -229,6 +229,7 @@ DataTransfer* DataTransfer::Create() {
   return data;
 }
 
+// static
 DataTransfer* DataTransfer::Create(DataTransferType type,
                                    DataTransferAccessPolicy policy,
                                    DataObject* data_object) {
@@ -263,7 +264,7 @@ void DataTransfer::setEffectAllowed(const String& effect) {
   if (ConvertEffectAllowedToDragOperation(effect) == kDragOperationPrivate) {
     // This means that there was no conversion, and the effectAllowed that
     // we are passed isn't a valid effectAllowed, so we should ignore it,
-    // and not set m_effectAllowed.
+    // and not set |effect_allowed_|.
 
     // The attribute must ignore any attempts to set it to a value other than
     // none, copy, copyLink, copyMove, link, linkMove, move, all, and
@@ -320,15 +321,15 @@ Vector<String> DataTransfer::types() {
 }
 
 FileList* DataTransfer::files() const {
-  FileList* files = FileList::Create();
+  auto* files = MakeGarbageCollected<FileList>();
   if (!CanReadData())
     return files;
 
   for (uint32_t i = 0; i < data_object_->length(); ++i) {
     if (data_object_->Item(i)->Kind() == DataObjectItem::kFileKind) {
       Blob* blob = data_object_->Item(i)->GetAsFile();
-      if (blob && blob->IsFile())
-        files->Append(ToFile(blob));
+      if (auto* file = DynamicTo<File>(blob))
+        files->Append(file);
     }
   }
 
@@ -342,8 +343,9 @@ void DataTransfer::setDragImage(Element* image, int x, int y) {
     return;
 
   IntPoint location(x, y);
-  if (IsHTMLImageElement(*image) && !image->isConnected())
-    SetDragImageResource(ToHTMLImageElement(*image).CachedImage(), location);
+  auto* html_image_element = DynamicTo<HTMLImageElement>(image);
+  if (html_image_element && !image->isConnected())
+    SetDragImageResource(html_image_element->CachedImage(), location);
   else
     SetDragImageElement(image, location);
 }
@@ -385,7 +387,7 @@ FloatSize DataTransfer::DeviceSpaceSize(const FloatSize& css_size,
 // Returns a DragImage whose bitmap contains |contents|, positioned and scaled
 // in device space.
 std::unique_ptr<DragImage> DataTransfer::CreateDragImageForFrame(
-    const LocalFrame& frame,
+    LocalFrame& frame,
     float opacity,
     RespectImageOrientationEnum image_orientation,
     const FloatSize& css_size,
@@ -415,9 +417,10 @@ std::unique_ptr<DragImage> DataTransfer::CreateDragImageForFrame(
   builder.EndRecording(skia_paint_canvas, property_tree_state);
 
   scoped_refptr<Image> image =
-      StaticBitmapImage::Create(surface->makeImageSnapshot());
+      UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
+  ChromeClient& chrome_client = frame.GetPage()->GetChromeClient();
   float screen_device_scale_factor =
-      frame.GetPage()->GetChromeClient().GetScreenInfo().device_scale_factor;
+      chrome_client.GetScreenInfo(frame).device_scale_factor;
 
   return DragImage::Create(image.get(), image_orientation,
                            screen_device_scale_factor, kInterpolationDefault,
@@ -425,7 +428,7 @@ std::unique_ptr<DragImage> DataTransfer::CreateDragImageForFrame(
 }
 
 // static
-std::unique_ptr<DragImage> DataTransfer::NodeImage(const LocalFrame& frame,
+std::unique_ptr<DragImage> DataTransfer::NodeImage(LocalFrame& frame,
                                                    Node& node) {
   DraggedNodeImageBuilder image_node(frame, node);
   return image_node.CreateImage();
@@ -597,11 +600,11 @@ bool DataTransfer::HasDropZoneType(const String& keyword) {
 }
 
 DataTransferItemList* DataTransfer::items() {
-  // FIXME: According to the spec, we are supposed to return the same collection
+  // TODO: According to the spec, we are supposed to return the same collection
   // of items each time. We now return a wrapper that always wraps the *same*
   // set of items, so JS shouldn't be able to tell, but we probably still want
   // to fix this.
-  return DataTransferItemList::Create(this, data_object_);
+  return MakeGarbageCollected<DataTransferItemList>(this, data_object_);
 }
 
 DataObject* DataTransfer::GetDataObject() const {
@@ -677,7 +680,7 @@ String ConvertDragOperationToDropZoneOperation(DragOperation operation) {
   }
 }
 
-void DataTransfer::Trace(blink::Visitor* visitor) {
+void DataTransfer::Trace(Visitor* visitor) {
   visitor->Trace(data_object_);
   visitor->Trace(drag_image_);
   visitor->Trace(drag_image_element_);

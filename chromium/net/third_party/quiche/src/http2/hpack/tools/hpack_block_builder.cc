@@ -17,21 +17,7 @@ void HpackBlockBuilder::AppendHighBitsAndVarint(uint8_t high_bits,
   EXPECT_LE(3, prefix_length);
   EXPECT_LE(prefix_length, 8);
 
-  HpackVarintEncoder varint_encoder;
-
-  unsigned char c =
-      varint_encoder.StartEncoding(high_bits, prefix_length, varint);
-  buffer_.push_back(c);
-
-  if (!varint_encoder.IsEncodingInProgress()) {
-    return;
-  }
-
-  // After the prefix, at most 63 bits can remain to be encoded.
-  // Each octet holds 7 bits, so at most 9 octets are necessary.
-  // TODO(bnc): Move this into a constant in HpackVarintEncoder.
-  varint_encoder.ResumeEncoding(/* max_encoded_bytes = */ 10, &buffer_);
-  DCHECK(!varint_encoder.IsEncodingInProgress());
+  HpackVarintEncoder::Encode(high_bits, prefix_length, varint, &buffer_);
 }
 
 void HpackBlockBuilder::AppendEntryTypeAndVarint(HpackEntryType entry_type,
@@ -69,7 +55,7 @@ void HpackBlockBuilder::AppendEntryTypeAndVarint(HpackEntryType entry_type,
 }
 
 void HpackBlockBuilder::AppendString(bool is_huffman_encoded,
-                                     Http2StringPiece str) {
+                                     quiche::QuicheStringPiece str) {
   uint8_t high_bits = is_huffman_encoded ? 0x80 : 0;
   uint8_t prefix_length = 7;
   AppendHighBitsAndVarint(high_bits, prefix_length, str.size());

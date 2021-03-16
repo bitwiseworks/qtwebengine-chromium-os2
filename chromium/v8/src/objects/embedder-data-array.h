@@ -5,9 +5,10 @@
 #ifndef V8_OBJECTS_EMBEDDER_DATA_ARRAY_H_
 #define V8_OBJECTS_EMBEDDER_DATA_ARRAY_H_
 
-#include "src/globals.h"
-#include "src/maybe-handles.h"
+#include "src/common/globals.h"
+#include "src/handles/maybe-handles.h"
 #include "src/objects/heap-object.h"
+#include "torque-generated/class-definitions-tq.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -19,22 +20,11 @@ namespace internal {
 // It's basically an "array of EmbedderDataSlots".
 // Note, if the pointer compression is enabled the embedder data slot also
 // contains a raw data part in addition to tagged part.
-class EmbedderDataArray : public HeapObject {
+class EmbedderDataArray
+    : public TorqueGeneratedEmbedderDataArray<EmbedderDataArray, HeapObject> {
  public:
-  // [length]: length of the array in an embedder data slots.
-  V8_INLINE int length() const;
-  V8_INLINE void set_length(int value);
-
-  DECL_CAST(EmbedderDataArray)
-
-// Layout description.
-#define EMBEDDER_DATA_ARRAY_FIELDS(V) \
-  V(kLengthOffset, kTaggedSize)       \
-  V(kHeaderSize, 0)
-
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
-                                EMBEDDER_DATA_ARRAY_FIELDS)
-#undef EMBEDDER_DATA_ARRAY_FIELDS
+  // TODO(v8:8989): [torque] Support marker constants.
+  static const int kHeaderSize = kSize;
 
   // Garbage collection support.
   static constexpr int SizeFor(int length) {
@@ -67,7 +57,7 @@ class EmbedderDataArray : public HeapObject {
  private:
   STATIC_ASSERT(kHeaderSize == Internals::kFixedArrayHeaderSize);
 
-  OBJECT_CONSTRUCTORS(EmbedderDataArray, HeapObject);
+  TQ_OBJECT_CONSTRUCTORS(EmbedderDataArray)
 };
 
 }  // namespace internal

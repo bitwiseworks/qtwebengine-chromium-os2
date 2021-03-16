@@ -28,7 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_DOM_EVENTS_EVENT_QUEUE_H_
 
 #include "third_party/blink/public/platform/task_type.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/wtf/linked_hash_set.h"
 
 namespace blink {
@@ -36,14 +36,11 @@ namespace blink {
 class Event;
 class ExecutionContext;
 
-class CORE_EXPORT EventQueue final
-    : public GarbageCollectedFinalized<EventQueue>,
-      public ContextLifecycleObserver {
+class CORE_EXPORT EventQueue final : public GarbageCollected<EventQueue>,
+                                     public ExecutionContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(EventQueue);
 
  public:
-  static EventQueue* Create(ExecutionContext*, TaskType);
-
   EventQueue(ExecutionContext*, TaskType);
   ~EventQueue();
 
@@ -56,7 +53,7 @@ class CORE_EXPORT EventQueue final
   bool RemoveEvent(Event&);
   void DispatchEvent(Event*);
 
-  void ContextDestroyed(ExecutionContext*) override;
+  void ContextDestroyed() override;
   void Close(ExecutionContext*);
   void DoCancelAllEvents(ExecutionContext*);
 

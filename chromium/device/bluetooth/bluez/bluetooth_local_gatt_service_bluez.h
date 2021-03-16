@@ -12,9 +12,9 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "device/bluetooth/bluetooth_local_gatt_service.h"
-#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_gatt_service_bluez.h"
 #include "device/bluetooth/bluez/bluetooth_local_gatt_characteristic_bluez.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 
 namespace bluez {
 
@@ -41,9 +41,9 @@ class BluetoothLocalGattServiceBlueZ
 
   // device::BluetoothLocalGattService overrides.
   void Register(const base::Closure& callback,
-                const ErrorCallback& error_callback) override;
+                ErrorCallback error_callback) override;
   void Unregister(const base::Closure& callback,
-                  const ErrorCallback& error_callback) override;
+                  ErrorCallback error_callback) override;
   bool IsRegistered() override;
   void Delete() override;
   device::BluetoothLocalGattCharacteristic* GetCharacteristic(
@@ -88,7 +88,7 @@ class BluetoothLocalGattServiceBlueZ
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<BluetoothLocalGattServiceBlueZ> weak_ptr_factory_;
+  base::WeakPtrFactory<BluetoothLocalGattServiceBlueZ> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothLocalGattServiceBlueZ);
 };

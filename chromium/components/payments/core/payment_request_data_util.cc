@@ -10,15 +10,18 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
-#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/payments/core/basic_card_response.h"
+#include "components/payments/core/method_strings.h"
 #include "components/payments/core/payment_method_data.h"
 #include "components/payments/core/payments_validators.h"
+#include "components/payments/core/url_util.h"
+#include "net/base/url_util.h"
 #include "url/url_constants.h"
 
 namespace payments {
@@ -55,13 +58,6 @@ mojom::PaymentAddressPtr GetPaymentAddressFromAutofillProfile(
       base::UTF16ToUTF8(profile.GetInfo(autofill::COMPANY_NAME, app_locale));
   payment_address->recipient =
       base::UTF16ToUTF8(profile.GetInfo(autofill::NAME_FULL, app_locale));
-
-  // The autofill profile |language_code| is the BCP-47 language tag (e.g.,
-  // "ja-Latn"), which can be split into a language code (e.g., "ja") and a
-  // script code (e.g., "Latn").
-  PaymentsValidators::SplitLanguageTag(profile.language_code(),
-                                       &payment_address->language_code,
-                                       &payment_address->script_code);
 
   // TODO(crbug.com/705945): Format phone number according to spec.
   payment_address->phone =
@@ -104,7 +100,6 @@ void ParseSupportedMethods(
   const std::set<std::string> kBasicCardNetworks{
       "amex",       "diners", "discover", "jcb",
       "mastercard", "mir",    "unionpay", "visa"};
-  std::set<std::string> remaining_card_networks(kBasicCardNetworks);
 
   std::set<GURL> url_payment_method_identifiers;
 
@@ -114,92 +109,41 @@ void ParseSupportedMethods(
 
     out_payment_method_identifiers->insert(method_data_entry.supported_method);
 
-    const char kBasicCardMethodName[] = "basic-card";
-    // If a card network is specified right in "supportedMethods", add it.
-    auto card_it =
-        remaining_card_networks.find(method_data_entry.supported_method);
-    if (card_it != remaining_card_networks.end()) {
-      out_supported_networks->push_back(method_data_entry.supported_method);
-      // |method| removed from |remaining_card_networks| so that it is not
-      // doubly added to |out_supported_networks|.
-      remaining_card_networks.erase(card_it);
-    } else if (method_data_entry.supported_method == kBasicCardMethodName) {
-      // For the "basic-card" method, check "supportedNetworks".
+    if (method_data_entry.supported_method == methods::kBasicCard) {
       if (method_data_entry.supported_networks.empty()) {
         // Empty |supported_networks| means all networks are supported.
         out_supported_networks->insert(out_supported_networks->end(),
-                                       remaining_card_networks.begin(),
-                                       remaining_card_networks.end());
+                                       kBasicCardNetworks.begin(),
+                                       kBasicCardNetworks.end());
         out_basic_card_specified_networks->insert(kBasicCardNetworks.begin(),
                                                   kBasicCardNetworks.end());
-        // Clear the set so that no further networks are added to
-        // |out_supported_networks|.
-        remaining_card_networks.clear();
       } else {
         // The merchant has specified a few basic card supported networks. Use
         // the mapping to transform to known basic-card types.
         for (const std::string& supported_network :
              method_data_entry.supported_networks) {
-          // Make sure that the network was not already added to
-          // |out_supported_networks|. If it's still in
-          // |remaining_card_networks| it's fair game.
-          auto it = remaining_card_networks.find(supported_network);
-          if (it != remaining_card_networks.end()) {
-            out_supported_networks->push_back(supported_network);
-            remaining_card_networks.erase(it);
-          }
           if (kBasicCardNetworks.find(supported_network) !=
-              kBasicCardNetworks.end()) {
+                  kBasicCardNetworks.end() &&
+              out_basic_card_specified_networks->find(supported_network) ==
+                  out_basic_card_specified_networks->end()) {
+            out_supported_networks->push_back(supported_network);
             out_basic_card_specified_networks->insert(supported_network);
           }
         }
       }
-      } else {
-        // Here |method_data_entry.supported_method| could be a deprecated
-        // supported network (e.g., "visa"), some invalid string or a URL
-        // Payment Method Identifier. Capture this last category if the URL
-        // is valid. A valid URL must have an https scheme and its username and
-        // password must be empty:
-        // https://www.w3.org/TR/payment-method-id/#dfn-validate-a-url-based-payment-method-identifier
-        // Avoid duplicate URLs.
-        GURL url(method_data_entry.supported_method);
-        if (url.is_valid() && url.SchemeIs(url::kHttpsScheme) &&
-            !url.has_username() && !url.has_password()) {
-          const auto result = url_payment_method_identifiers.insert(url);
-          if (result.second)
-            out_url_payment_method_identifiers->push_back(url);
-        }
+    } else {
+      // Here |method_data_entry.supported_method| could be a deprecated
+      // supported network (e.g., "visa"), some invalid string or a URL-based
+      // payment method identifier. Capture this last category if it is valid.
+      // Avoid duplicates.
+      GURL url(method_data_entry.supported_method);
+      if (UrlUtil::IsValidUrlBasedPaymentMethodIdentifier(url)) {
+        const auto result = url_payment_method_identifiers.insert(url);
+        if (result.second)
+          out_url_payment_method_identifiers->push_back(url);
       }
-  }
-}
-
-void ParseSupportedCardTypes(
-    const std::vector<PaymentMethodData>& method_data,
-    std::set<autofill::CreditCard::CardType>* out_supported_card_types_set) {
-  DCHECK(out_supported_card_types_set->empty());
-
-  for (const PaymentMethodData& method_data_entry : method_data) {
-    // Ignore |supported_types| if |supported_method| is not "basic-card".
-    if (method_data_entry.supported_method != "basic-card")
-      continue;
-
-    for (const autofill::CreditCard::CardType& card_type :
-         method_data_entry.supported_types) {
-      out_supported_card_types_set->insert(card_type);
     }
   }
-
-  // Omitting the card types means all 3 card types are supported.
-  if (out_supported_card_types_set->empty()) {
-    out_supported_card_types_set->insert(
-        autofill::CreditCard::CARD_TYPE_CREDIT);
-    out_supported_card_types_set->insert(autofill::CreditCard::CARD_TYPE_DEBIT);
-    out_supported_card_types_set->insert(
-        autofill::CreditCard::CARD_TYPE_PREPAID);
-  }
-
-  // Let the user decide whether an unknown card type should be used.
-  out_supported_card_types_set->insert(autofill::CreditCard::CARD_TYPE_UNKNOWN);
 }
 
 base::string16 FormatCardNumberForDisplay(const base::string16& card_number) {

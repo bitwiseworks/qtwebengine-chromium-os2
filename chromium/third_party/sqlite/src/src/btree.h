@@ -126,7 +126,7 @@ int sqlite3BtreeNewDb(Btree *p);
 
 /*
 ** The second parameter to sqlite3BtreeGetMeta or sqlite3BtreeUpdateMeta
-** should be one of the following values. The integer values are assigned
+** should be one of the following values. The integer values are assigned 
 ** to constants so that the offset of the corresponding field in an
 ** SQLite database header may be found using the following formula:
 **
@@ -197,7 +197,7 @@ int sqlite3BtreeNewDb(Btree *p);
 #define BTREE_BULKLOAD 0x00000001  /* Used to full index in sorted order */
 #define BTREE_SEEK_EQ  0x00000002  /* EQ seeks only - no range seeks */
 
-/*
+/* 
 ** Flags passed as the third argument to sqlite3BtreeCursor().
 **
 ** For read-only cursors the wrFlag argument is always zero. For read-write
@@ -265,7 +265,7 @@ int sqlite3BtreeDelete(BtCursor*, u8 flags);
 ** The nMem field might be zero, indicating that no decomposition is available.
 **
 ** Table btrees (used for rowid tables) contain an integer rowid used as
-** the key and passed in the nKey field.  The pKey field is zero.
+** the key and passed in the nKey field.  The pKey field is zero.  
 ** pData,nData hold the content of the new entry.  nZero extra zero bytes
 ** are appended to the end of the content when constructing the entry.
 ** The aMem,nMem fields are uninitialized for table btrees.
@@ -284,7 +284,7 @@ int sqlite3BtreeDelete(BtCursor*, u8 flags);
 **
 ** This object is used to pass information into sqlite3BtreeInsert().  The
 ** same information used to be passed as five separate parameters.  But placing
-** the information into this object helps to keep the interface more
+** the information into this object helps to keep the interface more 
 ** organized and understandable, and it also helps the resulting code to
 ** run a little faster by using fewer registers for parameter passing.
 */
@@ -301,14 +301,13 @@ struct BtreePayload {
 int sqlite3BtreeInsert(BtCursor*, const BtreePayload *pPayload,
                        int flags, int seekResult);
 int sqlite3BtreeFirst(BtCursor*, int *pRes);
-#ifndef SQLITE_OMIT_WINDOWFUNC
-void sqlite3BtreeSkipNext(BtCursor*);
-#endif
 int sqlite3BtreeLast(BtCursor*, int *pRes);
 int sqlite3BtreeNext(BtCursor*, int flags);
 int sqlite3BtreeEof(BtCursor*);
 int sqlite3BtreePrevious(BtCursor*, int flags);
 i64 sqlite3BtreeIntegerKey(BtCursor*);
+void sqlite3BtreeCursorPin(BtCursor*);
+void sqlite3BtreeCursorUnpin(BtCursor*);
 #ifdef SQLITE_ENABLE_OFFSET_SQL_FUNC
 i64 sqlite3BtreeOffset(BtCursor*);
 #endif
@@ -317,7 +316,7 @@ const void *sqlite3BtreePayloadFetch(BtCursor*, u32 *pAmt);
 u32 sqlite3BtreePayloadSize(BtCursor*);
 sqlite3_int64 sqlite3BtreeMaxRecordSize(BtCursor*);
 
-char *sqlite3BtreeIntegrityCheck(Btree*, int *aRoot, int nRoot, int, int*);
+char *sqlite3BtreeIntegrityCheck(sqlite3*,Btree*,int*aRoot,int nRoot,int,int*);
 struct Pager *sqlite3BtreePager(Btree*);
 i64 sqlite3BtreeRowCountEst(BtCursor*);
 
@@ -338,7 +337,7 @@ int sqlite3BtreeCursorIsValid(BtCursor*);
 int sqlite3BtreeCursorIsValidNN(BtCursor*);
 
 #ifndef SQLITE_OMIT_BTREECOUNT
-int sqlite3BtreeCount(BtCursor *, i64 *);
+int sqlite3BtreeCount(sqlite3*, BtCursor*, i64*);
 #endif
 
 #ifdef SQLITE_TEST
@@ -362,7 +361,7 @@ void sqlite3BtreeCursorList(Btree*);
   void sqlite3BtreeEnterCursor(BtCursor*);
   int sqlite3BtreeConnectionCount(Btree*);
 #else
-# define sqlite3BtreeEnter(X)
+# define sqlite3BtreeEnter(X) 
 # define sqlite3BtreeEnterAll(X)
 # define sqlite3BtreeSharable(X) 0
 # define sqlite3BtreeEnterCursor(X)

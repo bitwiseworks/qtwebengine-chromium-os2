@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "build/build_config.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_system.h"
 #include "core/fxcrt/maybe_owned.h"
@@ -21,6 +22,8 @@
 
 class CFX_Font;
 class CFX_UnicodeEncodingEx;
+class CPDF_Document;
+class CPDF_Font;
 
 class CFGAS_GEFont final : public Retainable {
  public:
@@ -31,11 +34,15 @@ class CFGAS_GEFont final : public Retainable {
                                           uint32_t dwFontStyles,
                                           uint16_t wCodePage,
                                           CFGAS_FontMgr* pFontMgr);
-  static RetainPtr<CFGAS_GEFont> LoadFont(CFX_Font* pExternalFont,
+  static RetainPtr<CFGAS_GEFont> LoadFont(const RetainPtr<CPDF_Font>& pPDFFont,
                                           CFGAS_FontMgr* pFontMgr);
   static RetainPtr<CFGAS_GEFont> LoadFont(
       std::unique_ptr<CFX_Font> pInternalFont,
       CFGAS_FontMgr* pFontMgr);
+
+  static RetainPtr<CFGAS_GEFont> LoadStockFont(CPDF_Document* pDoc,
+                                               CFGAS_FontMgr* pMgr,
+                                               const ByteString& font_family);
 
   uint32_t GetFontStyles() const;
   bool GetCharWidth(wchar_t wUnicode, int32_t* pWidth);
@@ -57,14 +64,14 @@ class CFGAS_GEFont final : public Retainable {
   explicit CFGAS_GEFont(CFGAS_FontMgr* pFontMgr);
   ~CFGAS_GEFont() override;
 
-#if _FX_PLATFORM_ == _FX_PLATFORM_WINDOWS_
+#if defined(OS_WIN)
   bool LoadFontInternal(const wchar_t* pszFontFamily,
                         uint32_t dwFontStyles,
                         uint16_t wCodePage);
   bool LoadFontInternal(const uint8_t* pBuffer, int32_t length);
-#endif  // _FX_PLATFORM_ == _FX_PLATFORM_WINDOWS_
+#endif
   bool LoadFontInternal(std::unique_ptr<CFX_Font> pInternalFont);
-  bool LoadFontInternal(CFX_Font* pExternalFont);
+  bool LoadFontInternal(const RetainPtr<CPDF_Font>& pPDFFont);
   bool InitFont();
   std::pair<int32_t, RetainPtr<CFGAS_GEFont>> GetGlyphIndexAndFont(
       wchar_t wUnicode,
@@ -72,8 +79,9 @@ class CFGAS_GEFont final : public Retainable {
   WideString GetFamilyName() const;
 
   Optional<uint32_t> m_dwLogFontStyle;
-  MaybeOwned<CFX_Font> m_pFont;  // Must come before |m_pFontEncoding|.
-  CFGAS_FontMgr::ObservedPtr const m_pFontMgr;
+  RetainPtr<CPDF_Font> m_pPDFFont;  // Must come before |m_pFont|.
+  MaybeOwned<CFX_Font> m_pFont;     // Must come before |m_pFontEncoding|.
+  ObservedPtr<CFGAS_FontMgr> const m_pFontMgr;
   std::unique_ptr<CFX_UnicodeEncodingEx> m_pFontEncoding;
   std::map<wchar_t, int32_t> m_CharWidthMap;
   std::map<wchar_t, FX_RECT> m_BBoxMap;

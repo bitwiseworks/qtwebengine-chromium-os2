@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "components/sessions/core/session_command.h"
+#include "components/tab_groups/tab_group_id.h"
 
 namespace sessions {
 
@@ -22,12 +23,18 @@ SessionTab::SessionTab()
 SessionTab::~SessionTab() {
 }
 
+// SessionTabGroup -------------------------------------------------------------
+
+SessionTabGroup::SessionTabGroup(const tab_groups::TabGroupId& id) : id(id) {}
+
+SessionTabGroup::~SessionTabGroup() {}
+
 // SessionWindow ---------------------------------------------------------------
 
 SessionWindow::SessionWindow()
     : window_id(SessionID::NewUnique()),
       selected_tab_index(-1),
-      type(TYPE_TABBED),
+      type(TYPE_NORMAL),
       is_constrained(true),
       show_state(ui::SHOW_STATE_DEFAULT) {}
 

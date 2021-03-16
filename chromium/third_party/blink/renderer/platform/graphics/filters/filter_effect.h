@@ -48,12 +48,10 @@ enum FilterEffectType {
   kFilterEffectTypeSourceInput
 };
 
-class PLATFORM_EXPORT FilterEffect
-    : public GarbageCollectedFinalized<FilterEffect> {
-
+class PLATFORM_EXPORT FilterEffect : public GarbageCollected<FilterEffect> {
  public:
   virtual ~FilterEffect();
-  virtual void Trace(blink::Visitor*);
+  virtual void Trace(Visitor*);
 
   void DisposeImageFilters();
   void DisposeImageFiltersRecursive();

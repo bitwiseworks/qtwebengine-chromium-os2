@@ -4,13 +4,15 @@
 
 #include "components/metrics/single_sample_metrics_factory_impl.h"
 
+#include "base/bind.h"
 #include "base/metrics/dummy_histogram.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/threading/thread.h"
 #include "components/metrics/single_sample_metrics.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace metrics {
@@ -51,8 +53,9 @@ class SingleSampleMetricsFactoryImplTest : public testing::Test {
     thread_.Stop();
   }
 
-  void CreateProvider(mojom::SingleSampleMetricsProviderRequest request) {
-    CreateSingleSampleMetricsProvider(std::move(request));
+  void CreateProvider(
+      mojo::PendingReceiver<mojom::SingleSampleMetricsProvider> receiver) {
+    CreateSingleSampleMetricsProvider(std::move(receiver));
     provider_count_++;
   }
 
@@ -74,7 +77,7 @@ class SingleSampleMetricsFactoryImplTest : public testing::Test {
                                                  kBucketCount);
   }
 
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   SingleSampleMetricsFactoryImpl* factory_;
   base::Thread thread_;
   size_t provider_count_ = 0;
@@ -138,6 +141,10 @@ TEST_F(SingleSampleMetricsFactoryImplTest, DefaultSingleSampleMetricWithValue) {
 }
 
 TEST_F(SingleSampleMetricsFactoryImplTest, MultithreadedMetrics) {
+  // Allow EXPECT_DCHECK_DEATH for multiple threads.
+  // https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#death-tests-and-threads
+  testing::FLAGS_gtest_death_test_style = "threadsafe";
+
   base::HistogramTester tester;
   std::unique_ptr<base::SingleSampleMetric> metric =
       factory_->CreateCustomCountsMetric(kMetricName, kMin, kMax, kBucketCount);

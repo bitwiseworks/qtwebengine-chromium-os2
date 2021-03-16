@@ -9,12 +9,10 @@
 import("../webrtc.gni")
 
 group("stats") {
-  deps = [
-    ":rtc_stats",
-  ]
+  deps = [ ":rtc_stats" ]
 }
 
-rtc_static_library("rtc_stats") {
+rtc_library("rtc_stats") {
   visibility = [ "*" ]
   cflags = []
   sources = [
@@ -30,13 +28,12 @@ rtc_static_library("rtc_stats") {
   ]
 }
 
-rtc_source_set("rtc_stats_test_utils") {
+rtc_library("rtc_stats_test_utils") {
   visibility = [ "*" ]
   cflags = []
   sources = [
     "test/rtc_test_stats.cc",
     "test/rtc_test_stats.h",
-    "test/rtcteststats.h",
   ]
 
   deps = [
@@ -62,8 +59,8 @@ if (rtc_include_tests) {
       "../rtc_base:checks",
       "../rtc_base:gunit_helpers",
       "../rtc_base:rtc_base_approved",
-      "../rtc_base:rtc_base_tests_main",
       "../rtc_base:rtc_json",
+      "../test:test_main",
       "../test:test_support",
     ]
 

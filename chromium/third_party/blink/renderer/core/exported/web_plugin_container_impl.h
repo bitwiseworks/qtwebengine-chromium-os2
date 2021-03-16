@@ -33,15 +33,15 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_EXPORTED_WEB_PLUGIN_CONTAINER_IMPL_H_
 
 #include "base/memory/scoped_refptr.h"
+#include "third_party/blink/public/common/input/web_touch_event.h"
+#include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/platform/web_coalesced_input_event.h"
-#include "third_party/blink/public/platform/web_focus_type.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
 #include "third_party/blink/public/web/web_plugin_container.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/frame/embedded_content_view.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace cc {
@@ -68,18 +68,14 @@ struct WebPrintParams;
 struct WebPrintPresetOptions;
 
 class CORE_EXPORT WebPluginContainerImpl final
-    : public GarbageCollectedFinalized<WebPluginContainerImpl>,
+    : public GarbageCollected<WebPluginContainerImpl>,
       public EmbeddedContentView,
       public WebPluginContainer,
-      public ContextClient {
+      public ExecutionContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
   USING_PRE_FINALIZER(WebPluginContainerImpl, PreFinalize);
 
  public:
-  static WebPluginContainerImpl* Create(HTMLPlugInElement& element,
-                                        WebPlugin* web_plugin) {
-    return MakeGarbageCollected<WebPluginContainerImpl>(element, web_plugin);
-  }
   // Check if plugins support a given command |name|.
   static bool SupportsCommand(const WebString& name);
 
@@ -88,13 +84,10 @@ class CORE_EXPORT WebPluginContainerImpl final
 
   // EmbeddedContentView methods
   bool IsPluginView() const override { return true; }
+  LocalFrameView* ParentFrameView() const override;
+  LayoutEmbeddedContent* GetLayoutEmbeddedContent() const override;
   void AttachToLayout() override;
   void DetachFromLayout() override;
-  bool IsAttached() const override { return is_attached_; }
-  void SetParentVisible(bool) override;
-  void FrameRectsChanged() override;
-  void SetFrameRect(const IntRect&) override;
-  IntRect FrameRect() const override;
   // |paint_offset| is used to to paint the contents at the correct location.
   // It should be issued as a transform operation before painting the contents.
   void Paint(GraphicsContext&,
@@ -111,10 +104,10 @@ class CORE_EXPORT WebPluginContainerImpl final
   bool SupportsKeyboardFocus() const;
   bool SupportsInputMethod() const;
   bool CanProcessDrag() const;
-  bool WantsWheelEvents();
+  bool WantsWheelEvents() const;
   void UpdateAllLifecyclePhases();
   void InvalidateRect(const IntRect&);
-  void SetFocused(bool, WebFocusType);
+  void SetFocused(bool, mojom::blink::FocusType);
   void HandleEvent(Event&);
   bool IsErrorplaceholder();
   void EventListenersRemoved();
@@ -125,13 +118,12 @@ class CORE_EXPORT WebPluginContainerImpl final
   WebDocument GetDocument() override;
   void DispatchProgressEvent(const WebString& type,
                              bool length_computable,
-                             unsigned long long loaded,
-                             unsigned long long total,
+                             uint64_t loaded,
+                             uint64_t total,
                              const WebString& url) override;
   void EnqueueMessageEvent(const WebDOMMessageEvent&) override;
   void Invalidate() override;
   void InvalidateRect(const WebRect&) override;
-  void ScrollRect(const WebRect&) override;
   void ScheduleAnimation() override;
   void ReportGeometry() override;
   v8::Local<v8::Object> V8ObjectForElement() override;
@@ -140,8 +132,8 @@ class CORE_EXPORT WebPluginContainerImpl final
   bool IsRectTopmost(const WebRect&) override;
   void RequestTouchEventType(TouchEventRequestType) override;
   void SetWantsWheelEvents(bool) override;
-  WebPoint RootFrameToLocalPoint(const WebPoint&) override;
-  WebPoint LocalToRootFramePoint(const WebPoint&) override;
+  gfx::Point RootFrameToLocalPoint(const gfx::Point&) override;
+  gfx::Point LocalToRootFramePoint(const gfx::Point&) override;
 
   // Non-Oilpan, this cannot be null. With Oilpan, it will be
   // null when in a disposed state, pending finalization during the next GC.
@@ -169,9 +161,6 @@ class CORE_EXPORT WebPluginContainerImpl final
   // Whether the plugin supports its own paginated print. The other print
   // interface methods are called only if this method returns true.
   bool SupportsPaginatedPrint() const;
-  // If the plugin content should not be scaled to the printable area of
-  // the page, then this method should return true.
-  bool IsPrintScalingDisabled() const;
   // Returns true on success and sets the out parameter to the print preset
   // options for the document.
   bool GetPrintPresetOptionsFromDocument(WebPrintPresetOptions*) const;
@@ -197,14 +186,18 @@ class CORE_EXPORT WebPluginContainerImpl final
   void DidFinishLoading();
   void DidFailLoading(const ResourceError&);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
   // USING_PRE_FINALIZER does not allow for virtual dispatch from the finalizer
   // method. Here we call Dispose() which does the correct virtual dispatch.
   void PreFinalize() { Dispose(); }
   void Dispose() override;
+  void SetFrameRect(const IntRect&) override;
+  void PropagateFrameRects() override { ReportGeometry(); }
+
+ protected:
+  void ParentVisibleChanged() override;
 
  private:
-  LocalFrameView& ParentFrameView() const;
   // Sets |windowRect| to the content rect of the plugin in screen space.
   // Sets |clippedAbsoluteRect| to the visible rect for the plugin, clipped to
   // the visible screen of the root frame, in local space of the plugin.
@@ -241,27 +234,21 @@ class CORE_EXPORT WebPluginContainerImpl final
   Member<HTMLPlugInElement> element_;
   WebPlugin* web_plugin_;
   cc::Layer* layer_;
-  IntRect frame_rect_;
   TouchEventRequestType touch_event_request_type_;
   bool prevent_contents_opaque_changes_;
   bool wants_wheel_events_;
-  bool self_visible_;
-  bool parent_visible_;
-  bool is_attached_;
 };
 
-DEFINE_TYPE_CASTS(WebPluginContainerImpl,
-                  EmbeddedContentView,
-                  embedded_content_view,
-                  embedded_content_view->IsPluginView(),
-                  embedded_content_view.IsPluginView());
-// Unlike EmbeddedContentView, we need not worry about object type for
-// container. WebPluginContainerImpl is the only subclass of WebPluginContainer.
-DEFINE_TYPE_CASTS(WebPluginContainerImpl,
-                  WebPluginContainer,
-                  container,
-                  true,
-                  true);
+template <>
+struct DowncastTraits<WebPluginContainerImpl> {
+  static bool AllowFrom(const EmbeddedContentView& embedded_content_view) {
+    return embedded_content_view.IsPluginView();
+  }
+  // Unlike EmbeddedContentView, we need not worry about object type for
+  // container. WebPluginContainerImpl is the only subclass of
+  // WebPluginContainer.
+  static bool AllowFrom(const WebPluginContainer& container) { return true; }
+};
 
 }  // namespace blink
 

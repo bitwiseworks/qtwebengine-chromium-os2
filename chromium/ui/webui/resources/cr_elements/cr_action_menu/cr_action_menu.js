@@ -38,7 +38,7 @@ let ShowAtPositionConfig;
  * @enum {number}
  * @const
  */
-const AnchorAlignment = {
+/* #export */ const AnchorAlignment = {
   BEFORE_START: -2,
   AFTER_START: -1,
   CENTER: 0,
@@ -164,17 +164,18 @@ Polymer({
       value: false,
     },
 
-    ariaLabel: String,
+    /* Descriptor of the menu. Should be something along the lines of "menu" */
+    roleDescription: String,
   },
 
   listeners: {
     'keydown': 'onKeyDown_',
     'mouseover': 'onMouseover_',
-    'tap': 'onTap_',
+    'click': 'onClick_',
   },
 
   /** override */
-  detached: function() {
+  detached() {
     this.removeListeners_();
   },
 
@@ -182,12 +183,12 @@ Polymer({
    * Exposing internal <dialog> elements for tests.
    * @return {!HTMLDialogElement}
    */
-  getDialog: function() {
-    return this.$.dialog;
+  getDialog() {
+    return /** @type {!HTMLDialogElement} */ (this.$.dialog);
   },
 
   /** @private */
-  removeListeners_: function() {
+  removeListeners_() {
     window.removeEventListener('resize', this.boundClose_);
     window.removeEventListener('popstate', this.boundClose_);
     if (this.contentObserver_) {
@@ -205,7 +206,7 @@ Polymer({
    * @param {!Event} e
    * @private
    */
-  onNativeDialogClose_: function(e) {
+  onNativeDialogClose_(e) {
     // Ignore any 'close' events not fired directly by the <dialog> element.
     if (e.target !== this.$.dialog) {
       return;
@@ -224,8 +225,8 @@ Polymer({
    * @param {!Event} e
    * @private
    */
-  onTap_: function(e) {
-    if (e.target == this) {
+  onClick_(e) {
+    if (e.target === this) {
       this.close();
       e.stopPropagation();
     }
@@ -235,22 +236,35 @@ Polymer({
    * @param {!KeyboardEvent} e
    * @private
    */
-  onKeyDown_: function(e) {
+  onKeyDown_(e) {
     e.stopPropagation();
 
-    if (e.key == 'Tab' || e.key == 'Escape') {
+    if (e.key === 'Tab' || e.key === 'Escape') {
       this.close();
+      if (e.key === 'Tab') {
+        this.fire('tabkeyclose', {shiftKey: e.shiftKey});
+      }
       e.preventDefault();
       return;
     }
 
-    let selectNext = e.key == 'ArrowDown';
-    if (e.key == 'Enter') {
+    if (e.key !== 'Enter' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') {
+      return;
+    }
+
+    const query = '.dropdown-item:not([disabled]):not([hidden])';
+    const options = Array.from(this.querySelectorAll(query));
+    if (options.length === 0) {
+      return;
+    }
+
+    const focused = getDeepActiveElement();
+    const index = options.findIndex(
+        option => cr.ui.FocusRow.getFocusableElement(option) === focused);
+
+    if (e.key === 'Enter') {
       // If a menu item has focus, don't change focus or close menu on 'Enter'.
-      const options = this.querySelectorAll('.dropdown-item');
-      const focusedIndex =
-          Array.prototype.indexOf.call(options, getDeepActiveElement());
-      if (focusedIndex != -1) {
+      if (index !== -1) {
         return;
       }
 
@@ -259,85 +273,50 @@ Polymer({
         e.preventDefault();
         return;
       }
-      selectNext = true;
-    }
-
-    if (e.key !== 'ArrowUp' && !selectNext) {
-      return;
-    }
-
-    const nextOption = this.getNextOption_(selectNext ? 1 : -1);
-    if (nextOption) {
-      if (!this.hasMousemoveListener_) {
-        this.hasMousemoveListener_ = true;
-        listenOnce(this, 'mousemove', e => {
-          this.onMouseover_(e);
-          this.hasMousemoveListener_ = false;
-        });
-      }
-      nextOption.focus();
     }
 
     e.preventDefault();
+    this.updateFocus_(options, index, e.key !== 'ArrowUp');
+
+    if (!this.hasMousemoveListener_) {
+      this.hasMousemoveListener_ = true;
+      this.addEventListener('mousemove', e => {
+        this.onMouseover_(e);
+        this.hasMousemoveListener_ = false;
+      }, {once: true});
+    }
   },
 
   /**
    * @param {!Event} e
    * @private
    */
-  onMouseover_: function(e) {
-    // TODO(scottchen): Using "focus" to determine selected item might mess
-    // with screen readers in some edge cases.
-    let i = 0;
-    let target;
-    do {
-      target = e.path[i++];
-      if (target.classList && target.classList.contains('dropdown-item') &&
-          !target.disabled) {
-        target.focus();
-        return;
-      }
-    } while (this != target);
-
-    // The user moved the mouse off the options. Reset focus to the dialog.
-    this.$.dialog.focus();
+  onMouseover_(e) {
+    const query = '.dropdown-item:not([disabled])';
+    const item = e.composedPath().find(el => el.matches && el.matches(query));
+    (item || this.$.wrapper).focus();
   },
 
   /**
-   * @param {number} step -1 for getting previous option (up), 1 for getting
-   *     next option (down).
-   * @return {?Element} The next focusable option, taking into account
-   *     disabled/hidden attributes, or null if no focusable option exists.
+   * @param {!Array<!HTMLElement>} options
+   * @param {number} focusedIndex
+   * @param {boolean} next
    * @private
    */
-  getNextOption_: function(step) {
-    // Using a counter to ensure no infinite loop occurs if all elements are
-    // hidden/disabled.
-    let counter = 0;
-    let nextOption = null;
-    const options = this.querySelectorAll('.dropdown-item');
+  updateFocus_(options, focusedIndex, next) {
     const numOptions = options.length;
-    let focusedIndex =
-        Array.prototype.indexOf.call(options, getDeepActiveElement());
-
-    // Handle case where nothing is focused and up is pressed.
-    if (focusedIndex === -1 && step === -1) {
-      focusedIndex = 0;
+    assert(numOptions > 0);
+    let index;
+    if (focusedIndex === -1) {
+      index = next ? 0 : numOptions - 1;
+    } else {
+      const delta = next ? 1 : -1;
+      index = (numOptions + focusedIndex + delta) % numOptions;
     }
-
-    do {
-      focusedIndex = (numOptions + focusedIndex + step) % numOptions;
-      nextOption = options[focusedIndex];
-      if (nextOption.disabled || nextOption.hidden) {
-        nextOption = null;
-      }
-      counter++;
-    } while (!nextOption && counter < numOptions);
-
-    return nextOption;
+    options[index].focus();
   },
 
-  close: function() {
+  close() {
     // Removing 'resize' and 'popstate' listeners when dialog is closed.
     this.removeListeners_();
     this.$.dialog.close();
@@ -356,7 +335,7 @@ Polymer({
    * @param {!Element} anchorElement
    * @param {ShowAtConfig=} opt_config
    */
-  showAt: function(anchorElement, opt_config) {
+  showAt(anchorElement, opt_config) {
     this.anchorElement_ = anchorElement;
     // Scroll the anchor element into view so that the bounding rect will be
     // accurate for where the menu should be shown.
@@ -366,7 +345,7 @@ Polymer({
 
     let height = rect.height;
     if (opt_config &&
-        opt_config.anchorAlignmentY == AnchorAlignment.AFTER_END) {
+        opt_config.anchorAlignmentY === AnchorAlignment.AFTER_END) {
       // When an action menu is positioned after the end of an element, the
       // action menu can appear too far away from the anchor element, typically
       // because anchors tend to have padding. So we offset the height a bit
@@ -384,6 +363,7 @@ Polymer({
           anchorAlignmentX: AnchorAlignment.BEFORE_END,
         },
         opt_config)));
+    this.$.wrapper.focus();
   },
 
   /**
@@ -413,7 +393,7 @@ Polymer({
    *
    * @param {!ShowAtPositionConfig} config
    */
-  showAtPosition: function(config) {
+  showAtPosition(config) {
     // Save the scroll position of the viewport.
     const doc = document.scrollingElement;
     const scrollLeft = doc.scrollLeft;
@@ -445,7 +425,7 @@ Polymer({
   },
 
   /** @private */
-  resetStyle_: function() {
+  resetStyle_() {
     this.$.dialog.style.left = '';
     this.$.dialog.style.right = '';
     this.$.dialog.style.top = '0';
@@ -457,7 +437,7 @@ Polymer({
    * @param {!ShowAtPositionConfig} config
    * @private
    */
-  positionDialog_: function(config) {
+  positionDialog_(config) {
     this.lastConfig_ = config;
     const c = Object.assign(getDefaultShowConfig(), config);
 
@@ -467,7 +447,7 @@ Polymer({
     const right = left + c.width;
 
     // Flip the X anchor in RTL.
-    const rtl = getComputedStyle(this).direction == 'rtl';
+    const rtl = getComputedStyle(this).direction === 'rtl';
     if (rtl) {
       c.anchorAlignmentX *= -1;
     }
@@ -493,7 +473,7 @@ Polymer({
   /**
    * @private
    */
-  addListeners_: function() {
+  addListeners_() {
     this.boundClose_ = this.boundClose_ || function() {
       if (this.$.dialog.open) {
         this.close();

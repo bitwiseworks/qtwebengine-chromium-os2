@@ -11,15 +11,14 @@
 
 namespace extensions {
 
-class NetworkingConfigSetNetworkFilterFunction
-    : public UIThreadExtensionFunction {
+class NetworkingConfigSetNetworkFilterFunction : public ExtensionFunction {
  public:
   NetworkingConfigSetNetworkFilterFunction();
 
   ResponseAction Run() override;
 
   DECLARE_EXTENSION_FUNCTION("networking.config.setNetworkFilter",
-                             NETWORKING_CONFIG_SETNETWORKFILTER);
+                             NETWORKING_CONFIG_SETNETWORKFILTER)
 
  protected:
   ~NetworkingConfigSetNetworkFilterFunction() override;
@@ -30,15 +29,14 @@ class NetworkingConfigSetNetworkFilterFunction
   DISALLOW_COPY_AND_ASSIGN(NetworkingConfigSetNetworkFilterFunction);
 };
 
-class NetworkingConfigFinishAuthenticationFunction
-    : public UIThreadExtensionFunction {
+class NetworkingConfigFinishAuthenticationFunction : public ExtensionFunction {
  public:
   NetworkingConfigFinishAuthenticationFunction();
 
   ResponseAction Run() override;
 
   DECLARE_EXTENSION_FUNCTION("networking.config.finishAuthentication",
-                             NETWORKING_CONFIG_FINISHAUTHENTICATION);
+                             NETWORKING_CONFIG_FINISHAUTHENTICATION)
 
  protected:
   ~NetworkingConfigFinishAuthenticationFunction() override;

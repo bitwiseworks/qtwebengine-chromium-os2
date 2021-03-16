@@ -5,10 +5,9 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVER_CONTROLLER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INTERSECTION_OBSERVER_INTERSECTION_OBSERVER_CONTROLLER_H_
 
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/intersection_observer/intersection_observer.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
@@ -17,46 +16,69 @@
 
 namespace blink {
 
-class Document;
+class ExecutionContext;
 
 class IntersectionObserverController
-    : public GarbageCollectedFinalized<IntersectionObserverController>,
-      public ContextClient,
+    : public GarbageCollected<IntersectionObserverController>,
+      public ExecutionContextClient,
       public NameClient {
   USING_GARBAGE_COLLECTED_MIXIN(IntersectionObserverController);
 
  public:
-  static IntersectionObserverController* Create(Document*);
-
-  explicit IntersectionObserverController(Document*);
+  explicit IntersectionObserverController(ExecutionContext*);
   virtual ~IntersectionObserverController();
 
   void ScheduleIntersectionObserverForDelivery(IntersectionObserver&);
-  void DeliverIntersectionObservations();
-  void ComputeTrackedIntersectionObservations();
-  void AddTrackedTarget(Element&);
-  void RemoveTrackedTarget(Element&);
 
-  void Trace(blink::Visitor*) override;
+  // Immediately deliver all notifications for all observers for which
+  // (observer->GetDeliveryBehavior() == behavior).
+  void DeliverNotifications(IntersectionObserver::DeliveryBehavior behavior);
+
+  // The flags argument is composed of values from
+  // IntersectionObservation::ComputeFlags. They are dirty bits that control
+  // whether an IntersectionObserver needs to do any work. The return value
+  // communicates whether observer->trackVisibility() is true for any tracked
+  // observer.
+  bool ComputeIntersections(unsigned flags);
+
+  // The second argument indicates whether the Element is a target of any
+  // observers for which observer->trackVisibility() is true.
+  void AddTrackedObserver(IntersectionObserver&);
+  void AddTrackedObservation(IntersectionObservation&);
+  void RemoveTrackedObserver(IntersectionObserver&);
+  void RemoveTrackedObservation(IntersectionObservation&);
+
+  bool NeedsOcclusionTracking() const { return needs_occlusion_tracking_; }
+
+  void Trace(Visitor*) override;
   const char* NameInHeapSnapshot() const override {
     return "IntersectionObserverController";
   }
 
- private:
-  void PostTaskToDeliverObservations();
+  unsigned GetTrackedObserverCountForTesting() const {
+    return tracked_explicit_root_observers_.size();
+  }
+  unsigned GetTrackedObservationCountForTesting() const {
+    return tracked_implicit_root_observations_.size();
+  }
 
  private:
-  // Elements in this document which are the target of an
-  // IntersectionObservation.
-  HeapHashSet<WeakMember<Element>> tracked_observation_targets_;
+  void PostTaskToDeliverNotifications();
+
+ private:
+  // IntersectionObserver's with a connected explicit root in this document.
+  HeapHashSet<WeakMember<IntersectionObserver>>
+      tracked_explicit_root_observers_;
+  // IntersectionObservations with an implicit root and connected target in this
+  // document.
+  HeapHashSet<WeakMember<IntersectionObservation>>
+      tracked_implicit_root_observations_;
   // IntersectionObservers for which this is the execution context of the
-  // callback.
-  HeapHashSet<TraceWrapperMember<IntersectionObserver>>
-      pending_intersection_observers_;
-  // TODO(https://crbug.com/796145): Remove this hack once on-stack objects
-  // get supported by either of wrapper-tracing or unified GC.
-  HeapHashSet<TraceWrapperMember<IntersectionObserver>>
-      intersection_observers_being_invoked_;
+  // callback, and with unsent notifications.
+  HeapHashSet<Member<IntersectionObserver>> pending_intersection_observers_;
+  // This is 'true' if any tracked node is the target of an observer for
+  // which observer->trackVisibility() is true.
+  bool needs_occlusion_tracking_;
 };
 
 }  // namespace blink

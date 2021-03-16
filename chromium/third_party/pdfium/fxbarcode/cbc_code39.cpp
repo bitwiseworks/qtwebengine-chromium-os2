@@ -23,6 +23,7 @@
 
 #include <memory>
 
+#include "core/fxcrt/fx_memory_wrappers.h"
 #include "fxbarcode/oned/BC_OnedCode39Writer.h"
 #include "third_party/base/ptr_util.h"
 
@@ -32,7 +33,7 @@ CBC_Code39::CBC_Code39()
 CBC_Code39::~CBC_Code39() {}
 
 bool CBC_Code39::Encode(WideStringView contents) {
-  if (contents.IsEmpty())
+  if (contents.IsEmpty() || contents.GetLength() > kMaxInputLengthBytes)
     return false;
 
   BCFORMAT format = BCFORMAT_CODE_39;

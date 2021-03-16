@@ -9,16 +9,22 @@
 
 #include "base/atomic_sequence_num.h"
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "gpu/command_buffer/common/gpu_memory_buffer_support.h"
+#include "gpu/ipc/client/client_shared_image_interface.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/common/gpu_messages.h"
 #include "gpu/ipc/common/gpu_param_traits_macros.h"
+#include "gpu/ipc/common/gpu_watchdog_timeout.h"
 #include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_sync_message.h"
+#include "ipc/trace_ipc_message.h"
+#include "mojo/public/cpp/bindings/lib/message_quota_checker.h"
 #include "url/gurl.h"
 
 using base::AutoLock;
@@ -47,12 +53,14 @@ GpuChannelHost::GpuChannelHost(int channel_id,
   for (int32_t i = 0;
        i <= static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue); ++i)
     next_route_id_.GetNext();
+
+#if defined(OS_MACOSX)
+  gpu::SetMacOSSpecificTextureTarget(gpu_info.macos_specific_texture_target);
+#endif  // defined(OS_MACOSX)
 }
 
 bool GpuChannelHost::Send(IPC::Message* msg) {
-  TRACE_EVENT2("ipc", "GpuChannelHost::Send", "class",
-               IPC_MESSAGE_ID_CLASS(msg->type()), "line",
-               IPC_MESSAGE_ID_LINE(msg->type()));
+  TRACE_IPC_MESSAGE_SEND("ipc", "GpuChannelHost::Send", msg);
 
   auto message = base::WrapUnique(msg);
 
@@ -85,7 +93,27 @@ bool GpuChannelHost::Send(IPC::Message* msg) {
 
   // http://crbug.com/125264
   base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
-  pending_sync.done_event->Wait();
+
+  // TODO(magchen): crbug.com/949839. Remove this histogram and do only one
+  // done_event->Wait() after the GPU watchdog V2 is fully launched.
+  base::TimeTicks start_time = base::TimeTicks::Now();
+
+  // The wait for event is split into two phases so we can still record the
+  // case in which the GPU hangs but not killed. Also all data should be
+  // recorded in the range of max_wait_sec seconds for easier comparison.
+  bool signaled =
+      pending_sync.done_event->TimedWait(kGpuChannelHostMaxWaitTime);
+
+  base::TimeDelta wait_duration = base::TimeTicks::Now() - start_time;
+
+  // Histogram of wait-for-sync time, used for monitoring the GPU watchdog.
+  UMA_HISTOGRAM_CUSTOM_TIMES("GPU.GPUChannelHostWaitTime2", wait_duration,
+                             base::TimeDelta::FromSeconds(1),
+                             kGpuChannelHostMaxWaitTime, 50);
+
+  // Continue waiting for the event if not signaled
+  if (!signaled)
+    pending_sync.done_event->Wait();
 
   return pending_sync.send_result;
 }
@@ -206,22 +234,6 @@ void GpuChannelHost::RemoveRoute(int route_id) {
                                 base::Unretained(listener_.get()), route_id));
 }
 
-base::SharedMemoryHandle GpuChannelHost::ShareToGpuProcess(
-    const base::SharedMemoryHandle& source_handle) {
-  if (IsLost())
-    return base::SharedMemoryHandle();
-
-  return base::SharedMemory::DuplicateHandle(source_handle);
-}
-
-base::UnsafeSharedMemoryRegion GpuChannelHost::ShareToGpuProcess(
-    const base::UnsafeSharedMemoryRegion& source_region) {
-  if (IsLost())
-    return base::UnsafeSharedMemoryRegion();
-
-  return source_region.Duplicate();
-}
-
 int32_t GpuChannelHost::ReserveImageId() {
   return next_image_id_.GetNext();
 }
@@ -232,6 +244,11 @@ int32_t GpuChannelHost::GenerateRouteID() {
 
 void GpuChannelHost::CrashGpuProcessForTesting() {
   Send(new GpuChannelMsg_CrashForTesting());
+}
+
+std::unique_ptr<ClientSharedImageInterface>
+GpuChannelHost::CreateClientSharedImageInterface() {
+  return std::make_unique<ClientSharedImageInterface>(&shared_image_interface_);
 }
 
 GpuChannelHost::~GpuChannelHost() = default;
@@ -262,11 +279,13 @@ operator=(OrderingBarrierInfo&&) = default;
 GpuChannelHost::Listener::Listener(
     mojo::ScopedMessagePipeHandle handle,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner)
-    : channel_(IPC::ChannelMojo::Create(std::move(handle),
-                                        IPC::Channel::MODE_CLIENT,
-                                        this,
-                                        io_task_runner,
-                                        base::ThreadTaskRunnerHandle::Get())) {
+    : channel_(IPC::ChannelMojo::Create(
+          std::move(handle),
+          IPC::Channel::MODE_CLIENT,
+          this,
+          io_task_runner,
+          base::ThreadTaskRunnerHandle::Get(),
+          mojo::internal::MessageQuotaChecker::MaybeCreate())) {
   DCHECK(channel_);
   DCHECK(io_task_runner->BelongsToCurrentThread());
   bool result = channel_->Connect();

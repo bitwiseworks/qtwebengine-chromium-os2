@@ -45,7 +45,6 @@ class ColorInputType final : public InputType,
   USING_GARBAGE_COLLECTED_MIXIN(ColorInputType);
 
  public:
-  static InputType* Create(HTMLInputElement&);
   explicit ColorInputType(HTMLInputElement&);
   ~ColorInputType() override;
   void Trace(Visitor*) override;
@@ -73,6 +72,7 @@ class ColorInputType final : public InputType,
   void DidSetValue(const String&, bool value_changed) override;
   void HandleDOMActivateEvent(Event&) override;
   void ClosePopupView() override;
+  bool HasOpenedPopup() const override;
   bool ShouldRespectListAttribute() override;
   bool TypeMismatchFor(const String&) const override;
   void WarnIfValueIsInvalid(const String&) const override;
@@ -80,7 +80,6 @@ class ColorInputType final : public InputType,
   AXObject* PopupRootAXObject() override;
 
   Color ValueAsColor() const;
-  void EndColorChooser();
   HTMLElement* ShadowColorSwatch() const;
 
   Member<ColorChooser> chooser_;

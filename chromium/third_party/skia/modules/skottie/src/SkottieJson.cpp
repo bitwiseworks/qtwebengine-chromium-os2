@@ -5,15 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "SkottieJson.h"
+#include "modules/skottie/src/SkottieJson.h"
 
-#include "SkData.h"
-#include "SkScalar.h"
-#include "SkPath.h"
-#include "SkPoint.h"
-#include "SkStream.h"
-#include "SkString.h"
-#include "SkottieValue.h"
+#include "include/core/SkData.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkPoint.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkStream.h"
+#include "include/core/SkString.h"
+#include "modules/skottie/src/SkottieValue.h"
 #include <vector>
 
 namespace skottie {
@@ -82,6 +82,18 @@ bool Parse<SkString>(const Value& v, SkString* s) {
     }
 
     return false;
+}
+
+template <>
+bool Parse<SkV2>(const Value& v, SkV2* v2) {
+    if (!v.is<ArrayValue>())
+        return false;
+    const auto& av = v.as<ArrayValue>();
+
+    // We need at least two scalars (BM sometimes exports a third value == 0).
+    return av.size() >= 2
+        && Parse<SkScalar>(av[0], &v2->x)
+        && Parse<SkScalar>(av[1], &v2->y);
 }
 
 template <>

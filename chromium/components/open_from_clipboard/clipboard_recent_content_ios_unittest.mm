@@ -15,6 +15,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 UIImage* TestUIImage(UIColor* color = [UIColor redColor]) {
@@ -108,36 +112,40 @@ class ClipboardRecentContentIOSTest : public ::testing::Test {
 
   void ResetClipboardRecentContent(const std::string& application_scheme,
                                    base::TimeDelta time_delta) {
-    clipboard_content_implementation_ =
-        [[ClipboardRecentContentImplIOSWithFakeUptime alloc]
-               initWithMaxAge:kMaxAge
-            authorizedSchemes:@[
-              base::SysUTF8ToNSString(kRecognizedScheme),
-              base::SysUTF8ToNSString(application_scheme)
-            ]
-                 userDefaults:[NSUserDefaults standardUserDefaults]
-                       uptime:time_delta.InSecondsF()];
+    ClipboardRecentContentImplIOSWithFakeUptime*
+        clipboard_content_implementation =
+            [[ClipboardRecentContentImplIOSWithFakeUptime alloc]
+                   initWithMaxAge:kMaxAge
+                authorizedSchemes:@[
+                  base::SysUTF8ToNSString(kRecognizedScheme),
+                  base::SysUTF8ToNSString(application_scheme)
+                ]
+                     userDefaults:[NSUserDefaults standardUserDefaults]
+                           uptime:time_delta.InSecondsF()];
 
     clipboard_content_ =
         std::make_unique<ClipboardRecentContentIOSWithFakeUptime>(
-            clipboard_content_implementation_);
+            clipboard_content_implementation);
+
+    // Keep a weak pointer to the ClipboardRecentContentImplIOS to allow
+    // updating the fake pasteboard change date.
+    clipboard_content_implementation_ = clipboard_content_implementation;
   }
 
   void SetStoredPasteboardChangeDate(NSDate* change_date) {
-    clipboard_content_implementation_.lastPasteboardChangeDate =
-        [change_date copy];
+    clipboard_content_implementation_.lastPasteboardChangeDate = change_date;
     [clipboard_content_implementation_ saveToUserDefaults];
   }
 
  protected:
   std::unique_ptr<ClipboardRecentContentIOSWithFakeUptime> clipboard_content_;
-  ClipboardRecentContentImplIOSWithFakeUptime*
+  __weak ClipboardRecentContentImplIOSWithFakeUptime*
       clipboard_content_implementation_;
 
   void VerifyClipboardURLExists(const char* expected_url) {
     base::Optional<GURL> optional_gurl =
         clipboard_content_->GetRecentURLFromClipboard();
-    EXPECT_TRUE(optional_gurl.has_value());
+    ASSERT_TRUE(optional_gurl.has_value());
     EXPECT_STREQ(expected_url, optional_gurl.value().spec().c_str());
   }
 
@@ -148,7 +156,7 @@ class ClipboardRecentContentIOSTest : public ::testing::Test {
   void VerifyClipboardTextExists(const char* expected_text) {
     base::Optional<base::string16> optional_text =
         clipboard_content_->GetRecentTextFromClipboard();
-    EXPECT_TRUE(optional_text.has_value());
+    ASSERT_TRUE(optional_text.has_value());
     EXPECT_STREQ(expected_text,
                  base::UTF16ToUTF8(optional_text.value()).c_str());
   }
@@ -158,8 +166,7 @@ class ClipboardRecentContentIOSTest : public ::testing::Test {
   }
 
   void VerifyIfClipboardImageExists(bool exists) {
-    EXPECT_EQ(clipboard_content_->GetRecentImageFromClipboard().has_value(),
-              exists);
+    EXPECT_EQ(clipboard_content_->HasRecentImageFromClipboard(), exists);
   }
 };
 

@@ -7,7 +7,9 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/stl_util.h"
 #include "base/strings/strcat.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
@@ -46,12 +48,12 @@ HttpPasswordStoreMigrator::HttpPasswordStoreMigrator(
   GURL::Replacements rep;
   rep.SetSchemeStr(url::kHttpScheme);
   GURL http_origin = https_origin.ReplaceComponents(rep);
-  PasswordStore::FormDigest form(autofill::PasswordForm::SCHEME_HTML,
+  PasswordStore::FormDigest form(autofill::PasswordForm::Scheme::kHtml,
                                  http_origin.GetOrigin().spec(), http_origin);
   http_origin_domain_ = http_origin.GetOrigin();
-  client_->GetPasswordStore()->GetLogins(form, this);
+  client_->GetProfilePasswordStore()->GetLogins(form, this);
   client_->PostHSTSQueryForHost(
-      https_origin, base::Bind(&OnHSTSQueryResultHelper, GetWeakPtr()));
+      https_origin, base::BindOnce(&OnHSTSQueryResultHelper, GetWeakPtr()));
 }
 
 HttpPasswordStoreMigrator::~HttpPasswordStoreMigrator() = default;
@@ -78,7 +80,8 @@ autofill::PasswordForm HttpPasswordStoreMigrator::MigrateHttpFormToHttps(
   if (!http_form.action.SchemeIs(url::kHttpsScheme))
     https_form.action = https_form.origin;
   https_form.form_data = autofill::FormData();
-  https_form.generation_upload_status = autofill::PasswordForm::NO_SIGNAL_SENT;
+  https_form.generation_upload_status =
+      autofill::PasswordForm::GenerationUploadStatus::kNoSignalSent;
   https_form.skip_zero_click = false;
   return https_form;
 }
@@ -95,12 +98,12 @@ void HttpPasswordStoreMigrator::OnGetPasswordStoreResults(
 
 void HttpPasswordStoreMigrator::OnHSTSQueryResult(HSTSResult is_hsts) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  mode_ =
-      (is_hsts == HSTSResult::kYes) ? MigrationMode::MOVE : MigrationMode::COPY;
+  mode_ = (is_hsts == HSTSResult::kYes) ? HttpPasswordMigrationMode::kMove
+                                        : HttpPasswordMigrationMode::kCopy;
   got_hsts_query_result_ = true;
 
   if (is_hsts == HSTSResult::kYes)
-    client_->GetPasswordStore()->RemoveSiteStats(http_origin_domain_);
+    client_->GetProfilePasswordStore()->RemoveSiteStats(http_origin_domain_);
 
   if (got_password_store_results_)
     ProcessPasswordStoreResults();
@@ -118,20 +121,19 @@ void HttpPasswordStoreMigrator::ProcessPasswordStoreResults() {
   for (const auto& form : results_) {
     autofill::PasswordForm new_form =
         HttpPasswordStoreMigrator::MigrateHttpFormToHttps(*form);
-    client_->GetPasswordStore()->AddLogin(new_form);
+    client_->GetProfilePasswordStore()->AddLogin(new_form);
 
-    if (mode_ == MigrationMode::MOVE)
-      client_->GetPasswordStore()->RemoveLogin(*form);
+    if (mode_ == HttpPasswordMigrationMode::kMove)
+      client_->GetProfilePasswordStore()->RemoveLogin(*form);
     *form = std::move(new_form);
   }
 
+  // Only log data if there was at least one migrated password.
   if (!results_.empty()) {
-    // Only log data if there was at least one migrated password.
-    metrics_util::LogCountHttpMigratedPasswords(results_.size());
-    metrics_util::LogHttpPasswordMigrationMode(
-        mode_ == MigrationMode::MOVE
-            ? metrics_util::HTTP_PASSWORD_MIGRATION_MODE_MOVE
-            : metrics_util::HTTP_PASSWORD_MIGRATION_MODE_COPY);
+    base::UmaHistogramCounts100("PasswordManager.HttpPasswordMigrationCount",
+                                results_.size());
+    base::UmaHistogramEnumeration("PasswordManager.HttpPasswordMigrationMode",
+                                  mode_);
   }
 
   if (consumer_)

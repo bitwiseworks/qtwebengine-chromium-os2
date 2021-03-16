@@ -17,8 +17,10 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/variations/variations_http_header_provider.h"
 #include "net/base/backoff_entry.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "url/gurl.h"
@@ -29,6 +31,16 @@ namespace autofill {
 
 class AutofillDriver;
 class FormStructure;
+class LogManager;
+
+const size_t kMaxAPIQueryGetSize = 10240;  // 10 KiB
+
+// A helper to make sure that tests which modify the set of active autofill
+// experiments do not interfere with one another.
+struct ScopedActiveAutofillExperiments {
+  ScopedActiveAutofillExperiments();
+  ~ScopedActiveAutofillExperiments();
+};
 
 // Handles getting and updating Autofill heuristics.
 class AutofillDownloadManager {
@@ -71,7 +83,8 @@ class AutofillDownloadManager {
   //   effect if using API.
   AutofillDownloadManager(AutofillDriver* driver,
                           Observer* observer,
-                          const std::string& api_key);
+                          const std::string& api_key,
+                          LogManager* log_manager);
   virtual ~AutofillDownloadManager();
 
   // Starts a query request to Autofill servers. The observer is called with the
@@ -106,11 +119,20 @@ class AutofillDownloadManager {
   // pair.
   static void ClearUploadHistory(PrefService* pref_service);
 
+ protected:
+  // Gets the length of the payload from request data. Used to simulate
+  // different payload sizes when testing without the need for data. Do not use
+  // this when the length is needed to read/write a buffer.
+  virtual size_t GetPayloadLength(base::StringPiece payload) const;
+
  private:
   friend class AutofillDownloadManagerTest;
+  friend struct ScopedActiveAutofillExperiments;
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadManagerTest, QueryAndUploadTest);
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadManagerTest, BackoffLogic_Upload);
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadManagerTest, BackoffLogic_Query);
+  FRIEND_TEST_ALL_PREFIXES(AutofillDownloadManagerTest, RetryLimit_Upload);
+  FRIEND_TEST_ALL_PREFIXES(AutofillDownloadManagerTest, RetryLimit_Query);
 
   struct FormRequestData;
   typedef std::list<std::pair<std::string, std::string> > QueryRequestCache;
@@ -151,11 +173,17 @@ class AutofillDownloadManager {
   std::string GetCombinedSignature(
       const std::vector<std::string>& forms_in_query) const;
 
+  // Returns the maximum number of attempts for a given autofill server request.
+  static int GetMaxServerAttempts();
+
   void OnSimpleLoaderComplete(
       std::list<std::unique_ptr<network::SimpleURLLoader>>::iterator it,
       FormRequestData request_data,
       base::TimeTicks request_start,
       std::unique_ptr<std::string> response_body);
+
+  static void InitActiveExperiments();
+  static void ResetActiveExperiments();
 
   // The AutofillDriver that this instance will use. Must not be null, and must
   // outlive this instance.
@@ -168,9 +196,18 @@ class AutofillDownloadManager {
   // Callback function to retrieve API key.
   const std::string api_key_;
 
+  // Access to leave log messages for chrome://autofill-internals, may be null.
+  LogManager* const log_manager_;  // WEAK
+
   // The autofill server URL root: scheme://host[:port]/path excluding the
   // final path component for the request and the query params.
   const GURL autofill_server_url_;
+
+  // The period after which the tracked set of uploads to throttle is reset.
+  const base::TimeDelta throttle_reset_period_;
+
+  // The set of active autofill server experiments.
+  static std::vector<variations::VariationID>* active_experiments_;
 
   // Loaders used for the processing the requests. Invalidated after completion.
   std::list<std::unique_ptr<network::SimpleURLLoader>> url_loaders_;
@@ -182,7 +219,7 @@ class AutofillDownloadManager {
   // Used for exponential backoff of requests.
   net::BackoffEntry loader_backoff_;
 
-  base::WeakPtrFactory<AutofillDownloadManager> weak_factory_;
+  base::WeakPtrFactory<AutofillDownloadManager> weak_factory_{this};
 };
 
 }  // namespace autofill

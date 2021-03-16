@@ -8,17 +8,17 @@
 #ifndef SkPictureRecord_DEFINED
 #define SkPictureRecord_DEFINED
 
-#include "SkCanvas.h"
-#include "SkCanvasVirtualEnforcer.h"
-#include "SkFlattenable.h"
-#include "SkPicture.h"
-#include "SkPictureData.h"
-#include "SkTArray.h"
-#include "SkTDArray.h"
-#include "SkTHash.h"
-#include "SkTo.h"
-#include "SkVertices.h"
-#include "SkWriter32.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkCanvasVirtualEnforcer.h"
+#include "include/core/SkFlattenable.h"
+#include "include/core/SkPicture.h"
+#include "include/core/SkVertices.h"
+#include "include/private/SkTArray.h"
+#include "include/private/SkTDArray.h"
+#include "include/private/SkTHash.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkPictureData.h"
+#include "src/core/SkWriter32.h"
 
 // These macros help with packing and unpacking a single byte value and
 // a 3 byte value into/out of a uint32_t
@@ -32,6 +32,8 @@
 class SkPictureRecord : public SkCanvasVirtualEnforcer<SkCanvas> {
 public:
     SkPictureRecord(const SkISize& dimensions, uint32_t recordFlags);
+
+    SkPictureRecord(const SkIRect& dimensions, uint32_t recordFlags);
 
     const SkTArray<sk_sp<const SkPicture>>& getPictures() const {
         return fPictures;
@@ -160,8 +162,11 @@ protected:
     bool onDoSaveBehind(const SkRect*) override;
     void willRestore() override;
 
+    void didConcat44(const SkScalar[16]) override;
     void didConcat(const SkMatrix&) override;
     void didSetMatrix(const SkMatrix&) override;
+    void didScale(SkScalar, SkScalar) override;
+    void didTranslate(SkScalar, SkScalar) override;
 
     void onDrawDRRect(const SkRRect&, const SkRRect&, const SkPaint&) override;
 
@@ -174,9 +179,9 @@ protected:
                      SkBlendMode, const SkRect*, const SkPaint*) override;
 
     void onDrawPaint(const SkPaint&) override;
+    void onDrawBehind(const SkPaint&) override;
     void onDrawPoints(PointMode, size_t count, const SkPoint pts[], const SkPaint&) override;
     void onDrawRect(const SkRect&, const SkPaint&) override;
-    void onDrawEdgeAARect(const SkRect&, SkCanvas::QuadAAFlags, SkColor, SkBlendMode) override;
     void onDrawRegion(const SkRegion&, const SkPaint&) override;
     void onDrawOval(const SkRect&, const SkPaint&) override;
     void onDrawArc(const SkRect&, SkScalar, SkScalar, bool, const SkPaint&) override;
@@ -189,21 +194,25 @@ protected:
                          const SkPaint*) override;
     void onDrawImageLattice(const SkImage*, const SkCanvas::Lattice& lattice, const SkRect& dst,
                             const SkPaint*) override;
-    void onDrawImageSet(const SkCanvas::ImageSetEntry[], int count, SkFilterQuality,
-                        SkBlendMode) override;
+
     void onDrawShadowRec(const SkPath&, const SkDrawShadowRec&) override;
-    void onDrawVerticesObject(const SkVertices*, const SkVertices::Bone bones[], int boneCount,
-                              SkBlendMode, const SkPaint&) override;
+    void onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint&) override;
 
     void onClipRect(const SkRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipRRect(const SkRRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipPath(const SkPath&, SkClipOp, ClipEdgeStyle) override;
+    void onClipShader(sk_sp<SkShader>, SkClipOp) override;
     void onClipRegion(const SkRegion&, SkClipOp) override;
 
     void onDrawPicture(const SkPicture*, const SkMatrix*, const SkPaint*) override;
 
     void onDrawDrawable(SkDrawable*, const SkMatrix*) override;
     void onDrawAnnotation(const SkRect&, const char[], SkData*) override;
+
+    void onDrawEdgeAAQuad(const SkRect&, const SkPoint[4], QuadAAFlags, const SkColor4f&,
+                          SkBlendMode) override;
+    void onDrawEdgeAAImageSet(const ImageSetEntry[], int count, const SkPoint[], const SkMatrix[],
+                              const SkPaint*, SrcRectConstraint) override;
 
     int addPathToHeap(const SkPath& path);  // does not write to ops stream
 
@@ -220,23 +229,6 @@ protected:
     void recordSave();
     void recordSaveLayer(const SaveLayerRec&);
     void recordRestore(bool fillInSkips = true);
-
-    // SHOULD NEVER BE CALLED
-    void onDrawBitmap(const SkBitmap&, SkScalar left, SkScalar top, const SkPaint*) override {
-        SK_ABORT("not reached");
-    }
-    void onDrawBitmapRect(const SkBitmap&, const SkRect* src, const SkRect& dst, const SkPaint*,
-                          SrcRectConstraint) override {
-        SK_ABORT("not reached");
-    }
-    void onDrawBitmapNine(const SkBitmap&, const SkIRect& center, const SkRect& dst,
-                          const SkPaint*) override {
-        SK_ABORT("not reached");
-    }
-    void onDrawBitmapLattice(const SkBitmap&, const SkCanvas::Lattice& lattice, const SkRect& dst,
-                             const SkPaint*) override {
-        SK_ABORT("not reached");
-    }
 
 private:
     SkTArray<SkPaint>  fPaints;

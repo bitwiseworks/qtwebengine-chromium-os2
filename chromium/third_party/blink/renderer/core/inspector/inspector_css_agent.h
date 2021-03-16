@@ -29,6 +29,7 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/css/css_rule_list.h"
 #include "third_party/blink/renderer/core/css/css_selector.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
@@ -45,7 +46,6 @@
 namespace blink {
 
 class CSSRule;
-class CSSRuleList;
 class CSSStyleRule;
 class CSSStyleSheet;
 class Document;
@@ -89,22 +89,11 @@ class CORE_EXPORT InspectorCSSAgent final
     }
 
    private:
-    Member<ContentSecurityPolicy> content_security_policy_;
+    ContentSecurityPolicy* content_security_policy_;
   };
 
   static CSSStyleRule* AsCSSStyleRule(CSSRule*);
   static CSSMediaRule* AsCSSMediaRule(CSSRule*);
-
-  static InspectorCSSAgent* Create(
-      InspectorDOMAgent* dom_agent,
-      InspectedFrames* inspected_frames,
-      InspectorNetworkAgent* network_agent,
-      InspectorResourceContentLoader* resource_content_loader,
-      InspectorResourceContainer* resource_container) {
-    return MakeGarbageCollected<InspectorCSSAgent>(
-        dom_agent, inspected_frames, network_agent, resource_content_loader,
-        resource_container);
-  }
 
   static void CollectAllDocumentStyleSheets(Document*,
                                             HeapVector<Member<CSSStyleSheet>>&);
@@ -120,7 +109,7 @@ class CORE_EXPORT InspectorCSSAgent final
                     InspectorResourceContentLoader*,
                     InspectorResourceContainer*);
   ~InspectorCSSAgent() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   void ForcePseudoState(Element*, CSSSelector::PseudoType, bool* result);
   void DidCommitLoadForLocalFrame(LocalFrame*) override;
@@ -213,8 +202,8 @@ class CORE_EXPORT InspectorCSSAgent final
 
   protocol::Response startRuleUsageTracking() override;
   protocol::Response takeCoverageDelta(
-      std::unique_ptr<protocol::Array<protocol::CSS::RuleUsage>>* result)
-      override;
+      std::unique_ptr<protocol::Array<protocol::CSS::RuleUsage>>* result,
+      double* out_timestamp) override;
   protocol::Response stopRuleUsageTracking(
       std::unique_ptr<protocol::Array<protocol::CSS::RuleUsage>>* result)
       override;
@@ -299,7 +288,7 @@ class CORE_EXPORT InspectorCSSAgent final
   std::unique_ptr<protocol::CSS::RuleUsage> BuildCoverageInfo(CSSStyleRule*,
                                                               bool);
   std::unique_ptr<protocol::Array<protocol::CSS::RuleMatch>>
-  BuildArrayForMatchedRuleList(CSSRuleList*, Element*, PseudoId);
+  BuildArrayForMatchedRuleList(RuleIndexList*, Element*, PseudoId);
   std::unique_ptr<protocol::CSS::CSSStyle> BuildObjectForAttributesStyle(
       Element*);
 

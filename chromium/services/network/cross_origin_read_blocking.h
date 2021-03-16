@@ -14,22 +14,22 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece_forward.h"
-#include "services/network/initiator_lock_compatibility.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom-forward.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 namespace content {
 FORWARD_DECLARE_TEST(CrossSiteDocumentResourceHandlerTest, ResponseBlocking);
+FORWARD_DECLARE_TEST(CrossSiteDocumentResourceHandlerTest,
+                     CORBProtectionLogging);
 }  // namespace content
-
-namespace net {
-class URLRequest;
-}
 
 namespace network {
 
-struct ResourceResponse;
+namespace mojom {
+class NetworkServiceClient;
+}  // namespace mojom
 
 // CrossOriginReadBlocking (CORB) implements response blocking
 // policy for Site Isolation.  CORB will monitor network responses to a
@@ -39,39 +39,86 @@ struct ResourceResponse;
 
 class COMPONENT_EXPORT(NETWORK_SERVICE) CrossOriginReadBlocking {
  public:
+  // This enum describes how CORB should decide whether to block a given
+  // no-cors, cross-origin response.
+  //
+  // Note that these values are used in histograms, and must not change.
   enum class MimeType {
-    // Note that these values are used in histograms, and must not change.
+    // Blocked if served with `X-Content-Type-Options: nosniff` or if this is a
+    // 206 range response or if sniffing confirms that the body matches
+    // `Content-Type`.
     kHtml = 0,
     kXml = 1,
     kJson = 2,
+
+    // Blocked if served with `X-Content-Type-Options: nosniff` or
+    // sniffing detects that this is HTML, JSON or XML.  For example, this
+    // behavior is used for `Content-Type: text/plain`.
     kPlain = 3,
+
+    // Blocked if sniffing finds a JSON security prefix.  Used for an otherwise
+    // unrecognized type (i.e. type that isn't explicitly recognized as
+    // belonging to one of the other categories).
     kOthers = 4,
 
-    kMax,
-    kInvalidMimeType = kMax,
-  };
+    // Always blocked.  Used for content types that are unlikely to be
+    // incorrectly applied to images, scripts and other legacy no-cors
+    // resources.  For example, `Content-Type: application/zip` is blocked
+    // without any confirmation sniffing.
+    kNeverSniffed = 5,
 
-  enum class CorbResultVsInitiatorLockCompatibility {
-    // Note that these values are used in histograms, and must not change.
-    kNoBlocking = 0,
-    kBenignBlocking = 1,
-    kBlockingWhenIncorrectLock = 2,
-    kBlockingWhenCompatibleLock = 3,
-    kBlockingWhenOtherLock = 4,
-
-    kMaxValue = kBlockingWhenOtherLock
+    kInvalidMimeType,              // For DCHECKs.
+    kMaxValue = kInvalidMimeType,  // For UMA histograms.
   };
 
   // An instance for tracking the state of analyzing a single response
   // and deciding whether CORB should block the response.
   class COMPONENT_EXPORT(NETWORK_SERVICE) ResponseAnalyzer {
    public:
-    // Creates a ResponseAnalyzer for the |request|, |response| pair.  The
-    // ResponseAnalyzer will decide whether |response| needs to be blocked.
-    ResponseAnalyzer(const net::URLRequest& request,
-                     const ResourceResponse& response,
-                     base::Optional<url::Origin> request_initiator_site_lock,
-                     mojom::FetchRequestMode fetch_request_mode);
+    // Categorizes the resource MIME type for CORB protection logging.
+    enum MimeTypeBucket {
+      // MIME types we expect CORB to protect (HTML, JSON etc.).
+      kProtected = 0,
+      // MIME types we expect CORB to allow through (js, images).
+      kPublic,
+      // Other MIME types.
+      kOther,
+    };
+    // Enum for CORB protection logging. Records if CORB would block a request
+    // if it was made cross-origin. This enum backs a histogram, so do not
+    // change the order of entries or remove entries. When adding new entries
+    // update |kMaxValue| and enums.xml (see the CrossOriginProtectionDecision
+    // enum).
+    enum class CrossOriginProtectionDecision {
+      // Logged if the request would be allowed without sniffing.
+      kAllow = 0,
+      // Logged if the request would be blocked without sniffing.
+      kBlock = 1,
+      // Logged if the request needed more sniffing for a decision.
+      kNeedToSniffMore = 2,
+      // Logged if the request would be allowed after sniffing.
+      kAllowedAfterSniffing = 3,
+      // Logged if the request would be blocked after sniffing.
+      kBlockedAfterSniffing = 4,
+
+      kMaxValue = kBlockedAfterSniffing,
+    };
+
+    // Creates a ResponseAnalyzer for the request (|request_url| and
+    // |request_initiator|), |response| pair.  The ResponseAnalyzer will decide
+    // whether |response| needs to be blocked.
+    //
+    // TODO(lukasza): https://crbug.com/920638: Remove
+    // |isolated_world_origin| and |network_service_client| once we gather
+    // enough UMA and Rappor data.
+    ResponseAnalyzer(
+        const GURL& request_url,
+        const base::Optional<url::Origin>& request_initiator,
+        const network::mojom::URLResponseHead& response,
+        const base::Optional<url::Origin>& request_initiator_site_lock,
+        mojom::RequestMode request_mode,
+        const base::Optional<url::Origin>& isolated_world_origin,
+        mojom::NetworkServiceClient* network_service_client);
 
     ~ResponseAnalyzer();
 
@@ -92,37 +139,41 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CrossOriginReadBlocking {
     // a warning message written to the DevTools console.
     bool ShouldReportBlockedResponse() const;
 
-    // Whether ShouldBlockBasedOnHeaders asked to sniff the body.
+    // Whether ShouldBlockBasedOnHeaders asked to sniff the body or the CORB
+    // protection logging needs extra sniffing.
     bool needs_sniffing() const {
-      return should_block_based_on_headers_ == kNeedToSniffMore;
+      return should_block_based_on_headers_ == kNeedToSniffMore ||
+             corb_protection_logging_needs_sniffing_;
     }
 
     // The MIME type determined by ShouldBlockBasedOnHeaders.
-    const CrossOriginReadBlocking::MimeType& canonical_mime_type() const {
+    const CrossOriginReadBlocking::MimeType& canonical_mime_type_for_testing()
+        const {
       return canonical_mime_type_;
     }
-
-    // Value of the content-length response header if available. -1 if not
-    // available.
-    int64_t content_length() const { return content_length_; }
-
-    // The HTTP response code (e.g. 200 or 404) received in response to this
-    // resource request.
-    int http_response_code() const { return http_response_code_; }
 
     // Allows ResponseAnalyzer to sniff the response body.
     void SniffResponseBody(base::StringPiece data, size_t new_data_offset);
 
-    bool found_parser_breaker() const { return found_parser_breaker_; }
-
     class ConfirmationSniffer;
     class SimpleConfirmationSniffer;
-    class FetchOnlyResourceSniffer;
 
     void LogAllowedResponse();
     void LogBlockedResponse();
 
    private:
+    FRIEND_TEST_ALL_PREFIXES(CrossOriginReadBlockingTest,
+                             SeemsSensitiveFromCORSHeuristic);
+    FRIEND_TEST_ALL_PREFIXES(CrossOriginReadBlockingTest,
+                             SeemsSensitiveFromCacheHeuristic);
+    FRIEND_TEST_ALL_PREFIXES(CrossOriginReadBlockingTest,
+                             SeemsSensitiveWithBothHeuristics);
+    FRIEND_TEST_ALL_PREFIXES(CrossOriginReadBlockingTest,
+                             SupportsRangeRequests);
+    FRIEND_TEST_ALL_PREFIXES(content::CrossSiteDocumentResourceHandlerTest,
+                             CORBProtectionLogging);
+    FRIEND_TEST_ALL_PREFIXES(ResponseAnalyzerTest, CORBProtectionLogging);
+
     // Three conclusions are possible from looking at the headers:
     //   - Allow: response doesn't need to be blocked (e.g. if it is same-origin
     //     or has been allowed via CORS headers)
@@ -133,20 +184,84 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CrossOriginReadBlocking {
       kBlock,
       kNeedToSniffMore,
     };
-    BlockingDecision ShouldBlockBasedOnHeaders(
-        mojom::FetchRequestMode fetch_request_mode,
-        const net::URLRequest& request,
-        const ResourceResponse& response);
+    // Static because this method is called both during the actual decision, and
+    // for the CORB protection logging decision.
+    //
+    // |is_cors_blocking_expected| returns whether the response is 1)
+    // cross-origin, 2) made in CORS mode and 3) doesn't have the right ACAO
+    // response header.
+    // TODO(lukasza): https://crbug.com/920638: Remove
+    // |is_cors_blocking_expected| once we gather enough UMA data.
+    static BlockingDecision ShouldBlockBasedOnHeaders(
+        mojom::RequestMode request_mode,
+        const GURL& request_url,
+        const base::Optional<url::Origin>& request_initiator,
+        const network::mojom::URLResponseHead& response,
+        const base::Optional<url::Origin>& request_initiator_site_lock,
+        MimeType canonical_mime_type,
+        bool* is_cors_blocking_expected);
+
+    // Returns true if the response has a nosniff header.
+    static bool HasNoSniff(const network::mojom::URLResponseHead& response);
+
+    // Checks if the response seems sensitive for CORB protection logging.
+    // Returns true if the Access-Control-Allow-Origin header has a value other
+    // than *.
+    static bool SeemsSensitiveFromCORSHeuristic(
+        const network::mojom::URLResponseHead& response);
+
+    // Checks if the response seems sensitive for CORB protection logging.
+    // Returns true if the response has Vary: Origin and Cache-Control: Private
+    // headers.
+    static bool SeemsSensitiveFromCacheHeuristic(
+        const network::mojom::URLResponseHead& response);
+
+    // Checks if a response has an Accept-Ranges header. This indicates the
+    // server supports range requests which may allow bypassing CORB due to
+    // their multipart content type.
+    static bool SupportsRangeRequests(
+        const network::mojom::URLResponseHead& response_headers);
+
+    // Determines the MIME type bucket for CORB protection logging.
+    static MimeTypeBucket GetMimeTypeBucket(
+        const network::mojom::URLResponseHead& response);
+
+    // Translates a blocking decision into a protection decision for use by
+    // LogSensitiveResponseProtection.
+    static CrossOriginProtectionDecision BlockingDecisionToProtectionDecision(
+        BlockingDecision would_protect_based_on_headers);
+
+    // Returns a protection decision (blocked after sniffing or allowed after
+    // sniffing) depending on if the sniffers found blockable content.
+    static CrossOriginProtectionDecision SniffingDecisionToProtectionDecision(
+        bool found_blockable_content);
 
     // Populates |sniffers_| container based on |canonical_mime_type_|.  Called
     // if ShouldBlockBasedOnHeaders returns kNeedToSniffMore
     void CreateSniffers();
 
-    // Logs bytes read for sniffing, but only if sniffing actually happened.
-    void LogBytesReadForSniffing();
+    // Reports potentially sensitive responses and whether CORB would have
+    // protected them, were they made cross origin. Also reports if the server
+    // supports range requests.
+    void LogSensitiveResponseProtection(
+        CrossOriginProtectionDecision protection_decision) const;
 
     // Outcome of ShouldBlockBasedOnHeaders recorded inside the Create method.
     BlockingDecision should_block_based_on_headers_;
+
+    // The following values store information about the response and are used by
+    // the CORB protection logging in LogSensitiveResponseProtection.
+    bool corb_protection_logging_needs_sniffing_ = false;
+    // |mime_type_bucket_| is either kProtected (if it's a type we expect to
+    // protect such as HTML), kPublic (for javascript etc.) or kOther.
+    MimeTypeBucket mime_type_bucket_ = kOther;
+    const bool seems_sensitive_from_cors_heuristic_;
+    const bool seems_sensitive_from_cache_heuristic_;
+    const bool supports_range_requests_;
+    const bool has_nosniff_header_;
+    // |hypothetical_sniffing_mode_| is true if we need to sniff only because of
+    // the CORB protection logging (and otherwise, CORB would not sniff).
+    bool hypothetical_sniffing_mode_ = false;
 
     // Canonical MIME type detected by ShouldBlockBasedOnHeaders.  Used to
     // determine if blocking the response is needed, as well as which type of
@@ -154,35 +269,34 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CrossOriginReadBlocking {
     MimeType canonical_mime_type_ = MimeType::kInvalidMimeType;
 
     // Content length if available. -1 if not available.
-    int64_t content_length_ = -1;
+    const int64_t content_length_;
 
     // The HTTP response code (e.g. 200 or 404) received in response to this
     // resource request.
-    int http_response_code_ = 0;
-
-    // Whether |request_initiator| was compatible with
-    // |request_initiator_site_lock|.  For safety initialized to kIncorrectLock,
-    // but in practice it will always be explicitly set by the constructor.
-    InitiatorLockCompatibility initiator_compatibility_ =
-        InitiatorLockCompatibility::kIncorrectLock;
-
-    // Propagated from URLLoaderFactoryParams::request_initiator_site_lock;
-    base::Optional<url::Origin> request_initiator_site_lock_;
+    const int http_response_code_;
 
     // The sniffers to be used.
     std::vector<std::unique_ptr<ConfirmationSniffer>> sniffers_;
 
     // Sniffing results.
     bool found_blockable_content_ = false;
-    bool found_parser_breaker_ = false;
-    int bytes_read_for_sniffing_ = -1;
+
+    // State used for calculating the
+    // SiteIsolation.XSD.Browser.AllowedByCorbButNotCors.ContentScript UMA
+    // and Extensions.CrossOriginFetchFromContentScript3 Rappor data.
+    //
+    // TODO(lukasza): https://crbug.com/920638: Remove the fields below once we
+    // gather enough UMA data.
+    const base::Optional<url::Origin> isolated_world_origin_;
+    bool is_cors_blocking_expected_ = false;
+    mojom::NetworkServiceClient* const network_service_client_;
 
     DISALLOW_COPY_AND_ASSIGN(ResponseAnalyzer);
   };
 
   // Used to strip response headers if a decision to block has been made.
   static void SanitizeBlockedResponse(
-      const scoped_refptr<network::ResourceResponse>& response);
+      network::mojom::URLResponseHead* response);
 
   // This enum backs a histogram, so do not change the order of entries or
   // remove entries. When adding new entries update |kMaxValue| and enums.xml
@@ -222,7 +336,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) CrossOriginReadBlocking {
 
   // Notifies CORB that |process_id| is proxying requests on behalf of a
   // universal-access plugin and therefore CORB should stop blocking requests
-  // marked as RESOURCE_TYPE_PLUGIN_RESOURCE.
+  // marked as ResourceType::kPluginResource.
   //
   // TODO(lukasza, laforge): https://crbug.com/702995: Remove the static
   // ...ForPlugin methods once Flash support is removed from Chromium (probably

@@ -17,6 +17,7 @@
 #include "base/logging.h"
 #include "base/process/process_metrics.h"
 #include "base/system/sys_info.h"
+#include "base/task/thread_pool.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace {
@@ -115,7 +116,7 @@ void SetCpusValue(const std::vector<CpuInfo>& infos, base::Value* result) {
     cpu_result.SetKey("kernel", base::Value(cpu.kernel));
     cpu_result.SetKey("idle", base::Value(cpu.idle));
     cpu_result.SetKey("total", base::Value(cpu.total));
-    cpu_results.GetList().push_back(std::move(cpu_result));
+    cpu_results.Append(std::move(cpu_result));
   }
   result->SetKey("cpus", std::move(cpu_results));
 }
@@ -198,8 +199,7 @@ base::Value GetSysInfo() {
 
 }  // namespace
 
-SysInternalsMessageHandler::SysInternalsMessageHandler()
-    : weak_ptr_factory_(this) {}
+SysInternalsMessageHandler::SysInternalsMessageHandler() {}
 
 SysInternalsMessageHandler::~SysInternalsMessageHandler() {}
 
@@ -215,15 +215,15 @@ void SysInternalsMessageHandler::HandleGetSysInfo(const base::ListValue* args) {
   DCHECK(args);
 
   AllowJavascript();
-  const base::Value::ListStorage& list = args->GetList();
+  base::Value::ConstListView list = args->GetList();
   if (list.size() != 1 || !list[0].is_string()) {
     NOTREACHED();
     return;
   }
 
   base::Value callback_id = list[0].Clone();
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::MayBlock(), base::BindOnce(&GetSysInfo),
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock()}, base::BindOnce(&GetSysInfo),
       base::BindOnce(&SysInternalsMessageHandler::ReplySysInfo,
                      weak_ptr_factory_.GetWeakPtr(), std::move(callback_id)));
 }

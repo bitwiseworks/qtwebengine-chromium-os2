@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "components/offline_pages/core/background/request_queue_store.h"
 #include "components/offline_pages/core/background/request_queue_task_test_base.h"
 #include "components/offline_pages/core/background/test_request_queue_store.h"
@@ -18,8 +19,14 @@ namespace offline_pages {
 namespace {
 const int64_t kRequestId1 = 42;
 const int64_t kRequestId2 = 44;
-const GURL kUrl1("http://example.com");
+
 const ClientId kClientId1("download", "1234");
+
+// TODO(https://crbug.com/1042727): Fix test GURL scoping and remove this getter
+// function.
+GURL Url1() {
+  return GURL("http://example.com");
+}
 
 class MarkAttemptCompletedTaskTest : public RequestQueueTaskTestBase {
  public:
@@ -32,19 +39,21 @@ class MarkAttemptCompletedTaskTest : public RequestQueueTaskTestBase {
   UpdateRequestsResult* last_result() const { return result_.get(); }
 
  private:
-  void AddRequestDone(ItemActionStatus status);
+  static void AddRequestDone(AddRequestResult result) {
+    ASSERT_EQ(AddRequestResult::SUCCESS, result);
+  }
 
   std::unique_ptr<UpdateRequestsResult> result_;
 };
 
 void MarkAttemptCompletedTaskTest::AddStartedItemToStore() {
   base::Time creation_time = OfflineTimeNow();
-  SavePageRequest request_1(kRequestId1, kUrl1, kClientId1, creation_time,
+  SavePageRequest request_1(kRequestId1, Url1(), kClientId1, creation_time,
                             true);
   request_1.MarkAttemptStarted(OfflineTimeNow());
   store_.AddRequest(
-      request_1, base::BindOnce(&MarkAttemptCompletedTaskTest::AddRequestDone,
-                                base::Unretained(this)));
+      request_1, RequestQueue::AddOptions(),
+      base::BindOnce(&MarkAttemptCompletedTaskTest::AddRequestDone));
   PumpLoop();
 }
 
@@ -53,9 +62,6 @@ void MarkAttemptCompletedTaskTest::ChangeRequestsStateCallback(
   result_ = std::make_unique<UpdateRequestsResult>(std::move(result));
 }
 
-void MarkAttemptCompletedTaskTest::AddRequestDone(ItemActionStatus status) {
-  ASSERT_EQ(ItemActionStatus::SUCCESS, status);
-}
 
 TEST_F(MarkAttemptCompletedTaskTest, MarkAttemptCompletedWhenExists) {
   InitializeStore();
@@ -66,7 +72,7 @@ TEST_F(MarkAttemptCompletedTaskTest, MarkAttemptCompletedWhenExists) {
       base::BindOnce(&MarkAttemptCompletedTaskTest::ChangeRequestsStateCallback,
                      base::Unretained(this)));
 
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(1UL, last_result()->item_statuses.size());
@@ -88,7 +94,7 @@ TEST_F(MarkAttemptCompletedTaskTest, MarkAttemptCompletedWhenItemMissing) {
       &store_, kRequestId2, FailState::CANNOT_DOWNLOAD,
       base::BindOnce(&MarkAttemptCompletedTaskTest::ChangeRequestsStateCallback,
                      base::Unretained(this)));
-  task.Run();
+  task.Execute(base::DoNothing());
   PumpLoop();
   ASSERT_TRUE(last_result());
   EXPECT_EQ(1UL, last_result()->item_statuses.size());

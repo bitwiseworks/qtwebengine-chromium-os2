@@ -26,13 +26,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_MEDIA_DEVICE_INFO_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_MEDIASTREAM_MEDIA_DEVICE_INFO_H_
 
-#include "third_party/blink/public/mojom/mediastream/media_devices.mojom-blink.h"
+#include "third_party/blink/public/mojom/mediastream/media_devices.mojom-blink-forward.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/heap_allocator.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-
-using blink::mojom::blink::MediaDeviceType;
 
 namespace blink {
 
@@ -43,22 +41,17 @@ class MODULES_EXPORT MediaDeviceInfo : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static MediaDeviceInfo* Create(const String& device_id,
-                                 const String& label,
-                                 const String& group_id,
-                                 MediaDeviceType);
-
   MediaDeviceInfo(const String& device_id,
                   const String& label,
                   const String& group_id,
-                  MediaDeviceType);
+                  mojom::blink::MediaDeviceType);
 
   String deviceId() const;
   String kind() const;
   String label() const;
   String groupId() const;
 
-  MediaDeviceType DeviceType() const;
+  mojom::blink::MediaDeviceType DeviceType() const;
 
   ScriptValue toJSONForBinding(ScriptState*);
 
@@ -66,7 +59,7 @@ class MODULES_EXPORT MediaDeviceInfo : public ScriptWrappable {
   String device_id_;
   String label_;
   String group_id_;
-  MediaDeviceType device_type_;
+  mojom::blink::MediaDeviceType device_type_;
 };
 
 using MediaDeviceInfoVector = HeapVector<Member<MediaDeviceInfo>>;

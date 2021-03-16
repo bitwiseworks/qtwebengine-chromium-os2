@@ -25,6 +25,8 @@ bool RenderDeviceDriverIface::SetClip_PathStroke(
   return false;
 }
 
+void RenderDeviceDriverIface::SetBaseClip(const FX_RECT& rect) {}
+
 bool RenderDeviceDriverIface::SetPixel(int x, int y, uint32_t color) {
   return false;
 }
@@ -58,9 +60,9 @@ bool RenderDeviceDriverIface::ContinueDIBits(CFX_ImageRenderer* handle,
 }
 
 bool RenderDeviceDriverIface::DrawDeviceText(int nChars,
-                                             const FXTEXT_CHARPOS* pCharPos,
+                                             const TextCharPos* pCharPos,
                                              CFX_Font* pFont,
-                                             const CFX_Matrix* pObject2Device,
+                                             const CFX_Matrix& mtObject2Device,
                                              float font_size,
                                              uint32_t color) {
   return false;

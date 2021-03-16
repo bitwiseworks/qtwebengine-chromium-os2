@@ -75,8 +75,8 @@ void shm_pool_create_buffer(wl_client* client,
   wl_resource* buffer_resource =
       wl_resource_create(client, &wl_buffer_interface, 1, id);
 
-  buffer->set_release_callback(base::Bind(&HandleBufferReleaseCallback,
-                                          base::Unretained(buffer_resource)));
+  buffer->set_release_callback(base::BindRepeating(
+      &HandleBufferReleaseCallback, base::Unretained(buffer_resource)));
 
   SetImplementation(buffer_resource, &buffer_implementation, std::move(buffer));
 }
@@ -86,7 +86,14 @@ void shm_pool_destroy(wl_client* client, wl_resource* resource) {
 }
 
 void shm_pool_resize(wl_client* client, wl_resource* resource, int32_t size) {
-  // Nothing to do here.
+  auto* shm = GetUserDataAs<SharedMemory>(resource);
+  if (size < 0 || static_cast<size_t>(size) < shm->GetSize()) {
+    wl_resource_post_error(resource, WL_SHM_ERROR_INVALID_FD,
+                           "Can't shrink a shm pool.");
+  }
+
+  if (!shm->Resize(size))
+    wl_resource_post_no_memory(resource);
 }
 
 const struct wl_shm_pool_interface shm_pool_implementation = {

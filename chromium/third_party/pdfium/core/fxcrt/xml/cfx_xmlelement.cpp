@@ -20,8 +20,8 @@ CFX_XMLElement::CFX_XMLElement(const WideString& wsTag) : name_(wsTag) {
 
 CFX_XMLElement::~CFX_XMLElement() = default;
 
-FX_XMLNODETYPE CFX_XMLElement::GetType() const {
-  return FX_XMLNODE_Element;
+CFX_XMLNode::Type CFX_XMLElement::GetType() const {
+  return Type::kElement;
 }
 
 CFX_XMLNode* CFX_XMLElement::Clone(CFX_XMLDocument* doc) {
@@ -32,21 +32,21 @@ CFX_XMLNode* CFX_XMLElement::Clone(CFX_XMLDocument* doc) {
   // text nodes?
   for (CFX_XMLNode* pChild = GetFirstChild(); pChild;
        pChild = pChild->GetNextSibling()) {
-    if (pChild->GetType() == FX_XMLNODE_Text)
-      node->AppendChild(pChild->Clone(doc));
+    if (pChild->GetType() == Type::kText)
+      node->AppendLastChild(pChild->Clone(doc));
   }
   return node;
 }
 
 WideString CFX_XMLElement::GetLocalTagName() const {
   auto pos = name_.Find(L':');
-  return pos.has_value() ? name_.Right(name_.GetLength() - pos.value() - 1)
+  return pos.has_value() ? name_.Last(name_.GetLength() - pos.value() - 1)
                          : name_;
 }
 
 WideString CFX_XMLElement::GetNamespacePrefix() const {
   auto pos = name_.Find(L':');
-  return pos.has_value() ? name_.Left(pos.value()) : WideString();
+  return pos.has_value() ? name_.First(pos.value()) : WideString();
 }
 
 WideString CFX_XMLElement::GetNamespaceURI() const {
@@ -57,10 +57,7 @@ WideString CFX_XMLElement::GetNamespaceURI() const {
     attr += wsPrefix;
   }
   const CFX_XMLNode* pNode = this;
-  while (pNode) {
-    if (pNode->GetType() != FX_XMLNODE_Element)
-      break;
-
+  while (pNode && pNode->GetType() == Type::kElement) {
     auto* pElement = static_cast<const CFX_XMLElement*>(pNode);
     if (!pElement->HasAttribute(attr)) {
       pNode = pNode->GetParent();
@@ -89,7 +86,7 @@ void CFX_XMLElement::Save(
   pXMLStream->WriteString("<");
   pXMLStream->WriteString(bsNameEncoded.AsStringView());
 
-  for (auto it : attrs_) {
+  for (const auto& it : attrs_) {
     // Note, the space between attributes is added by AttributeToString which
     // writes a blank as the first character.
     pXMLStream->WriteString(

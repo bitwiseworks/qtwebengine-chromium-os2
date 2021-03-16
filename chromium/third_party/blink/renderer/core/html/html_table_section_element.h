@@ -36,7 +36,8 @@ class HTMLTableSectionElement final : public HTMLTablePartElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableSectionElement);
+
+  HTMLTableSectionElement(const QualifiedName& tag_name, Document&);
 
   HTMLElement* insertRow(int index, ExceptionState&);
   void deleteRow(int index, ExceptionState&);
@@ -46,8 +47,6 @@ class HTMLTableSectionElement final : public HTMLTablePartElement {
   bool HasNonInBodyInsertionMode() const override { return true; }
 
  private:
-  HTMLTableSectionElement(const QualifiedName& tag_name, Document&);
-
   const CSSPropertyValueSet* AdditionalPresentationAttributeStyle() override;
 };
 
@@ -57,7 +56,25 @@ inline bool IsHTMLTableSectionElement(const HTMLElement& element) {
          element.HasTagName(html_names::kTheadTag);
 }
 
-DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLTableSectionElement);
+template <>
+struct DowncastTraits<HTMLTableSectionElement> {
+  static bool AllowFrom(const HTMLElement& element) {
+    return IsHTMLTableSectionElement(element);
+  }
+  static bool AllowFrom(const HTMLElement* element) {
+    return element && IsHTMLTableSectionElement(*element);
+  }
+  static bool AllowFrom(const Node& node) {
+    auto* html_element = DynamicTo<HTMLElement>(node);
+    return html_element ? IsHTMLTableSectionElement(*html_element) : false;
+  }
+  static bool AllowFrom(const Node* node) {
+    return node && IsA<HTMLTableSectionElement>(*node);
+  }
+  static bool AllowFrom(const Element* element) {
+    return element && IsA<HTMLTableSectionElement>(*element);
+  }
+};
 
 }  // namespace blink
 

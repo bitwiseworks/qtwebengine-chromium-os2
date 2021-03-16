@@ -30,7 +30,8 @@
 namespace blink {
 
 AudioDestinationHandler::AudioDestinationHandler(AudioNode& node)
-    : AudioHandler(kNodeTypeDestination, node, 0) {
+    : AudioHandler(kNodeTypeDestination, node, 0),
+      allow_pulling_audio_graph_(false) {
   AddInput();
 }
 
@@ -50,6 +51,14 @@ AudioDestinationHandler& AudioDestinationNode::GetAudioDestinationHandler()
 
 uint32_t AudioDestinationNode::maxChannelCount() const {
   return GetAudioDestinationHandler().MaxChannelCount();
+}
+
+void AudioDestinationNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+}
+
+void AudioDestinationNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

@@ -37,6 +37,7 @@
 #include "third_party/blink/renderer/core/dom/dom_implementation.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -90,9 +91,9 @@ static const WTF::TextEncoding GetEncodingFromDomain(const KURL& url) {
 
 TextResourceDecoderOptions::ContentType DetermineContentType(
     const String& mime_type) {
-  if (DeprecatedEqualIgnoringCase(mime_type, "text/css"))
+  if (EqualIgnoringASCIICase(mime_type, "text/css"))
     return TextResourceDecoderOptions::kCSSContent;
-  if (DeprecatedEqualIgnoringCase(mime_type, "text/html"))
+  if (EqualIgnoringASCIICase(mime_type, "text/html"))
     return TextResourceDecoderOptions::kHTMLContent;
   if (DOMImplementation::IsXMLMIMEType(mime_type))
     return TextResourceDecoderOptions::kXMLContent;
@@ -110,8 +111,8 @@ std::unique_ptr<TextResourceDecoder> BuildTextResourceDecoderFor(
 
   LocalFrame* frame = document->GetFrame();
   LocalFrame* parent_frame = nullptr;
-  if (frame && frame->Tree().Parent() && frame->Tree().Parent()->IsLocalFrame())
-    parent_frame = ToLocalFrame(frame->Tree().Parent());
+  if (frame)
+    parent_frame = DynamicTo<LocalFrame>(frame->Tree().Parent());
 
   // Set the hint encoding to the parent frame encoding only if the parent and
   // the current frames share the security origin. We impose this condition
@@ -134,25 +135,27 @@ std::unique_ptr<TextResourceDecoder> BuildTextResourceDecoderFor(
     // Disable autodetection for XML/JSON to honor the default encoding (UTF-8)
     // for unlabelled documents.
     if (DOMImplementation::IsXMLMIMEType(mime_type)) {
-      decoder = TextResourceDecoder::Create(TextResourceDecoderOptions(
-          TextResourceDecoderOptions::kXMLContent, default_encoding));
+      decoder =
+          std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
+              TextResourceDecoderOptions::kXMLContent, default_encoding));
       use_hint_encoding = false;
-    } else if (DOMImplementation::IsJSONMIMEType(mime_type)) {
-      decoder = TextResourceDecoder::Create(TextResourceDecoderOptions(
-          TextResourceDecoderOptions::kJSONContent, default_encoding));
+    } else if (MIMETypeRegistry::IsJSONMimeType(mime_type)) {
+      decoder =
+          std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
+              TextResourceDecoderOptions::kJSONContent, default_encoding));
       use_hint_encoding = false;
     } else {
       WTF::TextEncoding hint_encoding;
       if (use_hint_encoding &&
           parent_frame->GetDocument()->EncodingWasDetectedHeuristically())
         hint_encoding = parent_frame->GetDocument()->Encoding();
-      decoder = TextResourceDecoder::Create(
+      decoder = std::make_unique<TextResourceDecoder>(
           TextResourceDecoderOptions::CreateWithAutoDetection(
               DetermineContentType(mime_type), default_encoding, hint_encoding,
               document->Url()));
     }
   } else {
-    decoder = TextResourceDecoder::Create(TextResourceDecoderOptions(
+    decoder = std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         DetermineContentType(mime_type), encoding_from_domain));
   }
   DCHECK(decoder);

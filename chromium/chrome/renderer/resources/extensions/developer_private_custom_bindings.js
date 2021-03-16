@@ -4,10 +4,7 @@
 
 // Custom binding for the developerPrivate API.
 
-var binding =
-    apiBridge || require('binding').Binding.create('developerPrivate');
-
-binding.registerCustomHook(function(bindingsAPI) {
+apiBridge.registerCustomHook(function(bindingsAPI) {
   var apiFunctions = bindingsAPI.apiFunctions;
 
   // Converts the argument of |functionName| from DirectoryEntry to URL.
@@ -41,13 +38,13 @@ binding.registerCustomHook(function(bindingsAPI) {
 
   apiFunctions.setHandleRequest('inspect', function(options, callback) {
     var renderViewId = options.render_view_id;
-    if (typeof renderViewId == 'string') {
+    if (typeof renderViewId === 'string') {
       renderViewId = parseInt(renderViewId);
       if (isNaN(renderViewId))
         throw new Error('Invalid value for render_view_id');
     }
     var renderProcessId = options.render_process_id;
-    if (typeof renderProcessId == 'string') {
+    if (typeof renderProcessId === 'string') {
       renderProcessId = parseInt(renderProcessId);
       if (isNaN(renderProcessId))
         throw new Error('Invalid value for render_process_id');
@@ -60,6 +57,3 @@ binding.registerCustomHook(function(bindingsAPI) {
     }, callback);
   });
 });
-
-if (!apiBridge)
-  exports.$set('binding', binding.generate());

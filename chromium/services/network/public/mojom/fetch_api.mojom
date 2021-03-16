@@ -8,19 +8,52 @@ module network.mojom;
 // https://fetch.spec.whatwg.org/#concept-request-mode
 //
 // This enum is also used in histograms. Append-only.
-// See the "FetchRequestMode" enum in enums.xml.
-enum FetchRequestMode {
+// See the "RequestMode" enum in enums.xml.
+enum RequestMode {
   kSameOrigin,
   kNoCors,
   kCors,
   kCorsWithForcedPreflight,
   kNavigate,
+
   // Add a new type here, then update enums.xml.
+};
+
+// Corresponds to Fetch request's "destination":
+// https://fetch.spec.whatwg.org/#concept-request-destination
+//
+// Note: some types like kIframe and kFrame are still in PR
+// as of Feb 2020: https://github.com/whatwg/fetch/pull/948
+//
+// Note: if destination is kDocument it should be a main
+// resource request for main frames, except for Portals cases.
+enum RequestDestination {
+  kEmpty,
+  kAudio,
+  kAudioWorklet,
+  kDocument,
+  kEmbed,
+  kFont,
+  kFrame,
+  kIframe,
+  kImage,
+  kManifest,
+  kObject,
+  kPaintWorklet,
+  kReport,
+  kScript,
+  kServiceWorker,
+  kSharedWorker,
+  kStyle,
+  kTrack,
+  kVideo,
+  kWorker,
+  kXslt,
 };
 
 // Corresponds to Fetch request's "redirect mode":
 // https://fetch.spec.whatwg.org/#concept-request-redirect-mode
-enum FetchRedirectMode {
+enum RedirectMode {
   kFollow,
   kError,
   kManual,
@@ -28,7 +61,7 @@ enum FetchRedirectMode {
 
 // Corresponds to Fetch request's "credentials mode":
 // https://fetch.spec.whatwg.org/#concept-request-credentials-mode
-enum FetchCredentialsMode {
+enum CredentialsMode {
   kOmit,
   kSameOrigin,
   kInclude,

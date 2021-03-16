@@ -193,6 +193,20 @@ Set I/O operation maximum block size, in bytes. Default value is
 @code{INT_MAX}, which results in not limiting the requested block size.
 Setting this value reasonably low improves user termination request reaction
 time, which is valuable for files on slow medium.
+
+@item follow
+If set to 1, the protocol will retry reading at the end of the file, allowing
+reading files that still are being written. In order for this to terminate,
+you either need to use the rw_timeout option, or use the interrupt callback
+(for API users).
+
+@item seekable
+Controls if seekability is advertised on the file. 0 means non-seekable, -1
+means auto (seekable for normal files, non-seekable for named pipes).
+
+Many demuxers handle seekable and non-seekable resources differently,
+overriding this might speed up opening certain files at the cost of losing some
+features (e.g. accurate seeking).
 @end table
 
 @section ftp
@@ -214,6 +228,14 @@ Set timeout in microseconds of socket I/O operations used by the underlying low 
 operation. By default it is set to -1, which means that the timeout is
 not specified.
 
+@item ftp-user
+Set a user to be used for authenticating to the FTP server. This is overridden by the
+user in the FTP URL.
+
+@item ftp-password
+Set a password to be used for authenticating to the FTP server. This is overridden by
+the password in the FTP URL, or by @option{ftp-anonymous-password} if no user is set.
+
 @item ftp-anonymous-password
 Password used when login as anonymous user. Typically an e-mail address
 should be used.
@@ -228,17 +250,6 @@ NOTE: Protocol can be used as output, but it is recommended to not do
 it, unless special care is taken (tests, customized server configuration
 etc.). Different FTP servers behave in different way during seek
 operation. ff* tools may produce incomplete content due to server limitations.
-
-This protocol accepts the following options:
-
-@table @option
-@item follow
-If set to 1, the protocol will retry reading at the end of the file, allowing
-reading files that still are being written. In order for this to terminate,
-you either need to use the rw_timeout option, or use the interrupt callback
-(for API users).
-
-@end table
 
 @section gopher
 
@@ -389,6 +400,11 @@ ffmpeg -i somefile.ogg -chunked_post 0 -c copy -f ogg http://@var{server}:@var{p
 # Client can also be done with wget:
 wget --post-file=somefile.ogg http://@var{server}:@var{port}
 @end example
+
+@item send_expect_100
+Send an Expect: 100-continue header for POST. If set to 1 it will send, if set
+to 0 it won't, if set to -1 it will try to send if it is applicable. Default
+value is -1.
 
 @end table
 
@@ -1266,6 +1282,26 @@ only if @option{pbkeylen} is non-zero. It is used on
 the receiver only if the received data is encrypted.
 The configured passphrase cannot be recovered (write-only).
 
+@item enforced_encryption=@var{1|0}
+If true, both connection parties must have the same password
+set (including empty, that is, with no encryption). If the
+password doesn't match or only one side is unencrypted,
+the connection is rejected. Default is true.
+
+@item kmrefreshrate=@var{packets}
+The number of packets to be transmitted after which the
+encryption key is switched to a new key. Default is -1.
+-1 means auto (0x1000000 in srt library). The range for
+this option is integers in the 0 - @code{INT_MAX}.
+
+@item kmpreannounce=@var{packets}
+The interval between when a new encryption key is sent and
+when switchover occurs. This value also applies to the
+subsequent interval between when switchover occurs and
+when the old encryption key is decommissioned. Default is -1.
+-1 means auto (0x1000 in srt library). The range for
+this option is integers in the 0 - @code{INT_MAX}.
+
 @item payload_size=@var{bytes}
 Sets the maximum declared size of a packet transferred
 during the single call to the sending function in Live
@@ -1409,6 +1445,12 @@ the overhead transmission (retransmitted and control packets).
 
 file: Set options as for non-live transmission. See @option{messageapi}
 for further explanations
+
+@item linger=@var{seconds}
+The number of seconds that the socket waits for unsent data when closing.
+Default is -1. -1 means auto (off with 0 seconds in live mode, on with 180
+seconds in file mode). The range for this option is integers in the
+0 - @code{INT_MAX}.
 
 @end table
 
@@ -1611,7 +1653,7 @@ The list of supported options follows.
 @item buffer_size=@var{size}
 Set the UDP maximum socket buffer size in bytes. This is used to set either
 the receive or send buffer size, depending on what the socket is used for.
-Default is 64KB.  See also @var{fifo_size}.
+Default is 32 KB for output, 384 KB for input.  See also @var{fifo_size}.
 
 @item bitrate=@var{bitrate}
 If set to nonzero, the output will have the specified constant bitrate if the
@@ -1719,5 +1761,52 @@ Timeout in ms.
 @item listen
 Create the Unix socket in listening mode.
 @end table
+
+@section zmq
+
+ZeroMQ asynchronous messaging using the libzmq library.
+
+This library supports unicast streaming to multiple clients without relying on
+an external server.
+
+The required syntax for streaming or connecting to a stream is:
+@example
+zmq:tcp://ip-address:port
+@end example
+
+Example:
+Create a localhost stream on port 5555:
+@example
+ffmpeg -re -i input -f mpegts zmq:tcp://127.0.0.1:5555
+@end example
+
+Multiple clients may connect to the stream using:
+@example
+ffplay zmq:tcp://127.0.0.1:5555
+@end example
+
+Streaming to multiple clients is implemented using a ZeroMQ Pub-Sub pattern.
+The server side binds to a port and publishes data. Clients connect to the
+server (via IP address/port) and subscribe to the stream. The order in which
+the server and client start generally does not matter.
+
+ffmpeg must be compiled with the --enable-libzmq option to support
+this protocol.
+
+Options can be set on the @command{ffmpeg}/@command{ffplay} command
+line. The following options are supported:
+
+@table @option
+
+@item pkt_size
+Forces the maximum packet size for sending/receiving data. The default value is
+32,768 bytes. On the server side, this sets the maximum size of sent packets
+via ZeroMQ. On the clients, it sets an internal buffer size for receiving
+packets. Note that pkt_size on the clients should be equal to or greater than
+pkt_size on the server. Otherwise the received message may be truncated causing
+decoding errors.
+
+@end table
+
 
 @c man end PROTOCOLS

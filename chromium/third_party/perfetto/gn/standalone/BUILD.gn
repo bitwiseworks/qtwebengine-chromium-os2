@@ -12,15 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import("//gn/perfetto_check_build_deps.gni")
 import("//gn/standalone/android.gni")
-import("//gn/standalone/wasm.gni")
 import("//gn/standalone/sanitizers/sanitizers.gni")
+import("//gn/standalone/wasm.gni")
+
+# These warnings have been introduced with the newest version of clang (only in
+# the hermetic build) and are enabled just with -Werror.
+# TODO(primiano): we should look into Wimplicit-int-float-conversion. Seems
+# failing mostly in tests though.
+hermetic_clang_suppressions = [
+  "-Wno-c99-designator",
+  "-Wno-implicit-int-float-conversion",
+]
 
 config("extra_warnings") {
   cflags = [
     "-Wall",
     "-Wextra",
+    "-Wpedantic",
   ]
+
+  # Disable variadic macro warning as we make extensive use of them in trace
+  # processor and client API.
+  if (is_clang) {
+    cflags += [ "-Wno-gnu-zero-variadic-macro-arguments" ]
+  }
 
   # Disable Weverything on fuzzers to avoid breakages when new versions of clang
   # are rolled into OSS-fuzz.
@@ -32,9 +49,9 @@ config("extra_warnings") {
       "-Wno-disabled-macro-expansion",
       "-Wno-gnu-include-next",
       "-Wno-gnu-statement-expression",
-      "-Wno-gnu-zero-variadic-macro-arguments",
       "-Wno-padded",
       "-Wno-reserved-id-macro",
+      "-Wno-unknown-sanitizers",
     ]
   }
 }
@@ -75,11 +92,10 @@ config("default") {
     "-fPIC",
     "-g",
     "-Wformat",
-    "-Werror",
   ]
 
-  if (!is_wasm && !is_lto) {
-    cflags += [ "-Wa,--noexecstack" ]
+  if (!is_fuzzer) {
+    cflags += [ "-Werror" ]
   }
 
   if (is_clang) {
@@ -88,6 +104,12 @@ config("default") {
       "-fcolor-diagnostics",
       "-fdiagnostics-show-template-tree",
     ]
+  }
+
+  if (is_hermetic_clang && is_linux && !is_wasm) {
+    cflags += hermetic_clang_suppressions
+  } else {
+    not_needed([ "hermetic_clang_suppressions" ])
   }
 
   if (is_lto) {
@@ -108,7 +130,10 @@ config("default") {
       "-msse2",
       "-mfpmath=sse",
     ]
-    ldflags += [ "-m32" ]
+    ldflags += [
+      "-m32",
+      "-lgcc",
+    ]
   } else if (current_cpu == "arm64") {
     cflags += [ "-fno-omit-frame-pointer" ]
   }
@@ -118,10 +143,6 @@ config("default") {
       "pthread",
       "rt",
     ]
-  }
-
-  if (is_android) {
-    libs += [ "log" ]
   }
 
   if (is_debug) {
@@ -193,7 +214,7 @@ config("release") {
     "-ffunction-sections",
   ]
   if (is_android) {
-    cflags += [ "-Oz" ]
+    cflags += [ "-O2" ]
   } else if (is_fuzzer) {
     cflags += [ "-O1" ]
   } else {
@@ -203,7 +224,6 @@ config("release") {
     ldflags = [ "-dead_strip" ]
   } else {
     ldflags = [
-      "-fuse-ld=gold",
       "-Wl,--gc-sections",
       "-Wl,--icf=all",
       "-Wl,-O1",
@@ -240,4 +260,39 @@ config("executable") {
       "-Wl,-rpath-link=.",
     ]
   }
+}
+
+# This config is only added to certain leaf target types (see BUILDCONFIG.gn).
+# This allows us to remove the config (and thus the dependency) on a per-target
+# basis. If the config was applied to source_sets, then they would unavoidably
+# carry the dependency onto liblog to the final target.
+config("android_liblog") {
+  if (is_android) {
+    libs = [ "log" ]
+  }
+}
+
+config("gen_include_path") {
+  include_dirs = [ root_gen_dir ]
+}
+
+# This action generates a perfetto_version.gen.h which contains the git SHA1
+# of HEAD. The file can be included from C/C++ sources and exposes a
+# PERFETTO_GET_GIT_REVISION() macro that contains the git revision.
+action("gen_git_revision") {
+  script = "gen_git_revision.py"
+  generated_header = "${root_gen_dir}/perfetto_version.gen.h"
+  args = [ rebase_path(generated_header, root_build_dir) ]
+  inputs = []
+  outputs = [ generated_header ]
+  public_configs = [ ":gen_include_path" ]
+}
+
+# Checks that tools/install-build-deps has been run since it last changed.
+perfetto_check_build_deps("check_build_deps") {
+  args = []
+}
+
+perfetto_check_build_deps("check_build_deps_android") {
+  args = [ "--android" ]
 }

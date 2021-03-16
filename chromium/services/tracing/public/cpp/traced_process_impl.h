@@ -9,10 +9,10 @@
 #include <string>
 
 #include "base/component_export.h"
+#include "base/no_destructor.h"
 #include "base/sequence_checker.h"
-#include "base/synchronization/lock.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/tracing/public/mojom/tracing.mojom.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/tracing/public/mojom/traced_process.mojom.h"
 
 namespace tracing {
 
@@ -27,7 +27,9 @@ class COMPONENT_EXPORT(TRACING_CPP) TracedProcessImpl
  public:
   static TracedProcessImpl* GetInstance();
 
-  void OnTracedProcessRequest(mojom::TracedProcessRequest request);
+  void ResetTracedProcessReceiver();
+  void OnTracedProcessRequest(
+      mojo::PendingReceiver<mojom::TracedProcess> receiver);
 
   // Set which taskrunner to bind any incoming requests on.
   void SetTaskRunner(scoped_refptr<base::SequencedTaskRunner> task_runner);
@@ -45,13 +47,11 @@ class COMPONENT_EXPORT(TRACING_CPP) TracedProcessImpl
 
   // tracing::mojom::TracedProcess:
   void ConnectToTracingService(
-      mojom::ConnectToTracingRequestPtr request) override;
+      mojom::ConnectToTracingRequestPtr request,
+      ConnectToTracingServiceCallback callback) override;
 
-  // Lock protecting binding_.
-  base::Lock lock_;
   std::set<BaseAgent*> agents_;
-  tracing::mojom::AgentRegistryPtr agent_registry_;
-  mojo::Binding<tracing::mojom::TracedProcess> binding_;
+  mojo::Receiver<tracing::mojom::TracedProcess> receiver_{this};
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);

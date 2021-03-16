@@ -11,17 +11,15 @@
 #include <limits>
 #include <memory>
 
-#include "base/logging.h"
-#include "testing/gmock/include/gmock/gmock.h"
 #include "net/third_party/quiche/src/http2/platform/api/http2_macros.h"
+#include "net/third_party/quiche/src/common/platform/api/quiche_string_piece.h"
 #include "net/third_party/quiche/src/spdy/core/hpack/hpack_constants.h"
 #include "net/third_party/quiche/src/spdy/core/mock_spdy_framer_visitor.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_frame_reader.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_test_utils.h"
 #include "net/third_party/quiche/src/spdy/platform/api/spdy_flags.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_ptr_util.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string_piece.h"
+#include "net/third_party/quiche/src/spdy/platform/api/spdy_logging.h"
 
 using ::testing::AssertionFailure;
 using ::testing::AssertionResult;
@@ -140,7 +138,7 @@ class SpdyTestDeframerImpl : public SpdyTestDeframer,
   // alphabetical order for ease of navigation, and are not in same order
   // as in SpdyFramerVisitorInterface.
   void OnAltSvc(SpdyStreamId stream_id,
-                SpdyStringPiece origin,
+                quiche::QuicheStringPiece origin,
                 const SpdyAltSvcWireFormat::AlternativeServiceVector&
                     altsvc_vector) override;
   void OnContinuation(SpdyStreamId stream_id, bool end) override;
@@ -186,7 +184,8 @@ class SpdyTestDeframerImpl : public SpdyTestDeframer,
   // Callbacks defined in SpdyHeadersHandlerInterface.
 
   void OnHeaderBlockStart() override;
-  void OnHeader(SpdyStringPiece key, SpdyStringPiece value) override;
+  void OnHeader(quiche::QuicheStringPiece key,
+                quiche::QuicheStringPiece value) override;
   void OnHeaderBlockEnd(size_t header_bytes_parsed,
                         size_t compressed_header_bytes_parsed) override;
 
@@ -215,7 +214,7 @@ class SpdyTestDeframerImpl : public SpdyTestDeframer,
   bool fin_ = false;
   bool got_hpack_end_ = false;
 
-  std::unique_ptr<SpdyString> data_;
+  std::unique_ptr<std::string> data_;
 
   // Total length of the data frame.
   size_t data_len_ = 0;
@@ -224,7 +223,7 @@ class SpdyTestDeframerImpl : public SpdyTestDeframer,
   // Length field).
   size_t padding_len_ = 0;
 
-  std::unique_ptr<SpdyString> goaway_description_;
+  std::unique_ptr<std::string> goaway_description_;
   std::unique_ptr<StringPairVector> headers_;
   std::unique_ptr<SettingVector> settings_;
   std::unique_ptr<TestHeadersHandler> headers_handler_;
@@ -241,13 +240,13 @@ class SpdyTestDeframerImpl : public SpdyTestDeframer,
 // static
 std::unique_ptr<SpdyTestDeframer> SpdyTestDeframer::CreateConverter(
     std::unique_ptr<SpdyDeframerVisitorInterface> listener) {
-  return SpdyMakeUnique<SpdyTestDeframerImpl>(std::move(listener));
+  return std::make_unique<SpdyTestDeframerImpl>(std::move(listener));
 }
 
 void SpdyTestDeframerImpl::AtDataEnd() {
-  DVLOG(1) << "AtDataEnd";
+  SPDY_DVLOG(1) << "AtDataEnd";
   CHECK_EQ(data_len_, padding_len_ + data_->size());
-  auto ptr = SpdyMakeUnique<SpdyDataIR>(stream_id_, std::move(*data_));
+  auto ptr = std::make_unique<SpdyDataIR>(stream_id_, std::move(*data_));
   CHECK_EQ(0u, data_->size());
   data_.reset();
 
@@ -266,12 +265,12 @@ void SpdyTestDeframerImpl::AtDataEnd() {
 }
 
 void SpdyTestDeframerImpl::AtGoAwayEnd() {
-  DVLOG(1) << "AtDataEnd";
+  SPDY_DVLOG(1) << "AtDataEnd";
   CHECK_EQ(frame_type_, GOAWAY);
   if (HTTP2_DIE_IF_NULL(goaway_description_)->empty()) {
     listener_->OnGoAway(std::move(goaway_ir_));
   } else {
-    listener_->OnGoAway(SpdyMakeUnique<SpdyGoAwayIR>(
+    listener_->OnGoAway(std::make_unique<SpdyGoAwayIR>(
         goaway_ir_->last_good_stream_id(), goaway_ir_->error_code(),
         std::move(*goaway_description_)));
     CHECK_EQ(0u, goaway_description_->size());
@@ -282,7 +281,7 @@ void SpdyTestDeframerImpl::AtGoAwayEnd() {
 }
 
 void SpdyTestDeframerImpl::AtHeadersEnd() {
-  DVLOG(1) << "AtDataEnd";
+  SPDY_DVLOG(1) << "AtDataEnd";
   CHECK(frame_type_ == HEADERS || frame_type_ == CONTINUATION)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(end_) << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
@@ -310,7 +309,7 @@ void SpdyTestDeframerImpl::AtHeadersEnd() {
 }
 
 void SpdyTestDeframerImpl::AtPushPromiseEnd() {
-  DVLOG(1) << "AtDataEnd";
+  SPDY_DVLOG(1) << "AtDataEnd";
   CHECK(frame_type_ == PUSH_PROMISE || frame_type_ == CONTINUATION)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(end_) << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
@@ -372,7 +371,7 @@ bool SpdyTestDeframerImpl::AtFrameEnd() {
         } else if (push_promise_ir_) {
           AtPushPromiseEnd();
         } else {
-          LOG(FATAL) << "Where is the SpdyFrameIR for the headers!";
+          SPDY_LOG(FATAL) << "Where is the SpdyFrameIR for the headers!";
         }
       } else {
         incomplete_logical_header = true;
@@ -411,14 +410,14 @@ bool SpdyTestDeframerImpl::AtFrameEnd() {
 
 void SpdyTestDeframerImpl::OnAltSvc(
     SpdyStreamId stream_id,
-    SpdyStringPiece origin,
+    quiche::QuicheStringPiece origin,
     const SpdyAltSvcWireFormat::AlternativeServiceVector& altsvc_vector) {
-  DVLOG(1) << "OnAltSvc stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnAltSvc stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
-  auto ptr = SpdyMakeUnique<SpdyAltSvcIR>(stream_id);
-  ptr->set_origin(SpdyString(origin));
+  auto ptr = std::make_unique<SpdyAltSvcIR>(stream_id);
+  ptr->set_origin(std::string(origin));
   for (auto& altsvc : altsvc_vector) {
     ptr->add_altsvc(altsvc);
   }
@@ -430,7 +429,7 @@ void SpdyTestDeframerImpl::OnAltSvc(
 // PUSH_PROMISE or CONTINUATION). The last such frame has the END flag set.
 // SpdyFramer ensures that the behavior is correct before calling the visitor.
 void SpdyTestDeframerImpl::OnContinuation(SpdyStreamId stream_id, bool end) {
-  DVLOG(1) << "OnContinuation stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnContinuation stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
@@ -447,7 +446,7 @@ void SpdyTestDeframerImpl::OnContinuation(SpdyStreamId stream_id, bool end) {
 void SpdyTestDeframerImpl::OnDataFrameHeader(SpdyStreamId stream_id,
                                              size_t length,
                                              bool fin) {
-  DVLOG(1) << "OnDataFrameHeader stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnDataFrameHeader stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
@@ -457,15 +456,15 @@ void SpdyTestDeframerImpl::OnDataFrameHeader(SpdyStreamId stream_id,
   stream_id_ = stream_id;
   fin_ = fin;
   data_len_ = length;
-  data_ = SpdyMakeUnique<SpdyString>();
+  data_ = std::make_unique<std::string>();
 }
 
 // The SpdyFramer will not process any more data at this point.
 void SpdyTestDeframerImpl::OnError(
     http2::Http2DecoderAdapter::SpdyFramerError error) {
-  DVLOG(1) << "SpdyFramer detected an error in the stream: "
-           << http2::Http2DecoderAdapter::SpdyFramerErrorToString(error)
-           << "     frame_type_: " << Http2FrameTypeToString(frame_type_);
+  SPDY_DVLOG(1) << "SpdyFramer detected an error in the stream: "
+                << http2::Http2DecoderAdapter::SpdyFramerErrorToString(error)
+                << "     frame_type_: " << Http2FrameTypeToString(frame_type_);
   listener_->OnError(error, this);
 }
 
@@ -476,20 +475,20 @@ void SpdyTestDeframerImpl::OnError(
 // to indicate the end of the GOAWAY frame.
 void SpdyTestDeframerImpl::OnGoAway(SpdyStreamId last_good_stream_id,
                                     SpdyErrorCode error_code) {
-  DVLOG(1) << "OnGoAway last_good_stream_id: " << last_good_stream_id
-           << "     error code: " << error_code;
+  SPDY_DVLOG(1) << "OnGoAway last_good_stream_id: " << last_good_stream_id
+                << "     error code: " << error_code;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   frame_type_ = GOAWAY;
   goaway_ir_ =
-      SpdyMakeUnique<SpdyGoAwayIR>(last_good_stream_id, error_code, "");
-  goaway_description_ = SpdyMakeUnique<SpdyString>();
+      std::make_unique<SpdyGoAwayIR>(last_good_stream_id, error_code, "");
+  goaway_description_ = std::make_unique<std::string>();
 }
 
 // If len==0 then we've reached the end of the GOAWAY frame.
 bool SpdyTestDeframerImpl::OnGoAwayFrameData(const char* goaway_data,
                                              size_t len) {
-  DVLOG(1) << "OnGoAwayFrameData";
+  SPDY_DVLOG(1) << "OnGoAwayFrameData";
   CHECK_EQ(frame_type_, GOAWAY)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(goaway_description_ != nullptr);
@@ -498,12 +497,12 @@ bool SpdyTestDeframerImpl::OnGoAwayFrameData(const char* goaway_data,
 }
 
 SpdyHeadersHandlerInterface* SpdyTestDeframerImpl::OnHeaderFrameStart(
-    SpdyStreamId stream_id) {
+    SpdyStreamId /*stream_id*/) {
   return this;
 }
 
 void SpdyTestDeframerImpl::OnHeaderFrameEnd(SpdyStreamId stream_id) {
-  DVLOG(1) << "OnHeaderFrameEnd stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnHeaderFrameEnd stream_id: " << stream_id;
 }
 
 // Received the fixed portion of a HEADERS frame. Called before the variable
@@ -520,7 +519,7 @@ void SpdyTestDeframerImpl::OnHeaders(SpdyStreamId stream_id,
                                      bool exclusive,
                                      bool fin,
                                      bool end) {
-  DVLOG(1) << "OnHeaders stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnHeaders stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
@@ -530,9 +529,9 @@ void SpdyTestDeframerImpl::OnHeaders(SpdyStreamId stream_id,
   fin_ = fin;
   end_ = end;
 
-  headers_ = SpdyMakeUnique<StringPairVector>();
-  headers_handler_ = SpdyMakeUnique<TestHeadersHandler>();
-  headers_ir_ = SpdyMakeUnique<SpdyHeadersIR>(stream_id);
+  headers_ = std::make_unique<StringPairVector>();
+  headers_handler_ = std::make_unique<TestHeadersHandler>();
+  headers_ir_ = std::make_unique<SpdyHeadersIR>(stream_id);
   headers_ir_->set_fin(fin);
   if (has_priority) {
     headers_ir_->set_has_priority(true);
@@ -548,11 +547,11 @@ void SpdyTestDeframerImpl::OnHeaders(SpdyStreamId stream_id,
 // or frame id, as the SpdyPingId naming might imply.
 // Responding to a PING is supposed to be at the highest priority.
 void SpdyTestDeframerImpl::OnPing(uint64_t unique_id, bool is_ack) {
-  DVLOG(1) << "OnPing unique_id: " << unique_id
-           << "      is_ack: " << (is_ack ? "true" : "false");
+  SPDY_DVLOG(1) << "OnPing unique_id: " << unique_id
+                << "      is_ack: " << (is_ack ? "true" : "false");
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
-  auto ptr = SpdyMakeUnique<SpdyPingIR>(unique_id);
+  auto ptr = std::make_unique<SpdyPingIR>(unique_id);
   if (is_ack) {
     ptr->set_is_ack(is_ack);
     listener_->OnPingAck(std::move(ptr));
@@ -565,19 +564,19 @@ void SpdyTestDeframerImpl::OnPriority(SpdyStreamId stream_id,
                                       SpdyStreamId parent_stream_id,
                                       int weight,
                                       bool exclusive) {
-  DVLOG(1) << "OnPriority stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnPriority stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
 
-  listener_->OnPriority(SpdyMakeUnique<SpdyPriorityIR>(
+  listener_->OnPriority(std::make_unique<SpdyPriorityIR>(
       stream_id, parent_stream_id, weight, exclusive));
 }
 
 void SpdyTestDeframerImpl::OnPushPromise(SpdyStreamId stream_id,
                                          SpdyStreamId promised_stream_id,
                                          bool end) {
-  DVLOG(1) << "OnPushPromise stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnPushPromise stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
@@ -586,30 +585,30 @@ void SpdyTestDeframerImpl::OnPushPromise(SpdyStreamId stream_id,
   stream_id_ = stream_id;
   end_ = end;
 
-  headers_ = SpdyMakeUnique<StringPairVector>();
-  headers_handler_ = SpdyMakeUnique<TestHeadersHandler>();
+  headers_ = std::make_unique<StringPairVector>();
+  headers_handler_ = std::make_unique<TestHeadersHandler>();
   push_promise_ir_ =
-      SpdyMakeUnique<SpdyPushPromiseIR>(stream_id, promised_stream_id);
+      std::make_unique<SpdyPushPromiseIR>(stream_id, promised_stream_id);
 }
 
 // Closes the specified stream. After this the sender may still send PRIORITY
 // frames for this stream, which we can ignore.
 void SpdyTestDeframerImpl::OnRstStream(SpdyStreamId stream_id,
                                        SpdyErrorCode error_code) {
-  DVLOG(1) << "OnRstStream stream_id: " << stream_id
-           << "     error code: " << error_code;
+  SPDY_DVLOG(1) << "OnRstStream stream_id: " << stream_id
+                << "     error code: " << error_code;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_GT(stream_id, 0u);
 
   listener_->OnRstStream(
-      SpdyMakeUnique<SpdyRstStreamIR>(stream_id, error_code));
+      std::make_unique<SpdyRstStreamIR>(stream_id, error_code));
 }
 
 // Called for an individual setting. There is no negotiation; the sender is
 // stating the value that the sender is using.
 void SpdyTestDeframerImpl::OnSetting(SpdySettingsId id, uint32_t value) {
-  DVLOG(1) << "OnSetting id: " << id << std::hex << "    value: " << value;
+  SPDY_DVLOG(1) << "OnSetting id: " << id << std::hex << "    value: " << value;
   CHECK_EQ(frame_type_, SETTINGS)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(settings_ != nullptr);
@@ -624,7 +623,7 @@ void SpdyTestDeframerImpl::OnSetting(SpdySettingsId id, uint32_t value) {
 // (required) ACK of a SETTINGS frame. There is no stream_id because
 // the settings apply to the entire connection, not to an individual stream.
 void SpdyTestDeframerImpl::OnSettings() {
-  DVLOG(1) << "OnSettings";
+  SPDY_DVLOG(1) << "OnSettings";
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_EQ(nullptr, settings_ir_.get());
@@ -632,21 +631,21 @@ void SpdyTestDeframerImpl::OnSettings() {
   frame_type_ = SETTINGS;
   ack_ = false;
 
-  settings_ = SpdyMakeUnique<SettingVector>();
-  settings_ir_ = SpdyMakeUnique<SpdySettingsIR>();
+  settings_ = std::make_unique<SettingVector>();
+  settings_ir_ = std::make_unique<SpdySettingsIR>();
 }
 
 void SpdyTestDeframerImpl::OnSettingsAck() {
-  DVLOG(1) << "OnSettingsAck";
+  SPDY_DVLOG(1) << "OnSettingsAck";
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
-  auto ptr = SpdyMakeUnique<SpdySettingsIR>();
+  auto ptr = std::make_unique<SpdySettingsIR>();
   ptr->set_is_ack(true);
   listener_->OnSettingsAck(std::move(ptr));
 }
 
 void SpdyTestDeframerImpl::OnSettingsEnd() {
-  DVLOG(1) << "OnSettingsEnd";
+  SPDY_DVLOG(1) << "OnSettingsEnd";
   CHECK_EQ(frame_type_, SETTINGS)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(!ack_);
@@ -661,7 +660,7 @@ void SpdyTestDeframerImpl::OnSettingsEnd() {
 // frame with the END_STREAM flag set. Doesn't apply to PUSH_PROMISE frames
 // because they don't have END_STREAM flags.
 void SpdyTestDeframerImpl::OnStreamEnd(SpdyStreamId stream_id) {
-  DVLOG(1) << "OnStreamEnd stream_id: " << stream_id;
+  SPDY_DVLOG(1) << "OnStreamEnd stream_id: " << stream_id;
   CHECK_EQ(stream_id_, stream_id);
   CHECK(frame_type_ == DATA || frame_type_ == HEADERS ||
         frame_type_ == CONTINUATION)
@@ -677,8 +676,8 @@ void SpdyTestDeframerImpl::OnStreamEnd(SpdyStreamId stream_id) {
 void SpdyTestDeframerImpl::OnStreamFrameData(SpdyStreamId stream_id,
                                              const char* data,
                                              size_t len) {
-  DVLOG(1) << "OnStreamFrameData stream_id: " << stream_id
-           << "    len: " << len;
+  SPDY_DVLOG(1) << "OnStreamFrameData stream_id: " << stream_id
+                << "    len: " << len;
   CHECK_EQ(stream_id_, stream_id);
   CHECK_EQ(frame_type_, DATA);
   data_->append(data, len);
@@ -688,8 +687,8 @@ void SpdyTestDeframerImpl::OnStreamFrameData(SpdyStreamId stream_id,
 // payload. value will be in the range 0 to 255.
 void SpdyTestDeframerImpl::OnStreamPadLength(SpdyStreamId stream_id,
                                              size_t value) {
-  DVLOG(1) << "OnStreamPadding stream_id: " << stream_id
-           << "    value: " << value;
+  SPDY_DVLOG(1) << "OnStreamPadding stream_id: " << stream_id
+                << "    value: " << value;
   CHECK(frame_type_ == DATA || frame_type_ == HEADERS ||
         frame_type_ == PUSH_PROMISE)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
@@ -703,7 +702,8 @@ void SpdyTestDeframerImpl::OnStreamPadLength(SpdyStreamId stream_id,
 // Called when padding is skipped over at the end of the DATA frame. len will
 // be in the range 1 to 255.
 void SpdyTestDeframerImpl::OnStreamPadding(SpdyStreamId stream_id, size_t len) {
-  DVLOG(1) << "OnStreamPadding stream_id: " << stream_id << "    len: " << len;
+  SPDY_DVLOG(1) << "OnStreamPadding stream_id: " << stream_id
+                << "    len: " << len;
   CHECK(frame_type_ == DATA || frame_type_ == HEADERS ||
         frame_type_ == PUSH_PROMISE)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
@@ -720,14 +720,14 @@ void SpdyTestDeframerImpl::OnStreamPadding(SpdyStreamId stream_id, size_t len) {
 // closed.
 void SpdyTestDeframerImpl::OnWindowUpdate(SpdyStreamId stream_id,
                                           int delta_window_size) {
-  DVLOG(1) << "OnWindowUpdate stream_id: " << stream_id
-           << "    delta_window_size: " << delta_window_size;
+  SPDY_DVLOG(1) << "OnWindowUpdate stream_id: " << stream_id
+                << "    delta_window_size: " << delta_window_size;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK_NE(0, delta_window_size);
 
   listener_->OnWindowUpdate(
-      SpdyMakeUnique<SpdyWindowUpdateIR>(stream_id, delta_window_size));
+      std::make_unique<SpdyWindowUpdateIR>(stream_id, delta_window_size));
 }
 
 // Return true to indicate that the stream_id is valid; if not valid then
@@ -735,8 +735,8 @@ void SpdyTestDeframerImpl::OnWindowUpdate(SpdyStreamId stream_id,
 // of the set of currently open streams. For now we'll assume that unknown
 // frame types are unsupported.
 bool SpdyTestDeframerImpl::OnUnknownFrame(SpdyStreamId stream_id,
-                                          uint8_t frame_type) {
-  DVLOG(1) << "OnAltSvc stream_id: " << stream_id;
+                                          uint8_t /*frame_type*/) {
+  SPDY_DVLOG(1) << "OnAltSvc stream_id: " << stream_id;
   CHECK_EQ(frame_type_, UNSET)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   frame_type_ = UNKNOWN;
@@ -755,13 +755,14 @@ void SpdyTestDeframerImpl::OnHeaderBlockStart() {
   got_hpack_end_ = false;
 }
 
-void SpdyTestDeframerImpl::OnHeader(SpdyStringPiece key,
-                                    SpdyStringPiece value) {
+void SpdyTestDeframerImpl::OnHeader(quiche::QuicheStringPiece key,
+                                    quiche::QuicheStringPiece value) {
   CHECK(frame_type_ == HEADERS || frame_type_ == CONTINUATION ||
         frame_type_ == PUSH_PROMISE)
       << "   frame_type_=" << Http2FrameTypeToString(frame_type_);
   CHECK(!got_hpack_end_);
-  HTTP2_DIE_IF_NULL(headers_)->emplace_back(SpdyString(key), SpdyString(value));
+  HTTP2_DIE_IF_NULL(headers_)->emplace_back(std::string(key),
+                                            std::string(value));
   HTTP2_DIE_IF_NULL(headers_handler_)->OnHeader(key, value);
 }
 
@@ -783,21 +784,21 @@ class LoggingSpdyDeframerDelegate : public SpdyDeframerVisitorInterface {
       std::unique_ptr<SpdyDeframerVisitorInterface> wrapped)
       : wrapped_(std::move(wrapped)) {
     if (!wrapped_) {
-      wrapped_ = SpdyMakeUnique<SpdyDeframerVisitorInterface>();
+      wrapped_ = std::make_unique<SpdyDeframerVisitorInterface>();
     }
   }
   ~LoggingSpdyDeframerDelegate() override = default;
 
   void OnAltSvc(std::unique_ptr<SpdyAltSvcIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnAltSvc";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnAltSvc";
     wrapped_->OnAltSvc(std::move(frame));
   }
   void OnData(std::unique_ptr<SpdyDataIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnData";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnData";
     wrapped_->OnData(std::move(frame));
   }
   void OnGoAway(std::unique_ptr<SpdyGoAwayIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnGoAway";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnGoAway";
     wrapped_->OnGoAway(std::move(frame));
   }
 
@@ -806,21 +807,21 @@ class LoggingSpdyDeframerDelegate : public SpdyDeframerVisitorInterface {
   // and value strings) are provided in a vector.
   void OnHeaders(std::unique_ptr<SpdyHeadersIR> frame,
                  std::unique_ptr<StringPairVector> headers) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnHeaders";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnHeaders";
     wrapped_->OnHeaders(std::move(frame), std::move(headers));
   }
 
   void OnPing(std::unique_ptr<SpdyPingIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPing";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPing";
     wrapped_->OnPing(std::move(frame));
   }
   void OnPingAck(std::unique_ptr<SpdyPingIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPingAck";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPingAck";
     wrapped_->OnPingAck(std::move(frame));
   }
 
   void OnPriority(std::unique_ptr<SpdyPriorityIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPriority";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPriority";
     wrapped_->OnPriority(std::move(frame));
   }
 
@@ -829,12 +830,12 @@ class LoggingSpdyDeframerDelegate : public SpdyDeframerVisitorInterface {
   // and value strings) are provided in a vector.
   void OnPushPromise(std::unique_ptr<SpdyPushPromiseIR> frame,
                      std::unique_ptr<StringPairVector> headers) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPushPromise";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnPushPromise";
     wrapped_->OnPushPromise(std::move(frame), std::move(headers));
   }
 
   void OnRstStream(std::unique_ptr<SpdyRstStreamIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnRstStream";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnRstStream";
     wrapped_->OnRstStream(std::move(frame));
   }
 
@@ -843,26 +844,26 @@ class LoggingSpdyDeframerDelegate : public SpdyDeframerVisitorInterface {
   // the actual settings (parameter and value) are provided in a vector.
   void OnSettings(std::unique_ptr<SpdySettingsIR> frame,
                   std::unique_ptr<SettingVector> settings) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnSettings";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnSettings";
     wrapped_->OnSettings(std::move(frame), std::move(settings));
   }
 
   // A settings frame with an ACK has no content, but for uniformity passing
   // a frame with the ACK flag set.
   void OnSettingsAck(std::unique_ptr<SpdySettingsIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnSettingsAck";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnSettingsAck";
     wrapped_->OnSettingsAck(std::move(frame));
   }
 
   void OnWindowUpdate(std::unique_ptr<SpdyWindowUpdateIR> frame) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnWindowUpdate";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnWindowUpdate";
     wrapped_->OnWindowUpdate(std::move(frame));
   }
 
   // The SpdyFramer will not process any more data at this point.
   void OnError(http2::Http2DecoderAdapter::SpdyFramerError error,
                SpdyTestDeframer* deframer) override {
-    DVLOG(1) << "LoggingSpdyDeframerDelegate::OnError";
+    SPDY_DVLOG(1) << "LoggingSpdyDeframerDelegate::OnError";
     wrapped_->OnError(error, deframer);
   }
 
@@ -874,7 +875,7 @@ class LoggingSpdyDeframerDelegate : public SpdyDeframerVisitorInterface {
 std::unique_ptr<SpdyDeframerVisitorInterface>
 SpdyDeframerVisitorInterface::LogBeforeVisiting(
     std::unique_ptr<SpdyDeframerVisitorInterface> wrapped_listener) {
-  return SpdyMakeUnique<LoggingSpdyDeframerDelegate>(
+  return std::make_unique<LoggingSpdyDeframerDelegate>(
       std::move(wrapped_listener));
 }
 
@@ -1017,8 +1018,8 @@ void DeframerCallbackCollector::OnWindowUpdate(
 
 // The SpdyFramer will not process any more data at this point.
 void DeframerCallbackCollector::OnError(
-    http2::Http2DecoderAdapter::SpdyFramerError error,
-    SpdyTestDeframer* deframer) {
+    http2::Http2DecoderAdapter::SpdyFramerError /*error*/,
+    SpdyTestDeframer* /*deframer*/) {
   CollectedFrame cf;
   cf.error_reported = true;
   collected_frames_->push_back(std::move(cf));

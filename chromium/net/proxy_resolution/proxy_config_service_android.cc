@@ -20,8 +20,8 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "jni/ProxyChangeListener_jni.h"
 #include "net/base/host_port_pair.h"
+#include "net/net_jni_headers/ProxyChangeListener_jni.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 #include "url/third_party/mozilla/url_parse.h"
 
@@ -113,7 +113,7 @@ void AddBypassRules(const std::string& scheme,
       continue;
     // '?' is not one of the specified pattern characters above.
     DCHECK_EQ(std::string::npos, pattern.find('?'));
-    bypass_rules->AddRuleForHostname(scheme, pattern, -1);
+    bypass_rules->AddRuleFromString(scheme + "://" + pattern);
   }
 }
 
@@ -143,7 +143,7 @@ bool GetProxyRules(const GetPropertyCallback& get_property,
       rules->proxies_for_https.IsEmpty() &&
       rules->proxies_for_ftp.IsEmpty() &&
       rules->fallback_proxies.IsEmpty());
-};
+}
 
 void GetLatestProxyConfigInternal(const GetPropertyCallback& get_property,
                                   ProxyConfigWithAnnotation* config) {
@@ -189,8 +189,7 @@ void CreateStaticProxyConfig(const std::string& host,
       base::TrimWhitespaceASCII(*it, base::TRIM_ALL, &pattern);
       if (pattern.empty())
           continue;
-      proxy_config.proxy_rules().bypass_rules.AddRuleForHostname("", pattern,
-                                                                 -1);
+      proxy_config.proxy_rules().bypass_rules.AddRuleFromString(pattern);
     }
     *config =
         ProxyConfigWithAnnotation(proxy_config, NO_TRAFFIC_ANNOTATION_YET);
@@ -271,16 +270,15 @@ std::string CreateOverrideProxyConfig(
 class ProxyConfigServiceAndroid::Delegate
     : public base::RefCountedThreadSafe<Delegate> {
  public:
-  Delegate(const scoped_refptr<base::SequencedTaskRunner>& network_task_runner,
+  Delegate(const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
            const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner,
            const GetPropertyCallback& get_property_callback)
       : jni_delegate_(this),
-        network_task_runner_(network_task_runner),
+        main_task_runner_(main_task_runner),
         jni_task_runner_(jni_task_runner),
         get_property_callback_(get_property_callback),
         exclude_pac_url_(false),
-        has_proxy_override_(false) {
-  }
+        has_proxy_override_(false) {}
 
   void SetupJNI() {
     DCHECK(InJNISequence());
@@ -297,9 +295,9 @@ class ProxyConfigServiceAndroid::Delegate
     DCHECK(InJNISequence());
     ProxyConfigWithAnnotation proxy_config;
     GetLatestProxyConfigInternal(get_property_callback_, &proxy_config);
-    network_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInNetworkSequence,
-                                  this, proxy_config));
+    main_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInMainSequence, this,
+                                  proxy_config));
   }
 
   void Shutdown() {
@@ -307,23 +305,23 @@ class ProxyConfigServiceAndroid::Delegate
       ShutdownInJNISequence();
     } else {
       jni_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&Delegate::ShutdownInJNISequence, this));
+          FROM_HERE, base::BindOnce(&Delegate::ShutdownInJNISequence, this));
     }
   }
 
   // Called only in the network sequence.
   void AddObserver(Observer* observer) {
-    DCHECK(InNetworkSequence());
+    DCHECK(InMainSequence());
     observers_.AddObserver(observer);
   }
 
   void RemoveObserver(Observer* observer) {
-    DCHECK(InNetworkSequence());
+    DCHECK(InMainSequence());
     observers_.RemoveObserver(observer);
   }
 
   ConfigAvailability GetLatestProxyConfig(ProxyConfigWithAnnotation* config) {
-    DCHECK(InNetworkSequence());
+    DCHECK(InMainSequence());
     if (!config)
       return ProxyConfigService::CONFIG_UNSET;
     *config = proxy_config_;
@@ -338,9 +336,9 @@ class ProxyConfigServiceAndroid::Delegate
 
     ProxyConfigWithAnnotation proxy_config;
     GetLatestProxyConfigInternal(get_property_callback_, &proxy_config);
-    network_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInNetworkSequence,
-                                  this, proxy_config));
+    main_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInMainSequence, this,
+                                  proxy_config));
   }
 
   // Called in the JNI sequence.
@@ -359,9 +357,9 @@ class ProxyConfigServiceAndroid::Delegate
       CreateStaticProxyConfig(host, port, pac_url, exclusion_list,
           &proxy_config);
     }
-    network_task_runner_->PostTask(
-        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInNetworkSequence,
-                                  this, proxy_config));
+    main_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&Delegate::SetNewConfigInMainSequence, this,
+                                  proxy_config));
   }
 
   void set_exclude_pac_url(bool enabled) {
@@ -384,9 +382,9 @@ class ProxyConfigServiceAndroid::Delegate
       return result;
     }
 
-    network_task_runner_->PostTaskAndReply(
+    main_task_runner_->PostTaskAndReply(
         FROM_HERE,
-        base::BindOnce(&Delegate::SetNewConfigInNetworkSequence, this,
+        base::BindOnce(&Delegate::SetNewConfigInMainSequence, this,
                        proxy_config),
         std::move(callback));
 
@@ -403,9 +401,9 @@ class ProxyConfigServiceAndroid::Delegate
 
     ProxyConfigWithAnnotation proxy_config;
     GetLatestProxyConfigInternal(get_property_callback_, &proxy_config);
-    network_task_runner_->PostTaskAndReply(
+    main_task_runner_->PostTaskAndReply(
         FROM_HERE,
-        base::BindOnce(&Delegate::SetNewConfigInNetworkSequence, this,
+        base::BindOnce(&Delegate::SetNewConfigInMainSequence, this,
                        proxy_config),
         std::move(callback));
     has_proxy_override_ = false;
@@ -455,9 +453,9 @@ class ProxyConfigServiceAndroid::Delegate
   }
 
   // Called on the network sequence.
-  void SetNewConfigInNetworkSequence(
+  void SetNewConfigInMainSequence(
       const ProxyConfigWithAnnotation& proxy_config) {
-    DCHECK(InNetworkSequence());
+    DCHECK(InMainSequence());
     proxy_config_ = proxy_config;
     for (auto& observer : observers_) {
       observer.OnProxyConfigChanged(proxy_config,
@@ -469,15 +467,15 @@ class ProxyConfigServiceAndroid::Delegate
     return jni_task_runner_->RunsTasksInCurrentSequence();
   }
 
-  bool InNetworkSequence() const {
-    return network_task_runner_->RunsTasksInCurrentSequence();
+  bool InMainSequence() const {
+    return main_task_runner_->RunsTasksInCurrentSequence();
   }
 
   ScopedJavaGlobalRef<jobject> java_proxy_change_listener_;
 
   JNIDelegateImpl jni_delegate_;
   base::ObserverList<Observer>::Unchecked observers_;
-  scoped_refptr<base::SequencedTaskRunner> network_task_runner_;
+  scoped_refptr<base::SequencedTaskRunner> main_task_runner_;
   scoped_refptr<base::SequencedTaskRunner> jni_task_runner_;
   GetPropertyCallback get_property_callback_;
   ProxyConfigWithAnnotation proxy_config_;
@@ -489,10 +487,11 @@ class ProxyConfigServiceAndroid::Delegate
 };
 
 ProxyConfigServiceAndroid::ProxyConfigServiceAndroid(
-    const scoped_refptr<base::SequencedTaskRunner>& network_task_runner,
+    const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner)
-    : delegate_(new Delegate(
-        network_task_runner, jni_task_runner, base::Bind(&GetJavaProperty))) {
+    : delegate_(new Delegate(main_task_runner,
+                             jni_task_runner,
+                             base::BindRepeating(&GetJavaProperty))) {
   delegate_->SetupJNI();
   delegate_->FetchInitialConfig();
 }
@@ -520,13 +519,22 @@ ProxyConfigServiceAndroid::GetLatestProxyConfig(
 }
 
 ProxyConfigServiceAndroid::ProxyConfigServiceAndroid(
-    const scoped_refptr<base::SequencedTaskRunner>& network_task_runner,
+    const scoped_refptr<base::SequencedTaskRunner>& main_task_runner,
     const scoped_refptr<base::SequencedTaskRunner>& jni_task_runner,
     GetPropertyCallback get_property_callback)
-    : delegate_(new Delegate(
-        network_task_runner, jni_task_runner, get_property_callback)) {
+    : delegate_(new Delegate(main_task_runner,
+                             jni_task_runner,
+                             get_property_callback)) {
   delegate_->SetupJNI();
   delegate_->FetchInitialConfig();
+}
+
+void ProxyConfigServiceAndroid::ProxySettingsChangedTo(
+    const std::string& host,
+    int port,
+    const std::string& pac_url,
+    const std::vector<std::string>& exclusion_list) {
+  delegate_->ProxySettingsChangedTo(host, port, pac_url, exclusion_list);
 }
 
 void ProxyConfigServiceAndroid::ProxySettingsChanged() {

@@ -1,3 +1,7 @@
+// Copyright 2019 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 module fuzz.mojom;
 
 [Extensible]
@@ -24,6 +28,7 @@ union FuzzUnion {
   float fuzz_float;
   double fuzz_double;
   string fuzz_string;
+  array<bool> fuzz_bool_array;
   array<int8> fuzz_primitive_array;
   array<FuzzDummyStruct> fuzz_struct_array;
   map<string, int8> fuzz_primitive_map;
@@ -48,6 +53,7 @@ struct FuzzStruct {
   double fuzz_double;
   string fuzz_string;
 
+  array<bool> fuzz_bool_array;
   array<int8> fuzz_primitive_array;
   map<string, int8> fuzz_primitive_map;
   map<string, array<string>> fuzz_array_map;
@@ -63,6 +69,7 @@ interface FuzzDummyInterface {
   Ping();
 };
 
+// A comprehensive Mojo interface used for fuzzing message dispatch and validation.
 interface FuzzInterface {
   FuzzBasic();
   FuzzBasicResp() => ();
@@ -74,5 +81,5 @@ interface FuzzInterface {
   [Sync]
   FuzzArgsSyncResp(FuzzStruct a, FuzzStruct? b) => ();
 
-  FuzzAssociated(associated FuzzDummyInterface& request);
+  FuzzAssociated(pending_associated_receiver<FuzzDummyInterface> receiver);
 };

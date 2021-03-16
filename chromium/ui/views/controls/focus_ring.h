@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_CONTROLS_FOCUS_RING_H_
 #define UI_VIEWS_CONTROLS_FOCUS_RING_H_
 
+#include <memory>
+
 #include "base/scoped_observer.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/controls/focusable_border.h"
@@ -13,6 +15,8 @@
 #include "ui/views/views_export.h"
 
 namespace views {
+
+class HighlightPathGenerator;
 
 // FocusRing is a View that is designed to act as an indicator of focus for its
 // parent. It is a stand-alone view that paints to a layer which extends beyond
@@ -37,7 +41,7 @@ namespace views {
 // these take care of repainting it when the state changes.
 class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
  public:
-  static const char kViewClassName[];
+  METADATA_HEADER(FocusRing);
 
   using ViewPredicate = std::function<bool(View* view)>;
 
@@ -48,20 +52,12 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   // |parent|.
   static std::unique_ptr<FocusRing> Install(View* parent);
 
-  // Returns whether this class can draw a focus ring from |path|. Not all paths
-  // are useable since not all paths can be easily outset. If a FocusRing is
-  // configured to use an unuseable path, it will fall back to the default focus
-  // ring path.
-  static bool IsPathUseable(const SkPath& path);
-
-  // Sets the path to draw this FocusRing around. This path is in the parent
-  // view's coordinate system, *not* in the FocusRing's coordinate system. Note
-  // that this path will not be mirrored in RTL, so your View's computation of
-  // it should take RTL into account.
+  // Sets the HighlightPathGenerator to draw this FocusRing around.
   // Note: This method should only be used if the focus ring needs to differ
-  // from the highlight shape used for inkdrops. Otherwise set kHighlightPathKey
-  // on the parent and FocusRing will use it as well.
-  void SetPath(const SkPath& path);
+  // from the highlight shape used for InkDrops.
+  // Otherwise install a HighlightPathGenerator on the parent and FocusRing will
+  // use it as well.
+  void SetPathGenerator(std::unique_ptr<HighlightPathGenerator> generator);
 
   // Sets whether the FocusRing should show an invalid state for the View it
   // encloses.
@@ -77,8 +73,9 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   void SetColor(base::Optional<SkColor> color);
 
   // View:
-  const char* GetClassName() const override;
   void Layout() override;
+  void ViewHierarchyChanged(
+      const ViewHierarchyChangedDetails& details) override;
   void OnPaint(gfx::Canvas* canvas) override;
 
   // ViewObserver:
@@ -86,7 +83,9 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   void OnViewBlurred(View* view) override;
 
  private:
-  explicit FocusRing(View* parent);
+  FocusRing();
+
+  void RefreshLayer();
 
   // Translates the provided SkRect or SkRRect, which is in the parent's
   // coordinate system, into this view's coordinate system, then insets it
@@ -96,12 +95,8 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   SkRRect RingRectFromPathRect(const SkRect& rect) const;
   SkRRect RingRectFromPathRect(const SkRRect& rect) const;
 
-  // The View this focus ring is installed on.
-  View* view_ = nullptr;
-
-  // The path to draw this focus ring around. IsPathUseable(path_) is always
-  // true.
-  SkPath path_;
+  // The path generator used to draw this focus ring.
+  std::unique_ptr<HighlightPathGenerator> path_generator_;
 
   // Whether the enclosed View is in an invalid state, which controls whether
   // the focus ring shows an invalid appearance (usually a different color).
@@ -111,13 +106,13 @@ class VIEWS_EXPORT FocusRing : public View, public ViewObserver {
   base::Optional<SkColor> color_;
 
   // The predicate used to determine whether the parent has focus.
-  ViewPredicate has_focus_predicate_;
+  base::Optional<ViewPredicate> has_focus_predicate_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusRing);
 };
 
 VIEWS_EXPORT SkPath GetHighlightPath(const View* view);
 
-}  // views
+}  // namespace views
 
 #endif  // UI_VIEWS_CONTROLS_FOCUS_RING_H_

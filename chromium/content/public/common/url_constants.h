@@ -20,14 +20,16 @@ namespace content {
 CONTENT_EXPORT extern const char kChromeDevToolsScheme[];
 CONTENT_EXPORT extern const char kChromeErrorScheme[];
 CONTENT_EXPORT extern const char kChromeUIScheme[];  // Used for WebUIs.
+CONTENT_EXPORT extern const char kChromeUIUntrustedScheme[];
 CONTENT_EXPORT extern const char kGuestScheme[];
 CONTENT_EXPORT extern const char kViewSourceScheme[];
 #if defined(OS_CHROMEOS)
 CONTENT_EXPORT extern const char kExternalFileScheme[];
 #endif
 
-// Hosts for about URLs.
-CONTENT_EXPORT extern const char kAboutSrcDocURL[];
+// The `googlechrome:` scheme is registered on several platforms, and is
+// both interesting and dangerous.
+CONTENT_EXPORT extern const char kGoogleChromeScheme[];
 
 CONTENT_EXPORT extern const char kChromeUIAccessibilityHost[];
 CONTENT_EXPORT extern const char kChromeUIAppCacheInternalsHost[];
@@ -61,6 +63,8 @@ CONTENT_EXPORT extern const char kChromeUIGpuHangURL[];
 CONTENT_EXPORT extern const char kChromeUIHangURL[];
 CONTENT_EXPORT extern const char kChromeUIKillURL[];
 CONTENT_EXPORT extern const char kChromeUIMemoryExhaustURL[];
+CONTENT_EXPORT extern const char kChromeUIMemoryPressureCriticalURL[];
+CONTENT_EXPORT extern const char kChromeUIMemoryPressureModerateURL[];
 CONTENT_EXPORT extern const char kChromeUINetworkErrorsListingURL[];
 CONTENT_EXPORT extern const char kChromeUINetworkErrorURL[];
 CONTENT_EXPORT extern const char kChromeUIPpapiFlashCrashURL[];

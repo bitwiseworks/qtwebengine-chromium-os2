@@ -4,10 +4,12 @@
 
 #include "third_party/blink/public/common/manifest/manifest_mojom_traits.h"
 
+#include <string>
+#include <utility>
+
 #include "mojo/public/cpp/base/string16_mojom_traits.h"
-#include "third_party/blink/public/common/manifest/web_display_mode_mojom_traits.h"
 #include "third_party/blink/public/common/screen_orientation/web_screen_orientation_mojom_traits.h"
-#include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
+#include "ui/gfx/geometry/mojom/geometry_mojom_traits.h"
 #include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
@@ -64,7 +66,13 @@ bool StructTraits<blink::mojom::ManifestDataView, ::blink::Manifest>::Read(
   if (!data.ReadIcons(&out->icons))
     return false;
 
+  if (!data.ReadShortcuts(&out->shortcuts))
+    return false;
+
   if (!data.ReadShareTarget(&out->share_target))
+    return false;
+
+  if (!data.ReadFileHandlers(&out->file_handlers))
     return false;
 
   if (!data.ReadRelatedApplications(&out->related_applications))
@@ -77,9 +85,6 @@ bool StructTraits<blink::mojom::ManifestDataView, ::blink::Manifest>::Read(
 
   if (data.has_background_color())
     out->background_color = data.background_color();
-
-  if (!data.ReadSplashScreenUrl(&out->splash_screen_url))
-    return false;
 
   if (!data.ReadDisplay(&out->display))
     return false;
@@ -118,6 +123,31 @@ bool StructTraits<blink::mojom::ManifestImageResourceDataView,
   return true;
 }
 
+bool StructTraits<blink::mojom::ManifestShortcutItemDataView,
+                  ::blink::Manifest::ShortcutItem>::
+    Read(blink::mojom::ManifestShortcutItemDataView data,
+         ::blink::Manifest::ShortcutItem* out) {
+  if (!data.ReadName(&out->name))
+    return false;
+
+  TruncatedString16 string;
+  if (!data.ReadShortName(&string))
+    return false;
+  out->short_name = base::NullableString16(std::move(string.string));
+
+  if (!data.ReadDescription(&string))
+    return false;
+  out->description = base::NullableString16(std::move(string.string));
+
+  if (!data.ReadUrl(&out->url))
+    return false;
+
+  if (!data.ReadIcons(&out->icons))
+    return false;
+
+  return true;
+}
+
 bool StructTraits<blink::mojom::ManifestRelatedApplicationDataView,
                   ::blink::Manifest::RelatedApplication>::
     Read(blink::mojom::ManifestRelatedApplicationDataView data,
@@ -137,10 +167,10 @@ bool StructTraits<blink::mojom::ManifestRelatedApplicationDataView,
   return !(out->url.is_empty() && out->id.is_null());
 }
 
-bool StructTraits<blink::mojom::ManifestShareTargetFileDataView,
-                  ::blink::Manifest::ShareTargetFile>::
-    Read(blink::mojom::ManifestShareTargetFileDataView data,
-         ::blink::Manifest::ShareTargetFile* out) {
+bool StructTraits<blink::mojom::ManifestFileFilterDataView,
+                  ::blink::Manifest::FileFilter>::
+    Read(blink::mojom::ManifestFileFilterDataView data,
+         ::blink::Manifest::FileFilter* out) {
   TruncatedString16 name;
   if (!data.ReadName(&name))
     return false;
@@ -193,6 +223,22 @@ bool StructTraits<blink::mojom::ManifestShareTargetDataView,
     return false;
 
   return data.ReadParams(&out->params);
+}
+
+bool StructTraits<blink::mojom::ManifestFileHandlerDataView,
+                  ::blink::Manifest::FileHandler>::
+    Read(blink::mojom::ManifestFileHandlerDataView data,
+         ::blink::Manifest::FileHandler* out) {
+  if (!data.ReadAction(&out->action))
+    return false;
+
+  if (!data.ReadName(&out->name))
+    return false;
+
+  if (!data.ReadAccept(&out->accept))
+    return false;
+
+  return true;
 }
 
 }  // namespace mojo

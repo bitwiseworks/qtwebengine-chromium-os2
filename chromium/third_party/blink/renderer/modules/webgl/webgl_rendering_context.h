@@ -27,6 +27,8 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBGL_WEBGL_RENDERING_CONTEXT_H_
 
 #include <memory>
+
+#include "base/macros.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context_factory.h"
 #include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
 
@@ -36,12 +38,16 @@ class ANGLEInstancedArrays;
 class CanvasContextCreationAttributesCore;
 class EXTBlendMinMax;
 class EXTColorBufferHalfFloat;
+class EXTFloatBlend;
 class EXTFragDepth;
 class EXTShaderTextureLOD;
 class EXTsRGB;
+class EXTTextureCompressionBPTC;
+class EXTTextureCompressionRGTC;
 class EXTTextureFilterAnisotropic;
 class KHRParallelShaderCompile;
 class OESElementIndexUint;
+class OESFboRenderMipmap;
 class OESStandardDerivatives;
 class OESTextureFloat;
 class OESTextureFloatLinear;
@@ -52,15 +58,13 @@ class WebGLDebugRendererInfo;
 class WebGLDepthTexture;
 class WebGLLoseContext;
 class WebGLMultiDraw;
-class WebGLMultiDrawInstanced;
+class WebGLVideoTexture;
 
 class WebGLRenderingContext final : public WebGLRenderingContextBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
   class Factory : public CanvasRenderingContextFactory {
-    WTF_MAKE_NONCOPYABLE(Factory);
-
    public:
     Factory() = default;
     ~Factory() override = default;
@@ -73,6 +77,9 @@ class WebGLRenderingContext final : public WebGLRenderingContextBase {
       return CanvasRenderingContext::kContextWebgl;
     }
     void OnError(HTMLCanvasElement*, const String& error) override;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(Factory);
   };
 
   WebGLRenderingContext(CanvasRenderingContextHost*,
@@ -89,7 +96,7 @@ class WebGLRenderingContext final : public WebGLRenderingContextBase {
   void SetCanvasGetContextResult(RenderingContext&) final;
   void SetOffscreenCanvasGetContextResult(OffscreenRenderingContext&) final;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // Enabled extension objects.
@@ -97,12 +104,16 @@ class WebGLRenderingContext final : public WebGLRenderingContextBase {
   Member<EXTBlendMinMax> ext_blend_min_max_;
   Member<EXTColorBufferHalfFloat> ext_color_buffer_half_float_;
   Member<EXTDisjointTimerQuery> ext_disjoint_timer_query_;
+  Member<EXTFloatBlend> ext_float_blend_;
   Member<EXTFragDepth> ext_frag_depth_;
   Member<EXTShaderTextureLOD> ext_shader_texture_lod_;
+  Member<EXTTextureCompressionBPTC> ext_texture_compression_bptc_;
+  Member<EXTTextureCompressionRGTC> ext_texture_compression_rgtc_;
   Member<EXTTextureFilterAnisotropic> ext_texture_filter_anisotropic_;
   Member<EXTsRGB> exts_rgb_;
   Member<KHRParallelShaderCompile> khr_parallel_shader_compile_;
   Member<OESElementIndexUint> oes_element_index_uint_;
+  Member<OESFboRenderMipmap> oes_fbo_render_mipmap_;
   Member<OESStandardDerivatives> oes_standard_derivatives_;
   Member<OESTextureFloat> oes_texture_float_;
   Member<OESTextureFloatLinear> oes_texture_float_linear_;
@@ -122,18 +133,8 @@ class WebGLRenderingContext final : public WebGLRenderingContextBase {
   Member<WebGLDrawBuffers> webgl_draw_buffers_;
   Member<WebGLLoseContext> webgl_lose_context_;
   Member<WebGLMultiDraw> webgl_multi_draw_;
-  Member<WebGLMultiDrawInstanced> webgl_multi_draw_instanced_;
+  Member<WebGLVideoTexture> webgl_video_texture_;
 };
-
-DEFINE_TYPE_CASTS(WebGLRenderingContext,
-                  CanvasRenderingContext,
-                  context,
-                  context->Is3d() &&
-                      WebGLRenderingContextBase::GetWebGLVersion(context) ==
-                          Platform::kWebGL1ContextType,
-                  context.Is3d() &&
-                      WebGLRenderingContextBase::GetWebGLVersion(&context) ==
-                          Platform::kWebGL1ContextType);
 
 }  // namespace blink
 

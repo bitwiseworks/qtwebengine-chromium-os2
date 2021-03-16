@@ -24,23 +24,10 @@ std::ostream& operator<<(std::ostream& out, const StyleDifference& diff) {
       break;
   }
 
-  out << ", paintInvalidationType=";
-  switch (diff.paint_invalidation_type_) {
-    case StyleDifference::kNoPaintInvalidation:
-      out << "NoPaintInvalidation";
-      break;
-    case StyleDifference::kPaintInvalidationObject:
-      out << "PaintInvalidationObject";
-      break;
-    case StyleDifference::kPaintInvalidationSubtree:
-      out << "PaintInvalidationSubtree";
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
-
-  out << ", recomputeOverflow=" << diff.recompute_overflow_;
+  out << ", collectInlines=" << diff.needs_collect_inlines_;
+  out << ", reshape=" << diff.needs_reshape_;
+  out << ", paintInvalidation=" << diff.needs_paint_invalidation_;
+  out << ", recomputeVisualOverflow=" << diff.recompute_visual_overflow_;
   out << ", visualRectUpdate=" << diff.visual_rect_update_;
 
   out << ", propertySpecificDifferences=";

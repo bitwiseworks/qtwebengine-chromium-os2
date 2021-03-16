@@ -5,6 +5,7 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_REQUEST_H_
 
+#include <cstddef>
 #include <string>
 #include <utility>
 
@@ -13,6 +14,12 @@
 
 namespace mojo {
 
+// DEPRECATED: Do not introduce new uses of this type. Instead use the
+// AssociatedPendingReceiver type defined in associated_pending_receiver.h.
+// Mojom files which pass associated interface requests (i.e.,
+// "associated Interface&" syntax) should be updated to instead pass a
+// "pending_associated_receiver<Interface>".
+//
 // AssociatedInterfaceRequest represents an associated interface request. It is
 // similar to InterfaceRequest except that it doesn't own a message pipe handle.
 template <typename Interface>
@@ -21,7 +28,7 @@ class AssociatedInterfaceRequest {
   // Constructs an empty AssociatedInterfaceRequest, representing that the
   // client is not requesting an implementation of Interface.
   AssociatedInterfaceRequest() {}
-  AssociatedInterfaceRequest(decltype(nullptr)) {}
+  AssociatedInterfaceRequest(std::nullptr_t) {}
 
   explicit AssociatedInterfaceRequest(ScopedInterfaceEndpointHandle handle)
       : handle_(std::move(handle)) {}
@@ -41,7 +48,7 @@ class AssociatedInterfaceRequest {
   // Assigning to nullptr resets the AssociatedInterfaceRequest to an empty
   // state, closing the interface endpoint handle currently bound to it (if
   // any).
-  AssociatedInterfaceRequest& operator=(decltype(nullptr)) {
+  AssociatedInterfaceRequest& operator=(std::nullptr_t) {
     handle_.reset();
     return *this;
   }

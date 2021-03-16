@@ -11,6 +11,7 @@
 #include "base/location.h"
 #include "base/strings/string_piece.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 
 namespace network {
 
@@ -25,9 +26,20 @@ scoped_refptr<net::CRLSet> ParseCRLSet(std::string crl_set) {
   return result;
 }
 
+// Helper to guarantee |notify_callback| is run, even if |process_callback|
+// no-ops due to the worker pool doing the parsing outliving the
+// CRLSetDistributor.
+void ProcessParsedCRLSet(
+    base::OnceCallback<void(scoped_refptr<net::CRLSet>)> process_callback,
+    base::OnceClosure notify_callback,
+    scoped_refptr<net::CRLSet> crl_set) {
+  std::move(process_callback).Run(std::move(crl_set));
+  std::move(notify_callback).Run();
+}
+
 }  // namespace
 
-CRLSetDistributor::CRLSetDistributor() : weak_factory_(this) {}
+CRLSetDistributor::CRLSetDistributor() {}
 
 CRLSetDistributor::~CRLSetDistributor() = default;
 
@@ -39,17 +51,20 @@ void CRLSetDistributor::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void CRLSetDistributor::OnNewCRLSet(base::span<const uint8_t> crl_set) {
+void CRLSetDistributor::OnNewCRLSet(base::span<const uint8_t> crl_set,
+                                    base::OnceClosure callback) {
   // Make a copy for the background task, since the underlying storage for
   // the span will go away.
   std::string crl_set_string(reinterpret_cast<const char*>(crl_set.data()),
                              crl_set.size());
 
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&ParseCRLSet, std::move(crl_set_string)),
-      base::BindOnce(&CRLSetDistributor::OnCRLSetParsed,
-                     weak_factory_.GetWeakPtr()));
+      base::BindOnce(&ProcessParsedCRLSet,
+                     base::BindOnce(&CRLSetDistributor::OnCRLSetParsed,
+                                    weak_factory_.GetWeakPtr()),
+                     std::move(callback)));
 }
 
 void CRLSetDistributor::OnCRLSetParsed(scoped_refptr<net::CRLSet> crl_set) {

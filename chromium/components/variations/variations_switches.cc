@@ -16,8 +16,7 @@ const char kEnableBenchmarking[] = "enable-benchmarking";
 
 // Fakes the channel of the browser for purposes of Variations filtering. This
 // is to be used for testing only. Possible values are "stable", "beta", "dev"
-// and "canary". Note that this only applies if the browser's reported channel
-// is UNKNOWN.
+// and "canary". This works for official builds as well.
 const char kFakeVariationsChannel[] = "fake-variations-channel";
 
 // This option can be used to force parameters of field trials when testing
@@ -34,6 +33,11 @@ const char kForceFieldTrialParams[] = "force-fieldtrial-params";
 // header, specified as a 64-bit encoded list of numeric experiment ids. Ids
 // prefixed with the character "t" will be treated as Trigger Variation Ids.
 const char kForceVariationIds[] = "force-variation-ids";
+
+// Forces to remove Chrome Variation Ids from being sent in X-Client-Data
+// header, specified as a 64-bit encoded list of numeric experiment ids. Ids
+// prefixed with the character "t" will be treated as Trigger Variation Ids.
+const char kForceDisableVariationIds[] = "force-disable-variation-ids";
 
 // Allows overriding the country used for evaluating variations. This is similar
 // to the "Override Variations Country" entry on chrome://translate-internals,

@@ -4,6 +4,9 @@
 
 #include "ui/ozone/platform/drm/host/drm_cursor.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/trace_event/trace_event.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/ozone/platform/drm/host/drm_window_host.h"
@@ -217,6 +220,7 @@ gfx::Rect DrmCursor::GetCursorConfinedBounds() {
 
 void DrmCursor::InitializeOnEvdev() {
   DCHECK(evdev_thread_checker_.CalledOnValidThread());
+  base::AutoLock lock(lock_);
   proxy_->InitializeOnEvdevIfNecessary();
 }
 

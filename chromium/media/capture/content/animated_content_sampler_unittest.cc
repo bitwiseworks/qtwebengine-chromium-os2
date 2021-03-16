@@ -702,8 +702,8 @@ TEST_P(AnimatedContentSamplerParameterizedTest,
               max_acceptable_error.InMicroseconds());
 }
 
-INSTANTIATE_TEST_CASE_P(
-    ,
+INSTANTIATE_TEST_SUITE_P(
+    All,
     AnimatedContentSamplerParameterizedTest,
     ::testing::Values(
         // Typical frame rate content: Compositor runs at 60 Hz, capture at 30

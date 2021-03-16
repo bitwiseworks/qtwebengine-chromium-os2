@@ -20,8 +20,6 @@
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/memory/protected_memory.h"
-#include "base/memory/protected_memory_cfi.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/posix/unix_domain_socket.h"
 #include "base/rand_util.h"
@@ -111,7 +109,7 @@ static bool EnterSuidSandbox(sandbox::SetuidSandboxClient* setuid_sandbox,
     LOG(WARNING) << "You are using a wrong version of the setuid binary!\n"
                     "Please read "
                     "https://chromium.googlesource.com/chromium/src/+/master/"
-                    "docs/linux_suid_sandbox_development.md."
+                    "docs/linux/suid_sandbox_development.md."
                     "\n\n";
   }
 
@@ -188,7 +186,9 @@ bool ZygoteMain(
   // https://crbug.com/444900.
   bool using_layer2_sandbox = false;
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          service_manager::switches::kNoSandbox)) {
+          service_manager::switches::kNoSandbox) &&
+      !base::CommandLine::ForCurrentProcess()->HasSwitch(
+          service_manager::switches::kNoZygoteSandbox)) {
     // This will pre-initialize the various sandboxes that need it.
     using_layer2_sandbox = linux_sandbox->PreinitializeSandbox();
   }

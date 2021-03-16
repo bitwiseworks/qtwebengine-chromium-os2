@@ -60,6 +60,13 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AuthenticatorGetAssertionResponse
     return num_credentials_;
   }
 
+  const base::Optional<std::vector<uint8_t>>& android_client_data_ext() const {
+    return android_client_data_ext_;
+  }
+  void set_android_client_data_ext(const std::vector<uint8_t>& data) {
+    android_client_data_ext_ = data;
+  }
+
  private:
   base::Optional<PublicKeyCredentialDescriptor> credential_;
   AuthenticatorData authenticator_data_;
@@ -67,12 +74,12 @@ class COMPONENT_EXPORT(DEVICE_FIDO) AuthenticatorGetAssertionResponse
   base::Optional<PublicKeyCredentialUserEntity> user_entity_;
   base::Optional<uint8_t> num_credentials_;
 
+  // If not base::nullopt, the content of the googleAndroidClientData extension
+  // authenticator output.
+  base::Optional<std::vector<uint8_t>> android_client_data_ext_;
+
   DISALLOW_COPY_AND_ASSIGN(AuthenticatorGetAssertionResponse);
 };
-
-COMPONENT_EXPORT(DEVICE_FIDO)
-std::vector<uint8_t> GetSerializedCtapDeviceResponse(
-    const AuthenticatorGetAssertionResponse& response);
 
 }  // namespace device
 

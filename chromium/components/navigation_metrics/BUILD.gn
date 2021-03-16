@@ -10,19 +10,21 @@ static_library("navigation_metrics") {
 
   deps = [
     "//base",
+    "//base:i18n",
     "//components/dom_distiller/core:core",
+    "//components/profile_metrics",
+    "//components/url_formatter:url_formatter",
     "//url",
   ]
 }
 
 source_set("unit_tests") {
   testonly = true
-  sources = [
-    "navigation_metrics_unittest.cc",
-  ]
+  sources = [ "navigation_metrics_unittest.cc" ]
   deps = [
     ":navigation_metrics",
     "//base/test:test_support",
+    "//components/profile_metrics",
     "//testing/gtest",
     "//url",
   ]

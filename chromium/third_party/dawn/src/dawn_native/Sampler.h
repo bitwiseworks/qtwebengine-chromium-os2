@@ -15,8 +15,8 @@
 #ifndef DAWNNATIVE_SAMPLER_H_
 #define DAWNNATIVE_SAMPLER_H_
 
+#include "dawn_native/CachedObject.h"
 #include "dawn_native/Error.h"
-#include "dawn_native/ObjectBase.h"
 
 #include "dawn_native/dawn_platform.h"
 
@@ -26,9 +26,34 @@ namespace dawn_native {
 
     MaybeError ValidateSamplerDescriptor(DeviceBase* device, const SamplerDescriptor* descriptor);
 
-    class SamplerBase : public ObjectBase {
+    class SamplerBase : public CachedObject {
       public:
         SamplerBase(DeviceBase* device, const SamplerDescriptor* descriptor);
+        ~SamplerBase() override;
+
+        static SamplerBase* MakeError(DeviceBase* device);
+
+        // Functors necessary for the unordered_set<SamplerBase*>-based cache.
+        struct HashFunc {
+            size_t operator()(const SamplerBase* module) const;
+        };
+        struct EqualityFunc {
+            bool operator()(const SamplerBase* a, const SamplerBase* b) const;
+        };
+
+      private:
+        SamplerBase(DeviceBase* device, ObjectBase::ErrorTag tag);
+
+        // TODO(cwallez@chromium.org): Store a crypto hash of the items instead?
+        wgpu::AddressMode mAddressModeU;
+        wgpu::AddressMode mAddressModeV;
+        wgpu::AddressMode mAddressModeW;
+        wgpu::FilterMode mMagFilter;
+        wgpu::FilterMode mMinFilter;
+        wgpu::FilterMode mMipmapFilter;
+        float mLodMinClamp;
+        float mLodMaxClamp;
+        wgpu::CompareFunction mCompareFunction;
     };
 
 }  // namespace dawn_native

@@ -4,6 +4,7 @@
 
 #include "net/test/embedded_test_server/controllable_http_response.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -25,12 +26,12 @@ class ControllableHttpResponse::Interceptor : public HttpResponse {
 
  private:
   void SendResponse(const SendBytesCallback& send,
-                    const SendCompleteCallback& done) override {
+                    SendCompleteCallback done) override {
     controller_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&ControllableHttpResponse::OnRequest, controller_,
-                       base::ThreadTaskRunnerHandle::Get(), send, done,
-                       std::move(http_request_)));
+                       base::ThreadTaskRunnerHandle::Get(), send,
+                       std::move(done), std::move(http_request_)));
   }
 
   base::WeakPtr<ControllableHttpResponse> controller_;
@@ -44,8 +45,7 @@ class ControllableHttpResponse::Interceptor : public HttpResponse {
 ControllableHttpResponse::ControllableHttpResponse(
     EmbeddedTestServer* embedded_test_server,
     const std::string& relative_url,
-    bool relative_url_is_prefix)
-    : weak_ptr_factory_(this) {
+    bool relative_url_is_prefix) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   embedded_test_server->RegisterRequestHandler(base::BindRepeating(
       RequestHandler, weak_ptr_factory_.GetWeakPtr(),
@@ -96,7 +96,7 @@ void ControllableHttpResponse::Done() {
   DCHECK_EQ(State::READY_TO_SEND_DATA, state_) << "Done() called without any "
                                                   "opened connection. Did you "
                                                   "call WaitForRequest()?";
-  embedded_test_server_task_runner_->PostTask(FROM_HERE, done_);
+  embedded_test_server_task_runner_->PostTask(FROM_HERE, std::move(done_));
   state_ = State::DONE;
 }
 
@@ -104,14 +104,14 @@ void ControllableHttpResponse::OnRequest(
     scoped_refptr<base::SingleThreadTaskRunner>
         embedded_test_server_task_runner,
     const SendBytesCallback& send,
-    const SendCompleteCallback& done,
+    SendCompleteCallback done,
     std::unique_ptr<HttpRequest> http_request) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!embedded_test_server_task_runner_)
       << "A ControllableHttpResponse can only handle one request at a time";
   embedded_test_server_task_runner_ = embedded_test_server_task_runner;
   send_ = send;
-  done_ = done;
+  done_ = std::move(done);
   http_request_ = std::move(http_request);
   loop_.Quit();
 }

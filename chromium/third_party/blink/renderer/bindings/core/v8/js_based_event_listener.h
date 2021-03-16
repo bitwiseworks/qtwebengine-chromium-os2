@@ -7,6 +7,7 @@
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/events/event_listener.h"
+#include "third_party/blink/renderer/platform/bindings/v8_private_property.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "v8/include/v8.h"
 
@@ -36,7 +37,7 @@ class CORE_EXPORT JSBasedEventListener : public EventListener {
   // content attribute to get compiled, potentially unsuccessfully.
   //
   // Implements "get the current value of the event handler".
-  // https://html.spec.whatwg.org/multipage/webappapis.html#getting-the-current-value-of-the-event-handler
+  // https://html.spec.whatwg.org/C/#getting-the-current-value-of-the-event-handler
   // Returns v8::Null with firing error event instead of throwing an exception
   // on failing to compile the uncompiled script body in eventHandler's value.
   // Also, this can return empty because of crbug.com/881688 .
@@ -89,6 +90,8 @@ struct DowncastTraits<JSBasedEventListener> {
     return event_listener.IsJSBasedEventListener();
   }
 };
+
+extern const V8PrivateProperty::SymbolKey kPrivatePropertyGlobalEvent;
 
 }  // namespace blink
 

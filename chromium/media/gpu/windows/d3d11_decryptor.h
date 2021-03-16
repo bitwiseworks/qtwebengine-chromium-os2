@@ -23,16 +23,15 @@ class MEDIA_GPU_EXPORT D3D11Decryptor : public Decryptor {
   ~D3D11Decryptor() final;
 
   // Decryptor implementation.
-  void RegisterNewKeyCB(StreamType stream_type,
-                        const NewKeyCB& key_added_cb) final;
+  void RegisterNewKeyCB(StreamType stream_type, NewKeyCB key_added_cb) final;
   void Decrypt(StreamType stream_type,
                scoped_refptr<DecoderBuffer> encrypted,
-               const DecryptCB& decrypt_cb) final;
+               DecryptCB decrypt_cb) final;
   void CancelDecrypt(StreamType stream_type) final;
   void InitializeAudioDecoder(const AudioDecoderConfig& config,
-                              const DecoderInitCB& init_cb) final;
+                              DecoderInitCB init_cb) final;
   void InitializeVideoDecoder(const VideoDecoderConfig& config,
-                              const DecoderInitCB& init_cb) final;
+                              DecoderInitCB init_cb) final;
   void DecryptAndDecodeAudio(scoped_refptr<DecoderBuffer> encrypted,
                              const AudioDecodeCB& audio_decode_cb) final;
   void DecryptAndDecodeVideo(scoped_refptr<DecoderBuffer> encrypted,
@@ -87,7 +86,7 @@ class MEDIA_GPU_EXPORT D3D11Decryptor : public Decryptor {
   // to.
   ComPtr<ID3D11Buffer> cpu_accessible_buffer_;
 
-  base::WeakPtrFactory<D3D11Decryptor> weak_factory_;
+  base::WeakPtrFactory<D3D11Decryptor> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(D3D11Decryptor);
 };

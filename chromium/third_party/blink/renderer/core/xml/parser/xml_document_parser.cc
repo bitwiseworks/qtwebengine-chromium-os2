@@ -47,8 +47,9 @@
 #include "third_party/blink/renderer/core/dom/document_type.h"
 #include "third_party/blink/renderer/core/dom/processing_instruction.h"
 #include "third_party/blink/renderer/core/dom/transform_source.h"
+#include "third_party/blink/renderer/core/dom/xml_document.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/web_feature.h"
 #include "third_party/blink/renderer/core/html/html_html_element.h"
 #include "third_party/blink/renderer/core/html/html_template_element.h"
 #include "third_party/blink/renderer/core/html/parser/html_entity_parser.h"
@@ -64,7 +65,9 @@
 #include "third_party/blink/renderer/core/xml/parser/xml_document_parser_scope.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_parser_input.h"
 #include "third_party/blink/renderer/core/xmlns_names.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_initiator_type_names.h"
 #include "third_party/blink/renderer/platform/loader/fetch/raw_resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_error.h"
@@ -72,15 +75,13 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_response.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/utf8.h"
 #include "third_party/blink/renderer/platform/wtf/threading.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
-
-using namespace html_names;
 
 // FIXME: HTMLConstructionSite has a limit of 512, should these match?
 static const unsigned kMaxXMLTreeDepth = 5000;
@@ -129,8 +130,10 @@ class PendingStartElementNSCallback final
                                 const xmlChar** namespaces,
                                 int attribute_count,
                                 int defaulted_count,
-                                const xmlChar** attributes)
-      : local_name_(local_name),
+                                const xmlChar** attributes,
+                                TextPosition text_position)
+      : PendingCallback(text_position),
+        local_name_(local_name),
         prefix_(prefix),
         uri_(uri),
         namespace_count_(namespace_count),
@@ -185,8 +188,10 @@ class PendingStartElementNSCallback final
 class PendingEndElementNSCallback final
     : public XMLDocumentParser::PendingCallback {
  public:
-  explicit PendingEndElementNSCallback(TextPosition script_start_position)
-      : script_start_position_(script_start_position) {}
+  explicit PendingEndElementNSCallback(TextPosition script_start_position,
+                                       TextPosition text_position)
+      : PendingCallback(text_position),
+        script_start_position_(script_start_position) {}
 
   void Call(XMLDocumentParser* parser) override {
     parser->SetScriptStartPosition(script_start_position_);
@@ -200,8 +205,12 @@ class PendingEndElementNSCallback final
 class PendingCharactersCallback final
     : public XMLDocumentParser::PendingCallback {
  public:
-  PendingCharactersCallback(const xmlChar* chars, int length)
-      : chars_(xmlStrndup(chars, length)), length_(length) {}
+  PendingCharactersCallback(const xmlChar* chars,
+                            int length,
+                            TextPosition text_position)
+      : PendingCallback(text_position),
+        chars_(xmlStrndup(chars, length)),
+        length_(length) {}
 
   ~PendingCharactersCallback() override { xmlFree(chars_); }
 
@@ -217,8 +226,10 @@ class PendingCharactersCallback final
 class PendingProcessingInstructionCallback final
     : public XMLDocumentParser::PendingCallback {
  public:
-  PendingProcessingInstructionCallback(const String& target, const String& data)
-      : target_(target), data_(data) {}
+  PendingProcessingInstructionCallback(const String& target,
+                                       const String& data,
+                                       TextPosition text_position)
+      : PendingCallback(text_position), target_(target), data_(data) {}
 
   void Call(XMLDocumentParser* parser) override {
     parser->GetProcessingInstruction(target_, data_);
@@ -232,7 +243,9 @@ class PendingProcessingInstructionCallback final
 class PendingCDATABlockCallback final
     : public XMLDocumentParser::PendingCallback {
  public:
-  explicit PendingCDATABlockCallback(const String& text) : text_(text) {}
+  explicit PendingCDATABlockCallback(const String& text,
+                                     TextPosition text_position)
+      : PendingCallback(text_position), text_(text) {}
 
   void Call(XMLDocumentParser* parser) override { parser->CdataBlock(text_); }
 
@@ -242,7 +255,9 @@ class PendingCDATABlockCallback final
 
 class PendingCommentCallback final : public XMLDocumentParser::PendingCallback {
  public:
-  explicit PendingCommentCallback(const String& text) : text_(text) {}
+  explicit PendingCommentCallback(const String& text,
+                                  TextPosition text_position)
+      : PendingCallback(text_position), text_(text) {}
 
   void Call(XMLDocumentParser* parser) override { parser->Comment(text_); }
 
@@ -255,8 +270,12 @@ class PendingInternalSubsetCallback final
  public:
   PendingInternalSubsetCallback(const String& name,
                                 const String& external_id,
-                                const String& system_id)
-      : name_(name), external_id_(external_id), system_id_(system_id) {}
+                                const String& system_id,
+                                TextPosition text_position)
+      : PendingCallback(text_position),
+        name_(name),
+        external_id_(external_id),
+        system_id_(system_id) {}
 
   void Call(XMLDocumentParser* parser) override {
     parser->InternalSubset(name_, external_id_, system_id_);
@@ -272,25 +291,21 @@ class PendingErrorCallback final : public XMLDocumentParser::PendingCallback {
  public:
   PendingErrorCallback(XMLErrors::ErrorType type,
                        const xmlChar* message,
-                       OrdinalNumber line_number,
-                       OrdinalNumber column_number)
-      : type_(type),
-        message_(xmlStrdup(message)),
-        line_number_(line_number),
-        column_number_(column_number) {}
+                       TextPosition text_position)
+      : PendingCallback(text_position),
+        type_(type),
+        message_(xmlStrdup(message)) {}
 
   ~PendingErrorCallback() override { xmlFree(message_); }
 
   void Call(XMLDocumentParser* parser) override {
     parser->HandleError(type_, reinterpret_cast<char*>(message_),
-                        TextPosition(line_number_, column_number_));
+                        GetTextPosition());
   }
 
  private:
   XMLErrors::ErrorType type_;
   xmlChar* message_;
-  OrdinalNumber line_number_;
-  OrdinalNumber column_number_;
 };
 
 void XMLDocumentParser::PushCurrentNode(ContainerNode* n) {
@@ -362,7 +377,7 @@ bool XMLDocumentParser::UpdateLeafTextNode() {
   if (!leaf_text_node_)
     return true;
 
-  leaf_text_node_->appendData(
+  leaf_text_node_->ParserAppendData(
       ToString(buffered_text_.data(), buffered_text_.size()));
   buffered_text_.clear();
   leaf_text_node_ = nullptr;
@@ -401,10 +416,14 @@ void XMLDocumentParser::end() {
   // StopParsing() calls InsertErrorMessageBlock() if there was a parsing
   // error. Avoid showing the error message block twice.
   // TODO(crbug.com/898775): Rationalize this.
-  if (saw_error_ && !IsStopped())
+  if (saw_error_ && !IsStopped()) {
     InsertErrorMessageBlock();
-  else
+    // InsertErrorMessageBlock() may detach the document
+    if (IsDetached())
+      return;
+  } else {
     UpdateLeafTextNode();
+  }
 
   if (IsParsing())
     PrepareToStopParsing();
@@ -453,13 +472,13 @@ bool XMLDocumentParser::ParseDocumentFragment(
   // http://www.whatwg.org/specs/web-apps/current-work/multipage/the-xhtml-syntax.html#xml-fragment-parsing-algorithm
   // For now we have a hack for script/style innerHTML support:
   if (context_element &&
-      (context_element->HasLocalName(kScriptTag.LocalName()) ||
-       context_element->HasLocalName(kStyleTag.LocalName()))) {
+      (context_element->HasLocalName(html_names::kScriptTag.LocalName()) ||
+       context_element->HasLocalName(html_names::kStyleTag.LocalName()))) {
     fragment->ParserAppendChild(fragment->GetDocument().createTextNode(chunk));
     return true;
   }
 
-  XMLDocumentParser* parser = XMLDocumentParser::Create(
+  auto* parser = MakeGarbageCollected<XMLDocumentParser>(
       fragment, context_element, parser_content_policy);
   bool well_formed = parser->AppendFragmentSource(chunk);
 
@@ -473,7 +492,7 @@ bool XMLDocumentParser::ParseDocumentFragment(
 }
 
 static int g_global_descriptor = 0;
-static ThreadIdentifier g_libxml_loader_thread = 0;
+static base::PlatformThreadId g_libxml_loader_thread = 0;
 
 static int MatchFunc(const char*) {
   // Only match loads initiated due to uses of libxml2 from within
@@ -577,8 +596,9 @@ static bool ShouldAllowExternalLoad(const KURL& url) {
           XMLDocumentParserScope::current_document_->Url().ElidedString() +
           ". Domains, protocols and ports must match.\n";
       XMLDocumentParserScope::current_document_->AddConsoleMessage(
-          ConsoleMessage::Create(kSecurityMessageSource, kErrorMessageLevel,
-                                 message));
+          MakeGarbageCollected<ConsoleMessage>(
+              mojom::ConsoleMessageSource::kSecurity,
+              mojom::ConsoleMessageLevel::kError, message));
     }
     return false;
   }
@@ -605,8 +625,8 @@ static void* OpenFunc(const char* uri) {
     ResourceLoaderOptions options;
     options.initiator_info.name = fetch_initiator_type_names::kXml;
     FetchParameters params(ResourceRequest(url), options);
-    params.MutableResourceRequest().SetFetchRequestMode(
-        network::mojom::FetchRequestMode::kSameOrigin);
+    params.MutableResourceRequest().SetMode(
+        network::mojom::RequestMode::kSameOrigin);
     Resource* resource =
         RawResource::FetchSynchronously(params, document->Fetcher());
     if (!resource->ErrorOccurred()) {
@@ -683,12 +703,12 @@ scoped_refptr<XMLParserContext> XMLParserContext::CreateStringParser(
 scoped_refptr<XMLParserContext> XMLParserContext::CreateMemoryParser(
     xmlSAXHandlerPtr handlers,
     void* user_data,
-    const CString& chunk) {
+    const std::string& chunk) {
   InitializeLibXMLIfNecessary();
 
   // appendFragmentSource() checks that the length doesn't overflow an int.
   xmlParserCtxtPtr parser =
-      xmlCreateMemoryParserCtxt(chunk.data(), chunk.length());
+      xmlCreateMemoryParserCtxt(chunk.c_str(), chunk.length());
 
   if (!parser)
     return nullptr;
@@ -736,13 +756,14 @@ XMLDocumentParser::XMLDocumentParser(Document& document,
       requesting_script_(false),
       finish_called_(false),
       xml_errors_(&document),
-      script_runner_(frame_view ? XMLParserScriptRunner::Create(this)
-                                : nullptr),  // Don't execute scripts for
-                                             // documents without frames.
+      script_runner_(frame_view
+                         ? MakeGarbageCollected<XMLParserScriptRunner>(this)
+                         : nullptr),  // Don't execute scripts for
+                                      // documents without frames.
       script_start_position_(TextPosition::BelowRangePosition()),
       parsing_fragment_(false) {
   // This is XML being used as a document resource.
-  if (frame_view && document.IsXMLDocument())
+  if (frame_view && IsA<XMLDocument>(document))
     UseCounter::Count(document, WebFeature::kXMLDocument);
 }
 
@@ -766,7 +787,7 @@ XMLDocumentParser::XMLDocumentParser(DocumentFragment* fragment,
       script_start_position_(TextPosition::BelowRangePosition()),
       parsing_fragment_(true) {
   // Step 2 of
-  // https://html.spec.whatwg.org/multipage/xhtml.html#xml-fragment-parsing-algorithm
+  // https://html.spec.whatwg.org/C/#xml-fragment-parsing-algorithm
   // The following code collects prefix-namespace mapping in scope on
   // |parent_element|.
   HeapVector<Member<Element>> elem_stack;
@@ -806,7 +827,7 @@ XMLParserContext::~XMLParserContext() {
 
 XMLDocumentParser::~XMLDocumentParser() = default;
 
-void XMLDocumentParser::Trace(blink::Visitor* visitor) {
+void XMLDocumentParser::Trace(Visitor* visitor) {
   visitor->Trace(current_node_);
   visitor->Trace(current_node_stack_);
   visitor->Trace(leaf_text_node_);
@@ -947,7 +968,8 @@ void XMLDocumentParser::StartElementNs(const AtomicString& local_name,
     pending_callbacks_.push_back(
         std::make_unique<PendingStartElementNSCallback>(
             local_name, prefix, uri, nb_namespaces, libxml_namespaces,
-            nb_attributes, nb_defaulted, libxml_attributes));
+            nb_attributes, nb_defaulted, libxml_attributes,
+            script_start_position_));
     return;
   }
 
@@ -978,13 +1000,15 @@ void XMLDocumentParser::StartElementNs(const AtomicString& local_name,
                           prefix_to_namespace_map_, exception_state);
   AtomicString is;
   for (const auto& attr : prefixed_attributes) {
-    if (attr.GetName() == kIsAttr) {
+    if (attr.GetName() == html_names::kIsAttr) {
       is = attr.Value();
       break;
     }
   }
 
   QualifiedName q_name(prefix, local_name, adjusted_uri);
+  if (!prefix.IsEmpty() && adjusted_uri.IsEmpty())
+    q_name = QualifiedName(g_null_atom, prefix + ":" + local_name, g_null_atom);
   Element* new_element = current_node_->GetDocument().CreateElement(
       q_name,
       parsing_fragment_ ? CreateElementFlags::ByFragmentParser()
@@ -1015,15 +1039,16 @@ void XMLDocumentParser::StartElementNs(const AtomicString& local_name,
     return;
   }
 
-  if (auto* template_element = ToHTMLTemplateElementOrNull(*new_element))
+  if (auto* template_element = DynamicTo<HTMLTemplateElement>(*new_element))
     PushCurrentNode(template_element->content());
   else
     PushCurrentNode(new_element);
 
   // Note: |insertedByParser| will perform dispatching if this is an
   // HTMLHtmlElement.
-  if (IsHTMLHtmlElement(*new_element) && is_first_element) {
-    ToHTMLHtmlElement(*new_element).InsertedByParser();
+  auto* html_html_element = DynamicTo<HTMLHtmlElement>(new_element);
+  if (html_html_element && is_first_element) {
+    html_html_element->InsertedByParser();
   } else if (!parsing_fragment_ && is_first_element &&
              GetDocument()->GetFrame()) {
     GetDocument()->GetFrame()->Loader().DispatchDocumentElementAvailable();
@@ -1037,8 +1062,8 @@ void XMLDocumentParser::EndElementNs() {
     return;
 
   if (parser_paused_) {
-    pending_callbacks_.push_back(
-        std::make_unique<PendingEndElementNSCallback>(script_start_position_));
+    pending_callbacks_.push_back(std::make_unique<PendingEndElementNSCallback>(
+        script_start_position_, GetTextPosition()));
     return;
   }
 
@@ -1046,15 +1071,15 @@ void XMLDocumentParser::EndElementNs() {
     return;
 
   ContainerNode* n = current_node_;
-  if (current_node_->IsElementNode())
-    ToElement(n)->FinishParsingChildren();
-
-  if (!n->IsElementNode()) {
+  auto* element = DynamicTo<Element>(n);
+  if (!element) {
     PopCurrentNode();
     return;
   }
 
-  Element* element = ToElement(n);
+  element->FinishParsingChildren();
+
+  CheckIfBlockingStyleSheetAdded();
 
   if (element->IsScriptElement() &&
       !ScriptingContentIsAllowed(GetParserContentPolicy())) {
@@ -1107,8 +1132,8 @@ void XMLDocumentParser::Characters(const xmlChar* chars, int length) {
     return;
 
   if (parser_paused_) {
-    pending_callbacks_.push_back(
-        std::make_unique<PendingCharactersCallback>(chars, length));
+    pending_callbacks_.push_back(std::make_unique<PendingCharactersCallback>(
+        chars, length, GetTextPosition()));
     return;
   }
 
@@ -1127,8 +1152,8 @@ void XMLDocumentParser::GetError(XMLErrors::ErrorType type,
 
   if (parser_paused_) {
     pending_callbacks_.push_back(std::make_unique<PendingErrorCallback>(
-        type, reinterpret_cast<const xmlChar*>(formatted_message), LineNumber(),
-        ColumnNumber()));
+        type, reinterpret_cast<const xmlChar*>(formatted_message),
+        GetTextPosition()));
     return;
   }
 
@@ -1142,7 +1167,8 @@ void XMLDocumentParser::GetProcessingInstruction(const String& target,
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        std::make_unique<PendingProcessingInstructionCallback>(target, data));
+        std::make_unique<PendingProcessingInstructionCallback>(
+            target, data, GetTextPosition()));
     return;
   }
 
@@ -1161,6 +1187,8 @@ void XMLDocumentParser::GetProcessingInstruction(const String& target,
 
   if (pi->IsCSS())
     saw_css_ = true;
+
+  CheckIfBlockingStyleSheetAdded();
 
   if (!RuntimeEnabledFeatures::XSLTEnabled())
     return;
@@ -1184,7 +1212,7 @@ void XMLDocumentParser::CdataBlock(const String& text) {
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        std::make_unique<PendingCDATABlockCallback>(text));
+        std::make_unique<PendingCDATABlockCallback>(text, GetTextPosition()));
     return;
   }
 
@@ -1201,7 +1229,7 @@ void XMLDocumentParser::Comment(const String& text) {
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        std::make_unique<PendingCommentCallback>(text));
+        std::make_unique<PendingCommentCallback>(text, GetTextPosition()));
     return;
   }
 
@@ -1257,14 +1285,15 @@ void XMLDocumentParser::InternalSubset(const String& name,
 
   if (parser_paused_) {
     pending_callbacks_.push_back(
-        std::make_unique<PendingInternalSubsetCallback>(name, external_id,
-                                                        system_id));
+        std::make_unique<PendingInternalSubsetCallback>(
+            name, external_id, system_id, GetTextPosition()));
     return;
   }
 
-  if (GetDocument())
-    GetDocument()->ParserAppendChild(
-        DocumentType::Create(GetDocument(), name, external_id, system_id));
+  if (GetDocument()) {
+    GetDocument()->ParserAppendChild(MakeGarbageCollected<DocumentType>(
+        GetDocument(), name, external_id, system_id));
+  }
 }
 
 static inline XMLDocumentParser* GetParser(void* closure) {
@@ -1463,7 +1492,7 @@ static void ExternalSubsetHandler(void* closure,
                                   const xmlChar*,
                                   const xmlChar* external_id,
                                   const xmlChar*) {
-  // https://html.spec.whatwg.org/multipage/xhtml.html#parsing-xhtml-documents:named-character-references
+  // https://html.spec.whatwg.org/C/#parsing-xhtml-documents:named-character-references
   String ext_id = ToString(external_id);
   if (ext_id == "-//W3C//DTD XHTML 1.0 Transitional//EN" ||
       ext_id == "-//W3C//DTD XHTML 1.1//EN" ||
@@ -1487,7 +1516,7 @@ static void IgnorableWhitespaceHandler(void*, const xmlChar*, int) {
   // http://bugs.webkit.org/show_bug.cgi?id=5792
 }
 
-void XMLDocumentParser::InitializeParserContext(const CString& chunk) {
+void XMLDocumentParser::InitializeParserContext(const std::string& chunk) {
   xmlSAXHandler sax;
   memset(&sax, 0, sizeof(sax));
 
@@ -1521,7 +1550,6 @@ void XMLDocumentParser::InitializeParserContext(const CString& chunk) {
   if (parsing_fragment_) {
     context_ = XMLParserContext::CreateMemoryParser(&sax, this, chunk);
   } else {
-    DCHECK(!chunk.data());
     context_ = XMLParserContext::CreateStringParser(&sax, this);
   }
 }
@@ -1563,24 +1591,24 @@ xmlDocPtr XmlDocPtrForString(Document* document,
   // document results in good error messages.
   XMLDocumentParserScope scope(document, ErrorFunc, nullptr);
   XMLParserInput input(source);
-  return xmlReadMemory(input.Data(), input.size(), url.Latin1().data(),
+  return xmlReadMemory(input.Data(), input.size(), url.Latin1().c_str(),
                        input.Encoding(), XSLT_PARSE_OPTIONS);
 }
 
 OrdinalNumber XMLDocumentParser::LineNumber() const {
+  if (callback_)
+    return callback_->LineNumber();
   return OrdinalNumber::FromOneBasedInt(Context() ? Context()->input->line : 1);
 }
 
 OrdinalNumber XMLDocumentParser::ColumnNumber() const {
+  if (callback_)
+    return callback_->ColumnNumber();
   return OrdinalNumber::FromOneBasedInt(Context() ? Context()->input->col : 1);
 }
 
 TextPosition XMLDocumentParser::GetTextPosition() const {
-  xmlParserCtxtPtr context = this->Context();
-  if (!context)
-    return TextPosition::MinimumPosition();
-  return TextPosition(OrdinalNumber::FromOneBasedInt(context->input->line),
-                      OrdinalNumber::FromOneBasedInt(context->input->col));
+  return TextPosition(LineNumber(), ColumnNumber());
 }
 
 void XMLDocumentParser::StopParsing() {
@@ -1600,13 +1628,16 @@ void XMLDocumentParser::ResumeParsing() {
 
   // First, execute any pending callbacks
   while (!pending_callbacks_.IsEmpty()) {
-    std::unique_ptr<PendingCallback> callback = pending_callbacks_.TakeFirst();
-    callback->Call(this);
+    callback_ = pending_callbacks_.TakeFirst();
+    callback_->Call(this);
 
     // A callback paused the parser
-    if (parser_paused_)
+    if (parser_paused_) {
+      callback_.reset();
       return;
+    }
   }
+  callback_.reset();
 
   // Then, write any pending data
   SegmentedString rest = pending_src_;
@@ -1615,6 +1646,9 @@ void XMLDocumentParser::ResumeParsing() {
   // In any case, the XML parser runs on the main thread and it's OK if
   // the passed string has more than one reference.
   Append(rest.ToString().Impl());
+
+  if (IsDetached())
+    return;
 
   // Finally, if finish() has been called and write() didn't result
   // in any further callbacks being queued, call end()
@@ -1626,7 +1660,7 @@ bool XMLDocumentParser::AppendFragmentSource(const String& chunk) {
   DCHECK(!context_);
   DCHECK(parsing_fragment_);
 
-  CString chunk_as_utf8 = chunk.Utf8();
+  std::string chunk_as_utf8 = chunk.Utf8();
 
   // libxml2 takes an int for a length, and therefore can't handle XML chunks
   // larger than 2 GiB.
@@ -1643,9 +1677,9 @@ bool XMLDocumentParser::AppendFragmentSource(const String& chunk) {
   // XMLDocumentParserQt has a similar check (m_stream.error() ==
   // QXmlStreamReader::PrematureEndOfDocumentError) in doEnd(). Check if all
   // the chunk has been processed.
-  long bytes_processed = xmlByteConsumed(Context());
+  int64_t bytes_processed = xmlByteConsumed(Context());
   if (bytes_processed == -1 ||
-      static_cast<unsigned long>(bytes_processed) != chunk_as_utf8.length()) {
+      bytes_processed != static_cast<int64_t>(chunk_as_utf8.length())) {
     // FIXME: I don't believe we can hit this case without also having seen
     // an error or a null byte. If we hit this DCHECK, we've found a test
     // case which demonstrates the need for this code.
@@ -1656,6 +1690,32 @@ bool XMLDocumentParser::AppendFragmentSource(const String& chunk) {
 
   // No error if the chunk is well formed or it is not but we have no error.
   return Context()->wellFormed || !xmlCtxtGetLastError(Context());
+}
+
+void XMLDocumentParser::DidAddPendingParserBlockingStylesheet() {
+  if (!context_)
+    return;
+  added_pending_parser_blocking_stylesheet_ = true;
+}
+
+void XMLDocumentParser::DidLoadAllPendingParserBlockingStylesheets() {
+  added_pending_parser_blocking_stylesheet_ = false;
+  waiting_for_stylesheets_ = false;
+}
+
+void XMLDocumentParser::CheckIfBlockingStyleSheetAdded() {
+  if (!added_pending_parser_blocking_stylesheet_)
+    return;
+  added_pending_parser_blocking_stylesheet_ = false;
+  waiting_for_stylesheets_ = true;
+  PauseParsing();
+}
+
+void XMLDocumentParser::ExecuteScriptsWaitingForResources() {
+  if (!IsWaitingForScripts() && !waiting_for_stylesheets_ && parser_paused_ &&
+      IsParsing()) {
+    ResumeParsing();
+  }
 }
 
 // --------------------------------

@@ -6,12 +6,15 @@
 #include <iostream>
 
 #include "src/torque/declarable.h"
+#include "src/torque/global-context.h"
+#include "src/torque/type-inference.h"
+#include "src/torque/type-visitor.h"
 
 namespace v8 {
 namespace internal {
 namespace torque {
 
-DEFINE_CONTEXTUAL_VARIABLE(CurrentScope);
+DEFINE_CONTEXTUAL_VARIABLE(CurrentScope)
 
 std::ostream& operator<<(std::ostream& os, const QualifiedName& name) {
   for (const std::string& qualifier : name.namespace_qualification) {
@@ -53,46 +56,114 @@ std::ostream& operator<<(std::ostream& os, const RuntimeFunction& b) {
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const Generic& g) {
+std::ostream& operator<<(std::ostream& os, const GenericCallable& g) {
   os << "generic " << g.name() << "<";
-  PrintCommaSeparatedList(os, g.declaration()->generic_parameters);
+  PrintCommaSeparatedList(os, g.generic_parameters(),
+                          [](const GenericParameter& identifier) {
+                            return identifier.name->value;
+                          });
   os << ">";
 
   return os;
 }
 
-base::Optional<const Type*> Generic::InferTypeArgument(
-    size_t i, const TypeVector& arguments) {
-  const std::string type_name = declaration()->generic_parameters[i];
-  const std::vector<TypeExpression*>& parameters =
-      declaration()->callable->signature->parameters.types;
-  size_t j = declaration()->callable->signature->parameters.implicit_count;
-  for (size_t i = 0; i < arguments.size() && j < parameters.size(); ++i, ++j) {
-    BasicTypeExpression* basic =
-        BasicTypeExpression::DynamicCast(parameters[j]);
-    if (basic && basic->namespace_qualification.empty() &&
-        !basic->is_constexpr && basic->name == type_name) {
-      return arguments[i];
+SpecializationRequester::SpecializationRequester(SourcePosition position,
+                                                 Scope* scope, std::string name)
+    : position(position), name(std::move(name)) {
+  // Skip scopes that are not related to template specializations, they might be
+  // stack-allocated and not live for long enough.
+  while (scope && scope->GetSpecializationRequester().IsNone())
+    scope = scope->ParentScope();
+  this->scope = scope;
+}
+
+base::Optional<std::string> TypeConstraint::IsViolated(const Type* type) const {
+  if (upper_bound && !type->IsSubtypeOf(*upper_bound)) {
+    return {ToString("expected ", *type, " to be a subtype of ", *upper_bound)};
+  }
+  return base::nullopt;
+}
+
+base::Optional<std::string> FindConstraintViolation(
+    const std::vector<const Type*>& types,
+    const std::vector<TypeConstraint>& constraints) {
+  DCHECK_EQ(constraints.size(), types.size());
+  for (size_t i = 0; i < types.size(); ++i) {
+    if (auto violation = constraints[i].IsViolated(types[i])) {
+      return {"Could not instantiate generic, " + *violation + "."};
     }
   }
   return base::nullopt;
 }
 
-base::Optional<TypeVector> Generic::InferSpecializationTypes(
-    const TypeVector& explicit_specialization_types,
-    const TypeVector& arguments) {
-  TypeVector result = explicit_specialization_types;
-  size_t type_parameter_count = declaration()->generic_parameters.size();
-  if (explicit_specialization_types.size() > type_parameter_count) {
-    return base::nullopt;
-  }
-  for (size_t i = explicit_specialization_types.size();
-       i < type_parameter_count; ++i) {
-    base::Optional<const Type*> inferred = InferTypeArgument(i, arguments);
-    if (!inferred) return base::nullopt;
-    result.push_back(*inferred);
+std::vector<TypeConstraint> ComputeConstraints(
+    Scope* scope, const GenericParameters& parameters) {
+  CurrentScope::Scope scope_scope(scope);
+  std::vector<TypeConstraint> result;
+  for (const GenericParameter& parameter : parameters) {
+    if (parameter.constraint) {
+      result.push_back(TypeConstraint::SubtypeConstraint(
+          TypeVisitor::ComputeType(*parameter.constraint)));
+    } else {
+      result.push_back(TypeConstraint::Unconstrained());
+    }
   }
   return result;
+}
+
+TypeArgumentInference GenericCallable::InferSpecializationTypes(
+    const TypeVector& explicit_specialization_types,
+    const TypeVector& arguments) {
+  size_t implicit_count = declaration()->parameters.implicit_count;
+  const std::vector<TypeExpression*>& parameters =
+      declaration()->parameters.types;
+  std::vector<TypeExpression*> explicit_parameters(
+      parameters.begin() + implicit_count, parameters.end());
+
+  CurrentScope::Scope generic_scope(ParentScope());
+  TypeArgumentInference inference(generic_parameters(),
+                                  explicit_specialization_types,
+                                  explicit_parameters, arguments);
+  if (!inference.HasFailed()) {
+    if (auto violation =
+            FindConstraintViolation(inference.GetResult(), Constraints())) {
+      inference.Fail(*violation);
+    }
+  }
+  return inference;
+}
+
+base::Optional<Statement*> GenericCallable::CallableBody() {
+  if (auto* decl = TorqueMacroDeclaration::DynamicCast(declaration())) {
+    return decl->body;
+  } else if (auto* decl =
+                 TorqueBuiltinDeclaration::DynamicCast(declaration())) {
+    return decl->body;
+  } else {
+    return base::nullopt;
+  }
+}
+
+bool Namespace::IsDefaultNamespace() const {
+  return this == GlobalContext::GetDefaultNamespace();
+}
+
+bool Namespace::IsTestNamespace() const { return name() == kTestNamespaceName; }
+
+const Type* TypeAlias::Resolve() const {
+  if (!type_) {
+    CurrentScope::Scope scope_activator(ParentScope());
+    CurrentSourcePosition::Scope position_activator(Position());
+    TypeDeclaration* decl = *delayed_;
+    if (being_resolved_) {
+      std::stringstream s;
+      s << "Cannot create type " << decl->name->value
+        << " due to circular dependencies.";
+      ReportError(s.str());
+    }
+    type_ = TypeVisitor::ComputeType(decl);
+  }
+  return *type_;
 }
 
 }  // namespace torque

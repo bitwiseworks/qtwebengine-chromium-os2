@@ -5,7 +5,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,7 +24,6 @@
 // This code is compiled directly on many platforms, including client
 // platforms like Windows, Mac, and embedded systems.  Before making
 // any changes here, make sure that you're not breaking any platforms.
-//
 
 #ifndef ABSL_BASE_MACROS_H_
 #define ABSL_BASE_MACROS_H_
@@ -32,6 +31,9 @@
 #include <cassert>
 #include <cstddef>
 
+#include "absl/base/attributes.h"
+#include "absl/base/config.h"
+#include "absl/base/optimization.h"
 #include "absl/base/port.h"
 
 // ABSL_ARRAYSIZE()
@@ -43,12 +45,14 @@
   (sizeof(::absl::macros_internal::ArraySizeHelper(array)))
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace macros_internal {
 // Note: this internal template function declaration is used by ABSL_ARRAYSIZE.
 // The function doesn't need a definition, as we only use its type.
 template <typename T, size_t N>
 auto ArraySizeHelper(const T (&array)[N]) -> char (&)[N];
 }  // namespace macros_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // kLinkerInitialized
@@ -72,11 +76,13 @@ auto ArraySizeHelper(const T (&array)[N]) -> char (&)[N];
 //       // Invocation
 //       static MyClass my_global(absl::base_internal::kLinkerInitialized);
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace base_internal {
 enum LinkerInitialized {
   kLinkerInitialized = 0,
 };
 }  // namespace base_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // ABSL_FALLTHROUGH_INTENDED
@@ -107,7 +113,7 @@ enum LinkerInitialized {
 // when  performing switch labels fall-through diagnostic
 // (`-Wimplicit-fallthrough`). See clang documentation on language extensions
 // for details:
-// http://clang.llvm.org/docs/AttributeReference.html#fallthrough-clang-fallthrough
+// https://clang.llvm.org/docs/AttributeReference.html#fallthrough-clang-fallthrough
 //
 // When used with unsupported compilers, the ABSL_FALLTHROUGH_INTENDED macro
 // has no effect on diagnostics. In any case this macro has no effect on runtime
@@ -137,10 +143,15 @@ enum LinkerInitialized {
 // declarations. The macro argument is used as a custom diagnostic message (e.g.
 // suggestion of a better alternative).
 //
-// Example:
+// Examples:
 //
 //   class ABSL_DEPRECATED("Use Bar instead") Foo {...};
-//   ABSL_DEPRECATED("Use Baz instead") void Bar() {...}
+//
+//   ABSL_DEPRECATED("Use Baz() instead") void Bar() {...}
+//
+//   template <typename T>
+//   ABSL_DEPRECATED("Use DoThat() instead")
+//   void DoThis();
 //
 // Every usage of a deprecated entity will trigger a warning when compiled with
 // clang's `-Wdeprecated-declarations` option. This option is turned off by
@@ -158,7 +169,7 @@ enum LinkerInitialized {
 // Used on a function overload to trap bad calls: any call that matches the
 // overload will cause a compile-time error. This macro uses a clang-specific
 // "enable_if" attribute, as described at
-// http://clang.llvm.org/docs/AttributeReference.html#enable-if
+// https://clang.llvm.org/docs/AttributeReference.html#enable-if
 //
 // Overloads which use this macro should be bracketed by
 // `#ifdef ABSL_BAD_CALL_IF`.
@@ -171,12 +182,9 @@ enum LinkerInitialized {
 //     ABSL_BAD_CALL_IF(c <= -1 || c > 255,
 //                       "'c' must have the value of an unsigned char or EOF");
 //   #endif // ABSL_BAD_CALL_IF
-
-#if defined(__clang__)
-# if __has_attribute(enable_if)
-#  define ABSL_BAD_CALL_IF(expr, msg) \
-    __attribute__((enable_if(expr, "Bad call trap"), unavailable(msg)))
-# endif
+#if ABSL_HAVE_ATTRIBUTE(enable_if)
+#define ABSL_BAD_CALL_IF(expr, msg) \
+  __attribute__((enable_if(expr, "Bad call trap"), unavailable(msg)))
 #endif
 
 // ABSL_ASSERT()
@@ -192,11 +200,47 @@ enum LinkerInitialized {
 // This macro is inspired by
 // https://akrzemi1.wordpress.com/2017/05/18/asserts-in-constexpr-functions/
 #if defined(NDEBUG)
-#define ABSL_ASSERT(expr) (false ? (void)(expr) : (void)0)
+#define ABSL_ASSERT(expr) \
+  (false ? static_cast<void>(expr) : static_cast<void>(0))
 #else
-#define ABSL_ASSERT(expr)              \
-  (ABSL_PREDICT_TRUE((expr)) ? (void)0 \
+#define ABSL_ASSERT(expr)                           \
+  (ABSL_PREDICT_TRUE((expr)) ? static_cast<void>(0) \
                              : [] { assert(false && #expr); }())  // NOLINT
+#endif
+
+// `ABSL_INTERNAL_HARDENING_ABORT()` controls how `ABSL_HARDENING_ASSERT()`
+// aborts the program in release mode (when NDEBUG is defined). The
+// implementation should abort the program as quickly as possible and ideally it
+// should not be possible to ignore the abort request.
+#if (ABSL_HAVE_BUILTIN(__builtin_trap) &&         \
+     ABSL_HAVE_BUILTIN(__builtin_unreachable)) || \
+    (defined(__GNUC__) && !defined(__clang__))
+#define ABSL_INTERNAL_HARDENING_ABORT() \
+  do {                                  \
+    __builtin_trap();                   \
+    __builtin_unreachable();            \
+  } while (false)
+#else
+#define ABSL_INTERNAL_HARDENING_ABORT() abort()
+#endif
+
+// ABSL_HARDENING_ASSERT()
+//
+// `ABSL_HARDENING_ASSERT()` is like `ABSL_ASSERT()`, but used to implement
+// runtime assertions that should be enabled in hardened builds even when
+// `NDEBUG` is defined.
+//
+// When `NDEBUG` is not defined, `ABSL_HARDENING_ASSERT()` is identical to
+// `ABSL_ASSERT()`.
+//
+// See `ABSL_OPTION_HARDENED` in `absl/base/options.h` for more information on
+// hardened mode.
+#if ABSL_OPTION_HARDENED == 1 && defined(NDEBUG)
+#define ABSL_HARDENING_ASSERT(expr)                 \
+  (ABSL_PREDICT_TRUE((expr)) ? static_cast<void>(0) \
+                             : [] { ABSL_INTERNAL_HARDENING_ABORT(); }())
+#else
+#define ABSL_HARDENING_ASSERT(expr) ABSL_ASSERT(expr)
 #endif
 
 #ifdef ABSL_HAVE_EXCEPTIONS

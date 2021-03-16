@@ -8,7 +8,16 @@
 #include "testing/xfa_js_embedder_test.h"
 #include "xfa/fxfa/cxfa_eventparam.h"
 
-class CFXJSE_FormCalcContextEmbedderTest : public XFAJSEmbedderTest {};
+class CFXJSE_FormCalcContextEmbedderTest : public XFAJSEmbedderTest {
+ public:
+  CFXJSE_FormCalcContextEmbedderTest() = default;
+  ~CFXJSE_FormCalcContextEmbedderTest() override = default;
+
+ protected:
+  bool ExecuteExpectNull(ByteStringView input) {
+    return Execute(input) && GetValue()->IsNull();
+  }
+};
 
 // TODO(dsinclair): Comment out tests are broken and need to be fixed.
 
@@ -1063,6 +1072,7 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, Decode) {
       {R"(Decode("abc&NoneSuchButVeryLongIndeed;", "html"))", "abc"},
       {R"(Decode("&#x0041;&AElig;&Aacute;", "html"))", "A\xC3\x86\xC3\x81"},
       {R"(Decode("xyz&#", "html"))", "xyz"},
+      {R"(Decode("|&zzzzzz;|", "html"))", "||"},
 
       // XML
       {R"(Decode("", "xml"))", ""},
@@ -1070,6 +1080,7 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, Decode) {
       {R"(Decode("abc&nonesuchbutverylongindeed;", "xml"))", "abc"},
       {R"(Decode("&quot;&#x45;&lt;&gt;[].&apos;", "xml"))", "\"E<>[].'"},
       {R"(Decode("xyz&#", "xml"))", "xyz"},
+      {R"(Decode("|&zzzzzz;|", "xml"))", "||"},
 
       // URL
       {R"(Decode("", "url"))", ""},
@@ -1091,16 +1102,31 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, Decode) {
   }
 }
 
-TEST_F(CFXJSE_FormCalcContextEmbedderTest, DISABLED_Encode) {
+TEST_F(CFXJSE_FormCalcContextEmbedderTest, Encode) {
   ASSERT_TRUE(OpenDocument("simple_xfa.pdf"));
 
   struct {
     const char* program;
     const char* result;
   } tests[] = {
-      {"Encode(\"\"\"hello, world!\"\"\", \"url\")",
-       "%%22hello,%%20world!%%22"},
-      {"Encode(\"ÁÂÃÄÅÆ\", \"html\")", "&#xc1;&#Xc2;&#Xc3;&#xc4;&#xc5;&#xc6;"}};
+    {"Encode(\"X/~&^*<=>?|\")", "X%2f%7e%26%5e*%3c%3d%3e%3f%7c"},
+    {"Encode(\"X/~&^*<=>?|\", \"mbogo\")", "X%2f%7e%26%5e*%3c%3d%3e%3f%7c"},
+    {"Encode(\"X/~&^*<=>?|\", \"url\")", "X%2f%7e%26%5e*%3c%3d%3e%3f%7c"},
+    {"Encode(\"X/~&^*<=>?|\", \"xml\")", "X/~&amp;^*&lt;=&gt;?|"},
+    {"Encode(\"X/~&^*<=>?|\", \"html\")", "X/~&amp;^*&lt;=&gt;?|"},
+
+    {"Encode(\"\\u0022\\u00f5\\ufed0\", \"url\")", "%22%f5%fe%d0"},
+    {"Encode(\"\\u0022\\u00f4\\ufed0\", \"xml\")", "&quot;&#xf4;&#xfed0;"},
+    {"Encode(\"\\u0022\\u00f5\\ufed0\", \"html\")", "&quot;&otilde;&#xfed0;"},
+
+#if !defined(OS_WIN)
+    // Windows wchar_t isn't wide enough to handle these anyways.
+    // TODO(tsepez): fix surrogate encodings.
+    {"Encode(\"\\uD83D\\uDCA9\", \"url\")", "%01%f4%a9"},
+    {"Encode(\"\\uD83D\\uDCA9\", \"xml\")", ""},
+    {"Encode(\"\\uD83D\\uDCA9\", \"html\")", ""},
+#endif  // !defined(OS_WIN)
+  };
 
   for (size_t i = 0; i < FX_ArraySize(tests); ++i) {
     EXPECT_TRUE(Execute(tests[i].program));
@@ -1375,21 +1401,46 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, Stuff) {
 TEST_F(CFXJSE_FormCalcContextEmbedderTest, Substr) {
   ASSERT_TRUE(OpenDocument("simple_xfa.pdf"));
 
+  // Test wrong number of parameters.
+  EXPECT_FALSE(Execute("Substr()"));
+  EXPECT_FALSE(Execute("Substr(1)"));
+  EXPECT_FALSE(Execute("Substr(1, 2)"));
+  EXPECT_FALSE(Execute("Substr(1, 2, 3, 4)"));
+
+  // Test null input.
+  EXPECT_TRUE(ExecuteExpectNull("Substr(null, 0, 4)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(\"ABCDEFG\", null, 4)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(\"ABCDEFG\", 0, null)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(null, null, 4)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(null, 0, null)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(\"ABCDEFG\", null, null)"));
+  EXPECT_TRUE(ExecuteExpectNull("Substr(null, null, null)"));
+
   struct {
     const char* program;
     const char* result;
-  } tests[] = {{"Substr(\"ABCDEFG\", 3, 4)", "CDEF"},
-               {"Substr(3214, 2, 1)", "2"},
-               {"Substr(\"ABCDEFG\", 5, 0)", ""},
-               {"Substr(\"21 Waterloo St.\", 4, 5)", "Water"}};
+  } static const kTests[] = {{"Substr(\"ABCDEFG\", -1, 4)", "ABCD"},
+                             {"Substr(\"ABCDEFG\", 0, 4)", "ABCD"},
+                             {"Substr(\"ABCDEFG\", 3, 4)", "CDEF"},
+                             {"Substr(\"ABCDEFG\", 4, 4)", "DEFG"},
+                             {"Substr(\"ABCDEFG\", 5, 4)", "EFG"},
+                             {"Substr(\"ABCDEFG\", 6, 4)", "FG"},
+                             {"Substr(\"ABCDEFG\", 7, 4)", "G"},
+                             {"Substr(\"ABCDEFG\", 8, 4)", ""},
+                             {"Substr(\"ABCDEFG\", 5, -1)", ""},
+                             {"Substr(\"ABCDEFG\", 5, 0)", ""},
+                             {"Substr(\"ABCDEFG\", 5, 1)", "E"},
+                             {"Substr(\"abcdefghi\", 5, 3)", "efg"},
+                             {"Substr(3214, 2, 1)", "2"},
+                             {"Substr(\"21 Waterloo St.\", 4, 5)", "Water"}};
 
-  for (size_t i = 0; i < FX_ArraySize(tests); ++i) {
-    EXPECT_TRUE(Execute(tests[i].program));
+  for (const auto& test : kTests) {
+    EXPECT_TRUE(Execute(test.program));
 
     CFXJSE_Value* value = GetValue();
     EXPECT_TRUE(value->IsString());
-    EXPECT_STREQ(tests[i].result, value->ToString().c_str())
-        << "Program: " << tests[i].program << " Result: '" << value->ToString()
+    EXPECT_STREQ(test.result, value->ToString().c_str())
+        << "Program: " << test.program << " Result: '" << value->ToString()
         << "'";
   }
 }
@@ -1466,7 +1517,10 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, InvalidFunctions) {
   ASSERT_TRUE(OpenDocument("simple_xfa.pdf"));
 
   const char* const tests[] = {
-      "F()", "()", "()()()", "Round(2.0)()",
+      "F()",
+      "()",
+      "()()()",
+      "Round(2.0)()",
   };
 
   for (size_t i = 0; i < FX_ArraySize(tests); ++i) {
@@ -1645,4 +1699,11 @@ TEST_F(CFXJSE_FormCalcContextEmbedderTest, ComplexTextChangeEvent) {
   EXPECT_EQ(1, params.m_iSelEnd);
 
   context->SetEventParam(nullptr);
+}
+
+// Should not crash.
+TEST_F(CFXJSE_FormCalcContextEmbedderTest, BUG_1223) {
+  ASSERT_TRUE(OpenDocument("simple_xfa.pdf"));
+
+  EXPECT_FALSE(Execute("!.somExpression=0"));
 }

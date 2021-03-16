@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "google_apis/gaia/core_account_id.h"
+
 class GURL;
 
 namespace gaia {
@@ -16,7 +18,7 @@ namespace gaia {
 struct ListedAccount {
   // The account's ID, as per Chrome, will be determined in the
   // CookieManagerService.
-  std::string id;
+  CoreAccountId id;
   std::string email;
   std::string gaia_id;
   std::string raw_email;
@@ -49,6 +51,10 @@ bool AreEmailsSame(const std::string& email1, const std::string& email2);
 // Extract the domain part from the canonical form of the given email.
 std::string ExtractDomainName(const std::string& email);
 
+// Returns whether the user's email is Google internal. This check is meant
+// to be used sparingly since it ship Googler-only code to all users.
+bool IsGoogleInternalAccountEmail(const std::string& email);
+
 bool IsGaiaSignonRealm(const GURL& url);
 
 // Parses JSON data returned by /ListAccounts call, returning a vector of
@@ -60,6 +66,15 @@ bool IsGaiaSignonRealm(const GURL& url);
 bool ParseListAccountsData(const std::string& data,
                            std::vector<ListedAccount>* accounts,
                            std::vector<ListedAccount>* signed_out_accounts);
+
+// Parses base64url encoded protobuf message returned by the remote consent
+// flow, returning whether the consent was approved and the gaia id of the user
+// that was shown the consent page.
+// Returns false if the method failed to decode the protobuf.
+// |approved| and |gaia_id| must not be null.
+bool ParseOAuth2MintTokenConsentResult(const std::string& consent_result,
+                                       bool* approved,
+                                       std::string* gaia_id);
 
 }  // namespace gaia
 

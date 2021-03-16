@@ -57,7 +57,7 @@
 **      lsm1_value BLOB HIDDEN
 **    ) WITHOUT ROWID;
 **
-**
+** 
 **
 ** INTERNALS
 **
@@ -287,7 +287,7 @@ static int lsm1Connect(
     lsm1VblobAppendText(&sql, argv[i]);
     pNew->nVal++;
   }
-  lsm1VblobAppendText(&sql,
+  lsm1VblobAppendText(&sql, 
       ", lsm1_command HIDDEN"
       ", lsm1_key HIDDEN"
       ", lsm1_value HIDDEN) WITHOUT ROWID");
@@ -614,7 +614,7 @@ static int lsm1DecodeValues(lsm1_cursor *pCur){
     if( eType==0 ){
       pCur->aiOfst[i] = (u32)(v/6);
       pCur->aiLen[i] = 0;
-    }else{
+    }else{ 
       pCur->aiOfst[i] = n;
       n += (pCur->aiLen[i] = (u32)(v/6));
     }
@@ -738,7 +738,7 @@ static void lsm1KeyFromValue(
 /* Move to the first row to return.
 */
 static int lsm1Filter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -842,7 +842,7 @@ static int lsm1BestIndex(
 
   const struct sqlite3_index_constraint *pConstraint;
   pConstraint = pIdxInfo->aConstraint;
-  for(i=0; i<pIdxInfo->nConstraint && idxNum<16; i++, pConstraint++){
+  for(i=0; i<pIdxInfo->nConstraint; i++, pConstraint++){
     if( pConstraint->usable==0 ) continue;
     if( pConstraint->iColumn!=0 ) continue;
     switch( pConstraint->op ){
@@ -1004,7 +1004,7 @@ int lsm1Update(
   rc = lsm_insert(p->pDb, pKey, nKey, val.a, val.n);
   sqlite3_free(val.a);
   return rc==LSM_OK ? SQLITE_OK : SQLITE_ERROR;
-}
+}      
 
 /* Begin a transaction
 */
@@ -1037,7 +1037,7 @@ static int lsm1Rollback(sqlite3_vtab *pVtab){
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** generate_lsm1 virtual table.
 */
 static sqlite3_module lsm1Module = {
@@ -1068,8 +1068,8 @@ static sqlite3_module lsm1Module = {
 __declspec(dllexport)
 #endif
 int sqlite3_lsm_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

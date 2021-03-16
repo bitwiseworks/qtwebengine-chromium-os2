@@ -4,19 +4,23 @@
 
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader.h"
 
+#include "third_party/blink/public/common/features.h"
+#include "third_party/blink/renderer/core/dom/dom_implementation.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_fetcher.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader_client.h"
 #include "third_party/blink/renderer/core/loader/modulescript/module_script_loader_registry.h"
+#include "third_party/blink/renderer/core/script/js_module_script.h"
 #include "third_party/blink/renderer/core/script/modulator.h"
-#include "third_party/blink/renderer/core/script/module_script.h"
+#include "third_party/blink/renderer/core/script/value_wrapper_synthetic_module_script.h"
 #include "third_party/blink/renderer/platform/loader/fetch/fetch_client_settings_object_snapshot.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher_properties.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loading_log.h"
+#include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
@@ -93,7 +97,7 @@ void ModuleScriptLoader::Fetch(
                         level, custom_fetch_type);
 }
 
-// https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
+// <specdef href="https://html.spec.whatwg.org/C/#fetch-a-single-module-script">
 void ModuleScriptLoader::FetchInternal(
     const ModuleScriptFetchRequest& module_request,
     ResourceFetcher* fetch_client_settings_object_fetcher,
@@ -103,41 +107,44 @@ void ModuleScriptLoader::FetchInternal(
       fetch_client_settings_object_fetcher->GetProperties()
           .GetFetchClientSettingsObject();
 
-  // Step 4. "Set moduleMap[url] to "fetching"." [spec text]
+  // <spec step="4">Set moduleMap[url] to "fetching".</spec>
   AdvanceState(State::kFetching);
 
-  // Step 5. "Let request be a new request whose url is url, ..." [spec text]
+  // <spec step="5">Let request be a new request whose url is url, ...</spec>
   ResourceRequest resource_request(module_request.Url());
 #if DCHECK_IS_ON()
   url_ = module_request.Url();
 #endif
 
-  // "destination is destination," [spec text]
-  resource_request.SetRequestContext(module_request.Destination());
+  // <spec step="5">... destination is destination, ...</spec>
+  resource_request.SetRequestContext(module_request.ContextType());
+  resource_request.SetRequestDestination(module_request.Destination());
 
   ResourceLoaderOptions options;
 
-  // TODO(domfarolino): Probably insert step 6 here, which sets the credentials
-  // mode of "worker"- and "sharedworker"-destined requests to "same-origin",
-  // ensuring cross-origin module workers result in a network error, once
-  // https://github.com/whatwg/html/pull/3656 is merged. Cross-origin
-  // workers are not supported anyways due to URL checks in
-  // AbstractWorker::ResolveURL, but it might be good to try and follow the spec
-  // here, and let this resolve in a network error as Fetch dictates?
+  // <spec step="6">If destination is "worker" or "sharedworker" and the
+  // top-level module fetch flag is set, then set request's mode to
+  // "same-origin".</spec>
+  // Cross-origin workers are not supported due to security checks in
+  // AbstractWorker::ResolveURL, so no action needs to be taken here.
 
-  // Step 6. "Set up the module script request given request and options."
-  // [spec text]
-  // [SMSR]
-  // https://html.spec.whatwg.org/multipage/webappapis.html#set-up-the-module-script-request
+  // <spec step="7">Set up the module script request given request and
+  // options.</spec>
+  //
+  // <specdef label="SMSR"
+  // href="https://html.spec.whatwg.org/C/#set-up-the-module-script-request">
 
-  // [SMSR] "... its parser metadata to options's parser metadata, ..."
-  // [spec text]
+  // <spec label="SMSR">... its parser metadata to options's parser metadata,
+  // ...</spec>
   options.parser_disposition = options_.ParserState();
 
   // As initiator for module script fetch is not specified in HTML spec,
   // we specify "" as initiator per:
   // https://fetch.spec.whatwg.org/#concept-request-initiator
   options.initiator_info.name = g_empty_atom;
+
+  // TODO(crbug.com/1064920): Remove this once PlzDedicatedWorker ships.
+  options.reject_coep_unsafe_none = options_.GetRejectCoepUnsafeNone();
 
   if (level == ModuleGraphLevel::kDependentModuleFetch) {
     options.initiator_info.imported_module_referrer =
@@ -146,44 +153,34 @@ void ModuleScriptLoader::FetchInternal(
   }
 
   // Note: |options| should not be modified after here.
-  FetchParameters fetch_params(resource_request, options);
+  FetchParameters fetch_params(std::move(resource_request), options);
 
-  // [SMSR] "... its integrity metadata to options's integrity metadata, ..."
-  // [spec text]
+  // <spec label="SMSR">... its integrity metadata to options's integrity
+  // metadata, ...</spec>
   fetch_params.SetIntegrityMetadata(options_.GetIntegrityMetadata());
   fetch_params.MutableResourceRequest().SetFetchIntegrity(
       options_.GetIntegrityAttributeValue());
 
-  // [SMSR] "Set request's cryptographic nonce metadata to options's
-  // cryptographic nonce, ..." [spec text]
+  // <spec label="SMSR">Set request's cryptographic nonce metadata to options's
+  // cryptographic nonce, ...</spec>
   fetch_params.SetContentSecurityPolicyNonce(options_.Nonce());
 
-  // [SMSR] "... its referrer policy to options's referrer policy." [spec text]
-  // Note: For now this is done below with SetHTTPReferrer()
-  network::mojom::ReferrerPolicy referrer_policy =
-      module_request.Options().GetReferrerPolicy();
-  if (referrer_policy == network::mojom::ReferrerPolicy::kDefault)
-    referrer_policy = fetch_client_settings_object.GetReferrerPolicy();
+  // <spec label="SMSR">... its referrer policy to options's referrer
+  // policy.</spec>
+  fetch_params.MutableResourceRequest().SetReferrerPolicy(
+      module_request.Options().GetReferrerPolicy());
 
-  // Step 5. "... mode is "cors", ..."
-  // [SMSR] "... and its credentials mode to options's credentials mode."
-  // [spec text]
+  // <spec step="5">... mode is "cors", ...</spec>
+  //
+  // <spec label="SMSR">... its credentials mode to options's credentials mode,
+  // ...</spec>
   fetch_params.SetCrossOriginAccessControl(
       fetch_client_settings_object.GetSecurityOrigin(),
       options_.CredentialsMode());
 
-  // Step 5. "... referrer is referrer, ..." [spec text]
-  // Note: For now this is done below with SetHTTPReferrer()
-  String referrer_string = module_request.ReferrerString();
-  if (referrer_string == Referrer::ClientReferrerString())
-    referrer_string = fetch_client_settings_object.GetOutgoingReferrer();
-
-  // TODO(domfarolino): Stop storing ResourceRequest's referrer as a
-  // blink::Referrer (https://crbug.com/850813).
-  fetch_params.MutableResourceRequest().SetHTTPReferrer(
-      SecurityPolicy::GenerateReferrer(referrer_policy,
-                                       fetch_params.GetResourceRequest().Url(),
-                                       referrer_string));
+  // <spec step="5">... referrer is referrer, ...</spec>
+  fetch_params.MutableResourceRequest().SetReferrerString(
+      module_request.ReferrerString());
 
   // Priority Hints and a request's "importance" are currently non-standard, but
   // we can assume the following (see https://crbug.com/821464):
@@ -191,11 +188,12 @@ void ModuleScriptLoader::FetchInternal(
   fetch_params.MutableResourceRequest().SetFetchImportanceMode(
       options_.Importance());
 
-  // Step 5. "... and client is fetch client settings object." [spec text]
+  // <spec step="5">... and client is fetch client settings object.</spec>
+  //
   // -> set by ResourceFetcher
 
   // Note: The fetch request's "origin" isn't specified in
-  // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
+  // https://html.spec.whatwg.org/C/#fetch-a-single-module-script
   // Thus, the "origin" is "client" per
   // https://fetch.spec.whatwg.org/#concept-request-origin
 
@@ -206,25 +204,25 @@ void ModuleScriptLoader::FetchInternal(
   fetch_params.MutableResourceRequest().SetPriority(
       ResourceLoadPriority::kHigh);
 
-  // Use UTF-8, according to Step 9:
-  // "Let source text be the result of UTF-8 decoding response's body."
-  // [spec text]
+  // <spec step="12.1">Let source text be the result of UTF-8 decoding
+  // response's body.</spec>
   fetch_params.SetDecoderOptions(
-      TextResourceDecoderOptions::CreateAlwaysUseUTF8ForText());
+      TextResourceDecoderOptions::CreateUTF8Decode());
 
-  // Step 7. "If the caller specified custom steps to perform the fetch,
+  // <spec step="8">If the caller specified custom steps to perform the fetch,
   // perform them on request, setting the is top-level flag if the top-level
   // module fetch flag is set. Return from this algorithm, and when the custom
   // perform the fetch steps complete with response response, run the remaining
-  // steps.
-  // Otherwise, fetch request. Return from this algorithm, and run the remaining
-  // steps as part of the fetch's process response for the response response."
-  // [spec text]
-  module_fetcher_ = modulator_->CreateModuleScriptFetcher(custom_fetch_type);
+  // steps. Otherwise, fetch request. Return from this algorithm, and run the
+  // remaining steps as part of the fetch's process response for the response
+  // response.</spec>
+  module_fetcher_ =
+      modulator_->CreateModuleScriptFetcher(custom_fetch_type, PassKey());
   module_fetcher_->Fetch(fetch_params, fetch_client_settings_object_fetcher,
                          level, this);
 }
 
+// <specdef href="https://html.spec.whatwg.org/C/#fetch-a-single-module-script">
 void ModuleScriptLoader::NotifyFetchFinished(
     const base::Optional<ModuleScriptCreationParams>& params,
     const HeapVector<Member<ConsoleMessage>>& error_messages) {
@@ -234,11 +232,11 @@ void ModuleScriptLoader::NotifyFetchFinished(
     return;
   }
 
-  // Note: "conditions" referred in Step 8 is implemented in
+  // Note: "conditions" referred in Step 9 is implemented in
   // WasModuleLoadSuccessful() in module_script_fetcher.cc.
-  // Step 8. "If any of the following conditions are met, set moduleMap[url] to
-  // null, asynchronously complete this algorithm with null, and abort these
-  // steps." [spec text]
+  // <spec step="9">If any of the following conditions are met, set
+  // moduleMap[url] to null, asynchronously complete this algorithm with null,
+  // and abort these steps: ...</spec>
   if (!params.has_value()) {
     for (ConsoleMessage* error_message : error_messages) {
       ExecutionContext::From(modulator_->GetScriptState())
@@ -248,19 +246,40 @@ void ModuleScriptLoader::NotifyFetchFinished(
     return;
   }
 
-  // Step 9. "Let source text be the result of UTF-8 decoding response's body."
-  // [spec text]
-  // Step 10. "Let module script be the result of creating a module script given
-  // source text, module map settings object, response's url, and options."
-  // [spec text]
-  module_script_ = ModuleScript::Create(params->GetSourceText(), modulator_,
-                                        params->GetResponseUrl(),
-                                        params->GetResponseUrl(), options_);
+  // <spec step="12.1">Let source text be the result of UTF-8 decoding
+  // response's body.</spec>
+  //
+  // <spec step="12.2">Set module script to the result of creating a JavaScript
+  // module script given source text, module map settings object, response's
+  // url, and options.</spec>
+  switch (params->GetModuleType()) {
+    case ModuleScriptCreationParams::ModuleType::kJSONModule:
+      DCHECK(base::FeatureList::IsEnabled(blink::features::kJSONModules));
+      module_script_ = ValueWrapperSyntheticModuleScript::
+          CreateJSONWrapperSyntheticModuleScript(params, modulator_);
+      break;
+    case ModuleScriptCreationParams::ModuleType::kCSSModule:
+      DCHECK(RuntimeEnabledFeatures::CSSModulesEnabled());
+      module_script_ = ValueWrapperSyntheticModuleScript::
+          CreateCSSWrapperSyntheticModuleScript(params, modulator_);
+      break;
+    case ModuleScriptCreationParams::ModuleType::kJavaScriptModule:
+      // Step 9. "Let source text be the result of UTF-8 decoding response's
+      // body." [spec text]
+      // Step 10. "Let module script be the result of creating
+      // a module script given source text, module map settings object,
+      // response's url, and options." [spec text]
+      module_script_ = JSModuleScript::Create(
+          params->GetSourceText(), params->CacheHandler(),
+          ScriptSourceLocationType::kExternalFile, modulator_,
+          params->GetResponseUrl(), params->GetResponseUrl(), options_);
+      break;
+  }
 
   AdvanceState(State::kFinished);
 }
 
-void ModuleScriptLoader::Trace(blink::Visitor* visitor) {
+void ModuleScriptLoader::Trace(Visitor* visitor) {
   visitor->Trace(modulator_);
   visitor->Trace(module_script_);
   visitor->Trace(registry_);

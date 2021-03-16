@@ -4,16 +4,18 @@
 
 #include "content/common/background_fetch/background_fetch_types.h"
 
+#include "mojo/public/cpp/bindings/remote.h"
+
 namespace {
 
 blink::mojom::SerializedBlobPtr CloneSerializedBlob(
     const blink::mojom::SerializedBlobPtr& blob) {
   if (blob.is_null())
     return nullptr;
-  blink::mojom::BlobPtr blob_ptr(std::move(blob->blob));
-  blob_ptr->Clone(mojo::MakeRequest(&blob->blob));
-  return blink::mojom::SerializedBlob::New(
-      blob->uuid, blob->content_type, blob->size, blob_ptr.PassInterface());
+  mojo::Remote<blink::mojom::Blob> blob_remote(std::move(blob->blob));
+  blob_remote->Clone(blob->blob.InitWithNewPipeAndPassReceiver());
+  return blink::mojom::SerializedBlob::New(blob->uuid, blob->content_type,
+                                           blob->size, blob_remote.Unbind());
 }
 
 }  // namespace
@@ -33,7 +35,10 @@ blink::mojom::FetchAPIResponsePtr BackgroundFetchSettledFetch::CloneResponse(
       CloneSerializedBlob(response->blob), response->error,
       response->response_time, response->cache_storage_cache_name,
       response->cors_exposed_header_names,
-      CloneSerializedBlob(response->side_data_blob));
+      CloneSerializedBlob(response->side_data_blob),
+      CloneSerializedBlob(response->side_data_blob_for_cache_put),
+      mojo::Clone(response->content_security_policy),
+      response->loaded_with_credentials);
 }
 
 // static
@@ -43,12 +48,13 @@ blink::mojom::FetchAPIRequestPtr BackgroundFetchSettledFetch::CloneRequest(
     return nullptr;
   return blink::mojom::FetchAPIRequest::New(
       request->mode, request->is_main_resource_load,
-      request->request_context_type, request->frame_type, request->url,
-      request->method, request->headers, CloneSerializedBlob(request->blob),
-      request->body, request->referrer.Clone(), request->credentials_mode,
-      request->cache_mode, request->redirect_mode, request->integrity,
-      request->priority, request->fetch_window_id, request->keepalive,
-      request->is_reload, request->is_history_navigation);
+      request->request_context_type, request->destination, request->frame_type,
+      request->url, request->method, request->headers,
+      CloneSerializedBlob(request->blob), request->body,
+      request->referrer.Clone(), request->credentials_mode, request->cache_mode,
+      request->redirect_mode, request->integrity, request->priority,
+      request->fetch_window_id, request->keepalive, request->is_reload,
+      request->is_history_navigation);
 }
 
 }  // namespace content

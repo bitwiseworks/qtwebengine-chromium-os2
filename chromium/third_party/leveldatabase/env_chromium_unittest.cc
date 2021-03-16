@@ -15,9 +15,10 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_suite.h"
 #include "base/trace_event/process_memory_dump.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/leveldb_chrome.h"
@@ -83,8 +84,8 @@ class ChromiumEnvMultiPlatformTests : public ::testing::Test {
 };
 
 typedef ::testing::Types<ChromiumEnv> ChromiumEnvMultiPlatformTestsTypes;
-TYPED_TEST_CASE(ChromiumEnvMultiPlatformTests,
-                ChromiumEnvMultiPlatformTestsTypes);
+TYPED_TEST_SUITE(ChromiumEnvMultiPlatformTests,
+                 ChromiumEnvMultiPlatformTestsTypes);
 
 int CountFilesWithExtension(const base::FilePath& dir,
                             const base::FilePath::StringType& extension) {
@@ -112,7 +113,7 @@ bool GetFirstLDBFile(const base::FilePath& dir, base::FilePath* ldb_file) {
   return false;
 }
 
-TEST(ChromiumEnv, DeleteBackupTables) {
+TEST(ChromiumEnv, RemoveBackupTables) {
   Options options;
   options.create_if_missing = true;
   options.env = Env::Default();
@@ -259,14 +260,13 @@ TEST(ChromiumEnvTest, TestOpenOnRead) {
   for (int i = 0; i < kNumFiles; i++) {
     delete files[i];
   }
-  ASSERT_TRUE(env->DeleteFile(tmp_file_path.AsUTF8Unsafe()).ok());
+  ASSERT_TRUE(env->RemoveFile(tmp_file_path.AsUTF8Unsafe()).ok());
 }
 
 class ChromiumEnvDBTrackerTest : public ::testing::Test {
  protected:
   ChromiumEnvDBTrackerTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
+      : task_environment_(base::test::TaskEnvironment::MainThreadType::UI) {}
   void SetUp() override {
     testing::Test::SetUp();
     ASSERT_TRUE(scoped_temp_dir_.CreateUniqueTempDir());
@@ -301,7 +301,7 @@ class ChromiumEnvDBTrackerTest : public ::testing::Test {
 
  private:
   base::ScopedTempDir scoped_temp_dir_;
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
 };
 
 TEST_F(ChromiumEnvDBTrackerTest, OpenDatabase) {
@@ -515,7 +515,7 @@ TEST_F(ChromiumEnvDBTrackerTest, MemEnvMemoryDumpCreation) {
   EXPECT_EQ(size_with_file, mad->GetSizeInternal());
 
   // Now delete and size should go down.
-  s = memenv->DeleteFile("xxxxx_file.txt");
+  s = memenv->RemoveFile("xxxxx_file.txt");
   EXPECT_TRUE(s.ok()) << s.ToString();
 
   base::trace_event::ProcessMemoryDump dump3(dump_args);

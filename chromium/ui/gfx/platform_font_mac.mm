@@ -13,6 +13,7 @@
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "third_party/skia/include/ports/SkTypeface_mac.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/font_render_params.h"
@@ -126,11 +127,13 @@ Font::Weight GetFontWeightFromNSFont(NSFont* font) {
 
   // Documentation is vague about what sized floating point type should be used.
   // However, numeric_limits::epsilon() for 64-bit types is too small to match
-  // the above table, so use 32-bit float.
+  // the above table, so use 32-bit float. Do not check for the success of
+  // CFNumberGetValue(). CFNumberGetValue() returns false for *any* loss of
+  // value, and a float is used here deliberately to coarsen the accuracy.
+  // There's no guarantee that any particular value for the kCTFontWeightTrait
+  // will be able to be accurately represented with a float.
   float weight_value;
-  Boolean success =
-      CFNumberGetValue(cf_weight, kCFNumberFloatType, &weight_value);
-  DCHECK(success);
+  CFNumberGetValue(cf_weight, kCFNumberFloatType, &weight_value);
   for (const auto& item : weight_map) {
     if (weight_value - item.ct_weight <= std::numeric_limits<float>::epsilon())
       return item.gfx_weight;
@@ -178,6 +181,12 @@ NSFont* ValidateFont(NSFont* font) {
   return font ? font : [NSFont systemFontOfSize:[NSFont systemFontSize]];
 }
 
+std::string GetFamilyNameFromTypeface(sk_sp<SkTypeface> typeface) {
+  SkString family;
+  typeface->getFamilyName(&family);
+  return family.c_str();
+}
+
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -201,6 +210,16 @@ PlatformFontMac::PlatformFontMac(const std::string& font_name, int font_size)
                       font_size,
                       Font::NORMAL,
                       Font::Weight::NORMAL) {}
+
+PlatformFontMac::PlatformFontMac(sk_sp<SkTypeface> typeface,
+                                 int font_size_pixels,
+                                 const base::Optional<FontRenderParams>& params)
+    : PlatformFontMac(
+          base::mac::CFToNSCast(SkTypeface_GetCTFontRef(typeface.get())),
+          GetFamilyNameFromTypeface(typeface),
+          font_size_pixels,
+          (typeface->isItalic() ? Font::ITALIC : Font::NORMAL),
+          FontWeightFromInt(typeface->fontStyle().weight())) {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // PlatformFontMac, PlatformFont implementation:
@@ -293,7 +312,7 @@ const std::string& PlatformFontMac::GetFontName() const {
   return font_name_;
 }
 
-std::string PlatformFontMac::GetActualFontNameForTesting() const {
+std::string PlatformFontMac::GetActualFontName() const {
   return base::SysNSStringToUTF8([native_font_ familyName]);
 }
 
@@ -307,6 +326,10 @@ const FontRenderParams& PlatformFontMac::GetFontRenderParams() {
 
 NativeFont PlatformFontMac::GetNativeFont() const {
   return [[native_font_.get() retain] autorelease];
+}
+
+sk_sp<SkTypeface> PlatformFontMac::GetNativeSkTypeface() const {
+  return SkMakeTypefaceFromCTFont(base::mac::NSToCFCast(GetNativeFont()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -379,6 +402,14 @@ PlatformFont* PlatformFont::CreateFromNativeFont(NativeFont native_font) {
 PlatformFont* PlatformFont::CreateFromNameAndSize(const std::string& font_name,
                                                   int font_size) {
   return new PlatformFontMac(font_name, font_size);
+}
+
+// static
+PlatformFont* PlatformFont::CreateFromSkTypeface(
+    sk_sp<SkTypeface> typeface,
+    int font_size_pixels,
+    const base::Optional<FontRenderParams>& params) {
+  return new PlatformFontMac(typeface, font_size_pixels, params);
 }
 
 }  // namespace gfx

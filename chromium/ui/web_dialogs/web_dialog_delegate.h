@@ -10,6 +10,7 @@
 
 #include "base/strings/string16.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/web_dialogs/web_dialogs_export.h"
@@ -17,7 +18,7 @@
 class GURL;
 
 namespace content {
-class RenderViewHost;
+class RenderFrameHost;
 class WebContents;
 class WebUI;
 class WebUIMessageHandler;
@@ -86,9 +87,12 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
 
   // A callback to notify the delegate that a web dialog has been shown.
   // |webui| is the WebUI with which the dialog is associated.
-  // |render_view_host| is the RenderViewHost for the shown dialog.
-  virtual void OnDialogShown(content::WebUI* webui,
-                             content::RenderViewHost* render_view_host) {}
+  virtual void OnDialogShown(content::WebUI* webui) {}
+
+  // A callback to notify the delegate that the window is requesting to be
+  // closed.  If this returns true, the dialog is closed, otherwise the
+  // dialog remains open. Default implementation returns true.
+  virtual bool OnDialogCloseRequested();
 
   // A callback to notify the delegate that the dialog is about to close due to
   // the user pressing the ESC key.
@@ -104,23 +108,36 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
   // response to a "dialogClose" message from WebUI.
   virtual void OnDialogCloseFromWebUI(const std::string& json_retval);
 
-  // A callback to notify the delegate that the contents have gone
-  // away. Only relevant if your dialog hosts code that calls
-  // windows.close() and you've allowed that.  If the output parameter
+  // A callback to notify the delegate that the contents are requesting
+  // to be closed.  This could be in response to a number of events
+  // that are handled by the WebContents.  If the output parameter
   // is set to true, then the dialog is closed.  The default is false.
   // |out_close_dialog| is never NULL.
   virtual void OnCloseContents(content::WebContents* source,
                                bool* out_close_dialog) = 0;
 
+  // Returns true if escape should immediately close the dialog. Default is
+  // true.
+  virtual bool ShouldCloseDialogOnEscape() const;
+
   // A callback to allow the delegate to dictate that the window should not
   // have a title bar.  This is useful when presenting branded interfaces.
   virtual bool ShouldShowDialogTitle() const = 0;
+
+  // A callback to allow the delegate to center title text. Default is
+  // false.
+  virtual bool ShouldCenterDialogTitleText() const;
+
+  // Returns true if the dialog should show a close button in the title bar.
+  // Default implementation returns true.
+  virtual bool ShouldShowCloseButton() const;
 
   // A callback to allow the delegate to inhibit context menu or show
   // customized menu.
   // Returns true iff you do NOT want the standard context menu to be
   // shown (because you want to handle it yourself).
-  virtual bool HandleContextMenu(const content::ContextMenuParams& params);
+  virtual bool HandleContextMenu(content::RenderFrameHost* render_frame_host,
+                                 const content::ContextMenuParams& params);
 
   // A callback to allow the delegate to open a new URL inside |source|.
   // On return |out_new_contents| should contain the WebContents the URL
@@ -130,8 +147,8 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
                                     content::WebContents** out_new_contents);
 
   // A callback to control whether a WebContents will be created. Returns
-  // false to disallow the creation. Return true to use the default handler.
-  virtual bool HandleShouldCreateWebContents();
+  // true to disallow the creation. Return false to use the default handler.
+  virtual bool HandleShouldOverrideWebContentsCreation();
 
   // Stores the dialog bounds.
   virtual void StoreDialogSize(const gfx::Size& dialog_size) {}
@@ -141,6 +158,10 @@ class WEB_DIALOGS_EXPORT WebDialogDelegate {
 
   // Returns true if |accelerator| is processed, otherwise false.
   virtual bool AcceleratorPressed(const Accelerator& accelerator);
+
+  virtual void OnWebContentsFinishedLoad() {}
+  virtual void OnMainFrameResourceLoadComplete(
+      const blink::mojom::ResourceLoadInfo& resource_load_info) {}
 
   virtual ~WebDialogDelegate() {}
 };

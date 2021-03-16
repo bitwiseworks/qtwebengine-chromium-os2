@@ -7,7 +7,6 @@
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/stl_util.h"
-#include "content/public/browser/resource_request_info.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
 
 namespace extensions {
@@ -41,45 +40,46 @@ static_assert(kResourceTypesLength ==
 
 }  // namespace
 
-WebRequestResourceType ToWebRequestResourceType(content::ResourceType type) {
+WebRequestResourceType ToWebRequestResourceType(
+    blink::mojom::ResourceType type) {
   switch (type) {
-    case content::RESOURCE_TYPE_MAIN_FRAME:
+    case blink::mojom::ResourceType::kMainFrame:
+    case blink::mojom::ResourceType::kNavigationPreloadMainFrame:
       return WebRequestResourceType::MAIN_FRAME;
-    case content::RESOURCE_TYPE_SUB_FRAME:
+    case blink::mojom::ResourceType::kSubFrame:
+    case blink::mojom::ResourceType::kNavigationPreloadSubFrame:
       return WebRequestResourceType::SUB_FRAME;
-    case content::RESOURCE_TYPE_STYLESHEET:
+    case blink::mojom::ResourceType::kStylesheet:
       return WebRequestResourceType::STYLESHEET;
-    case content::RESOURCE_TYPE_SCRIPT:
+    case blink::mojom::ResourceType::kScript:
       return WebRequestResourceType::SCRIPT;
-    case content::RESOURCE_TYPE_IMAGE:
+    case blink::mojom::ResourceType::kImage:
       return WebRequestResourceType::IMAGE;
-    case content::RESOURCE_TYPE_FONT_RESOURCE:
+    case blink::mojom::ResourceType::kFontResource:
       return WebRequestResourceType::FONT;
-    case content::RESOURCE_TYPE_SUB_RESOURCE:
+    case blink::mojom::ResourceType::kSubResource:
       return WebRequestResourceType::OTHER;
-    case content::RESOURCE_TYPE_OBJECT:
+    case blink::mojom::ResourceType::kObject:
       return WebRequestResourceType::OBJECT;
-    case content::RESOURCE_TYPE_MEDIA:
+    case blink::mojom::ResourceType::kMedia:
       return WebRequestResourceType::MEDIA;
-    case content::RESOURCE_TYPE_WORKER:
-    case content::RESOURCE_TYPE_SHARED_WORKER:
+    case blink::mojom::ResourceType::kWorker:
+    case blink::mojom::ResourceType::kSharedWorker:
       return WebRequestResourceType::SCRIPT;
-    case content::RESOURCE_TYPE_PREFETCH:
+    case blink::mojom::ResourceType::kPrefetch:
       return WebRequestResourceType::OTHER;
-    case content::RESOURCE_TYPE_FAVICON:
+    case blink::mojom::ResourceType::kFavicon:
       return WebRequestResourceType::IMAGE;
-    case content::RESOURCE_TYPE_XHR:
+    case blink::mojom::ResourceType::kXhr:
       return WebRequestResourceType::XHR;
-    case content::RESOURCE_TYPE_PING:
+    case blink::mojom::ResourceType::kPing:
       return WebRequestResourceType::PING;
-    case content::RESOURCE_TYPE_SERVICE_WORKER:
+    case blink::mojom::ResourceType::kServiceWorker:
       return WebRequestResourceType::SCRIPT;
-    case content::RESOURCE_TYPE_CSP_REPORT:
+    case blink::mojom::ResourceType::kCspReport:
       return WebRequestResourceType::CSP_REPORT;
-    case content::RESOURCE_TYPE_PLUGIN_RESOURCE:
+    case blink::mojom::ResourceType::kPluginResource:
       return WebRequestResourceType::OBJECT;
-    case content::RESOURCE_TYPE_LAST_TYPE:
-      return WebRequestResourceType::OTHER;
   }
   NOTREACHED();
   return WebRequestResourceType::OTHER;

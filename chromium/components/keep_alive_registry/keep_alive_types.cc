@@ -19,10 +19,14 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "BACKGROUND_MODE_MANAGER";
     case KeepAliveOrigin::BACKGROUND_MODE_MANAGER_STARTUP:
       return out << "BACKGROUND_MODE_MANAGER_STARTUP";
+    case KeepAliveOrigin::BACKGROUND_SYNC:
+      return out << "BACKGROUND_SYNC";
     case KeepAliveOrigin::LOGIN_DISPLAY_HOST_WEBUI:
       return out << "LOGIN_DISPLAY_HOST_WEBUI";
     case KeepAliveOrigin::PIN_MIGRATION:
       return out << "PIN_MIGRATION";
+    case KeepAliveOrigin::REMOTE_DEBUGGING:
+      return out << "REMOTE_DEBUGGING";
     case KeepAliveOrigin::NOTIFICATION:
       return out << "NOTIFICATION";
     case KeepAliveOrigin::PENDING_NOTIFICATION_CLICK_EVENT:
@@ -49,6 +53,8 @@ std::ostream& operator<<(std::ostream& out, const KeepAliveOrigin& origin) {
       return out << "USER_MANAGER_VIEW";
     case KeepAliveOrigin::CREDENTIAL_PROVIDER_SIGNIN_DIALOG:
       return out << "CREDENTIAL_PROVIDER_SIGNIN_DIALOG";
+    case KeepAliveOrigin::NATIVE_MESSAGING_HOST_ERROR_REPORT:
+      return out << "NATIVE_MESSAGING_HOST_ERROR_REPORT";
   }
 
   NOTREACHED();

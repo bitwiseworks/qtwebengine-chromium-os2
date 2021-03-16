@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/shlwapi.h"
 
@@ -24,7 +25,7 @@ FilePath BuildSearchFilter(FileEnumerator::FolderSearchPolicy policy,
     case FileEnumerator::FolderSearchPolicy::MATCH_ONLY:
       return root_path.Append(pattern);
     case FileEnumerator::FolderSearchPolicy::ALL:
-      return root_path.Append(L"*");
+      return root_path.Append(FILE_PATH_LITERAL("*"));
   }
   NOTREACHED();
   return {};
@@ -55,8 +56,8 @@ int64_t FileEnumerator::FileInfo::GetSize() const {
   return static_cast<int64_t>(size.QuadPart);
 }
 
-base::Time FileEnumerator::FileInfo::GetLastModifiedTime() const {
-  return base::Time::FromFileTime(find_data_.ftLastWriteTime);
+Time FileEnumerator::FileInfo::GetLastModifiedTime() const {
+  return Time::FromFileTime(find_data_.ftLastWriteTime);
 }
 
 // FileEnumerator --------------------------------------------------------------
@@ -85,10 +86,24 @@ FileEnumerator::FileEnumerator(const FilePath& root_path,
                                int file_type,
                                const FilePath::StringType& pattern,
                                FolderSearchPolicy folder_search_policy)
+    : FileEnumerator(root_path,
+                     recursive,
+                     file_type,
+                     pattern,
+                     folder_search_policy,
+                     ErrorPolicy::IGNORE_ERRORS) {}
+
+FileEnumerator::FileEnumerator(const FilePath& root_path,
+                               bool recursive,
+                               int file_type,
+                               const FilePath::StringType& pattern,
+                               FolderSearchPolicy folder_search_policy,
+                               ErrorPolicy error_policy)
     : recursive_(recursive),
       file_type_(file_type),
-      pattern_(!pattern.empty() ? pattern : L"*"),
-      folder_search_policy_(folder_search_policy) {
+      pattern_(!pattern.empty() ? pattern : FILE_PATH_LITERAL("*")),
+      folder_search_policy_(folder_search_policy),
+      error_policy_(error_policy) {
   // INCLUDE_DOT_DOT must not be specified if recursive.
   DCHECK(!(recursive && (INCLUDE_DOT_DOT & file_type_)));
   memset(&find_data_, 0, sizeof(find_data_));
@@ -111,7 +126,7 @@ FileEnumerator::FileInfo FileEnumerator::GetInfo() const {
 }
 
 FilePath FileEnumerator::Next() {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 
   while (has_find_data_ || !pending_paths_.empty()) {
     if (!has_find_data_) {
@@ -135,6 +150,7 @@ FilePath FileEnumerator::Next() {
       }
     }
 
+    DWORD last_error = GetLastError();
     if (INVALID_HANDLE_VALUE == find_handle_) {
       has_find_data_ = false;
 
@@ -146,10 +162,16 @@ FilePath FileEnumerator::Next() {
         // files in the root search directory, but for those directories which
         // were matched, we want to enumerate all files inside them. This will
         // happen when the handle is empty.
-        pattern_ = L"*";
+        pattern_ = FILE_PATH_LITERAL("*");
       }
 
-      continue;
+      if (last_error == ERROR_NO_MORE_FILES ||
+          error_policy_ == ErrorPolicy::IGNORE_ERRORS) {
+        continue;
+      }
+
+      error_ = File::OSErrorToFileError(last_error);
+      return FilePath();
     }
 
     const FilePath filename(find_data_.cFileName);

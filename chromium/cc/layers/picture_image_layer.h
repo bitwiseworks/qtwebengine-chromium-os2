@@ -7,7 +7,6 @@
 
 #include <stddef.h>
 
-#include "base/macros.h"
 #include "cc/cc_export.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/picture_layer.h"
@@ -21,12 +20,12 @@ class CC_EXPORT PictureImageLayer : public PictureLayer, ContentLayerClient {
  public:
   static scoped_refptr<PictureImageLayer> Create();
 
+  PictureImageLayer(const PictureImageLayer&) = delete;
+  PictureImageLayer& operator=(const PictureImageLayer&) = delete;
+
   void SetImage(PaintImage image,
                 const SkMatrix& matrix,
                 bool uses_width_as_height);
-
-  // Layer implementation.
-  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   gfx::Rect PaintableRegion() override;
 
@@ -46,8 +45,6 @@ class CC_EXPORT PictureImageLayer : public PictureLayer, ContentLayerClient {
   PaintImage image_;
   SkMatrix matrix_;
   bool uses_width_as_height_;
-
-  DISALLOW_COPY_AND_ASSIGN(PictureImageLayer);
 };
 
 }  // namespace cc

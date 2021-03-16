@@ -35,7 +35,6 @@
 #include "base/macros.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/messaging/blink_transferable_message.h"
 #include "third_party/blink/renderer/core/messaging/message_port.h"
 #include "third_party/blink/renderer/core/workers/threaded_object_proxy_base.h"
 #include "third_party/blink/renderer/core/workers/worker_reporting_proxy.h"
@@ -43,6 +42,7 @@
 
 namespace blink {
 
+struct BlinkTransferableMessage;
 class DedicatedWorkerMessagingProxy;
 class ParentExecutionContextTaskRunners;
 class ThreadedMessagingProxyBase;
@@ -55,9 +55,8 @@ class CORE_EXPORT DedicatedWorkerObjectProxy : public ThreadedObjectProxyBase {
   USING_FAST_MALLOC(DedicatedWorkerObjectProxy);
 
  public:
-  static std::unique_ptr<DedicatedWorkerObjectProxy> Create(
-      DedicatedWorkerMessagingProxy*,
-      ParentExecutionContextTaskRunners*);
+  DedicatedWorkerObjectProxy(DedicatedWorkerMessagingProxy*,
+                             ParentExecutionContextTaskRunners*);
   ~DedicatedWorkerObjectProxy() override;
 
   void PostMessageToWorkerObject(BlinkTransferableMessage);
@@ -74,9 +73,6 @@ class CORE_EXPORT DedicatedWorkerObjectProxy : public ThreadedObjectProxyBase {
   void DidEvaluateModuleScript(bool success) override;
 
  protected:
-  DedicatedWorkerObjectProxy(DedicatedWorkerMessagingProxy*,
-                             ParentExecutionContextTaskRunners*);
-
   CrossThreadWeakPersistent<ThreadedMessagingProxyBase> MessagingProxyWeakPtr()
       final;
 

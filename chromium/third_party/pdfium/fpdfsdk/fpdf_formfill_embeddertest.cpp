@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "build/build_config.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/fx_system.h"
@@ -153,6 +154,18 @@ class FPDFFormFillInteractiveEmbedderTest : public FPDFFormFillEmbedderTest {
 
   void PerformRedo() { EXPECT_TRUE(FORM_Redo(form_handle(), page_)); }
 
+  void SetIndexSelectedShouldSucceed(int index, bool selected) {
+    EXPECT_TRUE(FORM_SetIndexSelected(form_handle(), page_, index, selected));
+  }
+
+  void SetIndexSelectedShouldFail(int index, bool selected) {
+    EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page_, index, selected));
+  }
+
+  void CheckIsIndexSelected(int index, bool expected) {
+    EXPECT_EQ(expected, FORM_IsIndexSelected(form_handle(), page_, index));
+  }
+
  private:
   FPDF_PAGE page_ = nullptr;
 };
@@ -268,6 +281,14 @@ class FPDFFormFillComboBoxFormEmbedderTest
     SelectTextWithMouse(EditableFormEnd(), EditableFormBegin());
   }
 
+  void FocusOnEditableForm() { FocusOnPoint(EditableFormDropDown()); }
+
+  void FocusOnNonEditableForm() { FocusOnPoint(NonEditableFormDropDown()); }
+
+  void FocusOnPoint(const CFX_PointF& point) {
+    EXPECT_EQ(true, FORM_OnFocus(form_handle(), page(), 0, point.x, point.y));
+  }
+
   const CFX_PointF& EditableFormBegin() const {
     static const CFX_PointF point = EditableFormAtX(kFormBeginX);
     return point;
@@ -336,12 +357,187 @@ class FPDFFormFillComboBoxFormEmbedderTest
   static constexpr float kNonEditableFormY = 410.0;
 };
 
+class FPDFFormFillListBoxFormEmbedderTest
+    : public FPDFFormFillInteractiveEmbedderTest {
+ protected:
+  FPDFFormFillListBoxFormEmbedderTest() = default;
+  ~FPDFFormFillListBoxFormEmbedderTest() override = default;
+
+  const char* GetDocumentName() const override {
+    // PDF with form listboxes:
+    // - "Listbox_SingleSelect" - Ff: 0, 3 options with pair values.
+    // - "Listbox_MultiSelect" - Ff: 2097152, 26 options with single values.
+    // - "Listbox_ReadOnly" - Ff: 1, 3 options with single values.
+    // - "Listbox_MultiSelectMultipleSelected" - Ff: 2097152, 5 options with
+    // single values.
+    // - "Listbox_SingleSelectLastSelected" - Ff: 0, 10 options with single
+    // values.
+    return "listbox_form.pdf";
+  }
+
+  int GetFormType() const override { return FPDF_FORMFIELD_LISTBOX; }
+
+  void FormSanityChecks() override {
+    EXPECT_EQ(GetFormType(),
+              GetFormTypeAtPoint(SingleSelectFirstVisibleOption()));
+    EXPECT_EQ(GetFormType(),
+              GetFormTypeAtPoint(SingleSelectSecondVisibleOption()));
+    EXPECT_EQ(GetFormType(),
+              GetFormTypeAtPoint(MultiSelectFirstVisibleOption()));
+    EXPECT_EQ(GetFormType(),
+              GetFormTypeAtPoint(MultiSelectSecondVisibleOption()));
+    EXPECT_EQ(
+        GetFormType(),
+        GetFormTypeAtPoint(MultiSelectMultipleSelectedFirstVisibleOption()));
+    EXPECT_EQ(
+        GetFormType(),
+        GetFormTypeAtPoint(MultiSelectMultipleSelectedSecondVisibleOption()));
+    EXPECT_EQ(GetFormType(),
+              GetFormTypeAtPoint(SingleSelectLastSelectedFirstVisibleOption()));
+    EXPECT_EQ(
+        GetFormType(),
+        GetFormTypeAtPoint(SingleSelectLastSelectedSecondVisibleOption()));
+  }
+
+  void ClickOnSingleSelectFormOption(int item_index) {
+    // Only the first two indices are visible so can only click on those
+    // without scrolling.
+    ASSERT(item_index >= 0);
+    ASSERT(item_index < 2);
+    if (item_index == 0) {
+      ClickOnFormFieldAtPoint(SingleSelectFirstVisibleOption());
+    } else {
+      ClickOnFormFieldAtPoint(SingleSelectSecondVisibleOption());
+    }
+  }
+
+  void ClickOnMultiSelectFormOption(int item_index) {
+    // Only the first two indices are visible so can only click on those
+    // without scrolling.
+    ASSERT(item_index >= 0);
+    ASSERT(item_index < 2);
+    if (item_index == 0) {
+      ClickOnFormFieldAtPoint(MultiSelectFirstVisibleOption());
+    } else {
+      ClickOnFormFieldAtPoint(MultiSelectSecondVisibleOption());
+    }
+  }
+
+  void ClickOnMultiSelectMultipleSelectedFormOption(int item_index) {
+    // Only two indices are visible so can only click on those
+    // without scrolling.
+    ASSERT(item_index >= 0);
+    ASSERT(item_index < 2);
+    if (item_index == 0) {
+      ClickOnFormFieldAtPoint(MultiSelectMultipleSelectedFirstVisibleOption());
+    } else {
+      ClickOnFormFieldAtPoint(MultiSelectMultipleSelectedSecondVisibleOption());
+    }
+  }
+
+  void ClickOnSingleSelectLastSelectedFormOption(int item_index) {
+    // Only two indices are visible so can only click on those
+    // without scrolling.
+    ASSERT(item_index >= 0);
+    ASSERT(item_index < 2);
+    if (item_index == 0) {
+      ClickOnFormFieldAtPoint(SingleSelectLastSelectedFirstVisibleOption());
+    } else {
+      ClickOnFormFieldAtPoint(SingleSelectLastSelectedSecondVisibleOption());
+    }
+  }
+
+  void FocusOnSingleSelectForm() {
+    FocusOnPoint(SingleSelectFirstVisibleOption());
+  }
+
+  void FocusOnMultiSelectForm() {
+    FocusOnPoint(MultiSelectFirstVisibleOption());
+  }
+
+  void FocusOnMultiSelectMultipleSelectedForm() {
+    FocusOnPoint(MultiSelectMultipleSelectedFirstVisibleOption());
+  }
+
+  void FocusOnSingleSelectLastSelectedForm() {
+    FocusOnPoint(SingleSelectLastSelectedFirstVisibleOption());
+  }
+
+  void FocusOnPoint(const CFX_PointF& point) {
+    EXPECT_EQ(true, FORM_OnFocus(form_handle(), page(), 0, point.x, point.y));
+  }
+
+  const CFX_PointF& SingleSelectFirstVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX, kSingleFormYFirstVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& SingleSelectSecondVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX, kSingleFormYSecondVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& MultiSelectFirstVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX, kMultiFormYFirstVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& MultiSelectSecondVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX, kMultiFormYSecondVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& MultiSelectMultipleSelectedFirstVisibleOption() const {
+    static const CFX_PointF point(
+        kFormBeginX, kMultiFormMultipleSelectedYFirstVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& MultiSelectMultipleSelectedSecondVisibleOption() const {
+    static const CFX_PointF point(
+        kFormBeginX, kMultiFormMultipleSelectedYSecondVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& SingleSelectLastSelectedFirstVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX,
+                                  kSingleFormLastSelectedYFirstVisibleOption);
+    return point;
+  }
+
+  const CFX_PointF& SingleSelectLastSelectedSecondVisibleOption() const {
+    static const CFX_PointF point(kFormBeginX,
+                                  kSingleFormLastSelectedYSecondVisibleOption);
+    return point;
+  }
+
+ private:
+  static constexpr float kFormBeginX = 102.0;
+  static constexpr float kSingleFormYFirstVisibleOption = 371.0;
+  static constexpr float kSingleFormYSecondVisibleOption = 358.0;
+  static constexpr float kMultiFormYFirstVisibleOption = 423.0;
+  static constexpr float kMultiFormYSecondVisibleOption = 408.0;
+  static constexpr float kMultiFormMultipleSelectedYFirstVisibleOption = 223.0;
+  static constexpr float kMultiFormMultipleSelectedYSecondVisibleOption = 208.0;
+  static constexpr float kSingleFormLastSelectedYFirstVisibleOption = 123.0;
+  static constexpr float kSingleFormLastSelectedYSecondVisibleOption = 108.0;
+};
+
+class FPDFFormFillTextFormEmbedderTestVersion2
+    : public FPDFFormFillTextFormEmbedderTest {
+  void SetUp() override {
+    SetFormFillInfoVersion(2);
+    FPDFFormFillInteractiveEmbedderTest::SetUp();
+  }
+};
+
 TEST_F(FPDFFormFillEmbedderTest, FirstTest) {
   EmbedderTestMockDelegate mock;
   EXPECT_CALL(mock, Alert(_, _, _, _)).Times(0);
   EXPECT_CALL(mock, UnsupportedHandler(_)).Times(0);
   EXPECT_CALL(mock, SetTimer(_, _)).Times(0);
   EXPECT_CALL(mock, KillTimer(_)).Times(0);
+  EXPECT_CALL(mock, OnFocusChange(_, _, _)).Times(0);
   SetDelegate(&mock);
 
   EXPECT_TRUE(OpenDocument("hello_world.pdf"));
@@ -442,6 +638,93 @@ TEST_F(FPDFFormFillEmbedderTest, BUG_901654_2) {
   UnloadPage(page);
 }
 
+TEST_F(FPDFFormFillEmbedderTest, GetFocusedAnnotation) {
+  ASSERT_TRUE(OpenDocument("annotiter.pdf"));
+  std::vector<FPDF_PAGE> pages;
+  for (size_t i = 0; i < 3; ++i) {
+    pages.push_back(LoadPage(i));
+    ASSERT_TRUE(pages.back());
+  }
+
+  // Ensure that there is no focused annotation.
+  FPDF_ANNOTATION annot = nullptr;
+  int page_index = -2;
+  ASSERT_TRUE(FORM_GetFocusedAnnot(form_handle(), &page_index, &annot));
+  EXPECT_FALSE(annot);
+  EXPECT_EQ(-1, page_index);
+
+  // Validate that nullptr values are handled properly.
+  EXPECT_FALSE(FORM_GetFocusedAnnot(nullptr, &page_index, &annot));
+  EXPECT_FALSE(FORM_GetFocusedAnnot(form_handle(), &page_index, nullptr));
+  EXPECT_FALSE(FORM_GetFocusedAnnot(form_handle(), nullptr, &annot));
+
+  const CFX_PointF right_bottom_annot_point(410.0f, 210.0f);
+  constexpr int kExpectedAnnotIndex = 3;
+
+  for (size_t i = 0; i < pages.size(); ++i) {
+    // Invoke click on the form field to bring it to focus.
+    FORM_OnMouseMove(form_handle(), pages[i], 0, right_bottom_annot_point.x,
+                     right_bottom_annot_point.y);
+    FORM_OnLButtonDown(form_handle(), pages[i], 0, right_bottom_annot_point.x,
+                       right_bottom_annot_point.y);
+    FORM_OnLButtonUp(form_handle(), pages[i], 0, right_bottom_annot_point.x,
+                     right_bottom_annot_point.y);
+
+    ASSERT_TRUE(FORM_GetFocusedAnnot(form_handle(), &page_index, &annot));
+    ASSERT_TRUE(annot);
+
+    EXPECT_EQ(kExpectedAnnotIndex, FPDFPage_GetAnnotIndex(pages[i], annot));
+    EXPECT_EQ(static_cast<int>(i), page_index);
+
+    FPDFPage_CloseAnnot(annot);
+  }
+
+  for (FPDF_PAGE page : pages)
+    UnloadPage(page);
+}
+
+TEST_F(FPDFFormFillEmbedderTest, SetFocusedAnnotation) {
+  ASSERT_TRUE(OpenDocument("annotiter.pdf"));
+  std::vector<FPDF_PAGE> pages;
+  for (size_t i = 0; i < 3; ++i) {
+    pages.push_back(LoadPage(i));
+    ASSERT_TRUE(pages.back());
+  }
+
+  // Ensure that there is no focused annotation.
+  FPDF_ANNOTATION annot = nullptr;
+  int page_index = -2;
+  ASSERT_TRUE(FORM_GetFocusedAnnot(form_handle(), &page_index, &annot));
+  EXPECT_FALSE(annot);
+  EXPECT_EQ(-1, page_index);
+
+  // Validate that nullptr values are handled properly.
+  EXPECT_FALSE(FORM_SetFocusedAnnot(nullptr, pages[0], annot));
+  EXPECT_FALSE(FORM_SetFocusedAnnot(form_handle(), nullptr, annot));
+  EXPECT_FALSE(FORM_SetFocusedAnnot(form_handle(), pages[0], nullptr));
+
+  constexpr int kExpectedAnnotIndex = 2;
+
+  for (size_t i = 0; i < pages.size(); ++i) {
+    // Setting focus on an annotation on page i.
+    ScopedFPDFAnnotation focused_annot(
+        FPDFPage_GetAnnot(pages[i], kExpectedAnnotIndex));
+    ASSERT_TRUE(focused_annot);
+
+    ASSERT_TRUE(
+        FORM_SetFocusedAnnot(form_handle(), pages[i], focused_annot.get()));
+
+    ASSERT_TRUE(FORM_GetFocusedAnnot(form_handle(), &page_index, &annot));
+    EXPECT_EQ(kExpectedAnnotIndex, FPDFPage_GetAnnotIndex(pages[i], annot));
+    EXPECT_EQ(static_cast<int>(i), page_index);
+
+    FPDFPage_CloseAnnot(annot);
+  }
+
+  for (FPDF_PAGE page : pages)
+    UnloadPage(page);
+}
+
 class DoURIActionBlockedDelegate final : public EmbedderTest::Delegate {
  public:
   void DoURIAction(FPDF_BYTESTRING uri) override {
@@ -514,6 +797,26 @@ TEST_F(FPDFFormFillEmbedderTest, DocumentAActions) {
   EXPECT_STREQ(L"Did Save", alerts[1].message.c_str());
   EXPECT_STREQ(L"Will Print", alerts[2].message.c_str());
   EXPECT_STREQ(L"Did Print", alerts[3].message.c_str());
+}
+
+TEST_F(FPDFFormFillEmbedderTest, DocumentAActionsDisableJavaScript) {
+  EmbedderTestTimerHandlingDelegate delegate;
+  SetDelegate(&delegate);
+
+  EXPECT_TRUE(OpenDocumentWithoutJavaScript("document_aactions.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  EXPECT_TRUE(page);
+
+  const auto& alerts = delegate.GetAlerts();
+  EXPECT_EQ(0U, alerts.size());
+
+  FORM_DoDocumentAAction(form_handle(), FPDFDOC_AACTION_WS);
+  FORM_DoDocumentAAction(form_handle(), FPDFDOC_AACTION_DS);
+  FORM_DoDocumentAAction(form_handle(), FPDFDOC_AACTION_WP);
+  FORM_DoDocumentAAction(form_handle(), FPDFDOC_AACTION_DP);
+  UnloadPage(page);
+
+  ASSERT_EQ(0U, alerts.size());
 }
 
 TEST_F(FPDFFormFillEmbedderTest, BUG_551248) {
@@ -677,12 +980,18 @@ TEST_F(FPDFFormFillEmbedderTest, BUG_765384) {
 }
 #endif  // PDF_ENABLE_V8
 
-TEST_F(FPDFFormFillEmbedderTest, FormText) {
-#if _FX_PLATFORM_ == _FX_PLATFORM_APPLE_
-  const char md5_1[] = "5f11dbe575fe197a37c3fb422559f8ff";
-  const char md5_2[] = "35b1a4b679eafc749a0b6fda750c0e8d";
-  const char md5_3[] = "65c64a7c355388f719a752aa1e23f6fe";
-#elif _FX_PLATFORM_ == _FX_PLATFORM_WINDOWS_
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_FormText DISABLED_FormText
+#else
+#define MAYBE_FormText FormText
+#endif
+TEST_F(FPDFFormFillEmbedderTest, MAYBE_FormText) {
+#if defined(OS_MACOSX)
+  const char md5_1[] = "d485541d958fef08d24e8eca3e537023";
+  const char md5_2[] = "c6e4a2fb10661116771ee74f54d9c5e0";
+  const char md5_3[] = "e0c8d5099301d7c10ed831a43e974d9d";
+#elif defined(OS_WIN)
   const char md5_1[] = "d3204faa62b607f0bd3893c9c22cabcb";
   const char md5_2[] = "29d1c3fd226ca6a69597f75937690320";
   const char md5_3[] = "5e678a55912cb568fd677bf34abb8727";
@@ -701,6 +1010,8 @@ TEST_F(FPDFFormFillEmbedderTest, FormText) {
     // Click on the textfield
     EXPECT_EQ(FPDF_FORMFIELD_TEXTFIELD,
               FPDFPage_HasFormFieldAtPoint(form_handle(), page, 120.0, 120.0));
+    EXPECT_EQ(
+        0, FPDFPage_FormFieldZOrderAtPoint(form_handle(), page, 120.0, 120.0));
     FORM_OnMouseMove(form_handle(), page, 0, 120.0, 120.0);
     FORM_OnLButtonDown(form_handle(), page, 0, 120.0, 120.0);
     FORM_OnLButtonUp(form_handle(), page, 0, 120.0, 120.0);
@@ -712,12 +1023,19 @@ TEST_F(FPDFFormFillEmbedderTest, FormText) {
     ScopedFPDFBitmap bitmap2 = RenderLoadedPage(page);
     CompareBitmap(bitmap2.get(), 300, 300, md5_2);
 
+    // Focus remains despite right clicking out of the textfield
+    FORM_OnMouseMove(form_handle(), page, 0, 15.0, 15.0);
+    FORM_OnRButtonDown(form_handle(), page, 0, 15.0, 15.0);
+    FORM_OnRButtonUp(form_handle(), page, 0, 15.0, 15.0);
+    ScopedFPDFBitmap bitmap3 = RenderLoadedPage(page);
+    CompareBitmap(bitmap3.get(), 300, 300, md5_2);
+
     // Take out focus by clicking out of the textfield
     FORM_OnMouseMove(form_handle(), page, 0, 15.0, 15.0);
     FORM_OnLButtonDown(form_handle(), page, 0, 15.0, 15.0);
     FORM_OnLButtonUp(form_handle(), page, 0, 15.0, 15.0);
-    ScopedFPDFBitmap bitmap3 = RenderLoadedPage(page);
-    CompareBitmap(bitmap3.get(), 300, 300, md5_3);
+    ScopedFPDFBitmap bitmap4 = RenderLoadedPage(page);
+    CompareBitmap(bitmap4.get(), 300, 300, md5_3);
 
     EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
 
@@ -726,6 +1044,69 @@ TEST_F(FPDFFormFillEmbedderTest, FormText) {
   }
   // Check saved document
   VerifySavedDocument(300, 300, md5_3);
+}
+
+// Tests using FPDF_REVERSE_BYTE_ORDER with FPDF_FFLDraw(). The two rendered
+// bitmaps should be different.
+// TODO(crbug.com/pdfium/11): Fix this test and enable.
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_BUG_1281 DISABLED_BUG_1281
+#else
+#define MAYBE_BUG_1281 BUG_1281
+#endif
+TEST_F(FPDFFormFillEmbedderTest, MAYBE_BUG_1281) {
+  const char kMd5Normal[] = "6c674642154408e877d88c6c082d67e9";
+  const char kMd5ReverseByteOrder[] = "24fff03d1e663b7ece5f6e69ad837124";
+
+  ASSERT_TRUE(OpenDocument("bug_890322.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  ASSERT_TRUE(page);
+
+  ScopedFPDFBitmap bitmap_normal = RenderLoadedPage(page);
+  CompareBitmap(bitmap_normal.get(), 200, 200, kMd5Normal);
+
+  ScopedFPDFBitmap bitmap_reverse_byte_order =
+      RenderLoadedPageWithFlags(page, FPDF_REVERSE_BYTE_ORDER);
+  CompareBitmap(bitmap_reverse_byte_order.get(), 200, 200,
+                kMd5ReverseByteOrder);
+
+  UnloadPage(page);
+}
+
+#if defined(_SKIA_SUPPORT_) || defined(_SKIA_SUPPORT_PATHS_)
+#define MAYBE_RemoveFormFieldHighlight DISABLED_RemoveFormFieldHighlight
+#else
+#define MAYBE_RemoveFormFieldHighlight RemoveFormFieldHighlight
+#endif
+TEST_F(FPDFFormFillEmbedderTest, MAYBE_RemoveFormFieldHighlight) {
+#if defined(OS_MACOSX)
+  const char kMd5Normal[] = "d485541d958fef08d24e8eca3e537023";
+  const char kMd5NoHighlight[] = "5e4b87c5b304c6fa9bd5f6311260494e";
+#elif defined(OS_WIN)
+  const char kMd5Normal[] = "d3204faa62b607f0bd3893c9c22cabcb";
+  const char kMd5NoHighlight[] = "3ec0938828e0a37ef23f687ee95a80e1";
+#else
+  const char kMd5Normal[] = "b890950d4b9bc163b1a96797f3004b53";
+  const char kMd5NoHighlight[] = "006010c318457810a518aa5e0b33c498";
+#endif
+
+  EXPECT_TRUE(OpenDocument("text_form.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  ASSERT_TRUE(page);
+  ScopedFPDFBitmap bitmap1 = RenderLoadedPage(page);
+  CompareBitmap(bitmap1.get(), 300, 300, kMd5Normal);
+
+  // Removing the highlight changes the rendering.
+  FPDF_RemoveFormFieldHighlight(form_handle());
+  ScopedFPDFBitmap bitmap2 = RenderLoadedPage(page);
+  CompareBitmap(bitmap2.get(), 300, 300, kMd5NoHighlight);
+
+  // Restoring it gives the original rendering.
+  SetInitialFormFieldHighlight(form_handle());
+  ScopedFPDFBitmap bitmap3 = RenderLoadedPage(page);
+  CompareBitmap(bitmap3.get(), 300, 300, kMd5Normal);
+
+  UnloadPage(page);
 }
 
 TEST_F(FPDFFormFillEmbedderTest, HasFormInfoNone) {
@@ -746,6 +1127,49 @@ TEST_F(FPDFFormFillEmbedderTest, HasFormInfoXFAFull) {
 TEST_F(FPDFFormFillEmbedderTest, HasFormInfoXFAForeground) {
   EXPECT_TRUE(OpenDocument("bug_216.pdf"));
   EXPECT_EQ(FORMTYPE_XFA_FOREGROUND, FPDF_GetFormType(document_));
+}
+
+TEST_F(FPDFFormFillEmbedderTest, BadApiInputsText) {
+  ASSERT_TRUE(OpenDocument("text_form.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  ASSERT_TRUE(page);
+
+  EXPECT_FALSE(FORM_SetIndexSelected(nullptr, nullptr, 0, true));
+  EXPECT_FALSE(FORM_SetIndexSelected(nullptr, page, 0, true));
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), nullptr, 0, true));
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page, -1, true));
+  EXPECT_FALSE(FORM_IsIndexSelected(nullptr, nullptr, 0));
+  EXPECT_FALSE(FORM_IsIndexSelected(nullptr, page, 0));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), nullptr, 0));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), page, -1));
+
+  UnloadPage(page);
+}
+
+TEST_F(FPDFFormFillEmbedderTest, BadApiInputsComboBox) {
+  ASSERT_TRUE(OpenDocument("combobox_form.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  ASSERT_TRUE(page);
+
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page, -1, true));
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page, 100, true));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), page, -1));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), page, 100));
+
+  UnloadPage(page);
+}
+
+TEST_F(FPDFFormFillEmbedderTest, BadApiInputsListBox) {
+  ASSERT_TRUE(OpenDocument("listbox_form.pdf"));
+  FPDF_PAGE page = LoadPage(0);
+  ASSERT_TRUE(page);
+
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page, -1, true));
+  EXPECT_FALSE(FORM_SetIndexSelected(form_handle(), page, 100, true));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), page, -1));
+  EXPECT_FALSE(FORM_IsIndexSelected(form_handle(), page, 100));
+
+  UnloadPage(page);
 }
 
 TEST_F(FPDFFormFillTextFormEmbedderTest, GetSelectedTextEmptyAndBasicKeyboard) {
@@ -967,6 +1391,115 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckFocusedFieldText(L"ABCDEFGHIJ");
 }
 
+TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
+       SetSelectionProgrammaticallyNonEditableField) {
+  // Focus on non-editable form field and check that the value is as expected.
+  // This is the value that is present in the field upon opening, we have not
+  // changed it by setting focus.
+  FocusOnNonEditableForm();
+  CheckFocusedFieldText(L"Banana");
+
+  // Make selections to change the value of the focused annotation
+  // programmatically.
+  SetIndexSelectedShouldSucceed(0, true);
+  CheckFocusedFieldText(L"Apple");
+
+  // Selecting an index that is already selected is success.
+  SetIndexSelectedShouldSucceed(0, true);
+  CheckFocusedFieldText(L"Apple");
+
+  SetIndexSelectedShouldSucceed(9, true);
+  CheckFocusedFieldText(L"Jackfruit");
+
+  // Cannot deselect a combobox field - value unchanged.
+  SetIndexSelectedShouldFail(9, false);
+  CheckFocusedFieldText(L"Jackfruit");
+
+  // Cannot select indices that are out of range - value unchanged.
+  SetIndexSelectedShouldFail(100, true);
+  SetIndexSelectedShouldFail(-100, true);
+  CheckFocusedFieldText(L"Jackfruit");
+
+  // Check that above actions are interchangeable with click actions, should be
+  // able to use a combination of both.
+  SelectNonEditableFormOption(1);
+  CheckFocusedFieldText(L"Banana");
+}
+
+TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
+       SetSelectionProgrammaticallyEditableField) {
+  // Focus on editable form field and check that the value is as expected.
+  // This is the value that is present in the field upon opening, we have not
+  // changed it by setting focus.
+  FocusOnEditableForm();
+  CheckFocusedFieldText(L"");
+
+  // Make selections to change value of the focused annotation
+  // programmatically.
+  SetIndexSelectedShouldSucceed(0, true);
+  CheckFocusedFieldText(L"Foo");
+
+  SetIndexSelectedShouldSucceed(1, true);
+  CheckFocusedFieldText(L"Bar");
+
+  // Selecting an index that is already selected is success.
+  SetIndexSelectedShouldSucceed(1, true);
+  CheckFocusedFieldText(L"Bar");
+
+  // Cannot deselect a combobox field - value unchanged.
+  SetIndexSelectedShouldFail(0, false);
+  CheckFocusedFieldText(L"Bar");
+
+  // Cannot select indices that are out of range - value unchanged.
+  SetIndexSelectedShouldFail(100, true);
+  SetIndexSelectedShouldFail(-100, true);
+  CheckFocusedFieldText(L"Bar");
+
+  // Check that above actions are interchangeable with click actions, should be
+  // able to use a combination of both.
+  SelectEditableFormOption(0);
+  CheckFocusedFieldText(L"Foo");
+
+  // Check that above actions are interchangeable with typing actions, should
+  // be able to use a combination of both. Typing text into a text field after
+  // selecting indices programmatically should be equivalent to doing so after
+  // a user selects an index via click on the dropdown.
+  SetIndexSelectedShouldSucceed(1, true);
+  CheckFocusedFieldText(L"Bar");
+  TypeTextIntoTextField(5, EditableFormBegin());
+  CheckFocusedFieldText(L"ABCDEBar");
+}
+
+TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
+       CheckIfIndexSelectedNonEditableField) {
+  // Non-editable field is set to 'Banana' (index 1) upon opening.
+  ClickOnFormFieldAtPoint(NonEditableFormBegin());
+  for (int i = 0; i < 26; i++) {
+    bool expected = i == 1;
+    CheckIsIndexSelected(i, expected);
+  }
+
+  SelectNonEditableFormOption(0);
+  CheckIsIndexSelected(0, true);
+  for (int i = 1; i < 26; i++) {
+    CheckIsIndexSelected(i, false);
+  }
+}
+
+TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
+       CheckIfIndexSelectedEditableField) {
+  // Editable field has nothing selected upon opening.
+  ClickOnFormFieldAtPoint(EditableFormBegin());
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+
+  SelectEditableFormOption(0);
+  CheckIsIndexSelected(0, true);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+}
+
 TEST_F(FPDFFormFillTextFormEmbedderTest, DeleteTextFieldEntireSelection) {
   // Select entire contents of text field.
   TypeTextIntoTextField(12, RegularFormBegin());
@@ -1114,8 +1647,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, InsertTextInEmptyTextField) {
   CheckFocusedFieldText(L"");
 
   // Test inserting text into empty text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Hello");
 
@@ -1135,8 +1667,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, InsertTextInPopulatedTextFieldLeft) {
   CheckFocusedFieldText(L"ABCDEFGH");
 
   // Test inserting text in front of existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"HelloABCDEFGH");
 
@@ -1154,8 +1685,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, InsertTextInPopulatedTextFieldMiddle) {
   ClickOnFormFieldAtPoint(RegularFormAtX(134.0));
 
   // Test inserting text in the middle of existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"ABCDHelloEFGH");
 
@@ -1173,8 +1703,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, InsertTextInPopulatedTextFieldRight) {
   ClickOnFormFieldAtPoint(RegularFormAtX(166.0));
 
   // Test inserting text behind existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"ABCDEFGHHello");
 
@@ -1195,8 +1724,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"ABCDEFGHIJKL");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Hello");
 
@@ -1217,8 +1745,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"ABCDEF");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"HelloGHIJKL");
 
@@ -1239,8 +1766,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"DEFGHI");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1260,8 +1786,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"GHIJKL");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1277,8 +1802,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckFocusedFieldText(L"");
 
   // Test inserting text into empty user-editable combobox.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Hello");
 
@@ -1297,8 +1821,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   ClickOnFormFieldAtPoint(EditableFormBegin());
 
   // Test inserting text in front of existing text in user-editable combobox.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1317,8 +1840,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
 
   // Test inserting text in the middle of existing text in user-editable
   // combobox.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1336,8 +1858,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   ClickOnFormFieldAtPoint(EditableFormEnd());
 
   // Test inserting text behind existing text in user-editable combobox.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1357,8 +1878,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckSelection(L"ABCDEFGHIJ");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1378,8 +1898,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckSelection(L"ABCDE");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1399,8 +1918,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckSelection(L"DEFGH");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1420,8 +1938,7 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest,
   CheckSelection(L"FGHIJ");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of user-editable combobox text field to check that
@@ -1447,8 +1964,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
 
   // Test inserting text into now empty text field so text to be inserted
   // exceeds the char limit and is cut off.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Hippopotam");
 
@@ -1473,8 +1989,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
 
   // Test inserting text into now empty text field so text to be inserted
   // exceeds the char limit and is cut off.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Zebra");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Zebra");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Zebra");
 
@@ -1491,8 +2006,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   ClickOnFormFieldAtPoint(CharLimitFormBegin());
 
   // Test inserting text in front of existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1513,8 +2027,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckFocusedFieldText(L"Elephant");
 
   // Test inserting text in the middle of existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"ElephHiant");
 
@@ -1533,8 +2046,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   ClickOnFormFieldAtPoint(CharLimitFormAtX(166.0));
 
   // Test inserting text behind existing text in text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1554,8 +2066,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"Elephant");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1575,8 +2086,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"Elep");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1596,8 +2106,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"epha");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1617,8 +2126,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest,
   CheckSelection(L"hant");
 
   // Test replacing text selection with text to be inserted.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hippopotamus");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hippopotamus");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 
   // Select entire contents of text field to check that insertion worked
@@ -1634,8 +2142,7 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, DoubleClickInTextField) {
   CheckFocusedFieldText(L"");
 
   // Test inserting text into empty text field.
-  std::unique_ptr<unsigned short, pdfium::FreeDeleter> text_to_insert =
-      GetFPDFWideString(L"Hello World");
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"Hello World");
   FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
   CheckFocusedFieldText(L"Hello World");
 
@@ -1643,6 +2150,30 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, DoubleClickInTextField) {
   CheckSelection(L"");
   DoubleClickOnFormFieldAtPoint(RegularFormBegin());
   CheckSelection(L"Hello World");
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, FocusAnnotationUpdateToEmbedder) {
+  testing::NiceMock<EmbedderTestMockDelegate> mock;
+  SetDelegate(&mock);
+  CheckFocusedFieldText(L"");
+
+#ifdef PDF_ENABLE_XFA
+  EXPECT_CALL(mock, OnFocusChange(_, _, 0)).Times(1);
+#else   // PDF_ENABLE_XFA
+  EXPECT_CALL(mock, OnFocusChange(_, _, 0)).Times(0);
+#endif  // PDF_ENABLE_XFA
+
+  ClickOnFormFieldAtPoint(RegularFormBegin());
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTestVersion2,
+       FocusAnnotationUpdateToEmbedder) {
+  testing::NiceMock<EmbedderTestMockDelegate> mock;
+  SetDelegate(&mock);
+  CheckFocusedFieldText(L"");
+
+  EXPECT_CALL(mock, OnFocusChange(_, _, 0)).Times(1);
+  ClickOnFormFieldAtPoint(RegularFormBegin());
 }
 
 TEST_F(FPDFFormFillTextFormEmbedderTest, FocusChanges) {
@@ -1782,6 +2313,33 @@ TEST_F(FPDFFormFillTextFormEmbedderTest, UndoRedo) {
   CheckCanRedo(false);
 }
 
+// This action only applies to Listboxes and Comboboxes so should fail
+// gracefully for Textboxes by returning false to all operations.
+TEST_F(FPDFFormFillTextFormEmbedderTest, SetIndexSelectedShouldFailGracefully) {
+  // set focus and read text to confirm we have it
+  ClickOnFormFieldAtPoint(CharLimitFormEnd());
+  CheckFocusedFieldText(L"Elephant");
+
+  SetIndexSelectedShouldFail(0, true);
+  SetIndexSelectedShouldFail(0, false);
+  SetIndexSelectedShouldFail(1, true);
+  SetIndexSelectedShouldFail(1, false);
+  SetIndexSelectedShouldFail(-1, true);
+  SetIndexSelectedShouldFail(-1, false);
+}
+
+// This action only applies to Listboxes and Comboboxes so should fail
+// gracefully for Textboxes by returning false to all operations.
+TEST_F(FPDFFormFillTextFormEmbedderTest, IsIndexSelectedShouldFailGracefully) {
+  // set focus and read text to confirm we have it
+  ClickOnFormFieldAtPoint(CharLimitFormEnd());
+  CheckFocusedFieldText(L"Elephant");
+
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(-1, false);
+}
+
 TEST_F(FPDFFormFillComboBoxFormEmbedderTest, UndoRedo) {
   ClickOnFormFieldAtPoint(NonEditableFormBegin());
   CheckFocusedFieldText(L"Banana");
@@ -1815,4 +2373,302 @@ TEST_F(FPDFFormFillComboBoxFormEmbedderTest, UndoRedo) {
   CheckFocusedFieldText(L"A");
   CheckCanUndo(true);
   CheckCanRedo(true);
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest,
+       CheckIfIndexSelectedSingleSelectField) {
+  // Nothing is selected in single select field upon opening.
+  FocusOnSingleSelectForm();
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+
+  ClickOnSingleSelectFormOption(1);
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest,
+       CheckIfIndexSelectedMultiSelectField) {
+  // Multiselect field set to 'Banana' (index 1) upon opening.
+  FocusOnMultiSelectForm();
+  for (int i = 0; i < 26; i++) {
+    bool expected = i == 1;
+    CheckIsIndexSelected(i, expected);
+  }
+
+  // TODO(bug_1377): Behavior should be changed to the one described below.
+  // Multiselect field set to 'Cherry' (index 2), which is index 1 among the
+  // visible form options because the listbox is scrolled down to have 'Banana'
+  // (index 1) at the top.
+  ClickOnMultiSelectFormOption(1);
+  for (int i = 0; i < 26; i++) {
+    bool expected = i == 1;
+    CheckIsIndexSelected(i, expected);
+  }
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest,
+       SetSelectionProgrammaticallySingleSelectField) {
+  // Nothing is selected in single select field upon opening.
+  FocusOnSingleSelectForm();
+  CheckFocusedFieldText(L"");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+
+  // Make selections to change the value of the focused annotation
+  // programmatically showing that only one value remains selected at a time.
+  SetIndexSelectedShouldSucceed(0, true);
+  CheckFocusedFieldText(L"Foo");
+  CheckIsIndexSelected(0, true);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+
+  SetIndexSelectedShouldSucceed(1, true);
+  CheckFocusedFieldText(L"Bar");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+
+  // Selecting/deselecting an index that is already selected/deselected is
+  // success.
+  SetIndexSelectedShouldSucceed(1, true);
+  CheckFocusedFieldText(L"Bar");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+
+  SetIndexSelectedShouldSucceed(2, false);
+  CheckFocusedFieldText(L"Bar");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+
+  // Cannot select indices that are out of range.
+  SetIndexSelectedShouldFail(100, true);
+  SetIndexSelectedShouldFail(-100, true);
+  SetIndexSelectedShouldFail(100, false);
+  SetIndexSelectedShouldFail(-100, false);
+  // Confirm that previous values were not changed.
+  CheckFocusedFieldText(L"Bar");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+
+  // Unlike combobox, should be able to deselect all indices.
+  SetIndexSelectedShouldSucceed(1, false);
+  CheckFocusedFieldText(L"");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, false);
+  CheckIsIndexSelected(2, false);
+
+  // Check that above actions are interchangeable with click actions, should be
+  // able to use a combination of both.
+  ClickOnSingleSelectFormOption(1);
+  CheckFocusedFieldText(L"Bar");
+  CheckIsIndexSelected(0, false);
+  CheckIsIndexSelected(1, true);
+  CheckIsIndexSelected(2, false);
+}
+
+// Re: Focus Field Text - For multiselect listboxes a caret is set on the last
+// item to be selected/deselected. The text of that item should be returned.
+TEST_F(FPDFFormFillListBoxFormEmbedderTest,
+       SetSelectionProgrammaticallyMultiSelectField) {
+  // Multiselect field set to 'Banana' (index 1) upon opening.
+  FocusOnMultiSelectForm();
+  for (int i = 0; i < 26; i++) {
+    bool expected = i == 1;
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Banana");
+
+  // Select some more options.
+  SetIndexSelectedShouldSucceed(5, true);
+  SetIndexSelectedShouldSucceed(6, true);
+  SetIndexSelectedShouldSucceed(20, true);
+  for (int i = 0; i < 26; i++) {
+    bool expected = (i == 1 || i == 5 || i == 6 || i == 20);
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Ugli Fruit");
+
+  // Selecting indices that are already selected is success - changes nothing.
+  SetIndexSelectedShouldSucceed(5, true);
+  SetIndexSelectedShouldSucceed(6, true);
+  SetIndexSelectedShouldSucceed(20, true);
+  for (int i = 0; i < 26; i++) {
+    bool expected = (i == 1 || i == 5 || i == 6 || i == 20);
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Ugli Fruit");
+
+  // Deselect some options.
+  SetIndexSelectedShouldSucceed(20, false);
+  SetIndexSelectedShouldSucceed(1, false);
+  for (int i = 0; i < 26; i++) {
+    bool expected = (i == 5 || i == 6);
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Banana");
+
+  // Deselecting indices that already aren't selected is success - does not
+  // change the selected values but moves the focus text caret to last item we
+  // executed on.
+  SetIndexSelectedShouldSucceed(1, false);
+  SetIndexSelectedShouldSucceed(3, false);
+  for (int i = 0; i < 26; i++) {
+    bool expected = (i == 5 || i == 6);
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Date");
+
+  // Cannot select indices that are out of range.
+  SetIndexSelectedShouldFail(100, true);
+  SetIndexSelectedShouldFail(-100, true);
+  SetIndexSelectedShouldFail(100, false);
+  SetIndexSelectedShouldFail(-100, false);
+  // Confirm that previous values were not changed.
+  CheckFocusedFieldText(L"Date");
+  for (int i = 0; i < 26; i++) {
+    bool expected = (i == 5 || i == 6);
+    CheckIsIndexSelected(i, expected);
+  }
+
+  // Check that above actions are interchangeable with click actions, should be
+  // able to use a combination of both.
+  // TODO(bug_1377): Change to click on form option 0 instead of form option 1
+  ClickOnMultiSelectFormOption(1);
+  for (int i = 0; i < 26; i++) {
+    bool expected = i == 1;
+    CheckIsIndexSelected(i, expected);
+  }
+  CheckFocusedFieldText(L"Banana");
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest, CheckIfMultipleSelected) {
+  // Multiselect field set to 'Gamma' (index 2) and 'Epsilon' (index 4) upon
+  // opening.
+  FocusOnMultiSelectMultipleSelectedForm();
+  for (int i = 0; i < 5; i++) {
+    // TODO(bug_1377): Should be selected at index 2 and index 4.
+    bool expected = false;
+    CheckIsIndexSelected(i, expected);
+  }
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest,
+       CheckIfVerticalScrollIsAtFirstSelected) {
+  // Multiselect field set to 'Gamma' (index 2) and 'Epsilon' (index 4) upon
+  // opening.
+
+  // TODO(bug_1377): Behavior should be changed to the one described below.
+  // The top visible option is 'Gamma' (index 2), so the first selection should
+  // not change. The second selection, 'Epsilon,' should be deselected.
+  ClickOnMultiSelectMultipleSelectedFormOption(0);
+  for (int i = 0; i < 5; i++) {
+    bool expected = i == 0;
+    CheckIsIndexSelected(i, expected);
+  }
+}
+
+TEST_F(FPDFFormFillListBoxFormEmbedderTest, CheckForNoOverscroll) {
+  // Only the last option in the list, 'Saskatchewan', is selected.
+  FocusOnSingleSelectLastSelectedForm();
+  for (int i = 0; i < 10; i++) {
+    bool expected = i == 9;
+    CheckIsIndexSelected(i, expected);
+  }
+
+  // Even though the top index is specified to be at 'Saskatchewan' (index 9),
+  // the top visible option will be the one above it, 'Quebec' (index 8), to
+  // prevent overscrolling. Therefore, clicking on the first visible option of
+  // the list should select 'Quebec' instead of 'Saskatchewan.'
+  ClickOnSingleSelectLastSelectedFormOption(0);
+  for (int i = 0; i < 10; i++) {
+    bool expected = i == 8;
+    CheckIsIndexSelected(i, expected);
+  }
+}
+
+TEST_F(FPDFFormFillTextFormEmbedderTest, ReplaceSelection) {
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"XYZ");
+  ClickOnFormFieldAtPoint(RegularFormBegin());
+  CheckCanUndo(false);
+  CheckCanRedo(false);
+
+  TypeTextIntoTextField(2, RegularFormBegin());
+  CheckFocusedFieldText(L"AB");
+  CheckSelection(L"");
+  SelectTextWithKeyboard(1, FWL_VKEY_Right, RegularFormBegin());
+  CheckSelection(L"A");
+
+  FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
+  CheckFocusedFieldText(L"XYZB");
+  CheckCanUndo(true);
+  CheckCanRedo(false);
+
+  PerformUndo();
+  CheckFocusedFieldText(L"AB");
+  CheckCanUndo(true);
+  CheckCanRedo(true);
+
+  PerformUndo();
+  CheckFocusedFieldText(L"A");
+  CheckCanUndo(true);
+  CheckCanRedo(true);
+
+  PerformUndo();
+  CheckFocusedFieldText(L"");
+  CheckCanUndo(false);
+  CheckCanRedo(true);
+
+  PerformRedo();
+  CheckFocusedFieldText(L"A");
+  CheckCanUndo(true);
+  CheckCanRedo(true);
+
+  PerformRedo();
+  CheckFocusedFieldText(L"AB");
+  CheckCanUndo(true);
+  CheckCanRedo(true);
+
+  PerformRedo();
+  CheckFocusedFieldText(L"XYZB");
+  CheckCanUndo(true);
+  CheckCanRedo(false);
+}
+
+class FPDFXFAFormBug1055869EmbedderTest
+    : public FPDFFormFillInteractiveEmbedderTest {
+ protected:
+  FPDFXFAFormBug1055869EmbedderTest() = default;
+  ~FPDFXFAFormBug1055869EmbedderTest() override = default;
+
+  const char* GetDocumentName() const override { return "bug_1055869.pdf"; }
+  int GetFormType() const override { return FORMTYPE_XFA_FULL; }
+};
+
+TEST_F(FPDFXFAFormBug1055869EmbedderTest, Paste) {
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"XYZ");
+  DoubleClickOnFormFieldAtPoint(CFX_PointF(100, 100));
+  FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
+}
+
+class FPDFXFAFormBug1058653EmbedderTest
+    : public FPDFFormFillInteractiveEmbedderTest {
+ protected:
+  FPDFXFAFormBug1058653EmbedderTest() = default;
+  ~FPDFXFAFormBug1058653EmbedderTest() override = default;
+
+  const char* GetDocumentName() const override { return "bug_1058653.pdf"; }
+  int GetFormType() const override { return FORMTYPE_XFA_FULL; }
+};
+
+TEST_F(FPDFXFAFormBug1058653EmbedderTest, Paste) {
+  ScopedFPDFWideString text_to_insert = GetFPDFWideString(L"");
+  DoubleClickOnFormFieldAtPoint(CFX_PointF(22, 22));
+  FORM_ReplaceSelection(form_handle(), page(), text_to_insert.get());
 }

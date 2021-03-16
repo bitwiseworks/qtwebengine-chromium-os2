@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2013 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -31,6 +31,7 @@ namespace rx
 class GLImplFactory;
 class ShaderImpl;
 class ShaderSh;
+class WaitableCompileEvent;
 }  // namespace rx
 
 namespace angle
@@ -69,17 +70,17 @@ class ShaderState final : angle::NonCopyable
     ShaderType getShaderType() const { return mShaderType; }
     int getShaderVersion() const { return mShaderVersion; }
 
-    const std::vector<sh::Varying> &getInputVaryings() const { return mInputVaryings; }
-    const std::vector<sh::Varying> &getOutputVaryings() const { return mOutputVaryings; }
-    const std::vector<sh::Uniform> &getUniforms() const { return mUniforms; }
+    const std::vector<sh::ShaderVariable> &getInputVaryings() const { return mInputVaryings; }
+    const std::vector<sh::ShaderVariable> &getOutputVaryings() const { return mOutputVaryings; }
+    const std::vector<sh::ShaderVariable> &getUniforms() const { return mUniforms; }
     const std::vector<sh::InterfaceBlock> &getUniformBlocks() const { return mUniformBlocks; }
     const std::vector<sh::InterfaceBlock> &getShaderStorageBlocks() const
     {
         return mShaderStorageBlocks;
     }
-    const std::vector<sh::Attribute> &getActiveAttributes() const { return mActiveAttributes; }
-    const std::vector<sh::Attribute> &getAllAttributes() const { return mAllAttributes; }
-    const std::vector<sh::OutputVariable> &getActiveOutputVariables() const
+    const std::vector<sh::ShaderVariable> &getActiveAttributes() const { return mActiveAttributes; }
+    const std::vector<sh::ShaderVariable> &getAllAttributes() const { return mAllAttributes; }
+    const std::vector<sh::ShaderVariable> &getActiveOutputVariables() const
     {
         return mActiveOutputVariables;
     }
@@ -98,14 +99,14 @@ class ShaderState final : angle::NonCopyable
 
     sh::WorkGroupSize mLocalSize;
 
-    std::vector<sh::Varying> mInputVaryings;
-    std::vector<sh::Varying> mOutputVaryings;
-    std::vector<sh::Uniform> mUniforms;
+    std::vector<sh::ShaderVariable> mInputVaryings;
+    std::vector<sh::ShaderVariable> mOutputVaryings;
+    std::vector<sh::ShaderVariable> mUniforms;
     std::vector<sh::InterfaceBlock> mUniformBlocks;
     std::vector<sh::InterfaceBlock> mShaderStorageBlocks;
-    std::vector<sh::Attribute> mAllAttributes;
-    std::vector<sh::Attribute> mActiveAttributes;
-    std::vector<sh::OutputVariable> mActiveOutputVariables;
+    std::vector<sh::ShaderVariable> mAllAttributes;
+    std::vector<sh::ShaderVariable> mActiveAttributes;
+    std::vector<sh::ShaderVariable> mActiveOutputVariables;
 
     // ANGLE_multiview.
     int mNumViews;
@@ -127,7 +128,7 @@ class Shader final : angle::NonCopyable, public LabeledObject
            rx::GLImplFactory *implFactory,
            const gl::Limitations &rendererLimitations,
            ShaderType type,
-           GLuint handle);
+           ShaderProgramID handle);
 
     void onDestroy(const Context *context);
 
@@ -135,7 +136,7 @@ class Shader final : angle::NonCopyable, public LabeledObject
     const std::string &getLabel() const override;
 
     ShaderType getType() const { return mType; }
-    GLuint getHandle() const;
+    ShaderProgramID getHandle() const;
 
     rx::ShaderImpl *getImplementation() const { return mImplementation.get(); }
 
@@ -163,14 +164,14 @@ class Shader final : angle::NonCopyable, public LabeledObject
 
     int getShaderVersion();
 
-    const std::vector<sh::Varying> &getInputVaryings();
-    const std::vector<sh::Varying> &getOutputVaryings();
-    const std::vector<sh::Uniform> &getUniforms();
+    const std::vector<sh::ShaderVariable> &getInputVaryings();
+    const std::vector<sh::ShaderVariable> &getOutputVaryings();
+    const std::vector<sh::ShaderVariable> &getUniforms();
     const std::vector<sh::InterfaceBlock> &getUniformBlocks();
     const std::vector<sh::InterfaceBlock> &getShaderStorageBlocks();
-    const std::vector<sh::Attribute> &getActiveAttributes();
-    const std::vector<sh::Attribute> &getAllAttributes();
-    const std::vector<sh::OutputVariable> &getActiveOutputVariables();
+    const std::vector<sh::ShaderVariable> &getActiveAttributes();
+    const std::vector<sh::ShaderVariable> &getAllAttributes();
+    const std::vector<sh::ShaderVariable> &getActiveOutputVariables();
 
     // Returns mapped name of a transform feedback varying. The original name may contain array
     // brackets with an index inside, which will get copied to the mapped name. The varying must be
@@ -189,6 +190,8 @@ class Shader final : angle::NonCopyable, public LabeledObject
     const std::string &getCompilerResourcesString() const;
 
   private:
+    struct CompilingState;
+
     ~Shader() override;
     static void GetSourceImpl(const std::string &source,
                               GLsizei bufSize,
@@ -200,7 +203,7 @@ class Shader final : angle::NonCopyable, public LabeledObject
     ShaderState mState;
     std::unique_ptr<rx::ShaderImpl> mImplementation;
     const gl::Limitations &mRendererLimitations;
-    const GLuint mHandle;
+    const ShaderProgramID mHandle;
     const ShaderType mType;
     unsigned int mRefCount;  // Number of program objects this shader is attached to
     bool mDeleteStatus;  // Flag to indicate that the shader can be deleted when no longer in use
@@ -208,15 +211,13 @@ class Shader final : angle::NonCopyable, public LabeledObject
 
     // We keep a reference to the translator in order to defer compiles while preserving settings.
     BindingPointer<Compiler> mBoundCompiler;
-    ShCompilerInstance mShCompilerInstance;
-    std::shared_ptr<CompileTask> mCompileTask;
-    std::shared_ptr<angle::WorkerThreadPool> mWorkerPool;
-    std::shared_ptr<angle::WaitableEvent> mCompileEvent;
+    std::unique_ptr<CompilingState> mCompilingState;
     std::string mCompilerResourcesString;
 
     ShaderProgramManager *mResourceManager;
 
     GLuint mCurrentMaxComputeWorkGroupInvocations;
+    unsigned int mMaxComputeSharedMemory;
 };
 
 bool CompareShaderVar(const sh::ShaderVariable &x, const sh::ShaderVariable &y);

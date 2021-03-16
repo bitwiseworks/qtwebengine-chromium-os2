@@ -78,7 +78,9 @@ WideString JSGetStringFromID(JSMessage msg) {
     case JSMessage::kInvalidSetError:
       msg_string = "Set not possible, invalid or unknown.";
       break;
-#ifdef PDF_ENABLE_XFA
+    case JSMessage::kUserGestureRequiredError:
+      msg_string = "User gesture required.";
+      break;
     case JSMessage::kTooManyOccurances:
       msg_string = "Too many occurances.";
       break;
@@ -88,7 +90,6 @@ WideString JSGetStringFromID(JSMessage msg) {
     default:
       NOTREACHED();
       break;
-#endif
   }
   return WideString::FromASCII(msg_string);
 }

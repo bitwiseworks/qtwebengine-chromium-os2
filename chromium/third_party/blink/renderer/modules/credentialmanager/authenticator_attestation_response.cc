@@ -8,14 +8,6 @@
 
 namespace blink {
 
-AuthenticatorAttestationResponse* AuthenticatorAttestationResponse::Create(
-    DOMArrayBuffer* client_data_json,
-    DOMArrayBuffer* attestation_object,
-    Vector<mojom::AuthenticatorTransport> transports) {
-  return MakeGarbageCollected<AuthenticatorAttestationResponse>(
-      client_data_json, attestation_object, std::move(transports));
-}
-
 AuthenticatorAttestationResponse::AuthenticatorAttestationResponse(
     DOMArrayBuffer* client_data_json,
     DOMArrayBuffer* attestation_object,
@@ -31,11 +23,11 @@ Vector<String> AuthenticatorAttestationResponse::getTransports() const {
   for (auto transport : transports_) {
     ret.emplace_back(mojo::ConvertTo<String>(transport));
   }
-  std::sort(ret.begin(), ret.end(), WTF::CodePointCompareLessThan);
+  std::sort(ret.begin(), ret.end(), WTF::CodeUnitCompareLessThan);
   return ret;
 }
 
-void AuthenticatorAttestationResponse::Trace(blink::Visitor* visitor) {
+void AuthenticatorAttestationResponse::Trace(Visitor* visitor) {
   visitor->Trace(attestation_object_);
   AuthenticatorResponse::Trace(visitor);
 }

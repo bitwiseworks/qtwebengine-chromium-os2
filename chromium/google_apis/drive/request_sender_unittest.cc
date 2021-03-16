@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "google_apis/drive/base_requests.h"
@@ -34,7 +35,7 @@ class TestAuthService : public DummyAuthService {
  public:
   TestAuthService() : auth_try_count_(0) {}
 
-  void StartAuthentication(const AuthStatusCallback& callback) override {
+  void StartAuthentication(AuthStatusCallback callback) override {
     // RequestSender should clear the rejected access token before starting
     // to request another one.
     EXPECT_FALSE(HasAccessToken());
@@ -43,12 +44,12 @@ class TestAuthService : public DummyAuthService {
 
     if (refresh_token() == kTestRefreshToken) {
       const std::string token =
-          kTestAccessToken + base::IntToString(auth_try_count_);
+          kTestAccessToken + base::NumberToString(auth_try_count_);
       set_access_token(token);
-      callback.Run(HTTP_SUCCESS, token);
+      std::move(callback).Run(HTTP_SUCCESS, token);
     } else {
       set_access_token("");
-      callback.Run(HTTP_UNAUTHORIZED, "");
+      std::move(callback).Run(HTTP_UNAUTHORIZED, "");
     }
   }
 
@@ -62,8 +63,8 @@ class RequestSenderTest : public testing::Test {
   RequestSenderTest()
       : auth_service_(new TestAuthService),
         request_sender_(base::WrapUnique(auth_service_),
-                        NULL,
-                        NULL,
+                        nullptr,
+                        nullptr,
                         "dummy-user-agent",
                         TRAFFIC_ANNOTATION_FOR_TESTS) {
     auth_service_->set_refresh_token(kTestRefreshToken);
@@ -83,9 +84,7 @@ class TestRequest : public AuthenticatedRequestInterface {
               FinishReason* finish_reason)
       : sender_(sender),
         start_called_(start_called),
-        finish_reason_(finish_reason),
-        weak_ptr_factory_(this) {
-  }
+        finish_reason_(finish_reason) {}
 
   // Test the situation that the request has finished.
   void FinishRequestWithSuccess() {
@@ -103,10 +102,10 @@ class TestRequest : public AuthenticatedRequestInterface {
 
   void Start(const std::string& access_token,
              const std::string& custom_user_agent,
-             const ReAuthenticateCallback& callback) override {
+             ReAuthenticateCallback callback) override {
     *start_called_ = true;
     passed_access_token_ = access_token;
-    passed_reauth_callback_ = callback;
+    passed_reauth_callback_ = std::move(callback);
 
     // This request class itself does not return any response at this point.
     // Each test case should respond properly by using the above methods.
@@ -133,7 +132,7 @@ class TestRequest : public AuthenticatedRequestInterface {
   FinishReason* finish_reason_;
   std::string passed_access_token_;
   ReAuthenticateCallback passed_reauth_callback_;
-  base::WeakPtrFactory<TestRequest> weak_ptr_factory_;
+  base::WeakPtrFactory<TestRequest> weak_ptr_factory_{this};
 };
 
 }  // namespace

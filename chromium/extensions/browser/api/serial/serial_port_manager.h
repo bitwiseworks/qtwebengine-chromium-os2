@@ -9,11 +9,14 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/threading/thread_checker.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/common/api/serial.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/serial.mojom.h"
 
 namespace content {
@@ -41,10 +44,16 @@ class SerialPortManager : public BrowserContextKeyedAPI {
       device::mojom::SerialPortManager::GetDevicesCallback callback);
 
   void GetPort(const std::string& path,
-               device::mojom::SerialPortRequest request);
+               mojo::PendingReceiver<device::mojom::SerialPort> receiver);
 
-  // Start receiving data and firing events for a connection.
-  void PollConnection(const std::string& extension_id, int connection_id);
+  // Start the poilling process for the connection.
+  void StartConnectionPolling(const std::string& extension_id,
+                              int connection_id);
+
+  // Allows tests to override how this class binds SerialPortManager receivers.
+  using Binder = base::RepeatingCallback<void(
+      mojo::PendingReceiver<device::mojom::SerialPortManager>)>;
+  static void OverrideBinderForTesting(Binder binder);
 
  private:
   typedef ApiResourceManager<SerialConnection>::ApiResourceData ConnectionData;
@@ -60,40 +69,32 @@ class SerialPortManager : public BrowserContextKeyedAPI {
     ReceiveParams(const ReceiveParams& other);
     ~ReceiveParams();
 
-    content::BrowserThread::ID thread_id;
     void* browser_context_id;
     std::string extension_id;
     scoped_refptr<ConnectionData> connections;
     int connection_id;
   };
+  static void DispatchReceiveEvent(const ReceiveParams& params,
+                                   std::vector<uint8_t> data,
+                                   serial::ReceiveError error);
 
-  static void StartReceive(const ReceiveParams& params);
-
-  static void ReceiveCallback(const ReceiveParams& params,
-                              std::vector<uint8_t> data,
-                              serial::ReceiveError error);
-
-  static void PostEvent(const ReceiveParams& params,
-                        std::unique_ptr<extensions::Event> event);
-
-  static void DispatchEvent(void* browser_context_id,
-                            const std::string& extension_id,
+  static void DispatchEvent(const ReceiveParams& params,
                             std::unique_ptr<extensions::Event> event);
 
   void EnsureConnection();
   void OnGotDevicesToGetPort(
       const std::string& path,
-      device::mojom::SerialPortRequest request,
+      mojo::PendingReceiver<device::mojom::SerialPort> receiver,
       std::vector<device::mojom::SerialPortInfoPtr> devices);
   void OnPortManagerConnectionError();
 
-  device::mojom::SerialPortManagerPtr port_manager_;
+  mojo::Remote<device::mojom::SerialPortManager> port_manager_;
   content::BrowserThread::ID thread_id_;
   scoped_refptr<ConnectionData> connections_;
   content::BrowserContext* const context_;
 
   THREAD_CHECKER(thread_checker_);
-  base::WeakPtrFactory<SerialPortManager> weak_factory_;
+  base::WeakPtrFactory<SerialPortManager> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SerialPortManager);
 };

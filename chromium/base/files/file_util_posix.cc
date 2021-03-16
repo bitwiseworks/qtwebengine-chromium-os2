@@ -15,13 +15,13 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/param.h>
-#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "base/base_switches.h"
+#include "base/bits.h"
 #include "base/command_line.h"
 #include "base/containers/stack.h"
 #include "base/environment.h"
@@ -30,6 +30,7 @@
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/stl_util.h"
@@ -41,6 +42,7 @@
 #include "base/system/sys_info.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/time/time.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 
 #if defined(OS_MACOSX)
@@ -67,36 +69,13 @@ namespace base {
 
 namespace {
 
-#if defined(OS_BSD) || defined(OS_MACOSX) || defined(OS_NACL) || \
-  defined(OS_FUCHSIA) || (defined(OS_ANDROID) && __ANDROID_API__ < 21)
-int CallStat(const char* path, stat_wrapper_t* sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return stat(path, sb);
-}
-#if !defined(OS_NACL_NONSFI)
-int CallLstat(const char* path, stat_wrapper_t* sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return lstat(path, sb);
-}
-#endif
-#else
-int CallStat(const char* path, stat_wrapper_t* sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return stat64(path, sb);
-}
-int CallLstat(const char* path, stat_wrapper_t* sb) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  return lstat64(path, sb);
-}
-#endif
-
 #if !defined(OS_NACL_NONSFI)
 // Helper for VerifyPathControlledByUser.
 bool VerifySpecificPathControlledByUser(const FilePath& path,
                                         uid_t owner_uid,
                                         const std::set<gid_t>& group_gids) {
   stat_wrapper_t stat_info;
-  if (CallLstat(path.value().c_str(), &stat_info) != 0) {
+  if (File::Lstat(path.value().c_str(), &stat_info) != 0) {
     DPLOG(ERROR) << "Failed to get information on path "
                  << path.value();
     return false;
@@ -113,7 +92,7 @@ bool VerifySpecificPathControlledByUser(const FilePath& path,
   }
 
   if ((stat_info.st_mode & S_IWGRP) &&
-      !ContainsKey(group_gids, stat_info.st_gid)) {
+      !Contains(group_gids, stat_info.st_gid)) {
     DLOG(ERROR) << "Path " << path.value()
                 << " is writable by an unprivileged group.";
     return false;
@@ -132,7 +111,7 @@ std::string TempFileName() {
   return StringPrintf(".%s.XXXXXX", base::mac::BaseBundleID());
 #endif
 
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   return std::string(".com.google.Chrome.XXXXXX");
 #else
   return std::string(".org.chromium.Chromium.XXXXXX");
@@ -141,7 +120,7 @@ std::string TempFileName() {
 
 bool AdvanceEnumeratorWithStat(FileEnumerator* traversal,
                                FilePath* out_next_path,
-                               struct stat* out_next_stat) {
+                               stat_wrapper_t* out_next_stat) {
   DCHECK(out_next_path);
   DCHECK(out_next_stat);
   *out_next_path = traversal->Next();
@@ -182,7 +161,7 @@ bool DoCopyDirectory(const FilePath& from_path,
                      const FilePath& to_path,
                      bool recursive,
                      bool open_exclusive) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   // Some old callers of CopyDirectory want it to support wildcards.
   // After some discussion, we decided to fix those callers.
   // Break loudly here if anyone tries to do this.
@@ -215,9 +194,9 @@ bool DoCopyDirectory(const FilePath& from_path,
 
   // We have to mimic windows behavior here. |to_path| may not exist yet,
   // start the loop with |to_path|.
-  struct stat from_stat;
+  stat_wrapper_t from_stat;
   FilePath current = from_path;
-  if (stat(from_path.value().c_str(), &from_stat) < 0) {
+  if (File::Stat(from_path.value().c_str(), &from_stat) < 0) {
     DPLOG(ERROR) << "CopyDirectory() couldn't stat source directory: "
                  << from_path.value();
     return false;
@@ -268,8 +247,8 @@ bool DoCopyDirectory(const FilePath& from_path,
       return false;
     }
 
-    struct stat stat_at_use;
-    if (fstat(infile.GetPlatformFile(), &stat_at_use) < 0) {
+    stat_wrapper_t stat_at_use;
+    if (File::Fstat(infile.GetPlatformFile(), &stat_at_use) < 0) {
       DPLOG(ERROR) << "CopyDirectory() couldn't stat file: " << current.value();
       return false;
     }
@@ -317,41 +296,22 @@ bool DoCopyDirectory(const FilePath& from_path,
 
   return true;
 }
-#endif  // !defined(OS_NACL_NONSFI)
-
-#if !defined(OS_MACOSX)
-// Appends |mode_char| to |mode| before the optional character set encoding; see
-// https://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html for
-// details.
-std::string AppendModeCharacter(StringPiece mode, char mode_char) {
-  std::string result(mode.as_string());
-  size_t comma_pos = result.find(',');
-  result.insert(comma_pos == std::string::npos ? result.length() : comma_pos, 1,
-                mode_char);
-  return result;
-}
-#endif
-
-}  // namespace
-
-#if !defined(OS_NACL_NONSFI)
-FilePath MakeAbsoluteFilePath(const FilePath& input) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
-  char full_path[PATH_MAX];
-  if (realpath(input.value().c_str(), full_path) == nullptr)
-    return FilePath();
-  return FilePath(full_path);
-}
 
 // TODO(erikkay): The Windows version of this accepts paths like "foo/bar/*"
 // which works both with and without the recursive flag.  I'm not sure we need
 // that functionality. If not, remove from file_util_win.cc, otherwise add it
 // here.
-bool DeleteFile(const FilePath& path, bool recursive) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+bool DoDeleteFile(const FilePath& path, bool recursive) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+
+#if defined(OS_ANDROID)
+  if (path.IsContentUri())
+    return DeleteContentUri(path);
+#endif  // defined(OS_ANDROID)
+
   const char* path_str = path.value().c_str();
   stat_wrapper_t file_info;
-  if (CallLstat(path_str, &file_info) != 0) {
+  if (File::Lstat(path_str, &file_info) != 0) {
     // The Windows version defines this condition as success.
     return (errno == ENOENT || errno == ENOTDIR);
   }
@@ -381,11 +341,44 @@ bool DeleteFile(const FilePath& path, bool recursive) {
   }
   return success;
 }
+#endif  // !defined(OS_NACL_NONSFI)
+
+#if !defined(OS_MACOSX)
+// Appends |mode_char| to |mode| before the optional character set encoding; see
+// https://www.gnu.org/software/libc/manual/html_node/Opening-Streams.html for
+// details.
+std::string AppendModeCharacter(StringPiece mode, char mode_char) {
+  std::string result(mode.as_string());
+  size_t comma_pos = result.find(',');
+  result.insert(comma_pos == std::string::npos ? result.length() : comma_pos, 1,
+                mode_char);
+  return result;
+}
+#endif
+
+}  // namespace
+
+#if !defined(OS_NACL_NONSFI)
+FilePath MakeAbsoluteFilePath(const FilePath& input) {
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  char full_path[PATH_MAX];
+  if (realpath(input.value().c_str(), full_path) == nullptr)
+    return FilePath();
+  return FilePath(full_path);
+}
+
+bool DeleteFile(const FilePath& path, bool recursive) {
+  return DoDeleteFile(path, recursive);
+}
+
+bool DeleteFileRecursively(const FilePath& path) {
+  return DoDeleteFile(path, /*recursive=*/true);
+}
 
 bool ReplaceFile(const FilePath& from_path,
                  const FilePath& to_path,
                  File::Error* error) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   if (rename(from_path.value().c_str(), to_path.value().c_str()) == 0)
     return true;
   if (error)
@@ -405,6 +398,17 @@ bool CopyDirectoryExcl(const FilePath& from_path,
   return DoCopyDirectory(from_path, to_path, recursive, true);
 }
 #endif  // !defined(OS_NACL_NONSFI)
+
+bool CreatePipe(ScopedFD* read_fd, ScopedFD* write_fd, bool non_blocking) {
+  int fds[2];
+  bool created =
+      non_blocking ? CreateLocalNonBlockingPipe(fds) : (0 == pipe(fds));
+  if (!created)
+    return false;
+  read_fd->reset(fds[0]);
+  write_fd->reset(fds[1]);
+  return true;
+}
 
 bool CreateLocalNonBlockingPipe(int fds[2]) {
 #if defined(OS_LINUX)
@@ -456,7 +460,7 @@ bool SetCloseOnExec(int fd) {
 }
 
 bool PathExists(const FilePath& path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 #if defined(OS_ANDROID)
   if (path.IsContentUri()) {
     return ContentUriExists(path);
@@ -467,15 +471,15 @@ bool PathExists(const FilePath& path) {
 
 #if !defined(OS_NACL_NONSFI)
 bool PathIsWritable(const FilePath& path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   return access(path.value().c_str(), W_OK) == 0;
 }
 #endif  // !defined(OS_NACL_NONSFI)
 
 bool DirectoryExists(const FilePath& path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   stat_wrapper_t file_info;
-  if (CallStat(path.value().c_str(), &file_info) != 0)
+  if (File::Stat(path.value().c_str(), &file_info) != 0)
     return false;
   return S_ISDIR(file_info.st_mode);
 }
@@ -494,16 +498,17 @@ bool ReadFromFD(int fd, char* buffer, size_t bytes) {
 
 #if !defined(OS_NACL_NONSFI)
 
-int CreateAndOpenFdForTemporaryFileInDir(const FilePath& directory,
-                                         FilePath* path) {
+ScopedFD CreateAndOpenFdForTemporaryFileInDir(const FilePath& directory,
+                                              FilePath* path) {
   ScopedBlockingCall scoped_blocking_call(
+      FROM_HERE,
       BlockingType::MAY_BLOCK);  // For call to mkstemp().
   *path = directory.Append(TempFileName());
   const std::string& tmpdir_string = path->value();
   // this should be OK since mkstemp just replaces characters in place
   char* buffer = const_cast<char*>(tmpdir_string.c_str());
 
-  return HANDLE_EINTR(mkstemp(buffer));
+  return ScopedFD(HANDLE_EINTR(mkstemp(buffer)));
 }
 
 #if !defined(OS_FUCHSIA)
@@ -532,13 +537,13 @@ bool ReadSymbolicLink(const FilePath& symlink_path, FilePath* target_path) {
 }
 
 bool GetPosixFilePermissions(const FilePath& path, int* mode) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK(mode);
 
   stat_wrapper_t file_info;
   // Uses stat(), because on symbolic link, lstat() does not return valid
   // permission bits in st_mode
-  if (CallStat(path.value().c_str(), &file_info) != 0)
+  if (File::Stat(path.value().c_str(), &file_info) != 0)
     return false;
 
   *mode = file_info.st_mode & FILE_PERMISSION_MASK;
@@ -547,12 +552,12 @@ bool GetPosixFilePermissions(const FilePath& path, int* mode) {
 
 bool SetPosixFilePermissions(const FilePath& path,
                              int mode) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   DCHECK_EQ(mode & ~FILE_PERMISSION_MASK, 0);
 
   // Calls stat() so that we can preserve the higher bits like S_ISGID.
   stat_wrapper_t stat_buf;
-  if (CallStat(path.value().c_str(), &stat_buf) != 0)
+  if (File::Stat(path.value().c_str(), &stat_buf) != 0)
     return false;
 
   // Clears the existing permission bits, and adds the new ones.
@@ -632,23 +637,21 @@ FilePath GetHomeDir() {
 #endif  // !defined(OS_MACOSX)
 
 bool CreateTemporaryFile(FilePath* path) {
-  ScopedBlockingCall scoped_blocking_call(
-      BlockingType::MAY_BLOCK);  // For call to close().
+  // For call to close() inside ScopedFD.
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   FilePath directory;
   if (!GetTempDir(&directory))
     return false;
-  int fd = CreateAndOpenFdForTemporaryFileInDir(directory, path);
-  if (fd < 0)
-    return false;
-  close(fd);
-  return true;
+  ScopedFD fd = CreateAndOpenFdForTemporaryFileInDir(directory, path);
+  return fd.is_valid();
 }
 
 FILE* CreateAndOpenTemporaryFileInDir(const FilePath& dir, FilePath* path) {
-  int fd = CreateAndOpenFdForTemporaryFileInDir(dir, path);
-  if (fd < 0)
+  ScopedFD scoped_fd = CreateAndOpenFdForTemporaryFileInDir(dir, path);
+  if (!scoped_fd.is_valid())
     return nullptr;
 
+  int fd = scoped_fd.release();
   FILE* file = fdopen(fd, "a+");
   if (!file)
     close(fd);
@@ -656,17 +659,17 @@ FILE* CreateAndOpenTemporaryFileInDir(const FilePath& dir, FilePath* path) {
 }
 
 bool CreateTemporaryFileInDir(const FilePath& dir, FilePath* temp_file) {
-  ScopedBlockingCall scoped_blocking_call(
-      BlockingType::MAY_BLOCK);  // For call to close().
-  int fd = CreateAndOpenFdForTemporaryFileInDir(dir, temp_file);
-  return ((fd >= 0) && !IGNORE_EINTR(close(fd)));
+  // For call to close() inside ScopedFD.
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
+  ScopedFD fd = CreateAndOpenFdForTemporaryFileInDir(dir, temp_file);
+  return fd.is_valid();
 }
 
 static bool CreateTemporaryDirInDirImpl(const FilePath& base_dir,
                                         const FilePath::StringType& name_tmpl,
                                         FilePath* new_dir) {
   ScopedBlockingCall scoped_blocking_call(
-      BlockingType::MAY_BLOCK);  // For call to mkdtemp().
+      FROM_HERE, BlockingType::MAY_BLOCK);  // For call to mkdtemp().
   DCHECK(name_tmpl.find("XXXXXX") != FilePath::StringType::npos)
       << "Directory name template must contain \"XXXXXX\".";
 
@@ -704,7 +707,7 @@ bool CreateNewTempDirectory(const FilePath::StringType& prefix,
 bool CreateDirectoryAndGetError(const FilePath& full_path,
                                 File::Error* error) {
   ScopedBlockingCall scoped_blocking_call(
-      BlockingType::MAY_BLOCK);  // For call to mkdir().
+      FROM_HERE, BlockingType::MAY_BLOCK);  // For call to mkdir().
   std::vector<FilePath> subpaths;
 
   // Collect a list of all parent directories.
@@ -756,7 +759,7 @@ bool IsLink(const FilePath& file_path) {
   stat_wrapper_t st;
   // If we can't lstat the file, it's safe to assume that the file won't at
   // least be a 'followable' link.
-  if (CallLstat(file_path.value().c_str(), &st) != 0)
+  if (File::Lstat(file_path.value().c_str(), &st) != 0)
     return false;
   return S_ISLNK(st.st_mode);
 }
@@ -771,7 +774,7 @@ bool GetFileInfo(const FilePath& file_path, File::Info* results) {
     return file.GetInfo(results);
   } else {
 #endif  // defined(OS_ANDROID)
-    if (CallStat(file_path.value().c_str(), &file_info) != 0)
+    if (File::Stat(file_path.value().c_str(), &file_info) != 0)
       return false;
 #if defined(OS_ANDROID)
   }
@@ -788,7 +791,7 @@ FILE* OpenFile(const FilePath& filename, const char* mode) {
   DCHECK(
       strchr(mode, 'e') == nullptr ||
       (strchr(mode, ',') != nullptr && strchr(mode, 'e') > strchr(mode, ',')));
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   FILE* result = nullptr;
 #if defined(OS_MACOSX)
   // macOS does not provide a mode character to set O_CLOEXEC; see
@@ -820,7 +823,7 @@ FILE* FileToFILE(File file, const char* mode) {
 #endif  // !defined(OS_NACL)
 
 int ReadFile(const FilePath& filename, char* data, int max_size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   int fd = HANDLE_EINTR(open(filename.value().c_str(), O_RDONLY));
   if (fd < 0)
     return -1;
@@ -832,7 +835,7 @@ int ReadFile(const FilePath& filename, char* data, int max_size) {
 }
 
 int WriteFile(const FilePath& filename, const char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   int fd = HANDLE_EINTR(creat(filename.value().c_str(), 0666));
   if (fd < 0)
     return -1;
@@ -858,10 +861,82 @@ bool WriteFileDescriptor(const int fd, const char* data, int size) {
   return true;
 }
 
+bool AllocateFileRegion(File* file, int64_t offset, size_t size) {
+  DCHECK(file);
+
+  // Explicitly extend |file| to the maximum size. Zeros will fill the new
+  // space. It is assumed that the existing file is fully realized as
+  // otherwise the entire file would have to be read and possibly written.
+  const int64_t original_file_len = file->GetLength();
+  if (original_file_len < 0) {
+    DPLOG(ERROR) << "fstat " << file->GetPlatformFile();
+    return false;
+  }
+
+  // Increase the actual length of the file, if necessary. This can fail if
+  // the disk is full and the OS doesn't support sparse files.
+  const int64_t new_file_len = offset + size;
+  if (!file->SetLength(std::max(original_file_len, new_file_len))) {
+    DPLOG(ERROR) << "ftruncate " << file->GetPlatformFile();
+    return false;
+  }
+
+  // Realize the extent of the file so that it can't fail (and crash) later
+  // when trying to write to a memory page that can't be created. This can
+  // fail if the disk is full and the file is sparse.
+
+  // First try the more effective platform-specific way of allocating the disk
+  // space. It can fail because the filesystem doesn't support it. In that case,
+  // use the manual method below.
+
+#if defined(OS_LINUX)
+  if (HANDLE_EINTR(fallocate(file->GetPlatformFile(), 0, offset, size)) != -1)
+    return true;
+  DPLOG(ERROR) << "fallocate";
+#elif defined(OS_MACOSX)
+  // MacOS doesn't support fallocate even though their new APFS filesystem
+  // does support sparse files. It does, however, have the functionality
+  // available via fcntl.
+  // See also: https://openradar.appspot.com/32720223
+  fstore_t params = {F_ALLOCATEALL, F_PEOFPOSMODE, offset, size, 0};
+  if (fcntl(file->GetPlatformFile(), F_PREALLOCATE, &params) != -1)
+    return true;
+  DPLOG(ERROR) << "F_PREALLOCATE";
+#endif
+
+  // Manually realize the extended file by writing bytes to it at intervals.
+  int64_t block_size = 512;  // Start with something safe.
+  stat_wrapper_t statbuf;
+  if (File::Fstat(file->GetPlatformFile(), &statbuf) == 0 &&
+      statbuf.st_blksize > 0 && base::bits::IsPowerOfTwo(statbuf.st_blksize)) {
+    block_size = statbuf.st_blksize;
+  }
+
+  // Write starting at the next block boundary after the old file length.
+  const int64_t extension_start =
+      base::bits::Align(original_file_len, block_size);
+  for (int64_t i = extension_start; i < new_file_len; i += block_size) {
+    char existing_byte;
+    if (HANDLE_EINTR(pread(file->GetPlatformFile(), &existing_byte, 1, i)) !=
+        1) {
+      return false;  // Can't read? Not viable.
+    }
+    if (existing_byte != 0) {
+      continue;  // Block has data so must already exist.
+    }
+    if (HANDLE_EINTR(pwrite(file->GetPlatformFile(), &existing_byte, 1, i)) !=
+        1) {
+      return false;  // Can't write? Not viable.
+    }
+  }
+
+  return true;
+}
+
 #if !defined(OS_NACL_NONSFI)
 
 bool AppendToFile(const FilePath& filename, const char* data, int size) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   bool ret = true;
   int fd = HANDLE_EINTR(open(filename.value().c_str(), O_WRONLY | O_APPEND));
   if (fd < 0) {
@@ -885,7 +960,7 @@ bool AppendToFile(const FilePath& filename, const char* data, int size) {
 
 bool GetCurrentDirectory(FilePath* dir) {
   // getcwd can return ENOENT, which implies it checks against the disk.
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 
   char system_buffer[PATH_MAX] = "";
   if (!getcwd(system_buffer, sizeof(system_buffer))) {
@@ -897,7 +972,7 @@ bool GetCurrentDirectory(FilePath* dir) {
 }
 
 bool SetCurrentDirectory(const FilePath& path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   return chdir(path.value().c_str()) == 0;
 }
 
@@ -952,7 +1027,7 @@ bool VerifyPathControlledByAdmin(const FilePath& path) {
   };
 
   // Reading the groups database may touch the file system.
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
 
   std::set<gid_t> allowed_group_ids;
   for (int i = 0, ie = base::size(kAdminGroupNames); i < ie; ++i) {
@@ -977,7 +1052,7 @@ int GetMaximumPathComponentLength(const FilePath& path) {
   // enough to guard against e.g. bugs causing multi-megabyte paths.
   return 1024;
 #else
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   return pathconf(path.value().c_str(), _PC_NAME_MAX);
 #endif
 }
@@ -1009,7 +1084,7 @@ bool GetShmemTempDir(bool executable, FilePath* path) {
 #if !defined(OS_MACOSX)
 // Mac has its own implementation, this is for all other Posix systems.
 bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   File infile;
 #if defined(OS_ANDROID)
   if (from_path.IsContentUri()) {
@@ -1031,18 +1106,46 @@ bool CopyFile(const FilePath& from_path, const FilePath& to_path) {
 }
 #endif  // !defined(OS_MACOSX)
 
+bool PreReadFile(const FilePath& file_path,
+                 bool is_executable,
+                 int64_t max_bytes) {
+  DCHECK_GE(max_bytes, 0);
+
+  // ChromeOS is also covered by OS_LINUX.
+  // posix_fadvise() is only available in the Android NDK in API 21+. Older
+  // versions may have the required kernel support, but don't have enough usage
+  // to justify backporting.
+#if defined(OS_LINUX) || (defined(OS_ANDROID) && __ANDROID_API__ >= 21)
+  File file(file_path, File::FLAG_OPEN | File::FLAG_READ);
+  if (!file.IsValid())
+    return false;
+
+  if (max_bytes == 0) {
+    // fadvise() pre-fetches the entire file when given a zero length.
+    return true;
+  }
+
+  const PlatformFile fd = file.GetPlatformFile();
+  const ::off_t len = base::saturated_cast<::off_t>(max_bytes);
+  return posix_fadvise(fd, /*offset=*/0, len, POSIX_FADV_WILLNEED) == 0;
+#else
+  // TODO(pwnall): Fall back to madvise() for macOS.
+  return internal::PreReadFileSlow(file_path, max_bytes);
+#endif  // defined(OS_LINUX) || (defined(OS_ANDROID) && __ANDROID_API__ >= 21)
+}
+
 // -----------------------------------------------------------------------------
 
 namespace internal {
 
 bool MoveUnsafe(const FilePath& from_path, const FilePath& to_path) {
-  ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
+  ScopedBlockingCall scoped_blocking_call(FROM_HERE, BlockingType::MAY_BLOCK);
   // Windows compatibility: if |to_path| exists, |from_path| and |to_path|
   // must be the same type, either both files, or both directories.
   stat_wrapper_t to_file_info;
-  if (CallStat(to_path.value().c_str(), &to_file_info) == 0) {
+  if (File::Stat(to_path.value().c_str(), &to_file_info) == 0) {
     stat_wrapper_t from_file_info;
-    if (CallStat(from_path.value().c_str(), &from_file_info) != 0)
+    if (File::Stat(from_path.value().c_str(), &from_file_info) != 0)
       return false;
     if (S_ISDIR(to_file_info.st_mode) != S_ISDIR(from_file_info.st_mode))
       return false;
@@ -1054,7 +1157,7 @@ bool MoveUnsafe(const FilePath& from_path, const FilePath& to_path) {
   if (!CopyDirectory(from_path, to_path, true))
     return false;
 
-  DeleteFile(from_path, true);
+  DeleteFileRecursively(from_path);
   return true;
 }
 
@@ -1067,7 +1170,7 @@ BASE_EXPORT bool IsPathExecutable(const FilePath& path) {
   bool result = false;
   FilePath tmp_file_path;
 
-  ScopedFD fd(CreateAndOpenFdForTemporaryFileInDir(path, &tmp_file_path));
+  ScopedFD fd = CreateAndOpenFdForTemporaryFileInDir(path, &tmp_file_path);
   if (fd.is_valid()) {
     DeleteFile(tmp_file_path, false);
     long sysconf_result = sysconf(_SC_PAGESIZE);

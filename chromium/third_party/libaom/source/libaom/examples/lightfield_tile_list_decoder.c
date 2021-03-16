@@ -55,7 +55,7 @@ static void write_tile_yuv1d(aom_codec_ctx_t *codec, const aom_image_t *img,
     die_codec(codec, "Failed to get the tile size");
   const unsigned int tile_width = tile_size >> 16;
   const unsigned int tile_height = tile_size & 65535;
-  const uint8_t output_frame_width_in_tiles = img->d_w / tile_width;
+  const uint32_t output_frame_width_in_tiles = img->d_w / tile_width;
 
   unsigned int tile_count = 0;
   if (aom_codec_control(codec, AV1D_GET_TILE_COUNT, &tile_count))
@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
       // Allocate memory to store decoded references. Allocate memory with the
       // border so that it can be used as a reference.
       for (j = 0; j < num_references; j++) {
-        unsigned int border = AOM_BORDER_IN_PIXELS;
+        unsigned int border = AOM_DEC_BORDER_IN_PIXELS;
         if (!aom_img_alloc_with_border(&reference_images[j], ref_fmt,
                                        frame_res[0], frame_res[1], 32, 8,
                                        border)) {

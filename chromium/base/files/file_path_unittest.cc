@@ -26,33 +26,33 @@
 namespace base {
 
 struct UnaryTestData {
-  const FilePath::CharType* input;
-  const FilePath::CharType* expected;
+  FilePath::StringPieceType input;
+  FilePath::StringPieceType expected;
 };
 
 struct UnaryBooleanTestData {
-  const FilePath::CharType* input;
+  FilePath::StringPieceType input;
   bool expected;
 };
 
 struct BinaryTestData {
-  const FilePath::CharType* inputs[2];
-  const FilePath::CharType* expected;
+  FilePath::StringPieceType inputs[2];
+  FilePath::StringPieceType expected;
 };
 
 struct BinaryBooleanTestData {
-  const FilePath::CharType* inputs[2];
+  FilePath::StringPieceType inputs[2];
   bool expected;
 };
 
 struct BinaryIntTestData {
-  const FilePath::CharType* inputs[2];
+  FilePath::StringPieceType inputs[2];
   int expected;
 };
 
 struct UTF8TestData {
-  const FilePath::CharType* native;
-  const char* utf8;
+  FilePath::StringPieceType native;
+  StringPiece utf8;
 };
 
 // file_util winds up using autoreleased objects on the Mac, so this needs
@@ -629,19 +629,19 @@ TEST_F(FilePathTest, AppendRelativePathTest) {
     {
       FilePath result;
       bool success = parent.AppendRelativePath(child, &result);
-      EXPECT_EQ(cases[i].expected[0] != '\0', success) <<
-        "i: " << i << ", parent: " << parent.value() << ", child: " <<
-        child.value();
-      EXPECT_STREQ(cases[i].expected, result.value().c_str()) <<
-        "i: " << i << ", parent: " << parent.value() << ", child: " <<
-        child.value();
+      EXPECT_EQ(!cases[i].expected.empty(), success)
+          << "i: " << i << ", parent: " << parent.value()
+          << ", child: " << child.value();
+      EXPECT_EQ(cases[i].expected, result.value())
+          << "i: " << i << ", parent: " << parent.value()
+          << ", child: " << child.value();
     }
     {
       FilePath result(base);
       bool success = parent.AppendRelativePath(child, &result);
-      EXPECT_EQ(cases[i].expected[0] != '\0', success) <<
-        "i: " << i << ", parent: " << parent.value() << ", child: " <<
-        child.value();
+      EXPECT_EQ(!cases[i].expected.empty(), success)
+          << "i: " << i << ", parent: " << parent.value()
+          << ", child: " << child.value();
       EXPECT_EQ(base.Append(cases[i].expected).value(), result.value()) <<
         "i: " << i << ", parent: " << parent.value() << ", child: " <<
         child.value();
@@ -728,6 +728,7 @@ TEST_F(FilePathTest, Extension) {
 }
 
 TEST_F(FilePathTest, Extension2) {
+  // clang-format off
   const struct UnaryTestData cases[] = {
 #if defined(FILE_PATH_USES_WIN_SEPARATORS)
     { FPL("C:\\a\\b\\c.ext"),        FPL(".ext") },
@@ -772,20 +773,24 @@ TEST_F(FilePathTest, Extension2) {
     { FPL("/foo.1234.user.js"),      FPL(".user.js") },
     { FPL("foo.user.js"),            FPL(".user.js") },
     { FPL("/foo.tar.bz"),            FPL(".tar.bz") },
+    { FPL("/foo.tar.xz"),            FPL(".tar.xz") },
   };
-  for (unsigned int i = 0; i < base::size(cases); ++i) {
+  // clang-format on
+
+  for (size_t i = 0; i < base::size(cases); ++i) {
     FilePath path(cases[i].input);
     FilePath::StringType extension = path.Extension();
     FilePath::StringType final_extension = path.FinalExtension();
-    EXPECT_STREQ(cases[i].expected, extension.c_str())
+    EXPECT_EQ(cases[i].expected, extension)
         << "i: " << i << ", path: " << path.value();
-    EXPECT_STREQ(cases[i].expected, final_extension.c_str())
+    EXPECT_EQ(cases[i].expected, final_extension)
         << "i: " << i << ", path: " << path.value();
   }
-  for (unsigned int i = 0; i < base::size(double_extension_cases); ++i) {
+
+  for (size_t i = 0; i < base::size(double_extension_cases); ++i) {
     FilePath path(double_extension_cases[i].input);
     FilePath::StringType extension = path.Extension();
-    EXPECT_STREQ(double_extension_cases[i].expected, extension.c_str())
+    EXPECT_EQ(double_extension_cases[i].expected, extension)
         << "i: " << i << ", path: " << path.value();
   }
 }
@@ -853,8 +858,9 @@ TEST_F(FilePathTest, InsertBeforeExtension) {
   for (unsigned int i = 0; i < base::size(cases); ++i) {
     FilePath path(cases[i].inputs[0]);
     FilePath result = path.InsertBeforeExtension(cases[i].inputs[1]);
-    EXPECT_EQ(cases[i].expected, result.value()) << "i: " << i <<
-        ", path: " << path.value() << ", insert: " << cases[i].inputs[1];
+    EXPECT_EQ(cases[i].expected, result.value())
+        << "i: " << i << ", path: " << path.value()
+        << ", insert: " << cases[i].inputs[1];
   }
 }
 
@@ -877,7 +883,7 @@ TEST_F(FilePathTest, RemoveExtension) {
     { FPL("/foo.bar/foo"),        FPL("/foo.bar/foo") },
     { FPL("/foo.bar/..////"),     FPL("/foo.bar/..////") },
   };
-  for (unsigned int i = 0; i < base::size(cases); ++i) {
+  for (size_t i = 0; i < base::size(cases); ++i) {
     FilePath path(cases[i].input);
     FilePath removed = path.RemoveExtension();
     FilePath removed_final = path.RemoveFinalExtension();
@@ -886,13 +892,18 @@ TEST_F(FilePathTest, RemoveExtension) {
     EXPECT_EQ(cases[i].expected, removed_final.value()) << "i: " << i <<
         ", path: " << path.value();
   }
-  {
+
+  const FilePath::StringPieceType tarballs[] = {
+      FPL("foo.tar.gz"), FPL("foo.tar.xz"), FPL("foo.tar.bz2"),
+      FPL("foo.tar.Z"), FPL("foo.tar.bz")};
+  for (size_t i = 0; i < base::size(tarballs); ++i) {
     FilePath path(FPL("foo.tar.gz"));
     FilePath removed = path.RemoveExtension();
     FilePath removed_final = path.RemoveFinalExtension();
-    EXPECT_EQ(FPL("foo"), removed.value()) << ", path: " << path.value();
-    EXPECT_EQ(FPL("foo.tar"), removed_final.value()) << ", path: "
-                                                     << path.value();
+    EXPECT_EQ(FPL("foo"), removed.value())
+        << "i: " << i << ", path: " << path.value();
+    EXPECT_EQ(FPL("foo.tar"), removed_final.value())
+        << "i: " << i << ", path: " << path.value();
   }
 }
 
@@ -1314,6 +1325,17 @@ TEST_F(FilePathTest, GetHFSDecomposedFormWithInvalidInput) {
     FilePath::StringType observed = FilePath::GetHFSDecomposedForm(
         invalid_input);
     EXPECT_TRUE(observed.empty());
+  }
+}
+
+TEST_F(FilePathTest, CompareIgnoreCaseWithInvalidInput) {
+  const FilePath::CharType* cases[] = {
+      FPL("\xc3\x28"),         FPL("\xe2\x82\x28"),     FPL("\xe2\x28\xa1"),
+      FPL("\xf0\x28\x8c\xbc"), FPL("\xf0\x28\x8c\x28"),
+  };
+  for (auto* invalid_input : cases) {
+    // All example inputs will be greater than the string "fixed".
+    EXPECT_EQ(FilePath::CompareIgnoreCase(invalid_input, FPL("fixed")), 1);
   }
 }
 #endif

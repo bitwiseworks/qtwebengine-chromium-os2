@@ -4,7 +4,7 @@
 # reads the file and returns a list of mappings required to remove all
 # diacritical marks from a unicode string. Each mapping is itself a list
 # consisting of two elements - the unicode codepoint and the single ASCII
-# character that it should be replaced with, or an empty string if the
+# character that it should be replaced with, or an empty string if the 
 # codepoint should simply be removed from the input. Examples:
 #
 #   { 224 a  0 }     (replace codepoint 224 to "a")
@@ -13,15 +13,15 @@
 # Mappings are only returned for non-upper case codepoints. It is assumed
 # that the input has already been folded to lower case.
 #
-# The third value in the list is always either 0 or 1. 0 if the
+# The third value in the list is always either 0 or 1. 0 if the 
 # UnicodeData.txt file maps the codepoint to a single ASCII character and
-# a diacritic, or 1 if the mapping is indirect. For example, consider the
+# a diacritic, or 1 if the mapping is indirect. For example, consider the 
 # two entries:
 #
 # 1ECD;LATIN SMALL LETTER O WITH DOT BELOW;Ll;0;L;006F 0323;;;;N;;;1ECC;;1ECC
 # 1ED9;LATIN SMALL LETTER O WITH CIRCUMFLEX AND DOT BELOW;Ll;0;L;1ECD 0302;;;;N;;;1ED8;;1ED8
 #
-# The first codepoint is a direct mapping (as 006F is ASCII and 0323 is a
+# The first codepoint is a direct mapping (as 006F is ASCII and 0323 is a 
 # diacritic). The second is an indirect mapping, as it maps to the
 # first codepoint plus 0302 (a diacritic).
 #

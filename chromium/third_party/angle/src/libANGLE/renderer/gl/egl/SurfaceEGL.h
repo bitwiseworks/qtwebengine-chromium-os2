@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -23,7 +23,7 @@ class SurfaceEGL : public SurfaceGL
     SurfaceEGL(const egl::SurfaceState &state, const FunctionsEGL *egl, EGLConfig config);
     ~SurfaceEGL() override;
 
-    egl::Error makeCurrent() override;
+    egl::Error makeCurrent(const gl::Context *context) override;
     egl::Error swap(const gl::Context *context) override;
     egl::Error swapWithDamage(const gl::Context *context, EGLint *rects, EGLint n_rects) override;
     egl::Error postSubBuffer(const gl::Context *context,

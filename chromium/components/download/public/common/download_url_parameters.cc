@@ -9,11 +9,7 @@ namespace download {
 DownloadUrlParameters::DownloadUrlParameters(
     const GURL& url,
     const net::NetworkTrafficAnnotationTag& traffic_annotation)
-    : DownloadUrlParameters(url,
-                            -1,
-                            -1,
-                            -1,
-                            traffic_annotation) {}
+    : DownloadUrlParameters(url, -1, -1, -1, traffic_annotation) {}
 
 DownloadUrlParameters::DownloadUrlParameters(
     const GURL& url,
@@ -35,11 +31,12 @@ DownloadUrlParameters::DownloadUrlParameters(
       frame_tree_node_id_(-1),
       url_(url),
       do_not_prompt_for_login_(false),
-      follow_cross_origin_redirects_(true),
+      cross_origin_redirects_(network::mojom::RedirectMode::kFollow),
       fetch_error_body_(false),
       transient_(false),
       traffic_annotation_(traffic_annotation),
-      download_source_(DownloadSource::UNKNOWN) {}
+      download_source_(DownloadSource::UNKNOWN),
+      require_safety_checks_(true) {}
 
 DownloadUrlParameters::~DownloadUrlParameters() = default;
 

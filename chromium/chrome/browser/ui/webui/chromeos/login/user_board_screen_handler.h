@@ -21,7 +21,9 @@ namespace chromeos {
 // A class that handles WebUI hooks in Gaia screen.
 class UserBoardScreenHandler : public BaseScreenHandler, public UserBoardView {
  public:
-  UserBoardScreenHandler();
+  using TView = UserBoardView;
+
+  explicit UserBoardScreenHandler(JSCallsContainer* js_calls_container);
   ~UserBoardScreenHandler() override;
 
  private:
@@ -61,7 +63,7 @@ class UserBoardScreenHandler : public BaseScreenHandler, public UserBoardView {
   base::WeakPtr<UserBoardView> GetWeakPtr() override;
 
   UserSelectionScreen* screen_ = nullptr;
-  base::WeakPtrFactory<UserBoardScreenHandler> weak_factory_;
+  base::WeakPtrFactory<UserBoardScreenHandler> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UserBoardScreenHandler);
 };

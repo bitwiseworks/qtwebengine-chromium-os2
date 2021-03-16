@@ -64,6 +64,9 @@ ANY41C(I422AlphaToARGBRow_Any_NEON, I422AlphaToARGBRow_NEON, 1, 0, 4, 7)
 #ifdef HAS_I422ALPHATOARGBROW_MSA
 ANY41C(I422AlphaToARGBRow_Any_MSA, I422AlphaToARGBRow_MSA, 1, 0, 4, 7)
 #endif
+#ifdef HAS_I422ALPHATOARGBROW_MMI
+ANY41C(I422AlphaToARGBRow_Any_MMI, I422AlphaToARGBRow_MMI, 1, 0, 4, 7)
+#endif
 #undef ANY41C
 
 // Any 3 planes to 1.
@@ -215,6 +218,15 @@ ANY31C(I422ToARGB4444Row_Any_MSA, I422ToARGB4444Row_MSA, 1, 0, 2, 7)
 ANY31C(I422ToARGB1555Row_Any_MSA, I422ToARGB1555Row_MSA, 1, 0, 2, 7)
 ANY31C(I422ToRGB565Row_Any_MSA, I422ToRGB565Row_MSA, 1, 0, 2, 7)
 #endif
+#ifdef HAS_I422TOARGBROW_MMI
+ANY31C(I444ToARGBRow_Any_MMI, I444ToARGBRow_MMI, 0, 0, 4, 7)
+ANY31C(I422ToARGBRow_Any_MMI, I422ToARGBRow_MMI, 1, 0, 4, 7)
+ANY31C(I422ToRGB24Row_Any_MMI, I422ToRGB24Row_MMI, 1, 0, 3, 15)
+ANY31C(I422ToARGB4444Row_Any_MMI, I422ToARGB4444Row_MMI, 1, 0, 2, 7)
+ANY31C(I422ToARGB1555Row_Any_MMI, I422ToARGB1555Row_MMI, 1, 0, 2, 7)
+ANY31C(I422ToRGB565Row_Any_MMI, I422ToRGB565Row_MMI, 1, 0, 2, 7)
+ANY31C(I422ToRGBARow_Any_MMI, I422ToRGBARow_MMI, 1, 0, 4, 7)
+#endif
 #undef ANY31C
 
 // Any 3 planes of 16 bit to 1 with yuvconstants
@@ -249,6 +261,9 @@ ANY31CT(I210ToARGBRow_Any_AVX2, I210ToARGBRow_AVX2, 1, 0, uint16_t, 2, 4, 15)
 #endif
 #ifdef HAS_I210TOAR30ROW_AVX2
 ANY31CT(I210ToAR30Row_Any_AVX2, I210ToAR30Row_AVX2, 1, 0, uint16_t, 2, 4, 15)
+#endif
+#ifdef HAS_I210TOARGBROW_MMI
+ANY31CT(I210ToARGBRow_Any_MMI, I210ToARGBRow_MMI, 1, 0, uint16_t, 2, 4, 7)
 #endif
 #undef ANY31CT
 
@@ -286,7 +301,12 @@ ANY21(MergeUVRow_Any_MSA, MergeUVRow_MSA, 0, 1, 1, 2, 15)
 #ifdef HAS_MERGEUVROW_MMI
 ANY21(MergeUVRow_Any_MMI, MergeUVRow_MMI, 0, 1, 1, 2, 7)
 #endif
-
+#ifdef HAS_NV21TOYUV24ROW_NEON
+ANY21(NV21ToYUV24Row_Any_NEON, NV21ToYUV24Row_NEON, 1, 1, 2, 3, 15)
+#endif
+#ifdef HAS_NV21TOYUV24ROW_AVX2
+ANY21(NV21ToYUV24Row_Any_AVX2, NV21ToYUV24Row_AVX2, 1, 1, 2, 3, 31)
+#endif
 // Math functions.
 #ifdef HAS_ARGBMULTIPLYROW_SSE2
 ANY21(ARGBMultiplyRow_Any_SSE2, ARGBMultiplyRow_SSE2, 0, 4, 4, 4, 3)
@@ -402,6 +422,9 @@ ANY21C(NV12ToARGBRow_Any_NEON, NV12ToARGBRow_NEON, 1, 1, 2, 4, 7)
 #ifdef HAS_NV12TOARGBROW_MSA
 ANY21C(NV12ToARGBRow_Any_MSA, NV12ToARGBRow_MSA, 1, 1, 2, 4, 7)
 #endif
+#ifdef HAS_NV12TOARGBROW_MMI
+ANY21C(NV12ToARGBRow_Any_MMI, NV12ToARGBRow_MMI, 1, 1, 2, 4, 7)
+#endif
 #ifdef HAS_NV21TOARGBROW_SSSE3
 ANY21C(NV21ToARGBRow_Any_SSSE3, NV21ToARGBRow_SSSE3, 1, 1, 2, 4, 7)
 #endif
@@ -414,6 +437,9 @@ ANY21C(NV21ToARGBRow_Any_NEON, NV21ToARGBRow_NEON, 1, 1, 2, 4, 7)
 #ifdef HAS_NV21TOARGBROW_MSA
 ANY21C(NV21ToARGBRow_Any_MSA, NV21ToARGBRow_MSA, 1, 1, 2, 4, 7)
 #endif
+#ifdef HAS_NV21TOARGBROW_MMI
+ANY21C(NV21ToARGBRow_Any_MMI, NV21ToARGBRow_MMI, 1, 1, 2, 4, 7)
+#endif
 #ifdef HAS_NV12TORGB24ROW_NEON
 ANY21C(NV12ToRGB24Row_Any_NEON, NV12ToRGB24Row_NEON, 1, 1, 2, 3, 7)
 #endif
@@ -423,6 +449,9 @@ ANY21C(NV21ToRGB24Row_Any_NEON, NV21ToRGB24Row_NEON, 1, 1, 2, 3, 7)
 #ifdef HAS_NV12TORGB24ROW_SSSE3
 ANY21C(NV12ToRGB24Row_Any_SSSE3, NV12ToRGB24Row_SSSE3, 1, 1, 2, 3, 15)
 #endif
+#ifdef HAS_NV12TORGB24ROW_MMI
+ANY21C(NV12ToRGB24Row_Any_MMI, NV12ToRGB24Row_MMI, 1, 1, 2, 3, 7)
+#endif
 #ifdef HAS_NV21TORGB24ROW_SSSE3
 ANY21C(NV21ToRGB24Row_Any_SSSE3, NV21ToRGB24Row_SSSE3, 1, 1, 2, 3, 15)
 #endif
@@ -431,6 +460,9 @@ ANY21C(NV12ToRGB24Row_Any_AVX2, NV12ToRGB24Row_AVX2, 1, 1, 2, 3, 31)
 #endif
 #ifdef HAS_NV21TORGB24ROW_AVX2
 ANY21C(NV21ToRGB24Row_Any_AVX2, NV21ToRGB24Row_AVX2, 1, 1, 2, 3, 31)
+#endif
+#ifdef HAS_NV21TORGB24ROW_MMI
+ANY21C(NV21ToRGB24Row_Any_MMI, NV21ToRGB24Row_MMI, 1, 1, 2, 3, 7)
 #endif
 #ifdef HAS_NV12TORGB565ROW_SSSE3
 ANY21C(NV12ToRGB565Row_Any_SSSE3, NV12ToRGB565Row_SSSE3, 1, 1, 2, 2, 7)
@@ -443,6 +475,9 @@ ANY21C(NV12ToRGB565Row_Any_NEON, NV12ToRGB565Row_NEON, 1, 1, 2, 2, 7)
 #endif
 #ifdef HAS_NV12TORGB565ROW_MSA
 ANY21C(NV12ToRGB565Row_Any_MSA, NV12ToRGB565Row_MSA, 1, 1, 2, 2, 7)
+#endif
+#ifdef HAS_NV12TORGB565ROW_MMI
+ANY21C(NV12ToRGB565Row_Any_MMI, NV12ToRGB565Row_MMI, 1, 1, 2, 2, 7)
 #endif
 #undef ANY21C
 
@@ -524,6 +559,9 @@ ANY11(RGB565ToARGBRow_Any_SSE2, RGB565ToARGBRow_SSE2, 0, 2, 4, 7)
 ANY11(ARGB1555ToARGBRow_Any_SSE2, ARGB1555ToARGBRow_SSE2, 0, 2, 4, 7)
 ANY11(ARGB4444ToARGBRow_Any_SSE2, ARGB4444ToARGBRow_SSE2, 0, 2, 4, 7)
 #endif
+#if defined(HAS_RAWTORGBAROW_SSSE3)
+ANY11(RAWToRGBARow_Any_SSSE3, RAWToRGBARow_SSSE3, 0, 3, 4, 15)
+#endif
 #if defined(HAS_RAWTORGB24ROW_SSSE3)
 ANY11(RAWToRGB24Row_Any_SSSE3, RAWToRGB24Row_SSSE3, 0, 3, 3, 7)
 #endif
@@ -575,8 +613,14 @@ ANY11(RAWToRGB24Row_Any_MMI, RAWToRGB24Row_MMI, 0, 3, 3, 3)
 #ifdef HAS_ARGBTOYROW_AVX2
 ANY11(ARGBToYRow_Any_AVX2, ARGBToYRow_AVX2, 0, 4, 1, 31)
 #endif
+#ifdef HAS_ABGRTOYROW_AVX2
+ANY11(ABGRToYRow_Any_AVX2, ABGRToYRow_AVX2, 0, 4, 1, 31)
+#endif
 #ifdef HAS_ARGBTOYJROW_AVX2
 ANY11(ARGBToYJRow_Any_AVX2, ARGBToYJRow_AVX2, 0, 4, 1, 31)
+#endif
+#ifdef HAS_RGBATOYJROW_AVX2
+ANY11(RGBAToYJRow_Any_AVX2, RGBAToYJRow_AVX2, 0, 4, 1, 31)
 #endif
 #ifdef HAS_UYVYTOYROW_AVX2
 ANY11(UYVYToYRow_Any_AVX2, UYVYToYRow_AVX2, 0, 2, 1, 31)
@@ -597,6 +641,9 @@ ANY11(UYVYToYRow_Any_SSE2, UYVYToYRow_SSE2, 1, 4, 1, 15)
 #ifdef HAS_ARGBTOYJROW_SSSE3
 ANY11(ARGBToYJRow_Any_SSSE3, ARGBToYJRow_SSSE3, 0, 4, 1, 15)
 #endif
+#ifdef HAS_RGBATOYJROW_SSSE3
+ANY11(RGBAToYJRow_Any_SSSE3, RGBAToYJRow_SSSE3, 0, 4, 1, 15)
+#endif
 #ifdef HAS_ARGBTOYROW_NEON
 ANY11(ARGBToYRow_Any_NEON, ARGBToYRow_NEON, 0, 4, 1, 7)
 #endif
@@ -608,6 +655,9 @@ ANY11(ARGBToYRow_Any_MMI, ARGBToYRow_MMI, 0, 4, 1, 7)
 #endif
 #ifdef HAS_ARGBTOYJROW_NEON
 ANY11(ARGBToYJRow_Any_NEON, ARGBToYJRow_NEON, 0, 4, 1, 7)
+#endif
+#ifdef HAS_RGBATOYJROW_NEON
+ANY11(RGBAToYJRow_Any_NEON, RGBAToYJRow_NEON, 0, 4, 1, 7)
 #endif
 #ifdef HAS_ARGBTOYJROW_MSA
 ANY11(ARGBToYJRow_Any_MSA, ARGBToYJRow_MSA, 0, 4, 1, 15)
@@ -702,6 +752,18 @@ ANY11(UYVYToYRow_Any_MSA, UYVYToYRow_MSA, 1, 4, 1, 31)
 #ifdef HAS_UYVYTOYROW_MMI
 ANY11(UYVYToYRow_Any_MMI, UYVYToYRow_MMI, 1, 4, 1, 15)
 #endif
+#ifdef HAS_AYUVTOYROW_NEON
+ANY11(AYUVToYRow_Any_NEON, AYUVToYRow_NEON, 0, 4, 1, 15)
+#endif
+#ifdef HAS_SWAPUVROW_SSSE3
+ANY11(SwapUVRow_Any_SSSE3, SwapUVRow_SSSE3, 0, 2, 2, 15)
+#endif
+#ifdef HAS_SWAPUVROW_AVX2
+ANY11(SwapUVRow_Any_AVX2, SwapUVRow_AVX2, 0, 2, 2, 31)
+#endif
+#ifdef HAS_SWAPUVROW_NEON
+ANY11(SwapUVRow_Any_NEON, SwapUVRow_NEON, 0, 2, 2, 15)
+#endif
 #ifdef HAS_RGB24TOARGBROW_NEON
 ANY11(RGB24ToARGBRow_Any_NEON, RGB24ToARGBRow_NEON, 0, 3, 4, 7)
 #endif
@@ -713,6 +775,9 @@ ANY11(RGB24ToARGBRow_Any_MMI, RGB24ToARGBRow_MMI, 0, 3, 4, 3)
 #endif
 #ifdef HAS_RAWTOARGBROW_NEON
 ANY11(RAWToARGBRow_Any_NEON, RAWToARGBRow_NEON, 0, 3, 4, 7)
+#endif
+#ifdef HAS_RAWTORGBAROW_NEON
+ANY11(RAWToRGBARow_Any_NEON, RAWToRGBARow_NEON, 0, 3, 4, 7)
 #endif
 #ifdef HAS_RAWTOARGBROW_MSA
 ANY11(RAWToARGBRow_Any_MSA, RAWToARGBRow_MSA, 0, 3, 4, 15)
@@ -1029,6 +1094,10 @@ ANY11C(UYVYToARGBRow_Any_NEON, UYVYToARGBRow_NEON, 1, 4, 4, 7)
 ANY11C(YUY2ToARGBRow_Any_MSA, YUY2ToARGBRow_MSA, 1, 4, 4, 7)
 ANY11C(UYVYToARGBRow_Any_MSA, UYVYToARGBRow_MSA, 1, 4, 4, 7)
 #endif
+#if defined(HAS_YUY2TOARGBROW_MMI)
+ANY11C(YUY2ToARGBRow_Any_MMI, YUY2ToARGBRow_MMI, 1, 4, 4, 7)
+ANY11C(UYVYToARGBRow_Any_MMI, UYVYToARGBRow_MMI, 1, 4, 4, 7)
+#endif
 #undef ANY11C
 
 // Any 1 to 1 interpolate.  Takes 2 rows of source via stride.
@@ -1136,6 +1205,9 @@ ANY1(ARGBSetRow_Any_NEON, ARGBSetRow_NEON, uint32_t, 4, 3)
 #endif
 #ifdef HAS_ARGBSETROW_MSA
 ANY1(ARGBSetRow_Any_MSA, ARGBSetRow_MSA, uint32_t, 4, 3)
+#endif
+#ifdef HAS_ARGBSETROW_MMI
+ANY1(ARGBSetRow_Any_MMI, ARGBSetRow_MMI, uint32_t, 4, 3)
 #endif
 #undef ANY1
 
@@ -1255,6 +1327,9 @@ ANY13(SplitRGBRow_Any_MMI, SplitRGBRow_MMI, 3, 3)
 
 #ifdef HAS_ARGBTOUVROW_AVX2
 ANY12S(ARGBToUVRow_Any_AVX2, ARGBToUVRow_AVX2, 0, 4, 31)
+#endif
+#ifdef HAS_ABGRTOUVROW_AVX2
+ANY12S(ABGRToUVRow_Any_AVX2, ABGRToUVRow_AVX2, 0, 4, 31)
 #endif
 #ifdef HAS_ARGBTOUVJROW_AVX2
 ANY12S(ARGBToUVJRow_Any_AVX2, ARGBToUVJRow_AVX2, 0, 4, 31)
@@ -1380,6 +1455,37 @@ ANY12S(UYVYToUVRow_Any_MSA, UYVYToUVRow_MSA, 1, 4, 31)
 ANY12S(UYVYToUVRow_Any_MMI, UYVYToUVRow_MMI, 1, 4, 15)
 #endif
 #undef ANY12S
+
+// Any 1 to 1 with source stride (2 rows of source).  Outputs UV plane.
+// 128 byte row allows for 32 avx ARGB pixels.
+#define ANY11S(NAMEANY, ANY_SIMD, UVSHIFT, BPP, MASK)                        \
+  void NAMEANY(const uint8_t* src_ptr, int src_stride_ptr, uint8_t* dst_vu,  \
+               int width) {                                                  \
+    SIMD_ALIGNED(uint8_t temp[128 * 3]);                                     \
+    memset(temp, 0, 128 * 2); /* for msan */                                 \
+    int r = width & MASK;                                                    \
+    int n = width & ~MASK;                                                   \
+    if (n > 0) {                                                             \
+      ANY_SIMD(src_ptr, src_stride_ptr, dst_vu, n);                          \
+    }                                                                        \
+    memcpy(temp, src_ptr + (n >> UVSHIFT) * BPP, SS(r, UVSHIFT) * BPP);      \
+    memcpy(temp + 128, src_ptr + src_stride_ptr + (n >> UVSHIFT) * BPP,      \
+           SS(r, UVSHIFT) * BPP);                                            \
+    if ((width & 1) && UVSHIFT == 0) { /* repeat last pixel for subsample */ \
+      memcpy(temp + SS(r, UVSHIFT) * BPP, temp + SS(r, UVSHIFT) * BPP - BPP, \
+             BPP);                                                           \
+      memcpy(temp + 128 + SS(r, UVSHIFT) * BPP,                              \
+             temp + 128 + SS(r, UVSHIFT) * BPP - BPP, BPP);                  \
+    }                                                                        \
+    ANY_SIMD(temp, 128, temp + 256, MASK + 1);                               \
+    memcpy(dst_vu + (n >> 1) * 2, temp + 256, SS(r, 1) * 2);                 \
+  }
+
+#ifdef HAS_AYUVTOVUROW_NEON
+ANY11S(AYUVToUVRow_Any_NEON, AYUVToUVRow_NEON, 0, 4, 15)
+ANY11S(AYUVToVURow_Any_NEON, AYUVToVURow_NEON, 0, 4, 15)
+#endif
+#undef ANY11S
 
 #ifdef __cplusplus
 }  // extern "C"

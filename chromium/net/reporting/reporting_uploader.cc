@@ -14,7 +14,9 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "net/base/elements_upload_data_stream.h"
+#include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
+#include "net/base/network_isolation_key.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -102,12 +104,14 @@ struct PendingUpload {
 
   PendingUpload(const url::Origin& report_origin,
                 const GURL& url,
+                const NetworkIsolationKey& network_isolation_key,
                 const std::string& json,
                 int max_depth,
                 ReportingUploader::UploadCallback callback)
       : state(CREATED),
         report_origin(report_origin),
         url(url),
+        network_isolation_key(network_isolation_key),
         payload_reader(UploadOwnedBytesElementReader::CreateWithString(json)),
         max_depth(max_depth),
         callback(std::move(callback)) {}
@@ -119,6 +123,7 @@ struct PendingUpload {
   State state;
   const url::Origin report_origin;
   const GURL url;
+  const NetworkIsolationKey network_isolation_key;
   std::unique_ptr<UploadElementReader> payload_reader;
   int max_depth;
   ReportingUploader::UploadCallback callback;
@@ -140,11 +145,13 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
 
   void StartUpload(const url::Origin& report_origin,
                    const GURL& url,
+                   const NetworkIsolationKey& network_isolation_key,
                    const std::string& json,
                    int max_depth,
                    UploadCallback callback) override {
     auto upload = std::make_unique<PendingUpload>(
-        report_origin, url, json, max_depth, std::move(callback));
+        report_origin, url, network_isolation_key, json, max_depth,
+        std::move(callback));
     auto collector_origin = url::Origin::Create(url);
     if (collector_origin == report_origin) {
       // Skip the preflight check if the reports are being sent to the same
@@ -153,6 +160,11 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
     } else {
       StartPreflightRequest(std::move(upload));
     }
+  }
+
+  void OnShutdown() override {
+    // Cancels all pending uploads.
+    uploads_.clear();
   }
 
   void StartPreflightRequest(std::unique_ptr<PendingUpload> upload) {
@@ -164,9 +176,11 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
 
     upload->request->set_method("OPTIONS");
 
-    upload->request->SetLoadFlags(LOAD_DISABLE_CACHE |
-                                  LOAD_DO_NOT_SAVE_COOKIES |
-                                  LOAD_DO_NOT_SEND_COOKIES);
+    upload->request->SetLoadFlags(LOAD_DISABLE_CACHE);
+    upload->request->set_allow_credentials(false);
+    upload->request->set_isolation_info(IsolationInfo::CreatePartial(
+        IsolationInfo::RedirectMode::kUpdateNothing,
+        upload->network_isolation_key));
 
     upload->request->SetExtraRequestHeaderByName(
         HttpRequestHeaders::kOrigin, upload->report_origin.Serialize(), true);
@@ -193,12 +207,13 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
     upload->state = PendingUpload::SENDING_PAYLOAD;
     upload->request = context_->CreateRequest(upload->url, IDLE, this,
                                               kReportUploadTrafficAnnotation);
-
     upload->request->set_method("POST");
 
-    upload->request->SetLoadFlags(LOAD_DISABLE_CACHE |
-                                  LOAD_DO_NOT_SAVE_COOKIES |
-                                  LOAD_DO_NOT_SEND_COOKIES);
+    upload->request->SetLoadFlags(LOAD_DISABLE_CACHE);
+    upload->request->set_allow_credentials(false);
+    upload->request->set_isolation_info(IsolationInfo::CreatePartial(
+        IsolationInfo::RedirectMode::kUpdateNothing,
+        upload->network_isolation_key));
 
     upload->request->SetExtraRequestHeaderByName(
         HttpRequestHeaders::kContentType, kUploadContentType, true);
@@ -229,7 +244,7 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
   }
 
   void OnAuthRequired(URLRequest* request,
-                      AuthChallengeInfo* auth_info) override {
+                      const AuthChallengeInfo& auth_info) override {
     request->Cancel();
   }
 
@@ -239,6 +254,7 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
   }
 
   void OnSSLCertificateError(URLRequest* request,
+                             int net_error,
                              const SSLInfo& ssl_info,
                              bool fatal) override {
     request->Cancel();
@@ -319,6 +335,10 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
     // Reporting doesn't need anything in the body of the response, so it
     // doesn't read it, so it should never get OnReadCompleted calls.
     NOTREACHED();
+  }
+
+  int GetPendingUploadCountForTesting() const override {
+    return uploads_.size();
   }
 
  private:

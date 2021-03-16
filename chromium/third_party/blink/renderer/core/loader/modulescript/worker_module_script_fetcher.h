@@ -14,15 +14,16 @@ class WorkerGlobalScope;
 // WorkerModuleScriptFetcher is an implementation of ModuleScriptFetcher
 // interface for WebWorkers. This implements the custom "perform the fetch" hook
 // defined in the HTML spec:
-// https://html.spec.whatwg.org/multipage/webappapis.html#fetching-scripts-perform-fetch
-// https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model
+// https://html.spec.whatwg.org/C/#fetching-scripts-perform-fetch
+// https://html.spec.whatwg.org/C/#worker-processing-model
 class CORE_EXPORT WorkerModuleScriptFetcher final
-    : public GarbageCollectedFinalized<WorkerModuleScriptFetcher>,
+    : public GarbageCollected<WorkerModuleScriptFetcher>,
       public ModuleScriptFetcher {
   USING_GARBAGE_COLLECTED_MIXIN(WorkerModuleScriptFetcher);
 
  public:
-  explicit WorkerModuleScriptFetcher(WorkerGlobalScope*);
+  WorkerModuleScriptFetcher(WorkerGlobalScope*,
+                            util::PassKey<ModuleScriptLoader>);
 
   // Implements ModuleScriptFetcher.
   void Fetch(FetchParameters&,
@@ -30,7 +31,7 @@ class CORE_EXPORT WorkerModuleScriptFetcher final
              ModuleGraphLevel,
              ModuleScriptFetcher::Client*) override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // Implements ResourceClient
@@ -39,6 +40,7 @@ class CORE_EXPORT WorkerModuleScriptFetcher final
 
   const Member<WorkerGlobalScope> global_scope_;
 
+  Member<ResourceFetcher> fetch_client_settings_object_fetcher_;
   Member<Client> client_;
   ModuleGraphLevel level_;
 };

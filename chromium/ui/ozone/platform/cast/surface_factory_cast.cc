@@ -4,6 +4,7 @@
 
 #include "ui/ozone/platform/cast/surface_factory_cast.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/macros.h"
@@ -25,7 +26,7 @@ class DummySurface : public SurfaceOzoneCanvas {
   ~DummySurface() override {}
 
   // SurfaceOzoneCanvas implementation:
-  sk_sp<SkSurface> GetSurface() override { return surface_; }
+  SkCanvas* GetCanvas() override { return surface_->getCanvas(); }
 
   void ResizeCanvas(const gfx::Size& viewport_size) override {
     surface_ =
@@ -49,14 +50,15 @@ class CastPixmap : public gfx::NativePixmap {
   CastPixmap() {}
 
   bool AreDmaBufFdsValid() const override { return false; }
-  size_t GetDmaBufFdCount() const override { return 0; }
   int GetDmaBufFd(size_t plane) const override { return -1; }
-  int GetDmaBufPitch(size_t plane) const override { return 0; }
-  int GetDmaBufOffset(size_t plane) const override { return 0; }
-  uint64_t GetDmaBufModifier(size_t plane) const override { return 0; }
+  uint32_t GetDmaBufPitch(size_t plane) const override { return 0; }
+  size_t GetDmaBufOffset(size_t plane) const override { return 0; }
+  size_t GetDmaBufPlaneSize(size_t plane) const override { return 0; }
+  uint64_t GetBufferFormatModifier() const override { return 0; }
   gfx::BufferFormat GetBufferFormat() const override {
     return gfx::BufferFormat::BGRA_8888;
   }
+  size_t GetNumberOfPlanes() const override { return 1; }
   gfx::Size GetBufferSize() const override { return gfx::Size(); }
   uint32_t GetUniqueId() const override { return 0; }
 
@@ -111,7 +113,8 @@ GLOzone* SurfaceFactoryCast::GetGLOzone(gl::GLImplementation implementation) {
 }
 
 std::unique_ptr<SurfaceOzoneCanvas> SurfaceFactoryCast::CreateCanvasForWidget(
-    gfx::AcceleratedWidget widget) {
+    gfx::AcceleratedWidget widget,
+    scoped_refptr<base::SequencedTaskRunner> task_runner) {
   // Software canvas support only in headless mode
   if (egl_implementation_)
     return nullptr;
@@ -120,9 +123,12 @@ std::unique_ptr<SurfaceOzoneCanvas> SurfaceFactoryCast::CreateCanvasForWidget(
 
 scoped_refptr<gfx::NativePixmap> SurfaceFactoryCast::CreateNativePixmap(
     gfx::AcceleratedWidget widget,
+    VkDevice vk_device,
     gfx::Size size,
     gfx::BufferFormat format,
-    gfx::BufferUsage usage) {
+    gfx::BufferUsage usage,
+    base::Optional<gfx::Size> framebuffer_size) {
+  DCHECK(!framebuffer_size || framebuffer_size == size);
   return base::MakeRefCounted<CastPixmap>();
 }
 

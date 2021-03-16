@@ -12,16 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "shaderc/shaderc.h"
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+
 #include <memory>
 #include <thread>
 #include <unordered_map>
 
-#include "SPIRV/spirv.hpp"
-
 #include "common_shaders_for_test.h"
-#include "shaderc/shaderc.h"
+#include "spirv/unified1/spirv.hpp"
 
 namespace {
 
@@ -228,7 +229,7 @@ class CompileStringTest : public testing::Test {
     EXPECT_TRUE(CompilationResultIsSuccess(comp.result())) << kind << '\n'
                                                            << shader;
     return shaderc_result_get_error_message(comp.result());
-  };
+  }
 
   // Compiles a shader, expects compilation failure, and returns the messages.
   const std::string CompilationErrors(
@@ -242,7 +243,7 @@ class CompileStringTest : public testing::Test {
                                                             << shader;
     EXPECT_EQ(0u, shaderc_result_get_length(comp.result()));
     return shaderc_result_get_error_message(comp.result());
-  };
+  }
 
   // Compiles a shader and returns the messages.
   const std::string CompilationMessages(
@@ -252,7 +253,7 @@ class CompileStringTest : public testing::Test {
     const Compilation comp(compiler_.get_compiler_handle(), shader, kind,
                            "shader", "main", options, output_type);
     return shaderc_result_get_error_message(comp.result());
-  };
+  }
 
   // Compiles a shader, expects compilation success, and returns the output
   // bytes.
@@ -273,7 +274,7 @@ class CompileStringTest : public testing::Test {
     // the binary data when it sees a '\0' byte.
     return std::string(shaderc_result_get_bytes(comp.result()),
                        shaderc_result_get_length(comp.result()));
-  };
+  }
 
   Compiler compiler_;
   compile_options_ptr options_;
@@ -812,7 +813,7 @@ TEST_P(ValidShaderKind, ValidSpvCode) {
       CompilesToValidSpv(compiler, test_case.shader_, test_case.shader_kind_));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CompileStringTest, ValidShaderKind,
     testing::ValuesIn(std::vector<ShaderKindTestCase>{
         // Valid default shader kinds.
@@ -858,7 +859,7 @@ TEST_P(InvalidShaderKind, CompilationShouldFail) {
       CompilesToValidSpv(compiler, test_case.shader_, test_case.shader_kind_));
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     CompileStringTest, InvalidShaderKind,
     testing::ValuesIn(std::vector<ShaderKindTestCase>{
         // Invalid default shader kind.
@@ -982,7 +983,7 @@ TEST_P(IncluderTests, SetIncluderCallbacksClonedOptions) {
               HasSubstr(test_case.expected_substring()));
 }
 
-INSTANTIATE_TEST_CASE_P(CompileStringTest, IncluderTests,
+INSTANTIATE_TEST_SUITE_P(CompileStringTest, IncluderTests,
                         testing::ValuesIn(std::vector<IncluderTestCase>{
                             IncluderTestCase(
                                 // Fake file system.
@@ -1216,7 +1217,6 @@ TEST_F(CompileStringWithOptionsTest,
                                  shaderc_glsl_compute_shader, options_.get()));
 }
 
-#ifdef NV_EXTENSIONS
 // task shader
 TEST_F(CompileStringWithOptionsTest,
        TargetEnvRespectedWhenCompilingVulkan1_0TaskShaderToVulkan1_0Succeeds) {
@@ -1290,7 +1290,6 @@ TEST_F(CompileStringWithOptionsTest,
   EXPECT_TRUE(CompilesToValidSpv(compiler_, kGlslShaderMeshSubgroupBarrier,
                                  shaderc_glsl_mesh_shader, options_.get()));
 }
-#endif
 
 TEST_F(CompileStringWithOptionsTest,
        DISABLED_TargetEnvIgnoredWhenPreprocessing) {
@@ -1457,7 +1456,7 @@ TEST_P(ParseVersionProfileTest, FromNullTerminatedString) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     HelperMethods, ParseVersionProfileTest,
     testing::ValuesIn(std::vector<ParseVersionProfileTestCase>{
         // Valid version profiles
@@ -1801,7 +1800,7 @@ TEST_F(CompileStringWithOptionsTest, HlslFunctionality1OffByDefault) {
   const std::string disassembly_text =
       CompilationOutput(kHlslShaderWithCounterBuffer, shaderc_fragment_shader,
                         options_.get(), OutputType::SpirvAssemblyText);
-  EXPECT_THAT(disassembly_text, Not(HasSubstr("OpDecorateStringGOOGLE")))
+  EXPECT_THAT(disassembly_text, Not(HasSubstr("OpDecorateString")))
       << disassembly_text;
 }
 
@@ -1814,7 +1813,7 @@ TEST_F(CompileStringWithOptionsTest, HlslFunctionality1Respected) {
   const std::string disassembly_text =
       CompilationOutput(kHlslShaderWithCounterBuffer, shaderc_fragment_shader,
                         options_.get(), OutputType::SpirvAssemblyText);
-  EXPECT_THAT(disassembly_text, HasSubstr("OpDecorateStringGOOGLE"));
+  EXPECT_THAT(disassembly_text, HasSubstr("OpDecorateString"));
 }
 
 TEST_F(CompileStringWithOptionsTest, HlslFunctionality1SurvivesCloning) {
@@ -1828,7 +1827,7 @@ TEST_F(CompileStringWithOptionsTest, HlslFunctionality1SurvivesCloning) {
   const std::string disassembly_text =
       CompilationOutput(kHlslShaderWithCounterBuffer, shaderc_fragment_shader,
                         cloned_options.get(), OutputType::SpirvAssemblyText);
-  EXPECT_THAT(disassembly_text, HasSubstr("OpDecorateStringGOOGLE"));
+  EXPECT_THAT(disassembly_text, HasSubstr("OpDecorateString"));
 }
 
 TEST_F(CompileStringWithOptionsTest, HlslFlexibleMemoryLayoutAllowed) {
@@ -1841,6 +1840,31 @@ TEST_F(CompileStringWithOptionsTest, HlslFlexibleMemoryLayoutAllowed) {
   shaderc_compile_options_set_auto_bind_uniforms(options_.get(), true);
   EXPECT_TRUE(CompilesToValidSpv(compiler_, kHlslMemLayoutResourceSelect,
                                  shaderc_fragment_shader, options_.get()));
+}
+
+TEST_F(CompileStringWithOptionsTest, ClampMapsToFClampByDefault) {
+  const std::string disassembly_text =
+      CompilationOutput(kGlslShaderWithClamp, shaderc_fragment_shader,
+                        options_.get(), OutputType::SpirvAssemblyText);
+  EXPECT_THAT(disassembly_text, HasSubstr("OpExtInst %v4float %1 FClamp"));
+}
+
+TEST_F(CompileStringWithOptionsTest, ClampMapsToNClampWithNanClamp) {
+  shaderc_compile_options_set_nan_clamp(options_.get(), true);
+  const std::string disassembly_text =
+      CompilationOutput(kGlslShaderWithClamp, shaderc_fragment_shader,
+                        options_.get(), OutputType::SpirvAssemblyText);
+  EXPECT_THAT(disassembly_text, HasSubstr("OpExtInst %v4float %1 NClamp"));
+}
+
+TEST_F(CompileStringWithOptionsTest, NanClampSurvivesCloning) {
+  shaderc_compile_options_set_nan_clamp(options_.get(), true);
+  compile_options_ptr cloned_options(
+      shaderc_compile_options_clone(options_.get()));
+  const std::string disassembly_text =
+      CompilationOutput(kGlslShaderWithClamp, shaderc_fragment_shader,
+                        cloned_options.get(), OutputType::SpirvAssemblyText);
+  EXPECT_THAT(disassembly_text, HasSubstr("OpExtInst %v4float %1 NClamp"));
 }
 
 }  // anonymous namespace

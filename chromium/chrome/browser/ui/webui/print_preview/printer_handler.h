@@ -10,29 +10,20 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/ref_counted_memory.h"
 #include "base/strings/string16.h"
+#include "base/values.h"
 #include "chrome/common/buildflags.h"
-
-namespace base {
-class DictionaryValue;
-class ListValue;
-class RefCountedMemory;
-class Value;
-}
 
 namespace content {
 class WebContents;
-}
-
-namespace gfx {
-class Size;
 }
 
 class Profile;
 
 namespace printing {
 
-class StickySettings;
+class PrintPreviewStickySettings;
 
 // Wrapper around PrinterProviderAPI to be used by print preview.
 // It makes request lifetime management easier, and hides details of more
@@ -58,6 +49,10 @@ class PrinterHandler {
   using PrintCallback = base::OnceCallback<void(const base::Value& error)>;
   using GetPrinterInfoCallback =
       base::OnceCallback<void(const base::DictionaryValue& printer_info)>;
+#if defined(OS_CHROMEOS)
+  using GetEulaUrlCallback =
+      base::OnceCallback<void(const std::string& license)>;
+#endif
 
   // Creates an instance of a PrinterHandler for cloud printers.
   // Note: Implementation currently empty, see https://crbug.com/829414
@@ -71,7 +66,7 @@ class PrinterHandler {
   static std::unique_ptr<PrinterHandler> CreateForPdfPrinter(
       Profile* profile,
       content::WebContents* preview_web_contents,
-      StickySettings* sticky_settings);
+      PrintPreviewStickySettings* sticky_settings);
 
   static std::unique_ptr<PrinterHandler> CreateForLocalPrinters(
       content::WebContents* preview_web_contents,
@@ -97,13 +92,12 @@ class PrinterHandler {
   // are found. May be called multiple times, or never if there are no printers
   // to add.
   // |done_callback| must be called exactly once when the search is complete.
-  virtual void StartGetPrinters(
-      const AddedPrintersCallback& added_printers_callback,
-      GetPrintersDoneCallback done_callback) = 0;
+  virtual void StartGetPrinters(AddedPrintersCallback added_printers_callback,
+                                GetPrintersDoneCallback done_callback) = 0;
 
   // Starts getting printing capability of the printer with the provided
   // destination ID.
-  // |callback| should be called in the response to the request.
+  // |callback| should be called in response to the request.
   virtual void StartGetCapability(const std::string& destination_id,
                                   GetCapabilityCallback callback) = 0;
 
@@ -116,21 +110,22 @@ class PrinterHandler {
                                        GetPrinterInfoCallback callback);
 
   // Starts a print request.
-  // |destination_id|: The printer to which print job should be sent.
-  // |capability|: Capability reported by the printer.
-  // |job_title|: The  title used for print job.
-  // |ticket_json|: The print job ticket as JSON string.
-  // |page_size|: The document page size.
+  // |job_title|: The title used for print job.
+  // |settings|: The print job settings.
   // |print_data|: The document bytes to print.
   // |callback| should be called in the response to the request.
-  virtual void StartPrint(
-      const std::string& destination_id,
-      const std::string& capability,
-      const base::string16& job_title,
-      const std::string& ticket_json,
-      const gfx::Size& page_size,
-      const scoped_refptr<base::RefCountedMemory>& print_data,
-      PrintCallback callback) = 0;
+  virtual void StartPrint(const base::string16& job_title,
+                          base::Value settings,
+                          scoped_refptr<base::RefCountedMemory> print_data,
+                          PrintCallback callback) = 0;
+
+#if defined(OS_CHROMEOS)
+  // Starts getting the printer's PPD EULA URL with the provided destination ID.
+  // |destination_id|: The ID of the printer.
+  // |callback| should be called in response to the request.
+  virtual void StartGetEulaUrl(const std::string& destination_id,
+                               GetEulaUrlCallback callback);
+#endif
 };
 
 }  // namespace printing

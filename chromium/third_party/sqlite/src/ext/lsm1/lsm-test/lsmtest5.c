@@ -10,19 +10,19 @@
 /*************************************************************************
 ** DATABASE CONTENTS:
 **
-**   The database contains up to N key/value pairs, where N is some large
+**   The database contains up to N key/value pairs, where N is some large 
 **   number (say 10,000,000). Keys are integer values between 0 and (N-1).
 **   The value associated with each key is a pseudo-random blob of data.
 **
-**   Key/value pair keys are encoded as the two bytes "k." followed by a
+**   Key/value pair keys are encoded as the two bytes "k." followed by a 
 **   10-digit decimal number. i.e. key 45 -> "k.0000000045".
 **
-**   As well as the key/value pairs, the database also contains checksum
+**   As well as the key/value pairs, the database also contains checksum 
 **   entries. The checksums form a hierarchy - for every F key/value
 **   entries there is one level 1 checksum. And for each F level 1 checksums
 **   there is one level 2 checksum. And so on.
 **
-**   Checksum keys are encoded as the two byte "c." followed by the
+**   Checksum keys are encoded as the two byte "c." followed by the 
 **   checksum level, followed by a 10 digit decimal number containing
 **   the value of the first key that contributes to the checksum value.
 **   For example, assuming F==10, the level 1 checksum that spans keys
@@ -30,17 +30,17 @@
 **
 **   Clients may perform one of two operations on the database: a read
 **   or a write.
-**
+** 
 ** READ OPERATIONS:
 **
 **   A read operation scans a range of F key/value pairs. It computes
 **   the expected checksum and then compares the computed value to the
-**   actual value stored in the level 1 checksum entry. It then scans
-**   the group of F level 1 checksums, and compares the computed checksum
-**   to the associated level 2 checksum value, and so on until the
+**   actual value stored in the level 1 checksum entry. It then scans 
+**   the group of F level 1 checksums, and compares the computed checksum 
+**   to the associated level 2 checksum value, and so on until the 
 **   highest level checksum value has been verified.
 **
-**   If a checksum ever fails to match the expected value, the test
+**   If a checksum ever fails to match the expected value, the test 
 **   has failed.
 **
 ** WRITE OPERATIONS:
@@ -73,7 +73,7 @@ struct DbParameters {
 
 /*
 ** Argument aBuf[] must point to a buffer at least DB_KEY_BYTES in size.
-** This function populates the buffer with a nul-terminated key string
+** This function populates the buffer with a nul-terminated key string 
 ** corresponding to key iKey.
 */
 static void dbFormatKey(
@@ -136,7 +136,7 @@ static void dbCksum(
 
 /*
 ** Compute the value of the checksum stored on level iLevel that contains
-** data from key iKey by scanning the pParam->nFanout entries at level
+** data from key iKey by scanning the pParam->nFanout entries at level 
 ** iLevel-1.
 */
 static u32 dbComputeCksum(
@@ -240,7 +240,7 @@ static int dbWriteOperation(
 /*************************************************************************
 ** The following block contains testXXX() functions that implement a
 ** wrapper around the systems native multi-thread support. There are no
-** synchronization primitives - just functions to launch and join
+** synchronization primitives - just functions to launch and join 
 ** threads. Wrapper functions are:
 **
 **    testThreadSupport()
@@ -391,7 +391,7 @@ static void testThreadWait(ThreadSet *pThreadSet, int nMs){
 }
 
 /*
-** Set the result for thread iThread.
+** Set the result for thread iThread. 
 */
 static void testThreadSetResult(
   ThreadSet *pThreadSet,          /* Thread-set handle */
@@ -413,7 +413,7 @@ static void testThreadSetResult(
 }
 
 /*
-** Retrieve the result for thread iThread.
+** Retrieve the result for thread iThread. 
 */
 static int testThreadGetResult(
   ThreadSet *pThreadSet,          /* Thread-set handle */
@@ -557,7 +557,7 @@ static void mt1Main(ThreadSet *pThreadSet, int iThread, void *pCtx){
   }
   testClose(&pDb);
 
-  /* If an error has occured, set the thread error code and the threadset
+  /* If an error has occured, set the thread error code and the threadset 
   ** halt flag to tell the other test threads to halt. Otherwise, set the
   ** thread error code to 0 and post a message with the number of read
   ** and write operations completed.  */
@@ -585,9 +585,9 @@ static void do_test_mt1(
 
   for(i=0; *pRc==0 && i<ArraySize(aTest); i++){
     Mt1Test *p = &aTest[i];
-    int bRun = testCaseBegin(pRc, zPattern,
-        "mt1.%s.db=%d,%d.ms=%d.rdwr=%d.fast=%d.slow=%d",
-        zSystem, p->param.nFanout, p->param.nKey,
+    int bRun = testCaseBegin(pRc, zPattern, 
+        "mt1.%s.db=%d,%d.ms=%d.rdwr=%d.fast=%d.slow=%d", 
+        zSystem, p->param.nFanout, p->param.nKey, 
         p->nMs, p->nReadwrite, p->nFastReader, p->nSlowReader
     );
     if( bRun ){

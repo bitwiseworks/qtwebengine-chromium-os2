@@ -16,7 +16,6 @@
 namespace media {
 
 const int kMaxDroppedPrerollWarnings = 10;
-const int kMaxDtsBeyondPtsWarnings = 10;
 const int kMaxAudioNonKeyframeWarnings = 10;
 const int kMaxNumKeyframeTimeGreaterThanDependantWarnings = 1;
 const int kMaxMuxedSequenceModeWarnings = 1;
@@ -33,8 +32,7 @@ class MseTrackBuffer {
  public:
   MseTrackBuffer(ChunkDemuxerStream* stream,
                  MediaLog* media_log,
-                 const SourceBufferParseWarningCB& parse_warning_cb,
-                 ChunkDemuxerStream::RangeApi range_api);
+                 SourceBufferParseWarningCB parse_warning_cb);
   ~MseTrackBuffer();
 
   // Get/set |last_decode_timestamp_|.
@@ -97,10 +95,9 @@ class MseTrackBuffer {
   // monotonically increasing.
   void SetHighestPresentationTimestampIfIncreased(base::TimeDelta timestamp);
 
-  // Adds |frame| to the end of |processed_frames_|. In some BufferingByPts
-  // SAP-Type-2 conditions, may also flush any previously enqueued frames, which
-  // can fail. Returns the result of such flushing, or true if no flushing was
-  // done.
+  // Adds |frame| to the end of |processed_frames_|. In some SAP-Type-2
+  // conditions, may also flush any previously enqueued frames, which can fail.
+  // Returns the result of such flushing, or true if no flushing was done.
   bool EnqueueProcessedFrame(scoped_refptr<StreamParserBuffer> frame);
 
   // Appends |processed_frames_|, if not empty, to |stream_| and clears
@@ -155,7 +152,6 @@ class MseTrackBuffer {
   // EnqueueProcessedFrame().
   base::TimeDelta last_signalled_group_start_pts_;
   bool have_flushed_since_last_group_start_;
-  ChunkDemuxerStream::RangeApi range_api_;
 
   // The coded frame duration of the last coded frame appended in the current
   // coded frame group. Initially kNoTimestamp, meaning "unset".
@@ -194,24 +190,21 @@ class MseTrackBuffer {
   DISALLOW_COPY_AND_ASSIGN(MseTrackBuffer);
 };
 
-MseTrackBuffer::MseTrackBuffer(
-    ChunkDemuxerStream* stream,
-    MediaLog* media_log,
-    const SourceBufferParseWarningCB& parse_warning_cb,
-    ChunkDemuxerStream::RangeApi range_api)
+MseTrackBuffer::MseTrackBuffer(ChunkDemuxerStream* stream,
+                               MediaLog* media_log,
+                               SourceBufferParseWarningCB parse_warning_cb)
     : last_decode_timestamp_(kNoDecodeTimestamp()),
       last_processed_decode_timestamp_(DecodeTimestamp()),
       pending_group_start_pts_(kNoTimestamp),
       last_keyframe_presentation_timestamp_(kNoTimestamp),
       last_signalled_group_start_pts_(kNoTimestamp),
       have_flushed_since_last_group_start_(false),
-      range_api_(range_api),
       last_frame_duration_(kNoTimestamp),
       highest_presentation_timestamp_(kNoTimestamp),
       needs_random_access_point_(true),
       stream_(stream),
       media_log_(media_log),
-      parse_warning_cb_(parse_warning_cb) {
+      parse_warning_cb_(std::move(parse_warning_cb)) {
   DCHECK(stream_);
   DCHECK(parse_warning_cb_);
 }
@@ -256,10 +249,7 @@ bool MseTrackBuffer::EnqueueProcessedFrame(
       if (!num_keyframe_time_greater_than_dependant_warnings_) {
         // At most once per each track (but potentially multiple times per
         // playback, if there are more than one tracks that exhibit this
-        // sequence in a playback) report a RAPPOR URL instance and also run the
-        // warning's callback.
-        media_log_->RecordRapporWithSecurityOrigin(
-            "Media.OriginUrl.MSE.KeyframeTimeGreaterThanDependant");
+        // sequence in a playback) run the warning's callback.
         DCHECK(parse_warning_cb_);
         parse_warning_cb_.Run(
             SourceBufferParseWarning::kKeyframeTimeGreaterThanDependant);
@@ -277,17 +267,16 @@ bool MseTrackBuffer::EnqueueProcessedFrame(
              "well supported by MSE; buffered range reporting may be less "
              "precise.";
 
-      // SAP-Type-2 GOPs (when buffering ByPts), by definition, contain at
-      // least one non-keyframe with PTS prior to the keyframe's PTS, with DTS
-      // continuous from keyframe forward to at least that non-keyframe. If
-      // such a non-keyframe overlaps the end of a previously buffered GOP
-      // sufficiently (such that, say, some previous GOP's non-keyframes
-      // depending on the overlapped non-keyframe(s) must be dropped), then a
-      // gap might need to result. But if we attempt to buffer the new GOP's
-      // keyframe through at least that first non-keyframe that does such
-      // overlapping all at once, the buffering mechanism doesn't expect such
-      // a discontinuity could occur (failing assumptions in places like
-      // SourceBufferRangeByPts).
+      // SAP-Type-2 GOPs, by definition, contain at least one non-keyframe with
+      // PTS prior to the keyframe's PTS, with DTS continuous from keyframe
+      // forward to at least that non-keyframe. If such a non-keyframe overlaps
+      // the end of a previously buffered GOP sufficiently (such that, say, some
+      // previous GOP's non-keyframes depending on the overlapped
+      // non-keyframe(s) must be dropped), then a gap might need to result. But
+      // if we attempt to buffer the new GOP's keyframe through at least that
+      // first non-keyframe that does such overlapping all at once, the
+      // buffering mechanism doesn't expect such a discontinuity could occur
+      // (failing assumptions in places like SourceBufferRange).
       //
       // To prevent such failure, we can first flush what's previously been
       // enqueued (if anything), but do this conservatively to not flush
@@ -296,8 +285,7 @@ bool MseTrackBuffer::EnqueueProcessedFrame(
       // this track and no flush has yet occurred for this track since then, or
       // if there has been a flush since then but this nonkeyframe's PTS is no
       // lower than the PTS of the first frame pending flush currently.
-      if (range_api_ == ChunkDemuxerStream::RangeApi::kNewByPts &&
-          !processed_frames_.empty()) {
+      if (!processed_frames_.empty()) {
         DCHECK(kNoTimestamp != last_signalled_group_start_pts_);
 
         if (!have_flushed_since_last_group_start_) {
@@ -347,15 +335,13 @@ void MseTrackBuffer::NotifyStartOfCodedFrameGroup(DecodeTimestamp start_dts,
   stream_->OnStartOfCodedFrameGroup(start_dts, start_pts);
 }
 
-FrameProcessor::FrameProcessor(const UpdateDurationCB& update_duration_cb,
-                               MediaLog* media_log,
-                               ChunkDemuxerStream::RangeApi range_api)
+FrameProcessor::FrameProcessor(UpdateDurationCB update_duration_cb,
+                               MediaLog* media_log)
     : group_start_timestamp_(kNoTimestamp),
-      update_duration_cb_(update_duration_cb),
-      media_log_(media_log),
-      range_api_(range_api) {
+      update_duration_cb_(std::move(update_duration_cb)),
+      media_log_(media_log) {
   DVLOG(2) << __func__ << "()";
-  DCHECK(update_duration_cb);
+  DCHECK(update_duration_cb_);
 }
 
 FrameProcessor::~FrameProcessor() {
@@ -363,10 +349,10 @@ FrameProcessor::~FrameProcessor() {
 }
 
 void FrameProcessor::SetParseWarningCallback(
-    const SourceBufferParseWarningCB& parse_warning_cb) {
+    SourceBufferParseWarningCB parse_warning_cb) {
   DCHECK(!parse_warning_cb_);
   DCHECK(parse_warning_cb);
-  parse_warning_cb_ = parse_warning_cb;
+  parse_warning_cb_ = std::move(parse_warning_cb);
 }
 
 void FrameProcessor::SetSequenceMode(bool sequence_mode) {
@@ -406,10 +392,7 @@ bool FrameProcessor::ProcessFrames(
     if (!num_muxed_sequence_mode_warnings_) {
       // At most once per SourceBuffer (but potentially multiple times per
       // playback, if there are more than one SourceBuffers used this way in a
-      // playback) report a RAPPOR URL instance and also run the warning's
-      // callback.
-      media_log_->RecordRapporWithSecurityOrigin(
-          "Media.OriginUrl.MSE.MuxedSequenceModeSourceBuffer");
+      // playback) run the warning's callback.
       DCHECK(parse_warning_cb_);
       parse_warning_cb_.Run(SourceBufferParseWarning::kMuxedSequenceMode);
     }
@@ -422,6 +405,17 @@ bool FrameProcessor::ProcessFrames(
            "recommended to instead use 'segments' mode for a multitrack "
            "SourceBuffer.";
   }
+
+  // Monitor |group_end_timestamp_| to detect any cases where it decreases while
+  // processing |frames| (which should all be from no more than 1 media
+  // segment), to see if (outside of mediasource fuzzers) real API usage hits
+  // this case frequently enough to potentially warrant MSE spec clarification
+  // of the last step in the coded frame processing algorithm. The previous
+  // value is not used as a baseline, since the spec would already handle that
+  // case interoperably (since we may be starting the processing of frames from
+  // a new media segment.) See https://crbug.com/920853 and
+  // https://github.com/w3c/media-source/issues/203.
+  base::TimeDelta max_group_end_timestamp = kNoTimestamp;
 
   // Implements the coded frame processing algorithm's outer loop for step 1.
   // Note that ProcessFrame() implements an inner loop for a single frame that
@@ -449,6 +443,9 @@ bool FrameProcessor::ProcessFrames(
       FlushProcessedFrames();
       return false;
     }
+
+    max_group_end_timestamp =
+        std::max(group_end_timestamp_, max_group_end_timestamp);
   }
 
   if (!FlushProcessedFrames())
@@ -459,6 +456,13 @@ bool FrameProcessor::ProcessFrames(
   // 5. If the media segment contains data beyond the current duration, then run
   //    the duration change algorithm with new duration set to the maximum of
   //    the current duration and the group end timestamp.
+  if (max_group_end_timestamp > group_end_timestamp_) {
+    // Log a parse warning. For now at least, we don't also log this to
+    // media-internals.
+    DCHECK(parse_warning_cb_);
+    parse_warning_cb_.Run(
+        SourceBufferParseWarning::kGroupEndTimestampDecreaseWithinMediaSegment);
+  }
   update_duration_cb_.Run(group_end_timestamp_);
 
   return true;
@@ -472,7 +476,7 @@ void FrameProcessor::SetGroupStartTimestampIfInSequenceMode(
     group_start_timestamp_ = timestamp_offset;
 
   // Changes to timestampOffset should invalidate the preroll buffer.
-  audio_preroll_buffer_ = NULL;
+  audio_preroll_buffer_.reset();
 }
 
 bool FrameProcessor::AddTrack(StreamParser::TrackId id,
@@ -487,8 +491,8 @@ bool FrameProcessor::AddTrack(StreamParser::TrackId id,
     return false;
   }
 
-  track_buffers_[id] = std::make_unique<MseTrackBuffer>(
-      stream, media_log_, parse_warning_cb_, range_api_);
+  track_buffers_[id] =
+      std::make_unique<MseTrackBuffer>(stream, media_log_, parse_warning_cb_);
   return true;
 }
 
@@ -552,7 +556,7 @@ void FrameProcessor::OnPossibleAudioConfigUpdate(
   DCHECK(config.IsValidConfig());
 
   // Always clear the preroll buffer when a config update is received.
-  audio_preroll_buffer_ = NULL;
+  audio_preroll_buffer_.reset();
 
   if (config.Matches(current_audio_config_))
     return;
@@ -648,7 +652,7 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
           << "us that ends too far (" << delta
           << "us) from next buffer with PTS "
           << buffer->timestamp().InMicroseconds() << "us";
-      audio_preroll_buffer_ = NULL;
+      audio_preroll_buffer_.reset();
     }
   }
 
@@ -663,6 +667,8 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
         << "us";
 
     // Mark the overlapping portion of the buffer for discard.
+    // TODO(wolenetz): Is this correct to ignore any pre-existing discard
+    // padding (e.g. WebM discard padding)? See https://crbug.com/969195.
     buffer->set_discard_padding(std::make_pair(
         append_window_start - buffer->timestamp(), base::TimeDelta()));
 
@@ -688,6 +694,8 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
                                             : "");
 
     // Mark the overlapping portion of the buffer for discard.
+    // TODO(wolenetz): Is this correct to ignore any pre-existing discard
+    // padding (e.g. WebM discard padding)? See https://crbug.com/969195.
     buffer->set_discard_padding(
         std::make_pair(buffer->discard_padding().first,
                        frame_end_timestamp - append_window_end));
@@ -758,20 +766,14 @@ bool FrameProcessor::ProcessFrame(scoped_refptr<StreamParserBuffer> frame,
                                    << " frame";
       return false;
     }
-    if (decode_timestamp.ToPresentationTime() > presentation_timestamp) {
-      // TODO(wolenetz): Determine whether DTS>PTS should really be allowed. See
-      // http://crbug.com/354518.
-      LIMITED_MEDIA_LOG(DEBUG, media_log_, num_dts_beyond_pts_warnings_,
-                        kMaxDtsBeyondPtsWarnings)
-          << "Parsed " << frame->GetTypeName() << " frame has DTS "
-          << decode_timestamp.InMicroseconds()
-          << "us, which is after the frame's PTS "
-          << presentation_timestamp.InMicroseconds() << "us";
-      DVLOG(2) << __func__ << ": WARNING: Frame DTS("
-               << decode_timestamp.InMicroseconds() << "us) > PTS("
-               << presentation_timestamp.InMicroseconds()
-               << "us), frame type=" << frame->GetTypeName();
-    }
+
+    // TODO(wolenetz): Determine whether any DTS>PTS logging is needed. See
+    // http://crbug.com/354518.
+    DVLOG_IF(2, decode_timestamp.ToPresentationTime() > presentation_timestamp)
+        << __func__ << ": WARNING: Frame DTS("
+        << decode_timestamp.InMicroseconds() << "us) > PTS("
+        << presentation_timestamp.InMicroseconds()
+        << "us), frame type=" << frame->GetTypeName();
 
     // All stream parsers must emit valid (non-negative) frame durations.
     // Note that duration of 0 can occur for at least WebM alt-ref frames.
@@ -934,22 +936,6 @@ bool FrameProcessor::ProcessFrame(scoped_refptr<StreamParserBuffer> frame,
     }
 
     DCHECK(presentation_timestamp >= base::TimeDelta());
-    if (decode_timestamp < DecodeTimestamp() &&
-        range_api_ == ChunkDemuxerStream::RangeApi::kLegacyByDts) {
-      // B-frames may still result in negative DTS here after being shifted by
-      // |timestamp_offset_|.
-      // TODO(wolenetz): This is no longer a step in the CFP, since negative DTS
-      // are allowed. Remove this parse failure and error log as part of fixing
-      // PTS/DTS conflation in SourceBufferStream. See https://crbug.com/398141
-      // and https://crbug.com/718641.
-      MEDIA_LOG(ERROR, media_log_)
-          << frame->GetTypeName() << " frame with PTS "
-          << presentation_timestamp.InMicroseconds() << "us has negative DTS "
-          << decode_timestamp.InMicroseconds()
-          << "us after applying timestampOffset, handling any discontinuity, "
-             "and filtering against append window";
-      return false;
-    }
 
     // 10. If the need random access point flag on track buffer equals true,
     //     then run the following steps:
@@ -992,13 +978,11 @@ bool FrameProcessor::ProcessFrame(scoped_refptr<StreamParserBuffer> frame,
         (track_buffer->pending_group_start_pts() != kNoTimestamp &&
          track_buffer->pending_group_start_pts() > presentation_timestamp);
 
-    if (range_api_ == ChunkDemuxerStream::RangeApi::kNewByPts &&
-        frame->is_key_frame()) {
-      // When buffering by PTS intervals and a keyframe is discovered to have a
-      // decreasing PTS versus the previous highest presentation timestamp for
-      // that track in the current coded frame group, signal a new coded frame
-      // group for that track buffer so that it can correctly process
-      // overlap-removals for the new GOP.
+    if (frame->is_key_frame()) {
+      // When a keyframe is discovered to have a decreasing PTS versus the
+      // previous highest presentation timestamp for that track in the current
+      // coded frame group, signal a new coded frame group for that track buffer
+      // so that it can correctly process overlap-removals for the new GOP.
       if (track_buffer->highest_presentation_timestamp() != kNoTimestamp &&
           track_buffer->highest_presentation_timestamp() >
               presentation_timestamp) {
@@ -1011,13 +995,13 @@ bool FrameProcessor::ProcessFrame(scoped_refptr<StreamParserBuffer> frame,
         track_buffer->ResetHighestPresentationTimestamp();
       }
 
-      // When buffering by PTS intervals and an otherwise continuous coded frame
-      // group (by DTS, and with non-decreasing keyframe PTS) contains a
-      // keyframe with PTS in the future significantly far enough that it may be
-      // outside of buffering fudge room, signal a new coded frame group with
-      // start time set to the previous highest frame end time in the coded
-      // frame group for this track. This lets the stream coalesce a potential
-      // gap, and also pass internal buffer adjacency checks.
+      // When an otherwise continuous coded frame group (by DTS, and with
+      // non-decreasing keyframe PTS) contains a keyframe with PTS in the future
+      // significantly far enough that it may be outside of buffering fudge
+      // room, signal a new coded frame group with start time set to the
+      // previous highest frame end time in the coded frame group for this
+      // track. This lets the stream coalesce a potential gap, and also pass
+      // internal buffer adjacency checks.
       signal_new_cfg |=
           track_buffer->highest_presentation_timestamp() != kNoTimestamp &&
           track_buffer->highest_presentation_timestamp() + frame->duration() <

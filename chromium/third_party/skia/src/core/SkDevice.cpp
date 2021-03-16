@@ -5,70 +5,92 @@
  * found in the LICENSE file.
  */
 
-#include "SkDevice.h"
+#include "src/core/SkDevice.h"
 
-#include "SkColorFilter.h"
-#include "SkDraw.h"
-#include "SkDrawable.h"
-#include "SkGlyphRun.h"
-#include "SkImageFilter.h"
-#include "SkImageFilterCache.h"
-#include "SkImagePriv.h"
-#include "SkImage_Base.h"
-#include "SkLatticeIter.h"
-#include "SkLocalMatrixShader.h"
-#include "SkMakeUnique.h"
-#include "SkMatrixPriv.h"
-#include "SkPatchUtils.h"
-#include "SkPathMeasure.h"
-#include "SkPathPriv.h"
-#include "SkRSXform.h"
-#include "SkRasterClip.h"
-#include "SkShader.h"
-#include "SkSpecialImage.h"
-#include "SkTLazy.h"
-#include "SkTextBlobPriv.h"
-#include "SkTextToPathIter.h"
-#include "SkTo.h"
-#include "SkUtils.h"
-#include "SkVertices.h"
+#include "include/core/SkColorFilter.h"
+#include "include/core/SkDrawable.h"
+#include "include/core/SkImageFilter.h"
+#include "include/core/SkPathMeasure.h"
+#include "include/core/SkRSXform.h"
+#include "include/core/SkShader.h"
+#include "include/core/SkVertices.h"
+#include "include/private/SkTo.h"
+#include "src/core/SkCanvasMatrix.h"
+#include "src/core/SkDraw.h"
+#include "src/core/SkGlyphRun.h"
+#include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImagePriv.h"
+#include "src/core/SkLatticeIter.h"
+#include "src/core/SkMatrixPriv.h"
+#include "src/core/SkPathPriv.h"
+#include "src/core/SkRasterClip.h"
+#include "src/core/SkSpecialImage.h"
+#include "src/core/SkTLazy.h"
+#include "src/core/SkTextBlobPriv.h"
+#include "src/core/SkUtils.h"
+#include "src/image/SkImage_Base.h"
+#include "src/shaders/SkLocalMatrixShader.h"
+#include "src/utils/SkPatchUtils.h"
 
 SkBaseDevice::SkBaseDevice(const SkImageInfo& info, const SkSurfaceProps& surfaceProps)
-    : fInfo(info)
-    , fSurfaceProps(surfaceProps)
-{
-    fOrigin = {0, 0};
-    fCTM.reset();
+        : fInfo(info)
+        , fSurfaceProps(surfaceProps) {
+    fDeviceToGlobal.reset();
+    fGlobalToDevice.reset();
+    fLocalToDevice.reset();
 }
 
-void SkBaseDevice::setOrigin(const SkMatrix& globalCTM, int x, int y) {
-    fOrigin.set(x, y);
-    fCTM = globalCTM;
-    fCTM.postTranslate(SkIntToScalar(-x), SkIntToScalar(-y));
-}
+void SkBaseDevice::setDeviceCoordinateSystem(const SkMatrix& deviceToGlobal,
+                                             const SkMatrix& localToDevice,
+                                             int bufferOriginX,
+                                             int bufferOriginY) {
+    fDeviceToGlobal = deviceToGlobal;
+    fDeviceToGlobal.normalizePerspective();
+    SkAssertResult(deviceToGlobal.invert(&fGlobalToDevice));
 
-void SkBaseDevice::setGlobalCTM(const SkMatrix& ctm) {
-    fCTM = ctm;
-    if (fOrigin.fX | fOrigin.fY) {
-        fCTM.postTranslate(-SkIntToScalar(fOrigin.fX), -SkIntToScalar(fOrigin.fY));
+    fLocalToDevice = localToDevice;
+    fLocalToDevice.normalizePerspective();
+    if (bufferOriginX | bufferOriginY) {
+        fDeviceToGlobal.preTranslate(bufferOriginX, bufferOriginY);
+        fGlobalToDevice.postTranslate(-bufferOriginX, -bufferOriginY);
+        fLocalToDevice.postTranslate(-bufferOriginX, -bufferOriginY);
     }
 }
 
-bool SkBaseDevice::clipIsWideOpen() const {
-    if (kRect_ClipType == this->onGetClipType()) {
-        SkRegion rgn;
-        this->onAsRgnClip(&rgn);
-        SkASSERT(rgn.isRect());
-        return rgn.getBounds() == SkIRect::MakeWH(this->width(), this->height());
-    } else {
-        return false;
+void SkBaseDevice::setGlobalCTM(const SkCanvasMatrix& ctm) {
+    fLocalToDevice = ctm;
+    fLocalToDevice.normalizePerspective();
+    if (!fGlobalToDevice.isIdentity()) {
+        // Map from the global CTM state to this device's coordinate system.
+        fLocalToDevice.postConcat(fGlobalToDevice);
     }
 }
 
-SkPixelGeometry SkBaseDevice::CreateInfo::AdjustGeometry(const SkImageInfo& info,
-                                                         TileUsage tileUsage,
-                                                         SkPixelGeometry geo,
-                                                         bool preserveLCDText) {
+bool SkBaseDevice::isPixelAlignedToGlobal() const {
+    return fDeviceToGlobal.isTranslate() &&
+           SkScalarIsInt(fDeviceToGlobal.getTranslateX()) &&
+           SkScalarIsInt(fDeviceToGlobal.getTranslateY());
+}
+
+SkIPoint SkBaseDevice::getOrigin() const {
+    // getOrigin() is deprecated, the old origin has been moved into the fDeviceToGlobal matrix.
+    // This extracts the origin from the matrix, but asserts that a more complicated coordinate
+    // space hasn't been set of the device. This function can be removed once existing use cases
+    // have been updated to use the device-to-global matrix instead or have themselves been removed
+    // (e.g. Android's device-space clip regions are going away, and are not compatible with the
+    // generalized device coordinate system).
+    SkASSERT(this->isPixelAlignedToGlobal());
+    return SkIPoint::Make(SkScalarFloorToInt(fDeviceToGlobal.getTranslateX()),
+                          SkScalarFloorToInt(fDeviceToGlobal.getTranslateY()));
+}
+
+SkMatrix SkBaseDevice::getRelativeTransform(const SkBaseDevice& inputDevice) const {
+    // To get the transform from the input's space to this space, transform from the input space to
+    // the global space, and then from the global space back to this space.
+    return SkMatrix::Concat(fGlobalToDevice, inputDevice.fDeviceToGlobal);
+}
+
+SkPixelGeometry SkBaseDevice::CreateInfo::AdjustGeometry(TileUsage tileUsage, SkPixelGeometry geo) {
     switch (tileUsage) {
         case kPossible_TileUsage:
             // (we think) for compatibility with old clients, we assume this layer can support LCD
@@ -76,9 +98,7 @@ SkPixelGeometry SkBaseDevice::CreateInfo::AdjustGeometry(const SkImageInfo& info
             // our callers (reed/robertphilips).
             break;
         case kNever_TileUsage:
-            if (!preserveLCDText) {
-                geo = kUnknown_SkPixelGeometry;
-            }
+            geo = kUnknown_SkPixelGeometry;
             break;
     }
     return geo;
@@ -89,12 +109,12 @@ static inline bool is_int(float x) {
 }
 
 void SkBaseDevice::drawRegion(const SkRegion& region, const SkPaint& paint) {
-    const SkMatrix& ctm = this->ctm();
-    bool isNonTranslate = ctm.getType() & ~(SkMatrix::kTranslate_Mask);
+    const SkMatrix& localToDevice = this->localToDevice();
+    bool isNonTranslate = localToDevice.getType() & ~(SkMatrix::kTranslate_Mask);
     bool complexPaint = paint.getStyle() != SkPaint::kFill_Style || paint.getMaskFilter() ||
                         paint.getPathEffect();
-    bool antiAlias = paint.isAntiAlias() && (!is_int(ctm.getTranslateX()) ||
-                                             !is_int(ctm.getTranslateY()));
+    bool antiAlias = paint.isAntiAlias() && (!is_int(localToDevice.getTranslateX()) ||
+                                             !is_int(localToDevice.getTranslateY()));
     if (isNonTranslate || complexPaint || antiAlias) {
         SkPath path;
         region.getBoundaryPath(&path);
@@ -123,46 +143,19 @@ void SkBaseDevice::drawDRRect(const SkRRect& outer,
     SkPath path;
     path.addRRect(outer);
     path.addRRect(inner);
-    path.setFillType(SkPath::kEvenOdd_FillType);
+    path.setFillType(SkPathFillType::kEvenOdd);
     path.setIsVolatile(true);
 
     this->drawPath(path, paint, true);
 }
 
-void SkBaseDevice::drawEdgeAARect(const SkRect& r, SkCanvas::QuadAAFlags aa, SkColor color,
-                                  SkBlendMode mode) {
-    SkPaint paint;
-    paint.setColor(color);
-    paint.setBlendMode(mode);
-    paint.setAntiAlias(aa == SkCanvas::kAll_QuadAAFlags);
-
-    this->drawRect(r, paint);
-}
-
 void SkBaseDevice::drawPatch(const SkPoint cubics[12], const SkColor colors[4],
                              const SkPoint texCoords[4], SkBlendMode bmode, const SkPaint& paint) {
-    SkISize lod = SkPatchUtils::GetLevelOfDetail(cubics, &this->ctm());
+    SkISize lod = SkPatchUtils::GetLevelOfDetail(cubics, &this->localToDevice());
     auto vertices = SkPatchUtils::MakeVertices(cubics, colors, texCoords, lod.width(), lod.height(),
                                                this->imageInfo().colorSpace());
     if (vertices) {
-        this->drawVertices(vertices.get(), nullptr, 0, bmode, paint);
-    }
-}
-
-void SkBaseDevice::drawImage(const SkImage* image, SkScalar x, SkScalar y,
-                             const SkPaint& paint) {
-    SkBitmap bm;
-    if (as_IB(image)->getROPixels(&bm)) {
-        this->drawBitmap(bm, x, y, paint);
-    }
-}
-
-void SkBaseDevice::drawImageRect(const SkImage* image, const SkRect* src,
-                                 const SkRect& dst, const SkPaint& paint,
-                                 SkCanvas::SrcRectConstraint constraint) {
-    SkBitmap bm;
-    if (as_IB(image)->getROPixels(&bm)) {
-        this->drawBitmapRect(bm, src, dst, paint, constraint);
+        this->drawVertices(vertices.get(), bmode, paint);
     }
 }
 
@@ -173,16 +166,6 @@ void SkBaseDevice::drawImageNine(const SkImage* image, const SkIRect& center,
     SkRect srcR, dstR;
     while (iter.next(&srcR, &dstR)) {
         this->drawImageRect(image, &srcR, dstR, paint, SkCanvas::kStrict_SrcRectConstraint);
-    }
-}
-
-void SkBaseDevice::drawBitmapNine(const SkBitmap& bitmap, const SkIRect& center,
-                                  const SkRect& dst, const SkPaint& paint) {
-    SkLatticeIter iter(bitmap.width(), bitmap.height(), center, dst);
-
-    SkRect srcR, dstR;
-    while (iter.next(&srcR, &dstR)) {
-        this->drawBitmapRect(bitmap, &srcR, dstR, paint, SkCanvas::kStrict_SrcRectConstraint);
     }
 }
 
@@ -210,33 +193,6 @@ void SkBaseDevice::drawImageLattice(const SkImage* image,
         } else {
             this->drawImageRect(image, &srcR, dstR, paint, SkCanvas::kStrict_SrcRectConstraint);
         }
-    }
-}
-
-void SkBaseDevice::drawImageSet(const SkCanvas::ImageSetEntry images[], int count,
-                                SkFilterQuality filterQuality, SkBlendMode mode) {
-    SkPaint paint;
-    paint.setFilterQuality(SkTPin(filterQuality, kNone_SkFilterQuality, kLow_SkFilterQuality));
-    paint.setBlendMode(mode);
-    for (int i = 0; i < count; ++i) {
-        // TODO: Handle per-edge AA. Right now this mirrors the SkiaRenderer component of Chrome
-        // which turns off antialiasing unless all four edges should be antialiased. This avoids
-        // seaming in tiled composited layers.
-        paint.setAntiAlias(images[i].fAAFlags == SkCanvas::kAll_QuadAAFlags);
-        paint.setAlpha(SkToUInt(SkTClamp(SkScalarRoundToInt(images[i].fAlpha * 255), 0, 255)));
-        this->drawImageRect(images[i].fImage.get(), &images[i].fSrcRect, images[i].fDstRect, paint,
-                            SkCanvas::kFast_SrcRectConstraint);
-    }
-}
-
-void SkBaseDevice::drawBitmapLattice(const SkBitmap& bitmap,
-                                     const SkCanvas::Lattice& lattice, const SkRect& dst,
-                                     const SkPaint& paint) {
-    SkLatticeIter iter(lattice, dst);
-
-    SkRect srcR, dstR;
-    while (iter.next(&srcR, &dstR)) {
-        this->drawBitmapRect(bitmap, &srcR, dstR, paint, SkCanvas::kStrict_SrcRectConstraint);
     }
 }
 
@@ -281,7 +237,71 @@ void SkBaseDevice::drawAtlas(const SkImage* atlas, const SkRSXform xform[],
     }
     SkPaint p(paint);
     p.setShader(atlas->makeShader());
-    this->drawVertices(builder.detach().get(), nullptr, 0, mode, p);
+    this->drawVertices(builder.detach().get(), mode, p);
+}
+
+
+void SkBaseDevice::drawEdgeAAQuad(const SkRect& r, const SkPoint clip[4], SkCanvas::QuadAAFlags aa,
+                                  const SkColor4f& color, SkBlendMode mode) {
+    SkPaint paint;
+    paint.setColor4f(color);
+    paint.setBlendMode(mode);
+    paint.setAntiAlias(aa == SkCanvas::kAll_QuadAAFlags);
+
+    if (clip) {
+        // Draw the clip directly as a quad since it's a filled color with no local coords
+        SkPath clipPath;
+        clipPath.addPoly(clip, 4, true);
+        this->drawPath(clipPath, paint);
+    } else {
+        this->drawRect(r, paint);
+    }
+}
+
+void SkBaseDevice::drawEdgeAAImageSet(const SkCanvas::ImageSetEntry images[], int count,
+                                      const SkPoint dstClips[], const SkMatrix preViewMatrices[],
+                                      const SkPaint& paint,
+                                      SkCanvas::SrcRectConstraint constraint) {
+    SkASSERT(paint.getStyle() == SkPaint::kFill_Style);
+    SkASSERT(!paint.getPathEffect());
+
+    SkPaint entryPaint = paint;
+    const SkMatrix baseLocalToDevice = this->localToDevice();
+    int clipIndex = 0;
+    for (int i = 0; i < count; ++i) {
+        // TODO: Handle per-edge AA. Right now this mirrors the SkiaRenderer component of Chrome
+        // which turns off antialiasing unless all four edges should be antialiased. This avoids
+        // seaming in tiled composited layers.
+        entryPaint.setAntiAlias(images[i].fAAFlags == SkCanvas::kAll_QuadAAFlags);
+        entryPaint.setAlphaf(paint.getAlphaf() * images[i].fAlpha);
+
+        bool needsRestore = false;
+        SkASSERT(images[i].fMatrixIndex < 0 || preViewMatrices);
+        if (images[i].fMatrixIndex >= 0) {
+            this->save();
+            this->setLocalToDevice(SkMatrix::Concat(
+                    baseLocalToDevice, preViewMatrices[images[i].fMatrixIndex]));
+            needsRestore = true;
+        }
+
+        SkASSERT(!images[i].fHasClip || dstClips);
+        if (images[i].fHasClip) {
+            // Since drawImageRect requires a srcRect, the dst clip is implemented as a true clip
+            if (!needsRestore) {
+                this->save();
+                needsRestore = true;
+            }
+            SkPath clipPath;
+            clipPath.addPoly(dstClips + clipIndex, 4, true);
+            this->clipPath(clipPath, SkClipOp::kIntersect, entryPaint.isAntiAlias());
+            clipIndex += 4;
+        }
+        this->drawImageRect(images[i].fImage.get(), &images[i].fSrcRect, images[i].fDstRect,
+                            entryPaint, constraint);
+        if (needsRestore) {
+            this->restoreLocal(baseLocalToDevice);
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -296,7 +316,10 @@ void SkBaseDevice::drawSpecial(SkSpecialImage*, int x, int y, const SkPaint&,
                                SkImage*, const SkMatrix&) {}
 sk_sp<SkSpecialImage> SkBaseDevice::makeSpecial(const SkBitmap&) { return nullptr; }
 sk_sp<SkSpecialImage> SkBaseDevice::makeSpecial(const SkImage*) { return nullptr; }
-sk_sp<SkSpecialImage> SkBaseDevice::snapSpecial() { return nullptr; }
+sk_sp<SkSpecialImage> SkBaseDevice::snapSpecial(const SkIRect&, bool) { return nullptr; }
+sk_sp<SkSpecialImage> SkBaseDevice::snapSpecial() {
+    return this->snapSpecial(SkIRect::MakeWH(this->width(), this->height()));
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -334,13 +357,13 @@ bool SkBaseDevice::peekPixels(SkPixmap* pmap) {
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-#include "SkUtils.h"
+#include "src/core/SkUtils.h"
 
 void SkBaseDevice::drawGlyphRunRSXform(const SkFont& font, const SkGlyphID glyphs[],
                                        const SkRSXform xform[], int count, SkPoint origin,
                                        const SkPaint& paint) {
-    const SkMatrix originalCTM = this->ctm();
-    if (!originalCTM.isFinite() || !SkScalarIsFinite(font.getSize()) ||
+    const SkMatrix originalLocalToDevice = this->localToDevice();
+    if (!originalLocalToDevice.isFinite() || !SkScalarIsFinite(font.getSize()) ||
         !SkScalarIsFinite(font.getScaleX()) ||
         !SkScalarIsFinite(font.getSkewX())) {
         return;
@@ -360,8 +383,8 @@ void SkBaseDevice::drawGlyphRunRSXform(const SkFont& font, const SkGlyphID glyph
         glyphID = glyphs[i];
         // now "glyphRun" is pointing at the current glyphID
 
-        SkMatrix ctm;
-        ctm.setRSXform(xform[i]).postTranslate(origin.fX, origin.fY);
+        SkMatrix glyphToDevice;
+        glyphToDevice.setRSXform(xform[i]).postTranslate(origin.fX, origin.fY);
 
         // We want to rotate each glyph by the rsxform, but we don't want to rotate "space"
         // (i.e. the shader that cares about the ctm) so we have to undo our little ctm trick
@@ -370,19 +393,19 @@ void SkBaseDevice::drawGlyphRunRSXform(const SkFont& font, const SkGlyphID glyph
         auto shader = transformingPaint.getShader();
         if (shader) {
             SkMatrix inverse;
-            if (ctm.invert(&inverse)) {
+            if (glyphToDevice.invert(&inverse)) {
                 transformingPaint.setShader(shader->makeWithLocalMatrix(inverse));
             } else {
                 transformingPaint.setShader(nullptr);  // can't handle this xform
             }
         }
 
-        ctm.setConcat(originalCTM, ctm);
-        this->setCTM(ctm);
+        glyphToDevice.postConcat(originalLocalToDevice);
+        this->setLocalToDevice(glyphToDevice);
 
         this->drawGlyphRunList(SkGlyphRunList{glyphRun, transformingPaint});
     }
-    this->setCTM(originalCTM);
+    this->setLocalToDevice(originalLocalToDevice);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -391,14 +414,12 @@ sk_sp<SkSurface> SkBaseDevice::makeSurface(SkImageInfo const&, SkSurfaceProps co
     return nullptr;
 }
 
-sk_sp<SkSpecialImage> SkBaseDevice::snapBackImage(const SkIRect&) {
-    return nullptr;
-}
-
 //////////////////////////////////////////////////////////////////////////////////////////
 
-void SkBaseDevice::LogDrawScaleFactor(const SkMatrix& matrix, SkFilterQuality filterQuality) {
+void SkBaseDevice::LogDrawScaleFactor(const SkMatrix& view, const SkMatrix& srcToDst,
+                                      SkFilterQuality filterQuality) {
 #if SK_HISTOGRAMS_ENABLED
+    SkMatrix matrix = SkMatrix::Concat(view, srcToDst);
     enum ScaleFactor {
         kUpscale_ScaleFactor,
         kNoScale_ScaleFactor,
@@ -448,4 +469,3 @@ void SkBaseDevice::LogDrawScaleFactor(const SkMatrix& matrix, SkFilterQuality fi
     SK_HISTOGRAM_ENUMERATION("FilterQuality", filterQuality, kLast_SkFilterQuality + 1);
 #endif
 }
-

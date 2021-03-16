@@ -12,16 +12,14 @@
 
 namespace blink {
 
-using namespace css_test_helpers;
-
 TEST(CSSStyleDeclarationTest, getPropertyShorthand) {
-  TestStyleSheet sheet;
+  css_test_helpers::TestStyleSheet sheet;
 
   sheet.AddCSSRules("div { padding: var(--p); }");
   ASSERT_TRUE(sheet.CssRules());
   ASSERT_EQ(1u, sheet.CssRules()->length());
   ASSERT_EQ(CSSRule::kStyleRule, sheet.CssRules()->item(0)->type());
-  CSSStyleRule* style_rule = ToCSSStyleRule(sheet.CssRules()->item(0));
+  CSSStyleRule* style_rule = To<CSSStyleRule>(sheet.CssRules()->item(0));
   CSSStyleDeclaration* style = style_rule->style();
   ASSERT_TRUE(style);
   EXPECT_EQ(AtomicString(), style->GetPropertyShorthand("padding"));

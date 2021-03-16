@@ -19,24 +19,23 @@
 
 #include "third_party/blink/renderer/modules/vibration/navigator_vibration.h"
 
+#include "base/metrics/histogram_functions.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/user_gesture_indicator.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
 #include "third_party/blink/renderer/core/frame/intervention.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/modules/vibration/vibration_controller.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 
 namespace blink {
 
 NavigatorVibration::NavigatorVibration(Navigator& navigator)
-    : ContextLifecycleObserver(navigator.GetFrame()->GetDocument()) {}
+    : ExecutionContextLifecycleObserver(navigator.GetFrame()->GetDocument()) {}
 
 NavigatorVibration::~NavigatorVibration() = default;
 
@@ -70,7 +69,7 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
   // reference to |window| or |navigator| was retained in another window.
   if (!frame)
     return false;
-  CollectHistogramMetrics(*frame);
+  CollectHistogramMetrics(navigator);
 
   DCHECK(frame->GetDocument());
   DCHECK(frame->GetPage());
@@ -78,9 +77,9 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
   if (!frame->GetPage()->IsPageVisible())
     return false;
 
-  if (!frame->HasBeenActivated()) {
+  if (!frame->HasStickyUserActivation()) {
     String message;
-    if (frame->IsCrossOriginSubframe()) {
+    if (frame->IsCrossOriginToMainFrame()) {
       message =
           "Blocked call to navigator.vibrate inside a cross-origin "
           "iframe because the frame has never been activated by the user: "
@@ -101,13 +100,16 @@ bool NavigatorVibration::vibrate(Navigator& navigator,
 }
 
 // static
-void NavigatorVibration::CollectHistogramMetrics(const LocalFrame& frame) {
+void NavigatorVibration::CollectHistogramMetrics(const Navigator& navigator) {
   NavigatorVibrationType type;
-  bool user_gesture = frame.HasBeenActivated();
-  UseCounter::Count(&frame, WebFeature::kNavigatorVibrate);
-  if (!frame.IsMainFrame()) {
-    UseCounter::Count(&frame, WebFeature::kNavigatorVibrateSubFrame);
-    if (frame.IsCrossOriginSubframe()) {
+  LocalFrame* frame = navigator.GetFrame();
+  bool user_gesture = frame->HasStickyUserActivation();
+  UseCounter::Count(navigator.DomWindow()->document(),
+                    WebFeature::kNavigatorVibrate);
+  if (!frame->IsMainFrame()) {
+    UseCounter::Count(navigator.DomWindow()->document(),
+                      WebFeature::kNavigatorVibrateSubFrame);
+    if (frame->IsCrossOriginToMainFrame()) {
       if (user_gesture)
         type = NavigatorVibrationType::kCrossOriginSubFrameWithUserGesture;
       else
@@ -124,9 +126,7 @@ void NavigatorVibration::CollectHistogramMetrics(const LocalFrame& frame) {
     else
       type = NavigatorVibrationType::kMainFrameNoUserGesture;
   }
-  DEFINE_STATIC_LOCAL(EnumerationHistogram, navigator_vibrate_histogram,
-                      ("Vibration.Context", NavigatorVibrationType::kEnumMax));
-  navigator_vibrate_histogram.Count(type);
+  base::UmaHistogramEnumeration("Vibration.Context", type);
 }
 
 VibrationController* NavigatorVibration::Controller(LocalFrame& frame) {
@@ -136,17 +136,17 @@ VibrationController* NavigatorVibration::Controller(LocalFrame& frame) {
   return controller_.Get();
 }
 
-void NavigatorVibration::ContextDestroyed(ExecutionContext*) {
+void NavigatorVibration::ContextDestroyed() {
   if (controller_) {
     controller_->Cancel();
     controller_ = nullptr;
   }
 }
 
-void NavigatorVibration::Trace(blink::Visitor* visitor) {
+void NavigatorVibration::Trace(Visitor* visitor) {
   visitor->Trace(controller_);
   Supplement<Navigator>::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
 }  // namespace blink

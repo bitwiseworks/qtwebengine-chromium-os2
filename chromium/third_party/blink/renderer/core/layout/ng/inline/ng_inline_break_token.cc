@@ -22,6 +22,7 @@ static_assert(sizeof(NGInlineBreakToken) ==
 }  // namespace
 
 NGInlineBreakToken::NGInlineBreakToken(
+    PassKey key,
     NGInlineNode node,
     const ComputedStyle* style,
     unsigned item_index,
@@ -34,14 +35,14 @@ NGInlineBreakToken::NGInlineBreakToken(
   flags_ = flags;
 }
 
-NGInlineBreakToken::NGInlineBreakToken(NGLayoutInputNode node)
+NGInlineBreakToken::NGInlineBreakToken(PassKey key, NGLayoutInputNode node)
     : NGBreakToken(kInlineBreakToken, kFinished, node),
       item_index_(0),
       text_offset_(0) {}
 
 NGInlineBreakToken::~NGInlineBreakToken() = default;
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 
 String NGInlineBreakToken::ToString() const {
   StringBuilder string_builder;
@@ -55,6 +56,6 @@ String NGInlineBreakToken::ToString() const {
   return string_builder.ToString();
 }
 
-#endif  // NDEBUG
+#endif  // DCHECK_IS_ON()
 
 }  // namespace blink

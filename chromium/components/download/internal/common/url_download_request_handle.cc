@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "components/download/public/common/url_download_request_handle.h"
+#include "base/bind.h"
 
 namespace download {
 
@@ -25,23 +26,5 @@ UrlDownloadRequestHandle& UrlDownloadRequestHandle::operator=(
 }
 
 UrlDownloadRequestHandle::~UrlDownloadRequestHandle() = default;
-
-void UrlDownloadRequestHandle::PauseRequest() {
-  downloader_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&UrlDownloadHandler::PauseRequest, downloader_));
-}
-
-void UrlDownloadRequestHandle::ResumeRequest() {
-  downloader_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&UrlDownloadHandler::ResumeRequest, downloader_));
-}
-
-void UrlDownloadRequestHandle::CancelRequest(bool user_cancel) {
-  downloader_task_runner_->PostTask(
-      FROM_HERE,
-      base::BindOnce(&UrlDownloadHandler::CancelRequest, downloader_));
-}
 
 }  // namespace download

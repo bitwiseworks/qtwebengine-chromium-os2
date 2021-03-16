@@ -29,6 +29,7 @@ class CORE_EXPORT ImageResourceInfo : public GarbageCollectedMixin {
  public:
   ~ImageResourceInfo() = default;
   virtual const KURL& Url() const = 0;
+  virtual base::TimeTicks LoadResponseEnd() const = 0;
   virtual bool IsSchedulingReload() const = 0;
   virtual const ResourceResponse& GetResponse() const = 0;
   virtual bool ShouldShowPlaceholder() const = 0;
@@ -59,7 +60,9 @@ class CORE_EXPORT ImageResourceInfo : public GarbageCollectedMixin {
 
   virtual void LoadDeferredImage(ResourceFetcher* fetcher) = 0;
 
-  void Trace(blink::Visitor* visitor) override {}
+  virtual bool IsAdResource() const = 0;
+
+  void Trace(Visitor* visitor) override {}
 };
 
 }  // namespace blink

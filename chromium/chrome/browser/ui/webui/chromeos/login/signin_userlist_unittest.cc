@@ -7,6 +7,7 @@
 #include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "chrome/browser/chromeos/login/screens/user_selection_screen.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
@@ -18,20 +19,18 @@
 #include "components/account_id/account_id.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-const size_t kMaxUsers = 18; // same as in user_selection_screen.cc
+const size_t kMaxUsers = 50;  // same as in user_selection_screen.cc
 const char* kOwner = "owner@gmail.com";
 const char* kUsersPublic[] = {"public0@gmail.com", "public1@gmail.com"};
-const char* kUsers[] = {
-    "a0@gmail.com", "a1@gmail.com", "a2@gmail.com", "a3@gmail.com",
-    "a4@gmail.com", "a5@gmail.com", "a6@gmail.com", "a7@gmail.com",
-    "a8@gmail.com", "a9@gmail.com", "a10@gmail.com", "a11@gmail.com",
-    "a12@gmail.com", "a13@gmail.com", "a14@gmail.com", "a15@gmail.com",
-    "a16@gmail.com", "a17@gmail.com", kOwner, "a18@gmail.com"};
+
+std::string GenerateUserEmail(int number) {
+  return "a" + base::NumberToString(number) + "@gmail.com";
+}
 
 }  // namespace
 
@@ -52,16 +51,21 @@ class SigninPrepareUserListTest : public testing::Test,
     profile_manager_.reset(
         new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
     ASSERT_TRUE(profile_manager_->SetUp());
-    controller_.reset(new MultiProfileUserController(
-        this, TestingBrowserProcess::GetGlobal()->local_state()));
+    controller_ = std::make_unique<MultiProfileUserController>(
+        this, TestingBrowserProcess::GetGlobal()->local_state());
     fake_user_manager_->set_multi_profile_user_controller(controller_.get());
 
     for (size_t i = 0; i < base::size(kUsersPublic); ++i)
       fake_user_manager_->AddPublicAccountUser(
           AccountId::FromUserEmail(kUsersPublic[i]));
 
-    for (size_t i = 0; i < base::size(kUsers); ++i)
-      fake_user_manager_->AddUser(AccountId::FromUserEmail(kUsers[i]));
+    for (size_t i = 0; i < kMaxUsers + 1; ++i) {
+      fake_user_manager_->AddUser(
+          AccountId::FromUserEmail(GenerateUserEmail(i)));
+      // Insert owner second to last.
+      if (i == kMaxUsers - 1)
+        fake_user_manager_->AddUser(AccountId::FromUserEmail(kOwner));
+    }
 
     fake_user_manager_->set_owner_id(AccountId::FromUserEmail(kOwner));
   }
@@ -78,7 +82,7 @@ class SigninPrepareUserListTest : public testing::Test,
   FakeChromeUserManager* user_manager() { return fake_user_manager_; }
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   ScopedCrosSettingsTestHelper cros_settings_test_helper_;
   FakeChromeUserManager* fake_user_manager_;
   user_manager::ScopedUserManager user_manager_enabler_;
@@ -106,7 +110,7 @@ TEST_F(SigninPrepareUserListTest, AlwaysKeepOwnerInList) {
       true /* is_signin_to_add */);
 
   EXPECT_EQ(kMaxUsers, users_to_send.size());
-  EXPECT_EQ("a18@gmail.com",
+  EXPECT_EQ(GenerateUserEmail(kMaxUsers),
             users_to_send.back()->GetAccountId().GetUserEmail());
   EXPECT_EQ(kOwner,
             users_to_send[kMaxUsers - 2]->GetAccountId().GetUserEmail());

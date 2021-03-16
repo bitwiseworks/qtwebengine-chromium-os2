@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -17,7 +17,8 @@ typedef _CGLContextObject *CGLContextObj;
 struct __IOSurface;
 typedef __IOSurface *IOSurfaceRef;
 
-@class SwapLayer;
+// WebKit's build process requires that every Objective-C class name has the prefix "Web".
+@class WebSwapLayer;
 
 namespace rx
 {
@@ -27,7 +28,6 @@ class FramebufferGL;
 class FunctionsGL;
 class RendererGL;
 class StateManagerGL;
-struct WorkaroundsGL;
 
 struct SharedSwapState
 {
@@ -62,7 +62,7 @@ class WindowSurfaceCGL : public SurfaceGL
     ~WindowSurfaceCGL() override;
 
     egl::Error initialize(const egl::Display *display) override;
-    egl::Error makeCurrent() override;
+    egl::Error makeCurrent(const gl::Context *context) override;
 
     egl::Error swap(const gl::Context *context) override;
     egl::Error postSubBuffer(const gl::Context *context,
@@ -87,7 +87,7 @@ class WindowSurfaceCGL : public SurfaceGL
                                               const gl::FramebufferState &state) override;
 
   private:
-    SwapLayer *mSwapLayer;
+    WebSwapLayer *mSwapLayer;
     SharedSwapState mSwapState;
     uint64_t mCurrentSwapId;
 

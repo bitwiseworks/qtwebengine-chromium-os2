@@ -17,12 +17,6 @@ class MODULES_EXPORT AuthenticatorAssertionResponse final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static AuthenticatorAssertionResponse* Create(
-      DOMArrayBuffer* client_data_json,
-      DOMArrayBuffer* authenticator_data,
-      DOMArrayBuffer* signature,
-      DOMArrayBuffer* user_handle);
-
   explicit AuthenticatorAssertionResponse(DOMArrayBuffer* client_data_json,
                                           DOMArrayBuffer* authenticator_data,
                                           DOMArrayBuffer* signature,
@@ -37,7 +31,7 @@ class MODULES_EXPORT AuthenticatorAssertionResponse final
 
   DOMArrayBuffer* userHandle() const { return user_handle_.Get(); }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   const Member<DOMArrayBuffer> authenticator_data_;

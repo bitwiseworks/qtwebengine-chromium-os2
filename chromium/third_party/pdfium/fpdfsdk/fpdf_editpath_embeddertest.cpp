@@ -6,18 +6,18 @@
 #include "public/fpdf_edit.h"
 #include "testing/embedder_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/test_support.h"
 
 class FPDFEditPathEmbedderTest : public EmbedderTest {};
 
 TEST_F(FPDFEditPathEmbedderTest, VerifyCorrectColoursReturned) {
+  constexpr int kObjectCount = 256;
   CreateEmptyDocument();
   FPDF_PAGE page = FPDFPage_New(document(), 0, 612, 792);
 
-  for (size_t i = 0; i < 256; ++i) {
+  for (size_t i = 0; i < kObjectCount; ++i) {
     FPDF_PAGEOBJECT path = FPDFPageObj_CreateNewPath(400, 100);
-    EXPECT_TRUE(FPDFPath_SetFillColor(path, i, i, i, i));
-    EXPECT_TRUE(FPDFPath_SetStrokeColor(path, i, i, i, i));
+    EXPECT_TRUE(FPDFPageObj_SetFillColor(path, i, i, i, i));
+    EXPECT_TRUE(FPDFPageObj_SetStrokeColor(path, i, i, i, i));
     EXPECT_TRUE(FPDFPath_SetDrawMode(path, FPDF_FILLMODE_ALTERNATE, 0));
     EXPECT_TRUE(FPDFPath_LineTo(path, 400, 200));
     EXPECT_TRUE(FPDFPath_LineTo(path, 300, 100));
@@ -31,13 +31,13 @@ TEST_F(FPDFEditPathEmbedderTest, VerifyCorrectColoursReturned) {
   FPDF_ClosePage(page);
   page = nullptr;
 
-  OpenSavedDocument(nullptr);
+  ASSERT_TRUE(OpenSavedDocument());
   page = LoadSavedPage(0);
   ASSERT(page);
 
-  for (size_t i = 0; i < 256; ++i) {
+  for (size_t i = 0; i < kObjectCount; ++i) {
     FPDF_PAGEOBJECT path = FPDFPage_GetObject(page, i);
-    ASSERT(path);
+    ASSERT_TRUE(path);
 
     EXPECT_EQ(FPDF_PAGEOBJ_PATH, FPDFPageObj_GetType(path));
 
@@ -45,13 +45,13 @@ TEST_F(FPDFEditPathEmbedderTest, VerifyCorrectColoursReturned) {
     unsigned int g;
     unsigned int b;
     unsigned int a;
-    FPDFPath_GetFillColor(path, &r, &g, &b, &a);
+    ASSERT_TRUE(FPDFPageObj_GetFillColor(path, &r, &g, &b, &a));
     EXPECT_EQ(i, r);
     EXPECT_EQ(i, g);
     EXPECT_EQ(i, b);
     EXPECT_EQ(i, a);
 
-    FPDFPath_GetStrokeColor(path, &r, &g, &b, &a);
+    ASSERT_TRUE(FPDFPageObj_GetStrokeColor(path, &r, &g, &b, &a));
     EXPECT_EQ(i, r);
     EXPECT_EQ(i, g);
     EXPECT_EQ(i, b);

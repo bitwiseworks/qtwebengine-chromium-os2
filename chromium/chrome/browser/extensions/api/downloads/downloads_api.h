@@ -14,21 +14,19 @@
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/download_danger_prompt.h"
-#include "chrome/browser/download/download_path_reservation_tracker.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/downloads.h"
 #include "components/download/content/public/all_download_item_notifier.h"
+#include "components/download/public/common/download_path_reservation_tracker.h"
 #include "content/public/browser/download_manager.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
+#include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/warning_set.h"
 
 class DownloadFileIconExtractor;
 class DownloadOpenPrompt;
-
-namespace extensions {
-class ExtensionRegistry;
-}
+class Profile;
 
 // Functions in the chrome.downloads namespace facilitate
 // controlling downloads from extensions. See the full API doc at
@@ -88,11 +86,11 @@ class DownloadedByExtension : public base::SupportsUserData::Data {
   DISALLOW_COPY_AND_ASSIGN(DownloadedByExtension);
 };
 
-class DownloadsDownloadFunction : public ChromeAsyncExtensionFunction {
+class DownloadsDownloadFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.download", DOWNLOADS_DOWNLOAD)
   DownloadsDownloadFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsDownloadFunction() override;
@@ -107,7 +105,7 @@ class DownloadsDownloadFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsDownloadFunction);
 };
 
-class DownloadsSearchFunction : public UIThreadExtensionFunction {
+class DownloadsSearchFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.search", DOWNLOADS_SEARCH)
   DownloadsSearchFunction();
@@ -120,7 +118,7 @@ class DownloadsSearchFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsSearchFunction);
 };
 
-class DownloadsPauseFunction : public UIThreadExtensionFunction {
+class DownloadsPauseFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.pause", DOWNLOADS_PAUSE)
   DownloadsPauseFunction();
@@ -133,7 +131,7 @@ class DownloadsPauseFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsPauseFunction);
 };
 
-class DownloadsResumeFunction : public UIThreadExtensionFunction {
+class DownloadsResumeFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.resume", DOWNLOADS_RESUME)
   DownloadsResumeFunction();
@@ -146,7 +144,7 @@ class DownloadsResumeFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsResumeFunction);
 };
 
-class DownloadsCancelFunction : public UIThreadExtensionFunction {
+class DownloadsCancelFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.cancel", DOWNLOADS_CANCEL)
   DownloadsCancelFunction();
@@ -159,7 +157,7 @@ class DownloadsCancelFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsCancelFunction);
 };
 
-class DownloadsEraseFunction : public UIThreadExtensionFunction {
+class DownloadsEraseFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.erase", DOWNLOADS_ERASE)
   DownloadsEraseFunction();
@@ -172,11 +170,11 @@ class DownloadsEraseFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsEraseFunction);
 };
 
-class DownloadsRemoveFileFunction : public ChromeAsyncExtensionFunction {
+class DownloadsRemoveFileFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.removeFile", DOWNLOADS_REMOVEFILE)
   DownloadsRemoveFileFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsRemoveFileFunction() override;
@@ -187,7 +185,7 @@ class DownloadsRemoveFileFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsRemoveFileFunction);
 };
 
-class DownloadsAcceptDangerFunction : public ChromeAsyncExtensionFunction {
+class DownloadsAcceptDangerFunction : public ExtensionFunction {
  public:
   typedef base::Callback<void(DownloadDangerPrompt*)> OnPromptCreatedCallback;
   static void OnPromptCreatedForTesting(
@@ -197,7 +195,7 @@ class DownloadsAcceptDangerFunction : public ChromeAsyncExtensionFunction {
 
   DECLARE_EXTENSION_FUNCTION("downloads.acceptDanger", DOWNLOADS_ACCEPTDANGER)
   DownloadsAcceptDangerFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsAcceptDangerFunction() override;
@@ -211,7 +209,7 @@ class DownloadsAcceptDangerFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsAcceptDangerFunction);
 };
 
-class DownloadsShowFunction : public UIThreadExtensionFunction {
+class DownloadsShowFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.show", DOWNLOADS_SHOW)
   DownloadsShowFunction();
@@ -224,7 +222,7 @@ class DownloadsShowFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsShowFunction);
 };
 
-class DownloadsShowDefaultFolderFunction : public UIThreadExtensionFunction {
+class DownloadsShowDefaultFolderFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION(
       "downloads.showDefaultFolder", DOWNLOADS_SHOWDEFAULTFOLDER)
@@ -238,7 +236,7 @@ class DownloadsShowDefaultFolderFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsShowDefaultFolderFunction);
 };
 
-class DownloadsOpenFunction : public UIThreadExtensionFunction {
+class DownloadsOpenFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.open", DOWNLOADS_OPEN)
   DownloadsOpenFunction();
@@ -261,7 +259,7 @@ class DownloadsOpenFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsOpenFunction);
 };
 
-class DownloadsSetShelfEnabledFunction : public UIThreadExtensionFunction {
+class DownloadsSetShelfEnabledFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.setShelfEnabled",
                              DOWNLOADS_SETSHELFENABLED)
@@ -275,24 +273,11 @@ class DownloadsSetShelfEnabledFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsSetShelfEnabledFunction);
 };
 
-class DownloadsDragFunction : public UIThreadExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("downloads.drag", DOWNLOADS_DRAG)
-  DownloadsDragFunction();
-  ResponseAction Run() override;
-
- protected:
-  ~DownloadsDragFunction() override;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(DownloadsDragFunction);
-};
-
-class DownloadsGetFileIconFunction : public ChromeAsyncExtensionFunction {
+class DownloadsGetFileIconFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.getFileIcon", DOWNLOADS_GETFILEICON)
   DownloadsGetFileIconFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
   void SetIconExtractorForTesting(DownloadFileIconExtractor* extractor);
 
  protected:
@@ -314,8 +299,8 @@ class ExtensionDownloadsEventRouter
  public:
   typedef base::Callback<void(
       const base::FilePath& changed_filename,
-      DownloadPathReservationTracker::FilenameConflictAction)>
-    FilenameChangedCallback;
+      download::DownloadPathReservationTracker::FilenameConflictAction)>
+      FilenameChangedCallback;
 
   static void SetDetermineFilenameTimeoutSecondsForTesting(int s);
 
@@ -408,7 +393,7 @@ class ExtensionDownloadsEventRouter
   // Listen to extension unloaded notifications.
   ScopedObserver<extensions::ExtensionRegistry,
                  extensions::ExtensionRegistryObserver>
-      extension_registry_observer_;
+      extension_registry_observer_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDownloadsEventRouter);
 };

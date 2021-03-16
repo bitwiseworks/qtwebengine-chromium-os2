@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// CancelableTaskTracker posts tasks (in the form of a Closure) to a
+// CancelableTaskTracker posts tasks (in the form of a OnceClosure) to a
 // TaskRunner, and is able to cancel the task later if it's not needed
 // anymore.  On destruction, CancelableTaskTracker will cancel all
 // tracked tasks.
 //
-// Each cancelable task can be associated with a reply (also a Closure). After
-// the task is run on the TaskRunner, |reply| will be posted back to
+// Each cancelable task can be associated with a reply (also a OnceClosure).
+// After the task is run on the TaskRunner, |reply| will be posted back to
 // originating TaskRunner.
 //
 // NOTE:
@@ -44,9 +44,11 @@
 #include "base/base_export.h"
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/containers/small_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
 #include "base/post_task_and_reply_with_result_internal.h"
 #include "base/sequence_checker.h"
 #include "base/synchronization/atomic_flag.h"
@@ -63,7 +65,7 @@ class BASE_EXPORT CancelableTaskTracker {
   typedef int64_t TaskId;
   static const TaskId kBadTaskId;
 
-  typedef Callback<bool()> IsCanceledCallback;
+  using IsCanceledCallback = RepeatingCallback<bool()>;
 
   CancelableTaskTracker();
 
@@ -91,22 +93,6 @@ class BASE_EXPORT CancelableTaskTracker {
                  std::move(task), Unretained(result)),
         BindOnce(&internal::ReplyAdapter<TaskReturnType, ReplyArgType>,
                  std::move(reply), Owned(result)));
-  }
-
-  // Callback version of PostTaskWithTraitsAndReplyWithResult above.
-  // Though RepeatingCallback is convertible to OnceCallback, we need this since
-  // we can not use template deduction and object conversion at once on the
-  // overload resolution.
-  // TODO(tzik): Update all callers of the Callback version to use OnceCallback.
-  template <typename TaskReturnType, typename ReplyArgType>
-  TaskId PostTaskAndReplyWithResult(TaskRunner* task_runner,
-                                    const Location& from_here,
-                                    Callback<TaskReturnType()> task,
-                                    Callback<void(ReplyArgType)> reply) {
-    return PostTaskAndReplyWithResult(
-        task_runner, from_here,
-        static_cast<OnceCallback<TaskReturnType()>>(std::move(task)),
-        static_cast<OnceCallback<void(ReplyArgType)>>(std::move(reply)));
   }
 
   // Creates a tracked TaskId and an associated IsCanceledCallback. Client can
@@ -144,13 +130,19 @@ class BASE_EXPORT CancelableTaskTracker {
   // See https://crbug.com/918948.
   using TaskCancellationFlag = RefCountedData<AtomicFlag>;
 
-  static void RunIfNotCanceled(const TaskCancellationFlag* flag,
-                               OnceClosure task);
-  static void RunThenUntrackIfNotCanceled(const TaskCancellationFlag* flag,
-                                          OnceClosure task,
-                                          OnceClosure untrack);
-  static bool IsCanceled(const TaskCancellationFlag* flag,
-                         const ScopedClosureRunner& cleanup_runner);
+  static void RunIfNotCanceled(
+      const scoped_refptr<SequencedTaskRunner>& origin_task_runner,
+      const scoped_refptr<TaskCancellationFlag>& flag,
+      OnceClosure task);
+  static void RunThenUntrackIfNotCanceled(
+      const scoped_refptr<SequencedTaskRunner>& origin_task_runner,
+      const scoped_refptr<TaskCancellationFlag>& flag,
+      OnceClosure task,
+      OnceClosure untrack);
+  static bool IsCanceled(
+      const scoped_refptr<SequencedTaskRunner>& origin_task_runner,
+      const scoped_refptr<TaskCancellationFlag>& flag,
+      const ScopedClosureRunner& cleanup_runner);
 
   void Track(TaskId id, scoped_refptr<TaskCancellationFlag> flag);
   void Untrack(TaskId id);
@@ -164,6 +156,10 @@ class BASE_EXPORT CancelableTaskTracker {
 
   TaskId next_id_ = 1;
   SequenceChecker sequence_checker_;
+
+  // TODO(https://crbug.com/1009795): Remove once crasher is resolved.
+  base::WeakPtr<CancelableTaskTracker> weak_this_;
+  base::WeakPtrFactory<CancelableTaskTracker> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CancelableTaskTracker);
 };

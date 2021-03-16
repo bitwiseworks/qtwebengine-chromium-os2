@@ -8,7 +8,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/time/time.h"
-#include "net/base/auth.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/cert/sct_status_flags.h"
@@ -17,6 +16,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_connection_status_flags.h"
+#include "net/third_party/quiche/src/quic/core/quic_versions.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
 using base::Time;
@@ -111,9 +111,70 @@ enum {
   // This bit is set if the response has a peer signature algorithm.
   RESPONSE_INFO_HAS_PEER_SIGNATURE_ALGORITHM = 1 << 25,
 
+  // This bit is set if the response is a prefetch whose reuse should be
+  // restricted in some way.
+  RESPONSE_INFO_RESTRICTED_PREFETCH = 1 << 26,
+
   // TODO(darin): Add other bits to indicate alternate request methods.
   // For now, we don't support storing those.
 };
+
+HttpResponseInfo::ConnectionInfoCoarse HttpResponseInfo::ConnectionInfoToCoarse(
+    ConnectionInfo info) {
+  switch (info) {
+    case CONNECTION_INFO_HTTP0_9:
+    case CONNECTION_INFO_HTTP1_0:
+    case CONNECTION_INFO_HTTP1_1:
+      return CONNECTION_INFO_COARSE_HTTP1;
+
+    case CONNECTION_INFO_HTTP2:
+    case CONNECTION_INFO_DEPRECATED_SPDY2:
+    case CONNECTION_INFO_DEPRECATED_SPDY3:
+    case CONNECTION_INFO_DEPRECATED_HTTP2_14:
+    case CONNECTION_INFO_DEPRECATED_HTTP2_15:
+      return CONNECTION_INFO_COARSE_HTTP2;
+
+    case CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
+    case CONNECTION_INFO_QUIC_32:
+    case CONNECTION_INFO_QUIC_33:
+    case CONNECTION_INFO_QUIC_34:
+    case CONNECTION_INFO_QUIC_35:
+    case CONNECTION_INFO_QUIC_36:
+    case CONNECTION_INFO_QUIC_37:
+    case CONNECTION_INFO_QUIC_38:
+    case CONNECTION_INFO_QUIC_39:
+    case CONNECTION_INFO_QUIC_40:
+    case CONNECTION_INFO_QUIC_41:
+    case CONNECTION_INFO_QUIC_42:
+    case CONNECTION_INFO_QUIC_43:
+    case CONNECTION_INFO_QUIC_44:
+    case CONNECTION_INFO_QUIC_45:
+    case CONNECTION_INFO_QUIC_46:
+    case CONNECTION_INFO_QUIC_47:
+    case CONNECTION_INFO_QUIC_Q048:
+    case CONNECTION_INFO_QUIC_T048:
+    case CONNECTION_INFO_QUIC_Q049:
+    case CONNECTION_INFO_QUIC_T049:
+    case CONNECTION_INFO_QUIC_Q050:
+    case CONNECTION_INFO_QUIC_T050:
+    case CONNECTION_INFO_QUIC_Q099:
+    case CONNECTION_INFO_QUIC_T099:
+    case CONNECTION_INFO_QUIC_999:
+    case CONNECTION_INFO_QUIC_DRAFT_25:
+    case CONNECTION_INFO_QUIC_DRAFT_27:
+      return CONNECTION_INFO_COARSE_QUIC;
+
+    case CONNECTION_INFO_UNKNOWN:
+      return CONNECTION_INFO_COARSE_OTHER;
+
+    case NUM_OF_CONNECTION_INFOS:
+      NOTREACHED();
+      return CONNECTION_INFO_COARSE_OTHER;
+  }
+
+  NOTREACHED();
+  return CONNECTION_INFO_COARSE_OTHER;
+}
 
 HttpResponseInfo::HttpResponseInfo()
     : was_cached(false),
@@ -125,6 +186,7 @@ HttpResponseInfo::HttpResponseInfo()
       was_fetched_via_proxy(false),
       did_use_http_auth(false),
       unused_since_prefetch(false),
+      restricted_prefetch(false),
       async_revalidation_requested(false),
       connection_info(CONNECTION_INFO_UNKNOWN) {}
 
@@ -229,7 +291,13 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
   uint16_t socket_address_port;
   if (!iter.ReadUInt16(&socket_address_port))
     return false;
-  socket_address = HostPortPair(socket_address_host, socket_address_port);
+
+  IPAddress ip_address;
+  if (ip_address.AssignFromIPLiteral(socket_address_host)) {
+    remote_endpoint = IPEndPoint(ip_address, socket_address_port);
+  } else if (ParseURLHostnameToAddress(socket_address_host, &ip_address)) {
+    remote_endpoint = IPEndPoint(ip_address, socket_address_port);
+  }
 
   // Read protocol-version.
   if (flags & RESPONSE_INFO_HAS_ALPN_NEGOTIATED_PROTOCOL) {
@@ -282,6 +350,8 @@ bool HttpResponseInfo::InitFromPickle(const base::Pickle& pickle,
 
   unused_since_prefetch = (flags & RESPONSE_INFO_UNUSED_SINCE_PREFETCH) != 0;
 
+  restricted_prefetch = (flags & RESPONSE_INFO_RESTRICTED_PREFETCH) != 0;
+
   ssl_info.pkp_bypassed = (flags & RESPONSE_INFO_PKP_BYPASSED) != 0;
 
   // Read peer_signature_algorithm.
@@ -331,6 +401,8 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
     flags |= RESPONSE_INFO_USE_HTTP_AUTHENTICATION;
   if (unused_since_prefetch)
     flags |= RESPONSE_INFO_UNUSED_SINCE_PREFETCH;
+  if (restricted_prefetch)
+    flags |= RESPONSE_INFO_RESTRICTED_PREFETCH;
   if (ssl_info.pkp_bypassed)
     flags |= RESPONSE_INFO_PKP_BYPASSED;
   if (!stale_revalidate_timeout.is_null())
@@ -365,8 +437,8 @@ void HttpResponseInfo::Persist(base::Pickle* pickle,
   if (vary_data.is_valid())
     vary_data.Persist(pickle);
 
-  pickle->WriteString(socket_address.host());
-  pickle->WriteUInt16(socket_address.port());
+  pickle->WriteString(remote_endpoint.ToStringWithoutPort());
+  pickle->WriteUInt16(remote_endpoint.port());
 
   if (was_alpn_negotiated)
     pickle->WriteString(alpn_negotiated_protocol);
@@ -414,7 +486,18 @@ bool HttpResponseInfo::DidUseQuic() const {
     case CONNECTION_INFO_QUIC_44:
     case CONNECTION_INFO_QUIC_45:
     case CONNECTION_INFO_QUIC_46:
-    case CONNECTION_INFO_QUIC_99:
+    case CONNECTION_INFO_QUIC_47:
+    case CONNECTION_INFO_QUIC_Q048:
+    case CONNECTION_INFO_QUIC_T048:
+    case CONNECTION_INFO_QUIC_Q049:
+    case CONNECTION_INFO_QUIC_T049:
+    case CONNECTION_INFO_QUIC_Q050:
+    case CONNECTION_INFO_QUIC_T050:
+    case CONNECTION_INFO_QUIC_Q099:
+    case CONNECTION_INFO_QUIC_T099:
+    case CONNECTION_INFO_QUIC_999:
+    case CONNECTION_INFO_QUIC_DRAFT_25:
+    case CONNECTION_INFO_QUIC_DRAFT_27:
       return true;
     case NUM_OF_CONNECTION_INFOS:
       NOTREACHED();
@@ -477,12 +560,34 @@ std::string HttpResponseInfo::ConnectionInfoToString(
       return "http/2+quic/45";
     case CONNECTION_INFO_QUIC_46:
       return "http/2+quic/46";
-    case CONNECTION_INFO_QUIC_99:
-      return "http/2+quic/99";
+    case CONNECTION_INFO_QUIC_47:
+      return "http/2+quic/47";
+    case CONNECTION_INFO_QUIC_Q048:
+      return "h3-Q048";
+    case CONNECTION_INFO_QUIC_T048:
+      return "h3-T048";
+    case CONNECTION_INFO_QUIC_Q049:
+      return "h3-Q049";
+    case CONNECTION_INFO_QUIC_T049:
+      return "h3-T049";
+    case CONNECTION_INFO_QUIC_Q050:
+      return "h3-Q050";
+    case CONNECTION_INFO_QUIC_T050:
+      return "h3-T050";
+    case CONNECTION_INFO_QUIC_Q099:
+      return "h3-Q099";
+    case CONNECTION_INFO_QUIC_DRAFT_25:
+      return "h3-25";
+    case CONNECTION_INFO_QUIC_DRAFT_27:
+      return "h3-27";
+    case CONNECTION_INFO_QUIC_T099:
+      return "h3-T099";
     case CONNECTION_INFO_HTTP0_9:
       return "http/0.9";
     case CONNECTION_INFO_HTTP1_0:
       return "http/1.0";
+    case CONNECTION_INFO_QUIC_999:
+      return "http2+quic/999";
     case NUM_OF_CONNECTION_INFOS:
       break;
   }

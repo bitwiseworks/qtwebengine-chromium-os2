@@ -3,63 +3,81 @@
 ANGLE's Vulkan back-end implementation lives in this folder.
 
 [Vulkan](https://www.khronos.org/vulkan/) is an explicit graphics API. It has a lot in common with
-other explicit APIs such as Microsoft's
-[D3D12](https://docs.microsoft.com/en-us/windows/desktop/direct3d12/directx-12-programming-guide)
-and Apple's [Metal](https://developer.apple.com/metal/). Compared to APIs like OpenGL or D3D11
-explicit APIs can offer a number of significant benefits:
+other explicit APIs such as Microsoft's [D3D12][D3D12 Guide] and Apple's
+[Metal](https://developer.apple.com/metal/). Compared to APIs like OpenGL or D3D11 explicit APIs can
+offer a number of significant benefits:
 
  * Lower API call CPU overhead.
  * A smaller API surface with more direct hardware control.
  * Better support for multi-core programming.
  * Vulkan in particular has open-source tooling and tests.
 
+[D3D12 Guide]: https://docs.microsoft.com/en-us/windows/desktop/direct3d12/directx-12-programming-guide
+
 ## Back-end Design
 
-The [RendererVk](RendererVk.cpp) is a singleton. RendererVk owns shared global resources like the
-[VkDevice](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkDevice.html),
-[VkQueue](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkQueue.html), the
-[Vulkan format tables](vk_format_utils.h) and [internal Vulkan shaders](shaders). The back-end
-creates a new [ContextVk](ContextVk.cpp) instance to manage each allocated OpenGL Context. ContextVk
-processes state changes and handles action commands like `glDrawArrays` and `glDrawElements`.
+The [`RendererVk`](RendererVk.cpp) class represents an `EGLDisplay`. `RendererVk` owns shared global
+resources like the [VkDevice][VkDevice], [VkQueue][VkQueue], the [Vulkan format tables](vk_format_utils.h)
+and [internal Vulkan shaders](shaders). The [ContextVk](ContextVk.cpp) class implements the back-end
+of a front-end OpenGL Context. ContextVk processes state changes and handles action commands like
+`glDrawArrays` and `glDrawElements`.
 
-### Fast OpenGL State Transitions
+## Command recording
 
-Typical OpenGL programs issue a few small state change commands between draw call commands. We want
-the typical app's use case to be as fast as possible so this leads to unique performance challenges.
+The back-end records commands into command buffers via the the following `ContextVk` APIs:
 
-Vulkan in quite different from OpenGL because it requires a separate compiled
-[VkPipeline](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkPipeline.html)
-for each state vector. Compiling VkPipelines is multiple orders of magnitude slower than enabling or
-disabling an OpenGL render state. To speed this up we use three levels of caching when transitioning
-states in the Vulkan back-end.
+ * `endRenderPassAndGetCommandBuffer`: returns a secondary command buffer *outside* a RenderPass instance.
+ * `flushAndBeginRenderPass`: returns a secondary command buffer *inside* a RenderPass instance.
+ * `flushAndGetPrimaryCommandBuffer`: returns the primary command buffer. You should rarely need this API.
 
-The first level is the driver's
-[VkPipelineCache](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkPipelineCache.html). The driver cache reduces pipeline recompilation time
-significantly. But even cached pipeline recompilations are orders of manitude slower than OpenGL
-state changes.
+*Note*: All of these commands may write out (aka flush) prior pending commands into a primary
+command buffer. When a RenderPass is open `endRenderPassAndGetCommandBuffer` will flush the
+pending RenderPass commands. `flushAndBeginRenderPass` will flush out pending commands outside a
+RenderPass to a primary buffer. On submit ANGLE submits the primary command buffer to a `VkQueue`.
 
-The second level cache is an ANGLE-owned hash map from OpenGL state vectors to compiled pipelines.
-See
-[GraphicsPipelineCache](https://chromium.googlesource.com/angle/angle/+/225f08bf85a368f905362cdd1366e4795680452c/src/libANGLE/renderer/vulkan/vk_cache_utils.h#498)
-in [vk_cache_utils.h](vk_cache_utils.h). ANGLE's
-[GraphicsPipelineDesc](https://chromium.googlesource.com/angle/angle/+/225f08bf85a368f905362cdd1366e4795680452c/src/libANGLE/renderer/vulkan/vk_cache_utils.h#244)
-class is a tightly packed 256-byte description of the current OpenGL rendering state. We
-also use a [xxHash](https://github.com/Cyan4973/xxHash) for the fastest possible hash computation.
-The hash map speeds up state changes considerably. But it is still significantly slower than OpenGL
-implementations.
+If you need to record inside a RenderPass, use `flushAndBeginRenderPass`. Otherwise, use
+`endRenderPassAndGetCommandBuffer`. You should rarely need to call `flushAndGetPrimaryCommandBuffer`.
+It's there for commands like debug labels, barriers and queries that need to be recorded serially on
+the primary command buffer.
 
-To get best performance we use a transition table from each OpenGL state vector to neighbouring
-state vectors. The transition table points from GraphicsPipelineCache entries directly to
-neighbouring VkPipeline objects. When the application changes state the state change bits are
-recorded into a compact bit mask that covers the GraphicsPipelineDesc state vector. Then on the next
-draw call we scan the transition bit mask and compare the GraphicsPipelineDesc of the current state
-vector and the state vector of the cached transition. With the hash map we compute a hash over the
-entire state vector and then do a 256-byte `memcmp` to guard against hash collisions. With the
-transition table we will only compare as many bytes as were changed in the transition bit mask. By
-skipping the expensive hashing and `memcmp` we can get as good or faster performance than native
-OpenGL drivers.
+The back-end usually records Image and Buffer barriers through additional `ContextVk` APIs:
 
-Note that the current design of the transition table stores transitions in an unsorted list. If
-applications map from one state to many this will slow down the transition time. This could be
-improved in the future using a faster look up. For instance we could keep a sorted transition table
-or use a small hash map for transitions.
+ * `onBufferRead` and `onBufferWrite` accumulate `VkBuffer` barriers.
+ * `onImageRead` and `onImageWrite` accumulate `VkImage` barriers.
+ * `onRenderPassImageWrite` is a special API for write barriers inside a RenderPass instance.
+
+After the back-end records commands to the primary buffer we flush (e.g. on swap) or when we call
+`ContextVk::finishToSerial`.
+
+See the [code][CommandAPIs] for more details.
+
+### Simple command recording example
+
+In this example we'll be recording a buffer copy command:
+
+```
+    # Ensure that ANGLE sets proper read and write barriers for the Buffers.
+    ANGLE_TRY(contextVk->onBufferWrite(VK_ACCESS_TRANSFER_WRITE_BIT, destBuffer));
+    ANGLE_TRY(contextVk->onBufferRead(VK_ACCESS_TRANSFER_READ_BIT, srcBuffer));
+
+    # Get a pointer to a secondary command buffer for command recording. May "flush" the RP.
+    vk::CommandBuffer *commandBuffer;
+    ANGLE_TRY(contextVk->endRenderPassAndGetCommandBuffer(&commandBuffer));
+
+    # Record the copy command into the secondary buffer. We're done!
+    commandBuffer->copyBuffer(srcBuffer->getBuffer(), destBuffer->getBuffer(), copyCount, copies);
+```
+
+## Additional Reading
+
+More implementation details can be found in the `doc` directory:
+
+- [Fast OpenGL State Transitions](doc/FastOpenGLStateTransitions.md)
+- [Shader Module Compilation](doc/ShaderModuleCompilation.md)
+- [OpenGL Line Segment Rasterization](doc/OpenGLLineSegmentRasterization.md)
+- [Format Tables and Emulation](doc/FormatTablesAndEmulation.md)
+
+[VkDevice]: https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkDevice.html
+[VkQueue]: https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkQueue.html
+[CommandAPIs]: https://chromium.googlesource.com/angle/angle/+/aa09ca69e4173cb14261e39be3b7bdf56bbd3840/src/libANGLE/renderer/vulkan/ContextVk.h#579
+

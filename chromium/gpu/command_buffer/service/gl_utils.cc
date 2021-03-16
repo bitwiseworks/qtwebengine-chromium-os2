@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <unordered_set>
 
-#include "base/metrics/histogram.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/service/error_state.h"
 #include "gpu/command_buffer/service/feature_info.h"
@@ -27,6 +26,10 @@ const int kS3TCBlockHeight = 4;
 const int kS3TCDXT1BlockSize = 8;
 const int kS3TCDXT3AndDXT5BlockSize = 16;
 const int kEACAndETC2BlockSize = 4;
+const int kBPTCBlockWidth = 4;
+const int kBPTCBlockHeight = 4;
+const int kRGTCBlockWidth = 4;
+const int kRGTCBlockHeight = 4;
 
 typedef struct {
   int blockWidth;
@@ -43,9 +46,10 @@ bool IsValidPVRTCSize(GLint level, GLsizei size) {
   return GLES2Util::IsPOT(size);
 }
 
-bool IsValidS3TCSizeForWebGL(GLint level, GLsizei size) {
-  // WebGL only allows multiple-of-4 sizes, except for levels > 0 where it also
-  // allows 1 or 2. See WEBGL_compressed_texture_s3tc.
+bool IsValidS3TCSizeForWebGLAndANGLE(GLint level, GLsizei size) {
+  // WebGL and ANGLE only allow multiple-of-4 sizes, except for levels > 0 where
+  // it also allows 1 or 2. See WEBGL_compressed_texture_s3tc and
+  // ANGLE_compressed_texture_dxt*
   return (level && size == 1) || (level && size == 2) ||
          !(size % kS3TCBlockWidth);
 }
@@ -105,18 +109,6 @@ const char* GetDebugSeverityString(GLenum severity) {
   }
 }
 }  // namespace
-
-std::vector<int> GetAllGLErrors() {
-  int gl_errors[] = {
-      GL_NO_ERROR,
-      GL_INVALID_ENUM,
-      GL_INVALID_VALUE,
-      GL_INVALID_OPERATION,
-      GL_INVALID_FRAMEBUFFER_OPERATION,
-      GL_OUT_OF_MEMORY,
-  };
-  return base::CustomHistogram::ArrayToCustomEnumRanges(gl_errors);
-}
 
 bool PrecisionMeetsSpecForHighpFloat(GLint rangeMin,
                                      GLint rangeMax,
@@ -502,6 +494,29 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
       bytes_required *= 16;
       bytes_required *= depth;
       break;
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+      bytes_required = (width + kBPTCBlockWidth - 1) / kBPTCBlockWidth;
+      bytes_required *= (height + kBPTCBlockHeight - 1) / kBPTCBlockHeight;
+      bytes_required *= 16;
+      bytes_required *= depth;
+      break;
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+      bytes_required = (width + kRGTCBlockWidth - 1) / kRGTCBlockWidth;
+      bytes_required *= (height + kRGTCBlockHeight - 1) / kRGTCBlockHeight;
+      bytes_required *= 8;
+      bytes_required *= depth;
+      break;
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
+      bytes_required = (width + kRGTCBlockWidth - 1) / kRGTCBlockWidth;
+      bytes_required *= (height + kRGTCBlockHeight - 1) / kRGTCBlockHeight;
+      bytes_required *= 16;
+      bytes_required *= depth;
+      break;
     default:
       if (function_name && error_state) {
         ERRORSTATE_SET_GL_ERROR_INVALID_ENUM(error_state, function_name, format,
@@ -522,6 +537,47 @@ bool GetCompressedTexSizeInBytes(const char* function_name,
   return true;
 }
 
+bool ValidateCompressedFormatTarget(GLenum target, GLenum format) {
+  if (target == GL_TEXTURE_3D) {
+    // Formats not supporting 3D Tex
+    switch (format) {
+      // ES 3.1, Section 8.7, page 169.
+      case GL_COMPRESSED_R11_EAC:
+      case GL_COMPRESSED_SIGNED_R11_EAC:
+      case GL_COMPRESSED_RG11_EAC:
+      case GL_COMPRESSED_SIGNED_RG11_EAC:
+      case GL_COMPRESSED_RGB8_ETC2:
+      case GL_COMPRESSED_SRGB8_ETC2:
+      case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+      case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+      case GL_COMPRESSED_RGBA8_ETC2_EAC:
+      case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
+      // GL_EXT_texture_compression_s3tc
+      case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
+      case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+      case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+      case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+      case GL_COMPRESSED_SRGB_S3TC_DXT1_EXT:
+      case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+      case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+      case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+      // GL_EXT_texture_compression_rgtc
+      case GL_COMPRESSED_RED_RGTC1_EXT:
+      case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+      case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+      case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
+        return false;
+      // GL_KHR_texture_compression_astc_hdr, TEXTURE_3D is not supported
+      // without HDR profile. This is guaranteed to be validated beforehand
+      // in GLES2DecoderImpl::TexStorageImpl before calling this.
+      default:
+        break;
+    }
+  }
+
+  return true;
+}
+
 bool ValidateCompressedTexSubDimensions(GLenum target,
                                         GLint level,
                                         GLint xoffset,
@@ -532,8 +588,12 @@ bool ValidateCompressedTexSubDimensions(GLenum target,
                                         GLsizei depth,
                                         GLenum format,
                                         Texture* texture,
-                                        bool restrict_for_webgl,
                                         const char** error_message) {
+  if (!ValidateCompressedFormatTarget(target, format)) {
+    *error_message = "target invalid for format";
+    return false;
+  }
+
   if (xoffset < 0 || yoffset < 0 || zoffset < 0) {
     *error_message = "x/y/z offset < 0";
     return false;
@@ -655,8 +715,7 @@ bool ValidateCompressedTexSubDimensions(GLenum target,
         return false;
       }
       return ValidateCompressedTexDimensions(target, level, width, height, 1,
-                                             format, restrict_for_webgl,
-                                             error_message);
+                                             format, error_message);
     }
 
     // ES3 formats
@@ -669,7 +728,15 @@ bool ValidateCompressedTexSubDimensions(GLenum target,
     case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
     case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
     case GL_COMPRESSED_RGBA8_ETC2_EAC:
-    case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC: {
+    case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT: {
       const int kBlockSize = 4;
       GLsizei tex_width, tex_height;
       if (target == GL_TEXTURE_3D ||
@@ -696,8 +763,11 @@ bool ValidateCompressedTexDimensions(GLenum target,
                                      GLsizei height,
                                      GLsizei depth,
                                      GLenum format,
-                                     bool restrict_for_webgl,
                                      const char** error_message) {
+  if (!ValidateCompressedFormatTarget(target, format)) {
+    *error_message = "target invalid for format";
+    return false;
+  }
   switch (format) {
     case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
@@ -707,9 +777,8 @@ bool ValidateCompressedTexDimensions(GLenum target,
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
-      DCHECK_EQ(1, depth);  // 2D formats.
-      if (restrict_for_webgl && (!IsValidS3TCSizeForWebGL(level, width) ||
-                                 !IsValidS3TCSizeForWebGL(level, height))) {
+      if (!IsValidS3TCSizeForWebGLAndANGLE(level, width) ||
+          !IsValidS3TCSizeForWebGLAndANGLE(level, height)) {
         *error_message = "width or height invalid for level";
         return false;
       }
@@ -746,7 +815,6 @@ bool ValidateCompressedTexDimensions(GLenum target,
     case GL_ATC_RGBA_EXPLICIT_ALPHA_AMD:
     case GL_ATC_RGBA_INTERPOLATED_ALPHA_AMD:
     case GL_ETC1_RGB8_OES:
-      DCHECK_EQ(1, depth);  // 2D formats.
       if (width <= 0 || height <= 0) {
         *error_message = "width or height invalid for level";
         return false;
@@ -756,7 +824,6 @@ bool ValidateCompressedTexDimensions(GLenum target,
     case GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG:
     case GL_COMPRESSED_RGBA_PVRTC_4BPPV1_IMG:
     case GL_COMPRESSED_RGBA_PVRTC_2BPPV1_IMG:
-      DCHECK_EQ(1, depth);  // 2D formats.
       if (!IsValidPVRTCSize(level, width) || !IsValidPVRTCSize(level, height)) {
         *error_message = "width or height invalid for level";
         return false;
@@ -778,8 +845,30 @@ bool ValidateCompressedTexDimensions(GLenum target,
         *error_message = "width, height, or depth invalid";
         return false;
       }
-      if (target == GL_TEXTURE_3D) {
-        *error_message = "target invalid for format";
+      return true;
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+      if (width < 0 || height < 0 || depth < 0) {
+        *error_message = "width, height, or depth invalid";
+        return false;
+      }
+      if (!(width % kBPTCBlockWidth == 0 && height % kBPTCBlockHeight == 0)) {
+        *error_message = "width or height is not a multiple of four";
+        return false;
+      }
+      return true;
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
+      if (width < 0 || height < 0 || depth < 0) {
+        *error_message = "width, height, or depth invalid";
+        return false;
+      }
+      if (!(width % kRGTCBlockWidth == 0 && height % kRGTCBlockHeight == 0)) {
+        *error_message = "width or height is not a multiple of four";
         return false;
       }
       return true;
@@ -914,6 +1003,15 @@ CopyTextureMethod GetCopyTextureCHROMIUMMethod(const FeatureInfo* feature_info,
                                   source_internal_format, source_type,
                                   &output_error_msg);
 
+  // The ES3 spec is vague about whether or not glCopyTexImage2D from a
+  // GL_RGB10_A2 attachment to an unsized internal format is valid. Most drivers
+  // interpreted the explicit call out as not valid (and dEQP actually checks
+  // this), so avoid DIRECT_COPY in that case.
+  if (feature_info->gl_version_info().is_es &&
+      source_internal_format == GL_RGB10_A2 &&
+      dest_internal_format != source_internal_format)
+    copy_tex_image_format_valid = false;
+
   // TODO(qiankun.miao@intel.com): for WebGL 2.0 or OpenGL ES 3.0, both
   // DIRECT_DRAW path for dest_level > 0 and DIRECT_COPY path for source_level >
   // 0 are not available due to a framebuffer completeness bug:
@@ -926,8 +1024,21 @@ CopyTextureMethod GetCopyTextureCHROMIUMMethod(const FeatureInfo* feature_info,
   if (source_target == GL_TEXTURE_2D &&
       (dest_target == GL_TEXTURE_2D || dest_target == GL_TEXTURE_CUBE_MAP) &&
       source_format_color_renderable && copy_tex_image_format_valid &&
-      source_level == 0 && !flip_y && !premultiply_alpha_change && !dither)
-    return CopyTextureMethod::DIRECT_COPY;
+      source_level == 0 && !flip_y && !premultiply_alpha_change && !dither) {
+    auto source_texture_type = GLES2Util::GetGLReadPixelsImplementationType(
+        source_internal_format, source_target);
+    auto dest_texture_type = GLES2Util::GetGLReadPixelsImplementationType(
+        dest_internal_format, dest_target);
+    if (source_texture_type != GL_UNSIGNED_SHORT ||
+        source_texture_type == dest_texture_type) {
+      // https://crbug.com/1042239. As it is stated in the latest OpenGL ES 3.2
+      // spec (Oct 22, 2019) it is optional for implementation to support
+      // conversion between unmatched source and dest effective internal format.
+      // R16 to R16F direct copy failure is seen on Android Nvidia shield
+      // devices. So we won't use DIRECT_COPY for this format.
+      return CopyTextureMethod::DIRECT_COPY;
+    }
+  }
   if (dest_format_color_renderable && dest_level == 0 &&
       dest_target != GL_TEXTURE_CUBE_MAP)
     return CopyTextureMethod::DIRECT_DRAW;
@@ -1018,7 +1129,11 @@ bool ValidateCopyTextureCHROMIUMInternalFormats(const FeatureInfo* feature_info,
       source_internal_format == GL_BGRA8_EXT ||
       source_internal_format == GL_RGB_YCBCR_420V_CHROMIUM ||
       source_internal_format == GL_RGB_YCBCR_422_CHROMIUM ||
-      source_internal_format == GL_R16_EXT;
+      source_internal_format == GL_RGB_YCBCR_P010_CHROMIUM ||
+      source_internal_format == GL_R16_EXT ||
+      source_internal_format == GL_RG16_EXT ||
+      source_internal_format == GL_RGBA16_EXT ||
+      source_internal_format == GL_RGB10_A2;
   if (!valid_source_format) {
     *output_error_msg = "invalid source internal format " +
                         GLES2Util::GetStringEnum(source_internal_format);
@@ -1031,6 +1146,197 @@ bool ValidateCopyTextureCHROMIUMInternalFormats(const FeatureInfo* feature_info,
   }
 
   return true;
+}
+
+GLenum GetTextureBindingQuery(GLenum texture_type) {
+  switch (texture_type) {
+    case GL_TEXTURE_2D:
+      return GL_TEXTURE_BINDING_2D;
+    case GL_TEXTURE_2D_ARRAY:
+      return GL_TEXTURE_BINDING_2D_ARRAY;
+    case GL_TEXTURE_2D_MULTISAMPLE:
+      return GL_TEXTURE_BINDING_2D_MULTISAMPLE;
+    case GL_TEXTURE_2D_MULTISAMPLE_ARRAY:
+      return GL_TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY;
+    case GL_TEXTURE_3D:
+      return GL_TEXTURE_BINDING_3D;
+    case GL_TEXTURE_EXTERNAL_OES:
+      return GL_TEXTURE_BINDING_EXTERNAL_OES;
+    case GL_TEXTURE_RECTANGLE:
+      return GL_TEXTURE_BINDING_RECTANGLE;
+    case GL_TEXTURE_CUBE_MAP:
+      return GL_TEXTURE_BINDING_CUBE_MAP;
+    default:
+      NOTREACHED();
+      return 0;
+  }
+}
+
+gfx::OverlayTransform GetGFXOverlayTransform(GLenum plane_transform) {
+  switch (plane_transform) {
+    case GL_OVERLAY_TRANSFORM_NONE_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_NONE;
+    case GL_OVERLAY_TRANSFORM_FLIP_HORIZONTAL_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_FLIP_HORIZONTAL;
+    case GL_OVERLAY_TRANSFORM_FLIP_VERTICAL_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_FLIP_VERTICAL;
+    case GL_OVERLAY_TRANSFORM_ROTATE_90_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_90;
+    case GL_OVERLAY_TRANSFORM_ROTATE_180_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_180;
+    case GL_OVERLAY_TRANSFORM_ROTATE_270_CHROMIUM:
+      return gfx::OVERLAY_TRANSFORM_ROTATE_270;
+    default:
+      return gfx::OVERLAY_TRANSFORM_INVALID;
+  }
+}
+
+bool GetGFXBufferFormat(GLenum internal_format, gfx::BufferFormat* out_format) {
+  switch (internal_format) {
+    case GL_RGBA8_OES:
+      *out_format = gfx::BufferFormat::RGBA_8888;
+      return true;
+    case GL_BGRA8_EXT:
+      *out_format = gfx::BufferFormat::BGRA_8888;
+      return true;
+    case GL_RGBA16F_EXT:
+      *out_format = gfx::BufferFormat::RGBA_F16;
+      return true;
+    case GL_R8_EXT:
+      *out_format = gfx::BufferFormat::R_8;
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool GetGFXBufferUsage(GLenum buffer_usage, gfx::BufferUsage* out_usage) {
+  switch (buffer_usage) {
+    case GL_SCANOUT_CHROMIUM:
+      *out_usage = gfx::BufferUsage::SCANOUT;
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool IsASTCFormat(GLenum internal_format) {
+  switch (internal_format) {
+    case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x12_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR:
+      return true;
+    default:
+      break;
+  }
+  return false;
+}
+
+// This is only called in Texture::SetLevelInfo in texture_manager.cc
+// where there is no direct access to decoder->IsCompressedTextureFormat
+// or feature_info->validators()->compressed_texture_format.IsValid
+bool IsCompressedTextureFormat(GLenum internal_format) {
+  switch (internal_format) {
+    // S3TC
+    case GL_COMPRESSED_RGB_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_SRGB_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+    case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+    case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    // ASTC
+    case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x4_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_5x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_6x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_8x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x5_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x6_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x8_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_10x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x10_KHR:
+    case GL_COMPRESSED_RGBA_ASTC_12x12_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_4x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x4_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_5x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_6x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_8x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x5_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x6_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x8_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_10x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR:
+    // BPTC
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM_EXT:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT:
+    // RGTC
+    case GL_COMPRESSED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1_EXT:
+    case GL_COMPRESSED_RED_GREEN_RGTC2_EXT:
+    case GL_COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT:
+    // ETC2/EAC
+    case GL_COMPRESSED_R11_EAC:
+    case GL_COMPRESSED_SIGNED_R11_EAC:
+    case GL_COMPRESSED_RGB8_ETC2:
+    case GL_COMPRESSED_SRGB8_ETC2:
+    case GL_COMPRESSED_RGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+    case GL_COMPRESSED_SRGB8_PUNCHTHROUGH_ALPHA1_ETC2:
+    case GL_COMPRESSED_RG11_EAC:
+    case GL_COMPRESSED_SIGNED_RG11_EAC:
+    case GL_COMPRESSED_RGBA8_ETC2_EAC:
+    case GL_COMPRESSED_SRGB8_ALPHA8_ETC2_EAC:
+    // ETC1
+    case GL_ETC1_RGB8_OES:
+    // PVRTC
+    case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG:
+    case GL_COMPRESSED_RGBA_PVRTC_4BPPV1_IMG:
+    case GL_COMPRESSED_RGB_PVRTC_2BPPV1_IMG:
+    case GL_COMPRESSED_RGBA_PVRTC_2BPPV1_IMG:
+    // ATC
+    case GL_ATC_RGB_AMD:
+    case GL_ATC_RGBA_EXPLICIT_ALPHA_AMD:
+    case GL_ATC_RGBA_INTERPOLATED_ALPHA_AMD:
+      return true;
+    default:
+      break;
+  }
+  return false;
 }
 
 }  // namespace gles2

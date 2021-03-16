@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -58,7 +59,11 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
 
   const base::string16& initiator_title() const { return initiator_title_; }
 
+  bool source_is_arc() const { return source_is_arc_; }
+
   bool source_is_modifiable() const { return source_is_modifiable_; }
+
+  bool source_is_pdf() const { return source_is_pdf_; }
 
   bool source_has_selection() const { return source_has_selection_; }
 
@@ -144,10 +149,8 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
                         int preview_request_id);
 
   // Notifies the Web UI renderer that preview data is available.
-  // |expected_pages_count| specifies the total number of pages.
   // |preview_request_id| indicates which request resulted in this response.
-  void OnPreviewDataIsAvailable(int expected_pages_count,
-                                scoped_refptr<base::RefCountedMemory> data,
+  void OnPreviewDataIsAvailable(scoped_refptr<base::RefCountedMemory> data,
                                 int preview_request_id);
 
   // Notifies the Web UI that the print preview failed to render for the request
@@ -185,20 +188,23 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
       int request_id);
 
   // Allows tests to wait until the print preview dialog is loaded.
-  class TestingDelegate {
+  class TestDelegate {
    public:
     virtual void DidGetPreviewPageCount(int page_count) = 0;
     virtual void DidRenderPreviewPage(content::WebContents* preview_dialog) = 0;
+
+   protected:
+    virtual ~TestDelegate() = default;
   };
 
-  static void SetDelegateForTesting(TestingDelegate* delegate);
+  static void SetDelegateForTesting(TestDelegate* delegate);
 
   // Allows for tests to set a file path to print a PDF to. This also initiates
   // the printing without having to click a button on the print preview dialog.
   void SetSelectedFileForTesting(const base::FilePath& path);
 
   // Passes |closure| to PrintPreviewHandler::SetPdfSavedClosureForTesting().
-  void SetPdfSavedClosureForTesting(const base::Closure& closure);
+  void SetPdfSavedClosureForTesting(base::OnceClosure closure);
 
   // Tell the handler to send the enable-manipulate-settings-for-test WebUI
   // event.
@@ -250,8 +256,14 @@ class PrintPreviewUI : public ConstrainedWebDialogUI {
   // Weak pointer to the WebUI handler.
   PrintPreviewHandler* const handler_;
 
+  // Indicates whether the source document is from ARC.
+  bool source_is_arc_ = false;
+
   // Indicates whether the source document can be modified.
   bool source_is_modifiable_ = true;
+
+  // Indicates whether the source document is a PDF.
+  bool source_is_pdf_ = false;
 
   // Indicates whether the source document has selection.
   bool source_has_selection_ = false;

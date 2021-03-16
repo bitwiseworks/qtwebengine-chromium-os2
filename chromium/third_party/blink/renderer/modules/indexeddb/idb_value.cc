@@ -17,18 +17,18 @@
 
 namespace blink {
 
-IDBValue::IDBValue(scoped_refptr<SharedBuffer> data,
-                   Vector<WebBlobInfo> blob_info)
-    : data_(std::move(data)), blob_info_(std::move(blob_info)) {}
+IDBValue::IDBValue(
+    scoped_refptr<SharedBuffer> data,
+    Vector<WebBlobInfo> blob_info,
+    Vector<mojo::PendingRemote<mojom::blink::NativeFileSystemTransferToken>>
+        native_file_system_tokens)
+    : data_(std::move(data)),
+      blob_info_(std::move(blob_info)),
+      native_file_system_tokens_(std::move(native_file_system_tokens)) {}
 
 IDBValue::~IDBValue() {
   if (isolate_ && external_allocated_size_)
     isolate_->AdjustAmountOfExternalAllocatedMemory(-external_allocated_size_);
-}
-
-std::unique_ptr<IDBValue> IDBValue::Create(scoped_refptr<SharedBuffer> data,
-                                           Vector<WebBlobInfo> blob_info) {
-  return base::WrapUnique(new IDBValue(std::move(data), std::move(blob_info)));
 }
 
 scoped_refptr<SerializedScriptValue> IDBValue::CreateSerializedValue() const {

@@ -4,15 +4,18 @@
 
 #include "base/process/process.h"
 
-#include "base/clang_coverage_buildflags.h"
+#include "base/clang_profiling_buildflags.h"
 #include "base/debug/activity_tracker.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/kill.h"
-#include "base/test/clang_coverage.h"
 #include "base/threading/thread_restrictions.h"
 
 #include <windows.h>
+
+#if BUILDFLAG(CLANG_PROFILING)
+#include "base/test/clang_profiling.h"
+#endif
 
 namespace {
 
@@ -87,8 +90,8 @@ bool Process::CanBackgroundProcesses() {
 
 // static
 void Process::TerminateCurrentProcessImmediately(int exit_code) {
-#if BUILDFLAG(CLANG_COVERAGE)
-  WriteClangCoverageProfile();
+#if BUILDFLAG(CLANG_PROFILING)
+  WriteClangProfilingProfile();
 #endif
   ::TerminateProcess(GetCurrentProcess(), exit_code);
   // There is some ambiguity over whether the call above can return. Rather than
@@ -162,10 +165,14 @@ bool Process::Terminate(int exit_code, bool wait) const {
       DPLOG(ERROR) << "Error waiting for process exit";
     Exited(exit_code);
   } else {
-    // The process can't be terminated, perhaps because it has already
-    // exited or is in the process of exiting. A non-zero timeout is necessary
-    // here for the same reasons as above.
-    DPLOG(ERROR) << "Unable to terminate process";
+    // The process can't be terminated, perhaps because it has already exited or
+    // is in the process of exiting. An error code of ERROR_ACCESS_DENIED is the
+    // undocumented-but-expected result if the process has already exited or
+    // started exiting when TerminateProcess is called, so don't print an error
+    // message in that case.
+    if (GetLastError() != ERROR_ACCESS_DENIED)
+      DPLOG(ERROR) << "Unable to terminate process";
+    // A non-zero timeout is necessary here for the same reasons as above.
     if (::WaitForSingleObject(Handle(), kWaitMs) == WAIT_OBJECT_0) {
       DWORD actual_exit;
       Exited(::GetExitCodeProcess(Handle(), &actual_exit) ? actual_exit
@@ -174,6 +181,35 @@ bool Process::Terminate(int exit_code, bool wait) const {
     }
   }
   return result;
+}
+
+Process::WaitExitStatus Process::WaitForExitOrEvent(
+    const base::win::ScopedHandle& stop_event_handle,
+    int* exit_code) const {
+  // Record the event that this thread is blocking upon (for hang diagnosis).
+  base::debug::ScopedProcessWaitActivity process_activity(this);
+
+  HANDLE events[] = {Handle(), stop_event_handle.Get()};
+  DWORD wait_result =
+      ::WaitForMultipleObjects(base::size(events), events, FALSE, INFINITE);
+
+  if (wait_result == WAIT_OBJECT_0) {
+    DWORD temp_code;  // Don't clobber out-parameters in case of failure.
+    if (!::GetExitCodeProcess(Handle(), &temp_code))
+      return Process::WaitExitStatus::FAILED;
+
+    if (exit_code)
+      *exit_code = temp_code;
+
+    Exited(temp_code);
+    return Process::WaitExitStatus::PROCESS_EXITED;
+  }
+
+  if (wait_result == WAIT_OBJECT_0 + 1) {
+    return Process::WaitExitStatus::STOP_EVENT_SIGNALED;
+  }
+
+  return Process::WaitExitStatus::FAILED;
 }
 
 bool Process::WaitForExit(int* exit_code) const {

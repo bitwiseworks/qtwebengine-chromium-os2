@@ -6,16 +6,22 @@
 #define COMPONENTS_SESSIONS_CORE_TAB_RESTORE_SERVICE_H_
 
 #include <list>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/time/time.h"
+#include "base/token.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/sessions/core/live_tab_context.h"
 #include "components/sessions/core/serialized_navigation_entry.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
 #include "components/sessions/core/sessions_export.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
@@ -24,7 +30,6 @@ namespace sessions {
 
 class LiveTab;
 class PlatformSpecificTabData;
-class LiveTabContext;
 class TabRestoreServiceObserver;
 
 // TabRestoreService is responsible for maintaining the most recently closed
@@ -50,7 +55,7 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
   // The type of entry.
   enum Type {
     TAB,
-    WINDOW
+    WINDOW,
   };
 
   struct SESSIONS_EXPORT Entry {
@@ -115,6 +120,12 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
 
     // The user agent override used for the tab's navigations (if applicable).
     std::string user_agent_override;
+
+    // The group the tab belonged to, if any.
+    base::Optional<tab_groups::TabGroupId> group;
+
+    // The group metadata for the tab, if any.
+    base::Optional<tab_groups::TabGroupVisualData> group_visual_data;
   };
 
   // Represents a previously open window.
@@ -129,6 +140,9 @@ class SESSIONS_EXPORT TabRestoreService : public KeyedService {
 
     // The tabs that comprised the window, in order.
     std::vector<std::unique_ptr<Tab>> tabs;
+
+    // Tab group data.
+    std::map<tab_groups::TabGroupId, tab_groups::TabGroupVisualData> tab_groups;
 
     // Index of the selected tab.
     int selected_tab_index = -1;

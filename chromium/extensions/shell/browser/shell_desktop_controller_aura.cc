@@ -18,8 +18,9 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/cursor/image_cursors.h"
+#include "ui/base/ime/init/input_method_factory.h"
 #include "ui/base/ime/input_method.h"
-#include "ui/base/ime/input_method_factory.h"
+#include "ui/base/mojom/cursor_type.mojom-shared.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -33,7 +34,7 @@
 
 #if defined(OS_CHROMEOS)
 #include "base/command_line.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power/power_manager_client.h"
 #include "extensions/shell/browser/shell_screen.h"
 #include "extensions/shell/common/switches.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -70,7 +71,7 @@ class ShellNativeCursorManager : public wm::NativeCursorManager {
   void SetCursor(gfx::NativeCursor cursor,
                  wm::NativeCursorManagerDelegate* delegate) override {
     image_cursors_->SetPlatformCursor(&cursor);
-    cursor.set_device_scale_factor(image_cursors_->GetScale());
+    cursor.set_image_scale_factor(image_cursors_->GetScale());
     delegate->CommitCursor(cursor);
 
     if (delegate->IsCursorVisible())
@@ -84,7 +85,7 @@ class ShellNativeCursorManager : public wm::NativeCursorManager {
     if (visible) {
       SetCursor(delegate->GetCursor(), delegate);
     } else {
-      gfx::NativeCursor invisible_cursor(ui::CursorType::kNone);
+      gfx::NativeCursor invisible_cursor(ui::mojom::CursorType::kNone);
       image_cursors_->SetPlatformCursor(&invisible_cursor);
       SetCursorOnAllRootWindows(invisible_cursor);
     }
@@ -141,8 +142,7 @@ ShellDesktopControllerAura::ShellDesktopControllerAura(
   extensions::AppWindowClient::Set(app_window_client_.get());
 
 #if defined(OS_CHROMEOS)
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->AddObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
   display_configurator_.reset(new display::DisplayConfigurator);
   display_configurator_->Init(
       ui::OzonePlatform::GetInstance()->CreateNativeDisplayDelegate(), false);
@@ -156,8 +156,7 @@ ShellDesktopControllerAura::ShellDesktopControllerAura(
 ShellDesktopControllerAura::~ShellDesktopControllerAura() {
   TearDownWindowManager();
 #if defined(OS_CHROMEOS)
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RemoveObserver(
-      this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
 #endif
   extensions::AppWindowClient::Set(NULL);
 }
@@ -213,10 +212,8 @@ void ShellDesktopControllerAura::PowerButtonEventReceived(
     bool down,
     const base::TimeTicks& timestamp) {
   if (down) {
-    chromeos::DBusThreadManager::Get()
-        ->GetPowerManagerClient()
-        ->RequestShutdown(power_manager::REQUEST_SHUTDOWN_FOR_USER,
-                          "AppShell power button");
+    chromeos::PowerManagerClient::Get()->RequestShutdown(
+        power_manager::REQUEST_SHUTDOWN_FOR_USER, "AppShell power button");
   }
 }
 
@@ -233,13 +230,12 @@ void ShellDesktopControllerAura::OnDisplayModeChanged(
 #endif
 
 ui::EventDispatchDetails ShellDesktopControllerAura::DispatchKeyEventPostIME(
-    ui::KeyEvent* key_event,
-    base::OnceCallback<void(bool)> ack_callback) {
+    ui::KeyEvent* key_event) {
   if (key_event->target()) {
     aura::WindowTreeHost* host = static_cast<aura::Window*>(key_event->target())
                                      ->GetRootWindow()
                                      ->GetHost();
-    return host->DispatchKeyEventPostIME(key_event, std::move(ack_callback));
+    return host->DispatchKeyEventPostIME(key_event);
   }
 
   // Send the key event to the focused window.
@@ -247,11 +243,10 @@ ui::EventDispatchDetails ShellDesktopControllerAura::DispatchKeyEventPostIME(
       const_cast<aura::Window*>(focus_controller_->GetActiveWindow());
   if (active_window) {
     return active_window->GetRootWindow()->GetHost()->DispatchKeyEventPostIME(
-        key_event, std::move(ack_callback));
+        key_event);
   }
 
-  return GetPrimaryHost()->DispatchKeyEventPostIME(key_event,
-                                                   std::move(ack_callback));
+  return GetPrimaryHost()->DispatchKeyEventPostIME(key_event);
 }
 
 void ShellDesktopControllerAura::OnKeepAliveStateChanged(
@@ -333,13 +328,13 @@ void ShellDesktopControllerAura::InitWindowManager() {
       std::make_unique<ShellNativeCursorManager>(this));
   cursor_manager_->SetDisplay(
       display::Screen::GetScreen()->GetPrimaryDisplay());
-  cursor_manager_->SetCursor(ui::CursorType::kPointer);
+  cursor_manager_->SetCursor(ui::mojom::CursorType::kPointer);
 
 #if defined(OS_CHROMEOS)
   user_activity_detector_ = std::make_unique<ui::UserActivityDetector>();
   user_activity_notifier_ =
       std::make_unique<ui::UserActivityPowerManagerNotifier>(
-          user_activity_detector_.get(), nullptr /*connector*/);
+          user_activity_detector_.get(), /*fingerprint=*/mojo::NullRemote());
 #endif
 }
 

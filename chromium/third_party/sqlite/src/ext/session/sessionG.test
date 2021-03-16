@@ -17,7 +17,7 @@
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]
-}
+} 
 source [file join [file dirname [info script]] session_common.tcl]
 source $testdir/tester.tcl
 ifcapable !session {finish_test; return}
@@ -174,7 +174,7 @@ do_test 4.3 {
 } {}
 
 #-------------------------------------------------------------------------
-reset_db
+reset_db 
 catch { db2 close }
 forcedelete test.db2
 sqlite3 db2 test.db2
@@ -206,7 +206,7 @@ do_test 5.1 {
 
 #-------------------------------------------------------------------------
 
-reset_db
+reset_db 
 db func number_name number_name
 do_execsql_test 6.0 {
   CREATE TABLE t1(a INTEGER PRIMARY KEY, b);
@@ -240,8 +240,8 @@ do_test 6.2 {
 } {}
 
 do_execsql_test 6.3 { SELECT count(*) FROM t1; } {1000}
-do_execsql_test 6.4 {
-  SELECT count(*) FROM t1 WHERE number_name(a+1) IS NOT b;
+do_execsql_test 6.4 { 
+  SELECT count(*) FROM t1 WHERE number_name(a+1) IS NOT b; 
 } {0}
 
 # db eval { SELECT * FROM t1 } { puts "$a || $b" }

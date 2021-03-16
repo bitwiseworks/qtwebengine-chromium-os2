@@ -38,15 +38,13 @@ class MODULES_EXPORT GamepadList final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static GamepadList* Create() { return MakeGarbageCollected<GamepadList>(); }
-
   GamepadList();
 
   void Set(unsigned index, Gamepad*);
   Gamepad* item(unsigned index);
   unsigned length() const { return device::Gamepads::kItemsLengthCap; }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   Member<Gamepad> items_[device::Gamepads::kItemsLengthCap];

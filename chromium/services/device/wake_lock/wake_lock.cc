@@ -6,15 +6,19 @@
 
 #include <utility>
 
+#include "base/bind.h"
+#include "services/device/wake_lock/wake_lock_context.h"
+
 namespace device {
 
-WakeLock::WakeLock(mojom::WakeLockRequest request,
+WakeLock::WakeLock(mojo::PendingReceiver<mojom::WakeLock> receiver,
                    mojom::WakeLockType type,
                    mojom::WakeLockReason reason,
                    const std::string& description,
                    int context_id,
                    WakeLockContextCallback native_view_getter,
-                   scoped_refptr<base::SingleThreadTaskRunner> file_task_runner)
+                   scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
+                   Observer* observer)
     : num_lock_requests_(0),
       type_(type),
       reason_(reason),
@@ -24,55 +28,49 @@ WakeLock::WakeLock(mojom::WakeLockRequest request,
       native_view_getter_(native_view_getter),
 #endif
       main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      file_task_runner_(std::move(file_task_runner)) {
-  AddClient(std::move(request));
-  binding_set_.set_connection_error_handler(
-      base::Bind(&WakeLock::OnConnectionError, base::Unretained(this)));
+      file_task_runner_(std::move(file_task_runner)),
+      observer_(observer) {
+  DCHECK(observer_);
+  AddClient(std::move(receiver));
+  receiver_set_.set_disconnect_handler(base::BindRepeating(
+      &WakeLock::OnConnectionError, base::Unretained(this)));
 }
 
 WakeLock::~WakeLock() {}
 
-void WakeLock::AddClient(mojom::WakeLockRequest request) {
+void WakeLock::AddClient(mojo::PendingReceiver<mojom::WakeLock> receiver) {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  binding_set_.AddBinding(this, std::move(request),
-                          std::make_unique<bool>(false));
-}
-
-void WakeLock::AddObserver(Observer* observer) {
-  DCHECK(observer);
-  observers_.AddObserver(observer);
-}
-
-void WakeLock::RemoveObserver(Observer* observer) {
-  DCHECK(observer);
-  observers_.RemoveObserver(observer);
+  receiver_set_.Add(this, std::move(receiver), std::make_unique<bool>(false));
 }
 
 void WakeLock::RequestWakeLock() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  DCHECK(binding_set_.dispatch_context());
+  DCHECK(receiver_set_.current_context());
+  DCHECK_GE(num_lock_requests_, 0);
 
   // Uses the Context to get the outstanding status of current binding.
   // Two consecutive requests from the same client should be coalesced
   // as one request.
-  if (*binding_set_.dispatch_context()) {
+  if (*receiver_set_.current_context()) {
     return;
   }
 
-  *binding_set_.dispatch_context() = true;
+  *receiver_set_.current_context() = true;
   num_lock_requests_++;
   UpdateWakeLock();
 }
 
 void WakeLock::CancelWakeLock() {
   DCHECK(main_task_runner_->RunsTasksInCurrentSequence());
-  DCHECK(binding_set_.dispatch_context());
+  DCHECK(receiver_set_.current_context());
 
-  if (!(*binding_set_.dispatch_context()))
+  // TODO(crbug.com/935063): Calling CancelWakeLock befoe RequestWakeLock
+  // shouldn't be allowed.
+  if (!(*receiver_set_.current_context()))
     return;
 
   DCHECK_GT(num_lock_requests_, 0);
-  *binding_set_.dispatch_context() = false;
+  *receiver_set_.current_context() = false;
   num_lock_requests_--;
   UpdateWakeLock();
 }
@@ -84,9 +82,8 @@ void WakeLock::ChangeType(mojom::WakeLockType type,
 #if defined(OS_ANDROID)
   LOG(ERROR) << "WakeLock::ChangeType() has no effect on Android.";
   std::move(callback).Run(false);
-  return;
-#endif
-  if (binding_set_.size() > 1) {
+#else
+  if (receiver_set_.size() > 1) {
     LOG(ERROR) << "WakeLock::ChangeType() is not allowed when the current wake "
                   "lock is shared by more than one clients.";
     std::move(callback).Run(false);
@@ -96,10 +93,13 @@ void WakeLock::ChangeType(mojom::WakeLockType type,
   mojom::WakeLockType old_type = type_;
   type_ = type;
 
-  if (type_ != old_type && wake_lock_)
+  if (type_ != old_type && wake_lock_) {
     SwapWakeLock();
+    observer_->OnWakeLockChanged(old_type, type_);
+  }
 
   std::move(callback).Run(true);
+#endif
 }
 
 void WakeLock::HasWakeLockForTests(HasWakeLockForTestsCallback callback) {
@@ -123,9 +123,7 @@ void WakeLock::CreateWakeLock() {
 
   wake_lock_ = std::make_unique<PowerSaveBlocker>(
       type_, reason_, *description_, main_task_runner_, file_task_runner_);
-
-  for (auto& observer : observers_)
-    observer.OnWakeLockActivated(type_);
+  observer_->OnWakeLockActivated(type_);
 
   if (type_ != mojom::WakeLockType::kPreventDisplaySleep)
     return;
@@ -146,9 +144,7 @@ void WakeLock::CreateWakeLock() {
 void WakeLock::RemoveWakeLock() {
   DCHECK(wake_lock_);
   wake_lock_.reset();
-
-  for (auto& observer : observers_)
-    observer.OnWakeLockDeactivated(type_);
+  observer_->OnWakeLockDeactivated(type_);
 }
 
 void WakeLock::SwapWakeLock() {
@@ -164,13 +160,14 @@ void WakeLock::SwapWakeLock() {
 void WakeLock::OnConnectionError() {
   // If this client has an outstanding wake lock request, decrease the
   // num_lock_requests and call UpdateWakeLock().
-  if (*binding_set_.dispatch_context() && num_lock_requests_ > 0) {
+  if (*receiver_set_.current_context() && num_lock_requests_ > 0) {
     num_lock_requests_--;
     UpdateWakeLock();
   }
 
-  if (binding_set_.empty()) {
-    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+  if (receiver_set_.empty()) {
+    // May delete |this|.
+    observer_->OnConnectionError(type_, this);
   }
 }
 

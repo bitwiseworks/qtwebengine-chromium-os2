@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -17,11 +18,10 @@
 #include "absl/strings/internal/str_format/extension.h"
 #include "absl/strings/string_view.h"
 
-class Cord;
-class CordReader;
-
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
+class Cord;
 class FormatCountCapture;
 class FormatSink;
 
@@ -35,12 +35,14 @@ struct HasUserDefinedConvert<
     T, void_t<decltype(AbslFormatConvert(
            std::declval<const T&>(), std::declval<ConversionSpec>(),
            std::declval<FormatSink*>()))>> : std::true_type {};
+
 template <typename T>
 class StreamedWrapper;
 
 // If 'v' can be converted (in the printf sense) according to 'conv',
 // then convert it, appending to `sink` and return `true`.
 // Otherwise fail and return `false`.
+
 // Raw pointers.
 struct VoidPtr {
   VoidPtr() = default;
@@ -54,7 +56,8 @@ ConvertResult<Conv::p> FormatConvertImpl(VoidPtr v, ConversionSpec conv,
                                          FormatSinkImpl* sink);
 
 // Strings.
-ConvertResult<Conv::s> FormatConvertImpl(const std::string& v, ConversionSpec conv,
+ConvertResult<Conv::s> FormatConvertImpl(const std::string& v,
+                                         ConversionSpec conv,
                                          FormatSinkImpl* sink);
 ConvertResult<Conv::s> FormatConvertImpl(string_view v, ConversionSpec conv,
                                          FormatSinkImpl* sink);
@@ -63,14 +66,15 @@ ConvertResult<Conv::s | Conv::p> FormatConvertImpl(const char* v,
                                                    FormatSinkImpl* sink);
 template <class AbslCord,
           typename std::enable_if<
-              std::is_same<AbslCord, ::Cord>::value>::type* = nullptr,
-          class AbslCordReader = ::CordReader>
+              std::is_same<AbslCord, absl::Cord>::value>::type* = nullptr>
 ConvertResult<Conv::s> FormatConvertImpl(const AbslCord& value,
                                          ConversionSpec conv,
                                          FormatSinkImpl* sink) {
-  if (conv.conv().id() != ConversionChar::s) return {false};
+  if (conv.conversion_char() != ConversionChar::s) {
+    return {false};
+  }
 
-  bool is_left = conv.flags().left;
+  bool is_left = conv.has_left_flag();
   size_t space_remaining = 0;
 
   int width = conv.width();
@@ -86,11 +90,17 @@ ConvertResult<Conv::s> FormatConvertImpl(const AbslCord& value,
 
   if (space_remaining > 0 && !is_left) sink->Append(space_remaining, ' ');
 
-  string_view piece;
-  for (AbslCordReader reader(value);
-       to_write > 0 && reader.ReadFragment(&piece); to_write -= piece.size()) {
-    if (piece.size() > to_write) piece.remove_suffix(piece.size() - to_write);
+  for (string_view piece : value.Chunks()) {
+    if (piece.size() > to_write) {
+      piece.remove_suffix(piece.size() - to_write);
+      to_write = 0;
+    } else {
+      to_write -= piece.size();
+    }
     sink->Append(piece);
+    if (to_write == 0) {
+      break;
+    }
   }
 
   if (space_remaining > 0 && is_left) sink->Append(space_remaining, ' ');
@@ -98,8 +108,8 @@ ConvertResult<Conv::s> FormatConvertImpl(const AbslCord& value,
 }
 
 using IntegralConvertResult =
-    ConvertResult<Conv::c | Conv::numeric | Conv::star>;
-using FloatingConvertResult = ConvertResult<Conv::floating>;
+    ConvertResult<Conv::c | Conv::kNumeric | Conv::kStar>;
+using FloatingConvertResult = ConvertResult<Conv::kFloating>;
 
 // Floats.
 FloatingConvertResult FormatConvertImpl(float v, ConversionSpec conv,
@@ -140,6 +150,8 @@ IntegralConvertResult FormatConvertImpl(long long v,  // NOLINT
 IntegralConvertResult FormatConvertImpl(unsigned long long v,  // NOLINT
                                         ConversionSpec conv,
                                         FormatSinkImpl* sink);
+IntegralConvertResult FormatConvertImpl(int128 v, ConversionSpec conv,
+                                        FormatSinkImpl* sink);
 IntegralConvertResult FormatConvertImpl(uint128 v, ConversionSpec conv,
                                         FormatSinkImpl* sink);
 template <typename T, enable_if_t<std::is_same<T, bool>::value, int> = 0>
@@ -175,8 +187,9 @@ struct FormatCountCaptureHelper {
                                               FormatSinkImpl* sink) {
     const absl::enable_if_t<sizeof(T) != 0, FormatCountCapture>& v2 = v;
 
-    if (conv.conv().id() != str_format_internal::ConversionChar::n)
+    if (conv.conversion_char() != str_format_internal::ConversionChar::n) {
       return {false};
+    }
     *v2.p_ = static_cast<int>(sink->size());
     return {true};
   }
@@ -289,7 +302,7 @@ class FormatArgImpl {
   struct Manager<T, ByPointer> {
     static Data SetValue(const T& value) {
       Data data;
-      data.ptr = &value;
+      data.ptr = std::addressof(value);
       return data;
     }
 
@@ -368,7 +381,7 @@ class FormatArgImpl {
   template <typename T>
   static bool Dispatch(Data arg, ConversionSpec spec, void* out) {
     // A `none` conv indicates that we want the `int` conversion.
-    if (ABSL_PREDICT_FALSE(spec.conv().id() == ConversionChar::none)) {
+    if (ABSL_PREDICT_FALSE(spec.conversion_char() == ConversionChar::kNone)) {
       return ToInt<T>(arg, static_cast<int*>(out), std::is_integral<T>(),
                       std::is_enum<T>());
     }
@@ -404,17 +417,20 @@ class FormatArgImpl {
                                              __VA_ARGS__);                     \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(unsigned long long, /* NOLINT */  \
                                              __VA_ARGS__);                     \
+  ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(int128, __VA_ARGS__);             \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(uint128, __VA_ARGS__);            \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(float, __VA_ARGS__);              \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(double, __VA_ARGS__);             \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(long double, __VA_ARGS__);        \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(const char*, __VA_ARGS__);        \
-  ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(std::string, __VA_ARGS__);             \
+  ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(std::string, __VA_ARGS__);        \
   ABSL_INTERNAL_FORMAT_DISPATCH_INSTANTIATE_(string_view, __VA_ARGS__)
 
 ABSL_INTERNAL_FORMAT_DISPATCH_OVERLOADS_EXPAND_(extern);
 
+
 }  // namespace str_format_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_STRINGS_INTERNAL_STR_FORMAT_ARG_H_

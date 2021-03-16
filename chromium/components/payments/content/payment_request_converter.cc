@@ -57,20 +57,6 @@ PaymentShippingOption ConvertPaymentShippingOption(
 
 }  // namespace
 
-autofill::CreditCard::CardType GetBasicCardType(
-    const mojom::BasicCardType& type) {
-  switch (type) {
-    case mojom::BasicCardType::CREDIT:
-      return autofill::CreditCard::CARD_TYPE_CREDIT;
-    case mojom::BasicCardType::DEBIT:
-      return autofill::CreditCard::CARD_TYPE_DEBIT;
-    case mojom::BasicCardType::PREPAID:
-      return autofill::CreditCard::CARD_TYPE_PREPAID;
-  }
-  NOTREACHED();
-  return autofill::CreditCard::CARD_TYPE_UNKNOWN;
-}
-
 std::string GetBasicCardNetworkName(const mojom::BasicCardNetwork& network) {
   switch (network) {
     case mojom::BasicCardNetwork::AMEX:
@@ -105,10 +91,6 @@ PaymentMethodData ConvertPaymentMethodData(
        method_data_entry->supported_networks) {
     method_data.supported_networks.push_back(GetBasicCardNetworkName(network));
   }
-  for (const mojom::BasicCardType& type : method_data_entry->supported_types) {
-    autofill::CreditCard::CardType card_type = GetBasicCardType(type);
-    method_data.supported_types.insert(card_type);
-  }
   return method_data;
 }
 
@@ -119,10 +101,14 @@ PaymentDetails ConvertPaymentDetails(
     details.total =
         std::make_unique<PaymentItem>(ConvertPaymentItem(details_entry->total));
   }
-  details.display_items.reserve(details_entry->display_items.size());
-  for (const mojom::PaymentItemPtr& display_item :
-       details_entry->display_items) {
-    details.display_items.push_back(ConvertPaymentItem(display_item));
+  if (details_entry->display_items) {
+    details.display_items.reserve(details_entry->display_items->size());
+    for (const mojom::PaymentItemPtr& display_item :
+         *details_entry->display_items) {
+      details.display_items.push_back(ConvertPaymentItem(display_item));
+    }
+  } else {
+    details.display_items.clear();
   }
   if (details_entry->shipping_options) {
     details.shipping_options.reserve(details_entry->shipping_options->size());
@@ -132,10 +118,14 @@ PaymentDetails ConvertPaymentDetails(
           ConvertPaymentShippingOption(shipping_option));
     }
   }
-  details.modifiers.reserve(details_entry->modifiers.size());
-  for (const mojom::PaymentDetailsModifierPtr& modifier :
-       details_entry->modifiers) {
-    details.modifiers.push_back(ConvertPaymentDetailsModifier(modifier));
+  if (details_entry->modifiers) {
+    details.modifiers.reserve(details_entry->modifiers->size());
+    for (const mojom::PaymentDetailsModifierPtr& modifier :
+         *details_entry->modifiers) {
+      details.modifiers.push_back(ConvertPaymentDetailsModifier(modifier));
+    }
+  } else {
+    details.modifiers.clear();
   }
   details.error = details_entry->error;
   if (details_entry->id.has_value())

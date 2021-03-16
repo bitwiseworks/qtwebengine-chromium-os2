@@ -14,7 +14,9 @@
 #include "components/subresource_filter/core/mojom/subresource_filter.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -53,14 +55,19 @@ class SubresourceFilterAgent
 
   virtual bool IsMainFrame();
 
+  virtual bool HasDocumentLoader();
+
   // Injects the provided subresource |filter| into the DocumentLoader
-  // orchestrating the most recently committed load.
-  virtual void SetSubresourceFilterForCommittedLoad(
+  // orchestrating the most recently created document. If this method is called
+  // as the result of a new document element instead of a new document (e.g.
+  // due to a document.write), we reuse the previous DocumentLoader.
+  virtual void SetSubresourceFilterForCurrentDocument(
       std::unique_ptr<blink::WebDocumentSubresourceFilter> filter);
 
   // Informs the browser that the first subresource load has been disallowed for
-  // the most recently committed load. Not called if all resources are allowed.
-  virtual void SignalFirstSubresourceDisallowedForCommittedLoad();
+  // the most recently created document. Not called if all resources are
+  // allowed.
+  virtual void SignalFirstSubresourceDisallowedForCurrentDocument();
 
   // Sends statistics about the DocumentSubresourceFilter's work to the browser.
   virtual void SendDocumentLoadStatistics(
@@ -81,46 +88,47 @@ class SubresourceFilterAgent
  private:
   // Assumes that the parent will be in a local frame relative to this one, upon
   // construction.
-  static mojom::ActivationState GetParentActivationState(
+  virtual mojom::ActivationState GetParentActivationState(
       content::RenderFrame* render_frame);
 
-  void RecordHistogramsOnLoadCommitted(
+  void RecordHistogramsOnFilterCreation(
       const mojom::ActivationState& activation_state);
-  void RecordHistogramsOnLoadFinished();
-  void ResetInfoForNextCommit();
+  void ResetInfoForNextDocument();
 
-  const mojom::SubresourceFilterHostAssociatedPtr& GetSubresourceFilterHost();
+  mojom::SubresourceFilterHost* GetSubresourceFilterHost();
 
   void OnSubresourceFilterAgentRequest(
-      mojom::SubresourceFilterAgentAssociatedRequest request);
+      mojo::PendingAssociatedReceiver<mojom::SubresourceFilterAgent> receiver);
 
   // content::RenderFrameObserver:
   void OnDestruct() override;
   void DidCreateNewDocument() override;
-  void DidFailProvisionalLoad(const blink::WebURLError& error) override;
+  void DidFailProvisionalLoad() override;
   void DidFinishLoad() override;
   void WillCreateWorkerFetchContext(blink::WebWorkerFetchContext*) override;
+
+  void MaybeCreateFilterForDocument(bool should_use_parent_activation);
 
   // Owned by the ChromeContentRendererClient and outlives us.
   UnverifiedRulesetDealer* ruleset_dealer_;
 
-  mojom::ActivationState activation_state_for_next_commit_;
+  mojom::ActivationState activation_state_for_next_document_;
 
   // Tracks all ad resource observers.
   std::unique_ptr<AdResourceTracker> ad_resource_tracker_;
 
   // Use associated interface to make sure mojo messages are ordered with regard
   // to legacy IPC messages.
-  mojom::SubresourceFilterHostAssociatedPtr subresource_filter_host_;
+  mojo::AssociatedRemote<mojom::SubresourceFilterHost> subresource_filter_host_;
 
-  mojo::AssociatedBinding<mojom::SubresourceFilterAgent> binding_;
+  mojo::AssociatedReceiver<mojom::SubresourceFilterAgent> receiver_{this};
 
-  // If a document has been created for this frame before. The first document
+  // If a document hasn't been created for this frame before. The first document
   // for a new local subframe should be about:blank.
   bool first_document_ = true;
 
   base::WeakPtr<WebDocumentSubresourceFilterImpl>
-      filter_for_last_committed_load_;
+      filter_for_last_created_document_;
 
   DISALLOW_COPY_AND_ASSIGN(SubresourceFilterAgent);
 };

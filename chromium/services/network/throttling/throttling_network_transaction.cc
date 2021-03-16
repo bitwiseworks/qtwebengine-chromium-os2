@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
@@ -62,7 +63,7 @@ int ThrottlingNetworkTransaction::Throttle(
   if (result > 0)
     throttled_byte_count_ += result;
 
-  throttle_callback_ = base::Bind(
+  throttle_callback_ = base::BindRepeating(
       &ThrottlingNetworkTransaction::ThrottleCallback, base::Unretained(this));
   int rv = interceptor_->StartThrottle(result, throttled_byte_count_, send_end,
                                        start, false, throttle_callback_);
@@ -222,11 +223,6 @@ void ThrottlingNetworkTransaction::StopCaching() {
   network_transaction_->StopCaching();
 }
 
-bool ThrottlingNetworkTransaction::GetFullRequestHeaders(
-    net::HttpRequestHeaders* headers) const {
-  return network_transaction_->GetFullRequestHeaders(headers);
-}
-
 int64_t ThrottlingNetworkTransaction::GetTotalReceivedBytes() const {
   return network_transaction_->GetTotalReceivedBytes();
 }
@@ -290,11 +286,6 @@ void ThrottlingNetworkTransaction::SetRequestHeadersCallback(
 void ThrottlingNetworkTransaction::SetResponseHeadersCallback(
     net::ResponseHeadersCallback callback) {
   network_transaction_->SetResponseHeadersCallback(std::move(callback));
-}
-
-void ThrottlingNetworkTransaction::SetBeforeHeadersSentCallback(
-    const BeforeHeadersSentCallback& callback) {
-  network_transaction_->SetBeforeHeadersSentCallback(callback);
 }
 
 int ThrottlingNetworkTransaction::ResumeNetworkStart() {

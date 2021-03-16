@@ -17,14 +17,11 @@ namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> SourceEventParametersCallback(
-    const NetLogSource source,
-    NetLogCaptureMode /* capture_mode */) {
+base::Value SourceEventParametersCallback(const NetLogSource source) {
   if (!source.IsValid())
-    return std::unique_ptr<base::Value>();
-  std::unique_ptr<base::DictionaryValue> event_params(
-      new base::DictionaryValue());
-  source.AddToEventParameters(event_params.get());
+    return base::Value();
+  base::DictionaryValue event_params;
+  source.AddToEventParameters(&event_params);
   return std::move(event_params);
 }
 
@@ -33,32 +30,38 @@ std::unique_ptr<base::Value> SourceEventParametersCallback(
 // LoadTimingInfo requires this be 0.
 const uint32_t NetLogSource::kInvalidId = 0;
 
-NetLogSource::NetLogSource() : type(NetLogSourceType::NONE), id(kInvalidId) {}
+NetLogSource::NetLogSource()
+    : NetLogSource(NetLogSourceType::NONE, kInvalidId) {}
 
 NetLogSource::NetLogSource(NetLogSourceType type, uint32_t id)
-    : type(type), id(id) {}
+    : NetLogSource(type, id, base::TimeTicks::Now()) {}
+
+NetLogSource::NetLogSource(NetLogSourceType type,
+                           uint32_t id,
+                           base::TimeTicks start_time)
+    : type(type), id(id), start_time(start_time) {}
 
 bool NetLogSource::IsValid() const {
   return id != kInvalidId;
 }
 
-void NetLogSource::AddToEventParameters(
-    base::DictionaryValue* event_params) const {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetInteger("type", static_cast<int>(type));
-  dict->SetInteger("id", static_cast<int>(id));
-  event_params->Set("source_dependency", std::move(dict));
+void NetLogSource::AddToEventParameters(base::Value* event_params) const {
+  DCHECK(event_params->is_dict());
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetIntKey("type", static_cast<int>(type));
+  dict.SetIntKey("id", static_cast<int>(id));
+  event_params->SetKey("source_dependency", std::move(dict));
 }
 
-NetLogParametersCallback NetLogSource::ToEventParametersCallback() const {
-  return base::Bind(&SourceEventParametersCallback, *this);
+base::Value NetLogSource::ToEventParameters() const {
+  return SourceEventParametersCallback(*this);
 }
 
 // static
-bool NetLogSource::FromEventParameters(base::Value* event_params,
+bool NetLogSource::FromEventParameters(const base::Value* event_params,
                                        NetLogSource* source) {
-  base::DictionaryValue* dict = NULL;
-  base::DictionaryValue* source_dict = NULL;
+  const base::DictionaryValue* dict = nullptr;
+  const base::DictionaryValue* source_dict = nullptr;
   int source_id = -1;
   int source_type = static_cast<int>(NetLogSourceType::COUNT);
   if (!event_params || !event_params->GetAsDictionary(&dict) ||

@@ -16,7 +16,7 @@ consumers.
 **Producers**  
 Producers are never trusted. We assume they will try their best to DoS / crash /
 exploit the tracing service. We do so at the
-[core/service_impl.cc](/src/tracing/core/service_impl.cc) so that the the same
+[core/service_impl.cc](/src/tracing/core/service_impl.cc) so that the same
 level of security and testing is applied regardless of the embedder and the IPC
 transport.
 
@@ -51,10 +51,9 @@ consumers (that would open a hard to audit path between
 untrusted-and-unprivileged and trusted-and-more-privileged entities).
 
 **Attestation of trace contents**  
-The tracing service guarantees that the `TracePacket` fields defined also in
-[trusted_packet.proto](/protos/perfetto/trace/trusted_packet.proto) cannot be
-spoofed by the Producer(s). Packets that try to define those fields are rejected
-(modulo the clock snapshots).  
+The tracing service guarantees that the `TracePacket` fields written by the
+Service cannot be spoofed by the Producer(s).  
+Packets that try to define those fields are rejected, modulo clock snapshots.  
 See [PacketStreamValidator](/src/tracing/core/packet_stream_validator.cc) and
 [its unit test](/src/tracing/core/packet_stream_validator_unittest.cc) for more
 details.  
@@ -64,8 +63,3 @@ that because doing so would imply that the service knows about all the possible
 types of packets, which doesn't scale.  
 However, the service appends the POSIX uid of the producer to each `TracePacket`
 to perform offline attestation of the contents of the trace.
-
-Internal docs
--------------
-* [Android security review doc](http://go/perfetto-asec)
-* [Chromium security review doc](http://go/perfetto-csec)

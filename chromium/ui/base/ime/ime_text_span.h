@@ -10,15 +10,15 @@
 #include <string>
 #include <vector>
 
+#include "base/component_export.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "ui/base/ime/ui_base_ime_types_export.h"
 
 namespace ui {
 
 // Intentionally keep sync with blink::WebImeTextSpan defined in:
 // third_party/WebKit/public/web/WebImeTextSpan.h
 
-struct UI_BASE_IME_TYPES_EXPORT ImeTextSpan {
+struct COMPONENT_EXPORT(UI_BASE_IME_TYPES) ImeTextSpan {
   enum class Type {
     // Creates a composition marker.
     kComposition,
@@ -37,18 +37,21 @@ struct UI_BASE_IME_TYPES_EXPORT ImeTextSpan {
     kThick,
   };
 
-  // The default constructor is used by generated Mojo code.
-  ImeTextSpan();
-  // TODO(huangs): remove this constructor.
-  ImeTextSpan(uint32_t start_offset,
-              uint32_t end_offset,
-              Thickness thickness);
-  ImeTextSpan(
-      Type type,
-      uint32_t start_offset,
-      uint32_t end_offset,
-      Thickness thickness,
-      SkColor background_color,
+  enum class UnderlineStyle {
+    kNone,
+    kSolid,
+    kDot,
+    kDash,
+    kSquiggle,
+  };
+
+  explicit ImeTextSpan(
+      Type type = Type::kComposition,
+      uint32_t start_offset = 0,
+      uint32_t end_offset = 0,
+      Thickness thickness = Thickness::kThin,
+      UnderlineStyle underline_style = UnderlineStyle::kSolid,
+      SkColor background_color = SK_ColorTRANSPARENT,
       SkColor suggestion_highlight_color = SK_ColorTRANSPARENT,
       const std::vector<std::string>& suggestions = std::vector<std::string>());
 
@@ -62,6 +65,8 @@ struct UI_BASE_IME_TYPES_EXPORT ImeTextSpan {
            (this->end_offset == rhs.end_offset) &&
            (this->underline_color == rhs.underline_color) &&
            (this->thickness == rhs.thickness) &&
+           (this->underline_style == rhs.underline_style) &&
+           (this->text_color == rhs.text_color) &&
            (this->background_color == rhs.background_color) &&
            (this->suggestion_highlight_color ==
             rhs.suggestion_highlight_color) &&
@@ -77,6 +82,8 @@ struct UI_BASE_IME_TYPES_EXPORT ImeTextSpan {
   uint32_t end_offset;
   SkColor underline_color = SK_ColorTRANSPARENT;
   Thickness thickness;
+  UnderlineStyle underline_style;
+  SkColor text_color = SK_ColorTRANSPARENT;
   SkColor background_color;
   SkColor suggestion_highlight_color;
   bool remove_on_finish_composing = false;

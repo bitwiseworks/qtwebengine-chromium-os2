@@ -38,7 +38,6 @@ const GUID kMediaSubTypeHDYC = {
     0x0000,
     0x0010,
     {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
-;
 
 // 16-bit grey-scale single plane formats provided by some depth cameras.
 const GUID kMediaSubTypeZ16 = {
@@ -72,7 +71,7 @@ class __declspec(uuid("88cdbbdc-a73b-4afa-acbf-15d5e2ce12c3")) SinkFilter
   size_t NoOfPins() override;
   IPin* GetPin(int index) override;
 
-  STDMETHOD(GetClassID)(CLSID* clsid) override;
+  IFACEMETHODIMP GetClassID(CLSID* clsid) override;
 
  private:
   ~SinkFilter() override;

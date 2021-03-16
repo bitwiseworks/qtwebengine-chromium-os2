@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/modules/sensor/magnetometer.h"
 
+#include "third_party/blink/public/mojom/feature_policy/feature_policy_feature.mojom-blink.h"
+
 using device::mojom::blink::SensorType;
 
 namespace blink {
@@ -30,7 +32,25 @@ Magnetometer::Magnetometer(ExecutionContext* execution_context,
              options,
              exception_state,
              SensorType::MAGNETOMETER,
-             {mojom::FeaturePolicyFeature::kMagnetometer}) {}
+             {mojom::blink::FeaturePolicyFeature::kMagnetometer}) {}
+
+base::Optional<double> Magnetometer::x() const {
+  if (hasReading())
+    return GetReading().magn.x;
+  return base::nullopt;
+}
+
+base::Optional<double> Magnetometer::y() const {
+  if (hasReading())
+    return GetReading().magn.y;
+  return base::nullopt;
+}
+
+base::Optional<double> Magnetometer::z() const {
+  if (hasReading())
+    return GetReading().magn.z;
+  return base::nullopt;
+}
 
 double Magnetometer::x(bool& is_null) const {
   INIT_IS_NULL_AND_RETURN(is_null, 0.0);
@@ -47,7 +67,7 @@ double Magnetometer::z(bool& is_null) const {
   return GetReading().magn.z;
 }
 
-void Magnetometer::Trace(blink::Visitor* visitor) {
+void Magnetometer::Trace(Visitor* visitor) {
   Sensor::Trace(visitor);
 }
 

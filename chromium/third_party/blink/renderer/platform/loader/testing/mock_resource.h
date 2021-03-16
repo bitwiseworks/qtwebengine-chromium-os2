@@ -6,6 +6,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_LOADER_TESTING_MOCK_RESOURCE_H_
 
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/loader/fetch/cached_metadata_handler.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/wtf/ref_counted.h"
 
@@ -22,11 +23,14 @@ class MockCacheHandler : public CachedMetadataHandler {
   MockCacheHandler(std::unique_ptr<CachedMetadataSender> send_callback);
 
   void Set(const uint8_t* data, size_t);
-  void ClearCachedMetadata(CachedMetadataHandler::CacheType) override;
+  void ClearCachedMetadata(CachedMetadataHandler::ClearCacheType) override;
   void Send();
 
   String Encoding() const override { return "mock encoding"; }
   bool IsServedFromCacheStorage() const override { return false; }
+  void OnMemoryDump(WebProcessMemoryDump* pmd,
+                    const String& dump_prefix) const override {}
+  size_t GetCodeCacheSize() const override { return 0; }
 
  private:
   std::unique_ptr<CachedMetadataSender> send_callback_;
@@ -42,13 +46,13 @@ class MockResource final : public Resource {
   static MockResource* Fetch(FetchParameters&,
                              ResourceFetcher*,
                              ResourceClient*);
-  static MockResource* Create(const ResourceRequest&);
-  static MockResource* Create(const KURL&);
+  explicit MockResource(const KURL&);
+  explicit MockResource(const ResourceRequest&);
   MockResource(const ResourceRequest&, const ResourceLoaderOptions&);
 
   CachedMetadataHandler* CreateCachedMetadataHandler(
       std::unique_ptr<CachedMetadataSender> send_callback) override;
-  void SetSerializedCachedMetadata(const uint8_t*, size_t) override;
+  void SetSerializedCachedMetadata(mojo_base::BigBuffer data) override;
 
   MockCacheHandler* CacheHandler();
 

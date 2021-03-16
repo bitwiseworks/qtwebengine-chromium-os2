@@ -45,16 +45,6 @@ std::unique_ptr<v8::Platform> NewDefaultPlatform(
   return std::move(platform);
 }
 
-v8::Platform* CreateDefaultPlatform(
-    int thread_pool_size, IdleTaskSupport idle_task_support,
-    InProcessStackDumping in_process_stack_dumping,
-    v8::TracingController* tracing_controller) {
-  return NewDefaultPlatform(
-             thread_pool_size, idle_task_support, in_process_stack_dumping,
-             std::unique_ptr<v8::TracingController>(tracing_controller))
-      .release();
-}
-
 bool PumpMessageLoop(v8::Platform* platform, v8::Isolate* isolate,
                      MessageLoopBehavior behavior) {
   return static_cast<DefaultPlatform*>(platform)->PumpMessageLoop(isolate,
@@ -109,14 +99,6 @@ void DefaultPlatform::SetThreadPoolSize(int thread_pool_size) {
       std::max(std::min(thread_pool_size, kMaxThreadPoolSize), 1);
 }
 
-void DefaultPlatform::EnsureBackgroundTaskRunnerInitialized() {
-  base::MutexGuard guard(&lock_);
-  if (!worker_threads_task_runner_) {
-    worker_threads_task_runner_ =
-        std::make_shared<DefaultWorkerThreadsTaskRunner>(thread_pool_size_);
-  }
-}
-
 namespace {
 
 double DefaultTimeFunction() {
@@ -125,6 +107,17 @@ double DefaultTimeFunction() {
 }
 
 }  // namespace
+
+void DefaultPlatform::EnsureBackgroundTaskRunnerInitialized() {
+  base::MutexGuard guard(&lock_);
+  if (!worker_threads_task_runner_) {
+    worker_threads_task_runner_ =
+        std::make_shared<DefaultWorkerThreadsTaskRunner>(
+            thread_pool_size_, time_function_for_testing_
+                                   ? time_function_for_testing_
+                                   : DefaultTimeFunction);
+  }
+}
 
 void DefaultPlatform::SetTimeFunctionForTesting(
     DefaultPlatform::TimeFunction time_function) {
@@ -148,6 +141,7 @@ bool DefaultPlatform::PumpMessageLoop(v8::Isolate* isolate,
   std::unique_ptr<Task> task = task_runner->PopTaskFromQueue(wait_for_work);
   if (!task) return failed_result;
 
+  DefaultForegroundTaskRunner::RunTaskScope scope(task_runner);
   task->Run();
   return true;
 }
@@ -170,6 +164,7 @@ void DefaultPlatform::RunIdleTasks(v8::Isolate* isolate,
   while (deadline_in_seconds > MonotonicallyIncreasingTime()) {
     std::unique_ptr<IdleTask> task = task_runner->PopTaskFromIdleQueue();
     if (!task) return;
+    DefaultForegroundTaskRunner::RunTaskScope scope(task_runner);
     task->Run(deadline_in_seconds);
   }
 }
@@ -198,23 +193,6 @@ void DefaultPlatform::CallDelayedOnWorkerThread(std::unique_ptr<Task> task,
   EnsureBackgroundTaskRunnerInitialized();
   worker_threads_task_runner_->PostDelayedTask(std::move(task),
                                                delay_in_seconds);
-}
-
-void DefaultPlatform::CallOnForegroundThread(v8::Isolate* isolate, Task* task) {
-  GetForegroundTaskRunner(isolate)->PostTask(std::unique_ptr<Task>(task));
-}
-
-void DefaultPlatform::CallDelayedOnForegroundThread(Isolate* isolate,
-                                                    Task* task,
-                                                    double delay_in_seconds) {
-  GetForegroundTaskRunner(isolate)->PostDelayedTask(std::unique_ptr<Task>(task),
-                                                    delay_in_seconds);
-}
-
-void DefaultPlatform::CallIdleOnForegroundThread(Isolate* isolate,
-                                                 IdleTask* task) {
-  GetForegroundTaskRunner(isolate)->PostIdleTask(
-      std::unique_ptr<IdleTask>(task));
 }
 
 bool DefaultPlatform::IdleTasksEnabled(Isolate* isolate) {

@@ -7,10 +7,12 @@ found in the LICENSE file.
 <script>
 'use strict';
 
-// Force Polymer into native shadowDom mode
-if (window.Polymer) {
-  throw new Error('Cannot proceed. Polymer already present.');
+if (!window.CustomElements || window.CustomElements.hasNative) {
+  // Force Polymer into native shadowDom mode
+  if (window.Polymer) {
+    throw new Error('Cannot proceed. Polymer already present.');
+  }
+  window.Polymer = {};
+  window.Polymer.dom = 'shadow';
 }
-window.Polymer = {};
-window.Polymer.dom = 'shadow';
 </script>

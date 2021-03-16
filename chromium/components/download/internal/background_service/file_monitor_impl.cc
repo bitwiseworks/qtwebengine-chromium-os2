@@ -24,7 +24,8 @@ bool CalculateDiskUtilization(const base::FilePath& file_dir,
                               int64_t& total_disk_space,
                               int64_t& free_disk_space,
                               int64_t& files_size) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::FileEnumerator file_enumerator(file_dir, false /* recursive */,
                                        base::FileEnumerator::FILES);
 
@@ -79,7 +80,8 @@ bool InitializeAndCreateDownloadDirectory(const base::FilePath& dir_path) {
 
 void GetFilesInDirectory(const base::FilePath& directory,
                          std::set<base::FilePath>& paths_out) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   base::FileEnumerator file_enumerator(directory, false /* recursive */,
                                        base::FileEnumerator::FILES);
 
@@ -91,7 +93,8 @@ void GetFilesInDirectory(const base::FilePath& directory,
 
 void DeleteFilesOnFileThread(const std::set<base::FilePath>& paths,
                              stats::FileCleanupReason reason) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   int num_delete_attempted = 0;
   int num_delete_failed = 0;
   int num_delete_by_external = 0;
@@ -116,7 +119,8 @@ void DeleteFilesOnFileThread(const std::set<base::FilePath>& paths,
 void DeleteUnknownFilesOnFileThread(
     const base::FilePath& directory,
     const std::set<base::FilePath>& download_file_paths) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   std::set<base::FilePath> files_in_dir;
   GetFilesInDirectory(directory, files_in_dir);
 
@@ -127,7 +131,8 @@ void DeleteUnknownFilesOnFileThread(
 }
 
 bool HardRecoverOnFileThread(const base::FilePath& directory) {
-  base::ScopedBlockingCall scoped_blocking_call(base::BlockingType::MAY_BLOCK);
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
   std::set<base::FilePath> files_in_dir;
   GetFilesInDirectory(directory, files_in_dir);
   DeleteFilesOnFileThread(files_in_dir,
@@ -143,16 +148,15 @@ FileMonitorImpl::FileMonitorImpl(
     base::TimeDelta file_keep_alive_time)
     : download_file_dir_(download_file_dir),
       file_keep_alive_time_(file_keep_alive_time),
-      file_thread_task_runner_(file_thread_task_runner),
-      weak_factory_(this) {}
+      file_thread_task_runner_(file_thread_task_runner) {}
 
 FileMonitorImpl::~FileMonitorImpl() = default;
 
-void FileMonitorImpl::Initialize(const InitCallback& callback) {
+void FileMonitorImpl::Initialize(InitCallback callback) {
   base::PostTaskAndReplyWithResult(
       file_thread_task_runner_.get(), FROM_HERE,
-      base::Bind(&InitializeAndCreateDownloadDirectory, download_file_dir_),
-      callback);
+      base::BindOnce(&InitializeAndCreateDownloadDirectory, download_file_dir_),
+      base::BindOnce(std::move(callback)));
 }
 
 void FileMonitorImpl::DeleteUnknownFiles(
@@ -174,22 +178,21 @@ void FileMonitorImpl::DeleteUnknownFiles(
 
 void FileMonitorImpl::CleanupFilesForCompletedEntries(
     const Model::EntryList& entries,
-    const base::Closure& completion_callback) {
+    base::OnceClosure completion_callback) {
   std::set<base::FilePath> files_to_remove;
   for (auto* entry : entries) {
     files_to_remove.insert(entry->target_file_path);
 
     // TODO(xingliu): Consider logs life time after the file being deleted on
     // the file thread.
-    stats::LogFileLifeTime(base::Time::Now() - entry->completion_time,
-                           entry->cleanup_attempt_count);
+    stats::LogFileLifeTime(base::Time::Now() - entry->completion_time);
   }
 
   file_thread_task_runner_->PostTaskAndReply(
       FROM_HERE,
       base::BindOnce(&DeleteFilesOnFileThread, files_to_remove,
                      stats::FileCleanupReason::TIMEOUT),
-      completion_callback);
+      std::move(completion_callback));
 }
 
 void FileMonitorImpl::DeleteFiles(
@@ -200,10 +203,11 @@ void FileMonitorImpl::DeleteFiles(
       base::BindOnce(&DeleteFilesOnFileThread, files_to_remove, reason));
 }
 
-void FileMonitorImpl::HardRecover(const InitCallback& callback) {
+void FileMonitorImpl::HardRecover(InitCallback callback) {
   base::PostTaskAndReplyWithResult(
       file_thread_task_runner_.get(), FROM_HERE,
-      base::Bind(&HardRecoverOnFileThread, download_file_dir_), callback);
+      base::BindOnce(&HardRecoverOnFileThread, download_file_dir_),
+      base::BindOnce(std::move(callback)));
 }
 
 }  // namespace download

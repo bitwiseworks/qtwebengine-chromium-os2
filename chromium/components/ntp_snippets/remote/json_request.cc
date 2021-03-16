@@ -8,14 +8,15 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/json/json_writer.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/clock.h"
 #include "base/values.h"
-#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/ntp_snippets/category_info.h"
 #include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/remote/request_params.h"
@@ -61,6 +62,11 @@ bool IsSendingUserClassEnabled() {
   return variations::GetVariationParamByFeatureAsBool(
       ntp_snippets::kArticleSuggestionsFeature, kSendUserClassName,
       /*default_value=*/true);
+}
+
+bool IsSendingOptionalImagesCapabilityEnabled() {
+  return base::FeatureList::IsEnabled(
+      ntp_snippets::kOptionalImagesEnabledFeature);
 }
 
 // Translate the BCP 47 |language_code| into a posix locale string.
@@ -120,8 +126,7 @@ JsonRequest::JsonRequest(
     const ParseJSONCallback& callback)
     : exclusive_category_(exclusive_category),
       clock_(clock),
-      parse_json_callback_(callback),
-      weak_ptr_factory_(this) {
+      parse_json_callback_(callback) {
   creation_time_ = clock_->Now();
 }
 
@@ -174,25 +179,26 @@ void JsonRequest::OnSimpleLoaderComplete(
                            net_error == net::OK ? response_code : net_error);
   if (net_error != net::OK) {
     std::move(request_completed_callback_)
-        .Run(/*result=*/nullptr, FetchResult::URL_REQUEST_STATUS_ERROR,
+        .Run(/*result=*/base::Value(), FetchResult::URL_REQUEST_STATUS_ERROR,
              /*error_details=*/base::StringPrintf(" %d", net_error));
   } else if (response_code / 100 != 2) {
     FetchResult result = response_code == net::HTTP_UNAUTHORIZED
                              ? FetchResult::HTTP_ERROR_UNAUTHORIZED
                              : FetchResult::HTTP_ERROR;
     std::move(request_completed_callback_)
-        .Run(/*result=*/nullptr, result,
+        .Run(/*result=*/base::Value(), result,
              /*error_details=*/base::StringPrintf(" %d", response_code));
   } else {
     last_response_string_ = std::move(*response_body);
-    parse_json_callback_.Run(
-        last_response_string_,
-        base::Bind(&JsonRequest::OnJsonParsed, weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&JsonRequest::OnJsonError, weak_ptr_factory_.GetWeakPtr()));
+    parse_json_callback_.Run(last_response_string_,
+                             base::BindOnce(&JsonRequest::OnJsonParsed,
+                                            weak_ptr_factory_.GetWeakPtr()),
+                             base::BindOnce(&JsonRequest::OnJsonError,
+                                            weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
-void JsonRequest::OnJsonParsed(std::unique_ptr<base::Value> result) {
+void JsonRequest::OnJsonParsed(base::Value result) {
   std::move(request_completed_callback_)
       .Run(std::move(result), FetchResult::SUCCESS,
            /*error_details=*/std::string());
@@ -202,7 +208,7 @@ void JsonRequest::OnJsonError(const std::string& error) {
   LOG(WARNING) << "Received invalid JSON (" << error
                << "): " << last_response_string_;
   std::move(request_completed_callback_)
-      .Run(/*result=*/nullptr, FetchResult::JSON_PARSE_ERROR,
+      .Run(/*result=*/base::Value(), FetchResult::JSON_PARSE_ERROR,
            /*error_details=*/base::StringPrintf(" (error %s)", error.c_str()));
 }
 
@@ -224,9 +230,7 @@ std::unique_ptr<JsonRequest> JsonRequest::Builder::Build() const {
 }
 
 JsonRequest::Builder& JsonRequest::Builder::SetAuthentication(
-    const std::string& account_id,
     const std::string& auth_header) {
-  obfuscated_gaia_id_ = account_id;
   auth_header_ = auth_header;
   return *this;
 }
@@ -273,12 +277,19 @@ JsonRequest::Builder& JsonRequest::Builder::SetUserClassifier(
   return *this;
 }
 
+JsonRequest::Builder& JsonRequest::Builder::SetOptionalImagesCapability(
+    bool supports_optional_images) {
+  if (supports_optional_images && IsSendingOptionalImagesCapabilityEnabled()) {
+    display_capability_ = "CAPABILITY_OPTIONAL_IMAGES";
+  }
+  return *this;
+}
+
 std::unique_ptr<network::ResourceRequest>
 JsonRequest::Builder::BuildResourceRequest() const {
   auto resource_request = std::make_unique<network::ResourceRequest>();
   resource_request->url = url_;
-  resource_request->load_flags =
-      net::LOAD_DO_NOT_SEND_COOKIES | net::LOAD_DO_NOT_SAVE_COOKIES;
+  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
   resource_request->method = "POST";
   resource_request->headers.SetHeader("Content-Type",
                                       "application/json; charset=UTF-8");
@@ -288,8 +299,8 @@ JsonRequest::Builder::BuildResourceRequest() const {
   // Add X-Client-Data header with experiment IDs from field trials.
   // TODO: We should call AppendVariationHeaders with explicit
   // variations::SignedIn::kNo If the auth_header_ is empty
-  variations::AppendVariationHeadersUnknownSignedIn(
-      url_, variations::InIncognito::kNo, &resource_request->headers);
+  variations::AppendVariationsHeaderUnknownSignedIn(
+      url_, variations::InIncognito::kNo, resource_request.get());
   return resource_request;
 }
 
@@ -312,6 +323,10 @@ std::string JsonRequest::Builder::BuildBody() const {
 
   if (!user_class_.empty()) {
     request->SetString("userActivenessClass", user_class_);
+  }
+
+  if (!display_capability_.empty()) {
+    request->SetString("displayCapability", display_capability_);
   }
 
   language::UrlLanguageHistogram::LanguageInfo ui_language;
@@ -337,8 +352,7 @@ std::string JsonRequest::Builder::BuildBody() const {
     exclusive_category_parameters.SetInteger("numSuggestions",
                                              params_.count_to_fetch);
     base::ListValue category_parameters;
-    category_parameters.GetList().push_back(
-        std::move(exclusive_category_parameters));
+    category_parameters.Append(std::move(exclusive_category_parameters));
     request->SetKey("categoryParameters", std::move(category_parameters));
   }
 
@@ -387,9 +401,6 @@ std::unique_ptr<network::SimpleURLLoader> JsonRequest::Builder::BuildURLLoader(
           << resource_request->headers.ToString() << "\n"
           << body;
 
-  // TODO(https://crbug.com/808498): Re-add data use measurement once
-  // SimpleURLLoader supports it.
-  // ID=data_use_measurement::DataUseUserData::NTP_SNIPPETS_SUGGESTIONS);
   auto loader = network::SimpleURLLoader::Create(std::move(resource_request),
                                                  traffic_annotation);
   loader->AttachStringForUpload(body, "application/json");

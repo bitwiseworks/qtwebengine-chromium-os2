@@ -24,6 +24,7 @@
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_value.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -37,7 +38,7 @@ class CORE_EXPORT CSSInitialValue : public CSSValue {
 
   bool Equals(const CSSInitialValue&) const { return true; }
 
-  void TraceAfterDispatch(blink::Visitor* visitor) {
+  void TraceAfterDispatch(blink::Visitor* visitor) const {
     CSSValue::TraceAfterDispatch(visitor);
   }
 
@@ -45,7 +46,12 @@ class CORE_EXPORT CSSInitialValue : public CSSValue {
   friend class CSSValuePool;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSInitialValue, IsInitialValue());
+template <>
+struct DowncastTraits<CSSInitialValue> {
+  static bool AllowFrom(const CSSValue& value) {
+    return value.IsInitialValue();
+  }
+};
 
 }  // namespace blink
 

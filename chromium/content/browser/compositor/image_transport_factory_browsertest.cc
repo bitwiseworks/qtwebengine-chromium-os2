@@ -6,7 +6,9 @@
 
 #include "base/run_loop.h"
 #include "build/build_config.h"
+#include "components/viz/common/gpu/context_lost_observer.h"
 #include "components/viz/common/gpu/context_provider.h"
+#include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/public/test/content_browser_test.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -18,10 +20,9 @@ namespace {
 
 using ImageTransportFactoryBrowserTest = ContentBrowserTest;
 
-class MockContextFactoryObserver : public ui::ContextFactoryObserver {
+class MockContextLostObserver : public viz::ContextLostObserver {
  public:
-  MOCK_METHOD0(OnLostSharedContext, void());
-  MOCK_METHOD0(OnLostVizProcess, void());
+  MOCK_METHOD0(OnContextLost, void());
 };
 
 // Flaky on ChromeOS: crbug.com/394083
@@ -36,18 +37,19 @@ IN_PROC_BROWSER_TEST_F(ImageTransportFactoryBrowserTest,
   ImageTransportFactory* factory = ImageTransportFactory::GetInstance();
 
   // This test doesn't make sense in software compositing mode.
-  if (factory->IsGpuCompositingDisabled())
+  if (GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled())
     return;
-
-  MockContextFactoryObserver observer;
-  factory->GetContextFactory()->AddObserver(&observer);
-
-  base::RunLoop run_loop;
-  EXPECT_CALL(observer, OnLostSharedContext())
-      .WillOnce(testing::Invoke(&run_loop, &base::RunLoop::Quit));
 
   scoped_refptr<viz::ContextProvider> context_provider =
       factory->GetContextFactory()->SharedMainThreadContextProvider();
+
+  MockContextLostObserver observer;
+  context_provider->AddObserver(&observer);
+
+  base::RunLoop run_loop;
+  EXPECT_CALL(observer, OnContextLost())
+      .WillOnce(testing::Invoke(&run_loop, &base::RunLoop::Quit));
+
   gpu::gles2::GLES2Interface* gl = context_provider->ContextGL();
   gl->LoseContextCHROMIUM(GL_GUILTY_CONTEXT_RESET_ARB,
                           GL_INNOCENT_CONTEXT_RESET_ARB);
@@ -58,7 +60,7 @@ IN_PROC_BROWSER_TEST_F(ImageTransportFactoryBrowserTest,
 
   run_loop.Run();
 
-  factory->GetContextFactory()->RemoveObserver(&observer);
+  context_provider->RemoveObserver(&observer);
 }
 
 }  // anonymous namespace

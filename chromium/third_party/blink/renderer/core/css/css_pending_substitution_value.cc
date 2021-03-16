@@ -5,8 +5,10 @@
 #include "third_party/blink/renderer/core/css/css_pending_substitution_value.h"
 
 namespace blink {
+namespace cssvalue {
 
-void CSSPendingSubstitutionValue::TraceAfterDispatch(blink::Visitor* visitor) {
+void CSSPendingSubstitutionValue::TraceAfterDispatch(
+    blink::Visitor* visitor) const {
   CSSValue::TraceAfterDispatch(visitor);
   visitor->Trace(shorthand_value_);
 }
@@ -15,4 +17,5 @@ String CSSPendingSubstitutionValue::CustomCSSText() const {
   return "";
 }
 
+}  // namespace cssvalue
 }  // namespace blink

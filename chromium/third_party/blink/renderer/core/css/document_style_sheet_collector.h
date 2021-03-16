@@ -28,7 +28,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_DOCUMENT_STYLE_SHEET_COLLECTOR_H_
 
 #include "third_party/blink/renderer/core/css/active_style_sheets.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
@@ -51,7 +50,6 @@ class DocumentStyleSheetCollector {
   DocumentStyleSheetCollector(StyleSheetCollection*,
                               HeapVector<Member<StyleSheet>>*,
                               HeapHashSet<Member<Document>>*);
-  ~DocumentStyleSheetCollector();
 
   void AppendActiveStyleSheet(const ActiveStyleSheet&);
   void AppendSheetForList(StyleSheet*);
@@ -62,7 +60,7 @@ class DocumentStyleSheetCollector {
   void WillVisit(Document* document) { visited_documents_->insert(document); }
 
  private:
-  Member<StyleSheetCollection> collection_;
+  StyleSheetCollection* collection_;
   HeapVector<Member<StyleSheet>>* style_sheets_for_style_sheet_list_;
   HeapHashSet<Member<Document>>* visited_documents_;
 };

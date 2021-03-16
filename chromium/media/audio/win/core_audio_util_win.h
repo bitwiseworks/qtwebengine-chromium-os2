@@ -66,6 +66,9 @@ class MEDIA_EXPORT CoreAudioUtil {
   // it is safe to call from other threads.
   static bool IsSupported();
 
+  // Converts a COM error into a human-readable string.
+  static std::string ErrorToString(HRESULT hresult);
+
   // Prints/logs all fields of the format structure in |format|.
   // Also supports extended versions (WAVEFORMATEXTENSIBLE).
   static std::string WaveFormatToString(WaveFormatWrapper format);
@@ -205,8 +208,6 @@ class MEDIA_EXPORT CoreAudioUtil {
   // speaker, and so on, continuing in the order defined in KsMedia.h.
   // See http://msdn.microsoft.com/en-us/library/windows/hardware/ff537083(v=vs.85).aspx
   // for more details.
-  // To get the channel config of the default device, pass an empty string
-  // for |device_id|.
   static ChannelConfig GetChannelConfig(const std::string& device_id,
                                         EDataFlow data_flow);
 

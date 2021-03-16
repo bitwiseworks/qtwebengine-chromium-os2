@@ -18,21 +18,37 @@
 #include "media/base/test_data_util.h"
 #include "media/media_buildflags.h"
 #include "media/mojo/buildflags.h"
-#include "third_party/libaom/av1_buildflags.h"
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
+#include "media/base/android/media_codec_util.h"
 #endif
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
 
+// External Clear Key is a test-only key system that has mostly the same
+// functionality as Clear Key key system. Unlike Clear Key, which is implemented
+// by AesDecryptor in the render process directly, External Clear Key is
+// implemented by hosting a CDM that supports Clear Key (e.g. AesDecryptor) in a
+// remote processes to cover the code path used by a real production CDM, which
+// is otherwise hard to cover by tests.
+// - When ENABLE_LIBRARY_CDMS is true, a "Clear Key CDM" that implements the
+//   "Library CDM API" is hosted in the CDM/utility process to do decryption and
+//   decoding. This covers MojoCdm, MojoDecryptor, CdmAdapter, CdmFileIO etc.
+//   See //media/cdm/library_cdm/clear_key_cdm/README.md.
+// - Otherwise when ENABLE_MOJO_CDM is true, External Clear Key is supported in
+//   content/shell/ by using MojoCdm with AesDecryptor running in a remote
+//   process, e.g. GPU or Browser, as specified by |mojo_media_host|. The
+//   connection between the media pipeline and the CDM varies on different
+//   platforms. For example, the media pipeline could choose the default
+//   RendererImpl in the render process, which can use the remote CDM to do
+//   decryption via MojoDecryptor. The media pipeline could also choose
+//   MojoRenderer, which hosts a RendererImpl in the remote process, which uses
+//   the Decryptor exposed by the AesDecryptor directly in the remote process.
+//   See TestMojoMediaClient for details on this path.
 #if BUILDFLAG(ENABLE_MOJO_CDM) && !BUILDFLAG(ENABLE_LIBRARY_CDMS)
-// When mojo CDM is enabled, External Clear Key is supported in //content/shell/
-// by using mojo CDM with AesDecryptor running in the remote (e.g. GPU or
-// Browser) process. When pepper CDM is supported, External Clear Key is
-// supported in chrome/, which is tested in browser_tests.
 #define SUPPORTS_EXTERNAL_CLEAR_KEY_IN_CONTENT_SHELL
 #endif
 
@@ -102,7 +118,7 @@ class EncryptedMediaTest
     query_params.emplace_back("keySystem", CurrentKeySystem());
     query_params.emplace_back(
         "configChangeType",
-        base::IntToString(static_cast<int>(config_change_type)));
+        base::NumberToString(static_cast<int>(config_change_type)));
     RunMediaTestPage("mse_config_change.html", query_params, media::kEnded,
                      true);
   }
@@ -176,26 +192,26 @@ class EncryptedMediaTest
 using ::testing::Combine;
 using ::testing::Values;
 
-INSTANTIATE_TEST_CASE_P(SRC_ClearKey,
-                        EncryptedMediaTest,
-                        Combine(Values(kClearKeyKeySystem),
-                                Values(SrcType::SRC)));
+INSTANTIATE_TEST_SUITE_P(SRC_ClearKey,
+                         EncryptedMediaTest,
+                         Combine(Values(kClearKeyKeySystem),
+                                 Values(SrcType::SRC)));
 
-INSTANTIATE_TEST_CASE_P(MSE_ClearKey,
-                        EncryptedMediaTest,
-                        Combine(Values(kClearKeyKeySystem),
-                                Values(SrcType::MSE)));
+INSTANTIATE_TEST_SUITE_P(MSE_ClearKey,
+                         EncryptedMediaTest,
+                         Combine(Values(kClearKeyKeySystem),
+                                 Values(SrcType::MSE)));
 
 #if defined(SUPPORTS_EXTERNAL_CLEAR_KEY_IN_CONTENT_SHELL)
-INSTANTIATE_TEST_CASE_P(SRC_ExternalClearKey,
-                        EncryptedMediaTest,
-                        Combine(Values(kExternalClearKeyKeySystem),
-                                Values(SrcType::SRC)));
+INSTANTIATE_TEST_SUITE_P(SRC_ExternalClearKey,
+                         EncryptedMediaTest,
+                         Combine(Values(kExternalClearKeyKeySystem),
+                                 Values(SrcType::SRC)));
 
-INSTANTIATE_TEST_CASE_P(MSE_ExternalClearKey,
-                        EncryptedMediaTest,
-                        Combine(Values(kExternalClearKeyKeySystem),
-                                Values(SrcType::MSE)));
+INSTANTIATE_TEST_SUITE_P(MSE_ExternalClearKey,
+                         EncryptedMediaTest,
+                         Combine(Values(kExternalClearKeyKeySystem),
+                                 Values(SrcType::MSE)));
 #endif
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_AudioOnly_WebM) {
@@ -214,7 +230,9 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoOnly_WebM) {
   TestSimplePlayback("bear-320x240-v_enc-v.webm");
 }
 
-IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoOnly_WebM_Fullsample) {
+// TODO(crbug.com/1045382): Flaky on multiple platforms.
+IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
+                       DISABLED_Playback_VideoOnly_WebM_Fullsample) {
   TestSimplePlayback("bear-320x240-v-vp9_fullsample_enc-v.webm");
 }
 
@@ -228,7 +246,7 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoClearAudio_WebM) {
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_AudioOnly_WebM_Opus) {
 #if defined(OS_ANDROID)
-  if (!media::PlatformHasOpusSupport())
+  if (!media::MediaCodecUtil::IsOpusDecoderAvailable())
     return;
 #endif
   TestSimplePlayback("bear-320x240-opus-a_enc-a.webm");
@@ -236,7 +254,7 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_AudioOnly_WebM_Opus) {
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoAudio_WebM_Opus) {
 #if defined(OS_ANDROID)
-  if (!media::PlatformHasOpusSupport())
+  if (!media::MediaCodecUtil::IsOpusDecoderAvailable())
     return;
 #endif
   TestSimplePlayback("bear-320x240-opus-av_enc-av.webm");
@@ -244,7 +262,7 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoAudio_WebM_Opus) {
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoClearAudio_WebM_Opus) {
 #if defined(OS_ANDROID)
-  if (!media::PlatformHasOpusSupport())
+  if (!media::MediaCodecUtil::IsOpusDecoderAvailable())
     return;
 #endif
   TestSimplePlayback("bear-320x240-opus-av_enc-v.webm");
@@ -252,6 +270,14 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoClearAudio_WebM_Opus) {
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_AudioOnly_MP4_FLAC) {
   RunMultipleFileTest(std::string(), "bear-flac-cenc.mp4", media::kEnded);
+}
+
+IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_AudioOnly_MP4_OPUS) {
+#if defined(OS_ANDROID)
+  if (!media::MediaCodecUtil::IsOpusDecoderAvailable())
+    return;
+#endif
+  RunMultipleFileTest(std::string(), "bear-opus-cenc.mp4", media::kEnded);
 }
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_VideoOnly_MP4_VP9) {
@@ -314,7 +340,16 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, ConfigChangeVideo_ClearToClear) {
   TestConfigChange(ConfigChangeType::CLEAR_TO_CLEAR);
 }
 
-IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, ConfigChangeVideo_ClearToEncrypted) {
+// Failed on Android, see https://crbug.com/1014540.
+#if defined(OS_ANDROID)
+#define MAYBE_ConfigChangeVideo_ClearToEncrypted \
+  DISABLED_ConfigChangeVideo_ClearToEncrypted
+#else
+#define MAYBE_ConfigChangeVideo_ClearToEncrypted \
+  ConfigChangeVideo_ClearToEncrypted
+#endif
+IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
+                       MAYBE_ConfigChangeVideo_ClearToEncrypted) {
   TestConfigChange(ConfigChangeType::CLEAR_TO_ENCRYPTED);
 }
 
@@ -327,16 +362,13 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
   TestConfigChange(ConfigChangeType::ENCRYPTED_TO_ENCRYPTED);
 }
 
-IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, FrameSizeChangeVideo) {
+// Fails on Android (https://crbug.com/778245 and https://crbug.com/1023638).
 #if defined(OS_ANDROID)
-  // https://crbug.com/778245
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <=
-      base::android::SDK_VERSION_KITKAT) {
-    DVLOG(0) << "Skipping test - FrameSizeChange is flaky on KitKat devices.";
-    return;
-  }
+#define MAYBE_FrameSizeChangeVideo DISABLED_FrameSizeChangeVideo
+#else
+#define MAYBE_FrameSizeChangeVideo FrameSizeChangeVideo
 #endif
-
+IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, MAYBE_FrameSizeChangeVideo) {
   TestFrameSizeChange();
 }
 
@@ -356,31 +388,22 @@ IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_Encryption_CENS) {
                       media::kError);
 }
 
-#if !defined(OS_ANDROID)
-// TODO(crbug.com/813845): Enable CBCS support on Chrome for Android.
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest, Playback_Encryption_CBCS) {
-  std::string expected_result =
-      BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME) ? media::kEnded : media::kError;
   RunMultipleFileTest("bear-640x360-v_frag-cbcs.mp4",
-                      "bear-640x360-a_frag-cbcs.mp4", expected_result);
+                      "bear-640x360-a_frag-cbcs.mp4", media::kEnded);
 }
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
                        Playback_Encryption_CBCS_Video_CENC_Audio) {
-  std::string expected_result =
-      BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME) ? media::kEnded : media::kError;
   RunMultipleFileTest("bear-640x360-v_frag-cbcs.mp4",
-                      "bear-640x360-a_frag-cenc.mp4", expected_result);
+                      "bear-640x360-a_frag-cenc.mp4", media::kEnded);
 }
 
 IN_PROC_BROWSER_TEST_P(EncryptedMediaTest,
                        Playback_Encryption_CENC_Video_CBCS_Audio) {
-  std::string expected_result =
-      BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME) ? media::kEnded : media::kError;
   RunMultipleFileTest("bear-640x360-v_frag-cenc.mp4",
-                      "bear-640x360-a_frag-cbcs.mp4", expected_result);
+                      "bear-640x360-a_frag-cbcs.mp4", media::kEnded);
 }
-#endif  // !defined(OS_ANDROID)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 IN_PROC_BROWSER_TEST_F(EncryptedMediaTest, UnknownKeySystemThrowsException) {

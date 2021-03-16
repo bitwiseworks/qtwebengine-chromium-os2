@@ -5,70 +5,18 @@
 #ifndef THIRD_PARTY_BLINK_COMMON_FEATURE_POLICY_FEATURE_POLICY_MOJOM_TRAITS_H_
 #define THIRD_PARTY_BLINK_COMMON_FEATURE_POLICY_FEATURE_POLICY_MOJOM_TRAITS_H_
 
-#include <vector>
+#include <map>
 
+#include "base/containers/flat_map.h"
 #include "mojo/public/cpp/bindings/enum_traits.h"
+#include "third_party/blink/common/feature_policy/policy_value_mojom_traits.h"
 #include "third_party/blink/public/common/common_export.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
 #include "third_party/blink/public/common/frame/sandbox_flags.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-shared.h"
+#include "url/mojom/origin_mojom_traits.h"
 
 namespace mojo {
-
-#define STATIC_ASSERT_ENUM(a, b)                            \
-  static_assert(static_cast<int>(a) == static_cast<int>(b), \
-                "mismatching enum : " #a)
-
-// TODO(crbug.com/789818) - Merge these 2 WebSandboxFlags enums.
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kNone,
-                   ::blink::mojom::WebSandboxFlags::kNone);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kNavigation,
-                   ::blink::mojom::WebSandboxFlags::kNavigation);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kPlugins,
-                   ::blink::mojom::WebSandboxFlags::kPlugins);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kOrigin,
-                   ::blink::mojom::WebSandboxFlags::kOrigin);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kForms,
-                   ::blink::mojom::WebSandboxFlags::kForms);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kScripts,
-                   ::blink::mojom::WebSandboxFlags::kScripts);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kTopNavigation,
-                   ::blink::mojom::WebSandboxFlags::kTopNavigation);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kPopups,
-                   ::blink::mojom::WebSandboxFlags::kPopups);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kAutomaticFeatures,
-                   ::blink::mojom::WebSandboxFlags::kAutomaticFeatures);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kPointerLock,
-                   ::blink::mojom::WebSandboxFlags::kPointerLock);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kDocumentDomain,
-                   ::blink::mojom::WebSandboxFlags::kDocumentDomain);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kOrientationLock,
-                   ::blink::mojom::WebSandboxFlags::kOrientationLock);
-STATIC_ASSERT_ENUM(
-    ::blink::WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts,
-    ::blink::mojom::WebSandboxFlags::kPropagatesToAuxiliaryBrowsingContexts);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kModals,
-                   ::blink::mojom::WebSandboxFlags::kModals);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kPresentationController,
-                   ::blink::mojom::WebSandboxFlags::kPresentationController);
-STATIC_ASSERT_ENUM(
-    ::blink::WebSandboxFlags::kTopNavigationByUserActivation,
-    ::blink::mojom::WebSandboxFlags::kTopNavigationByUserActivation);
-STATIC_ASSERT_ENUM(::blink::WebSandboxFlags::kDownloads,
-                   ::blink::mojom::WebSandboxFlags::kDownloads);
-
-template <>
-struct BLINK_COMMON_EXPORT
-    EnumTraits<blink::mojom::WebSandboxFlags, blink::WebSandboxFlags> {
-  static blink::mojom::WebSandboxFlags ToMojom(blink::WebSandboxFlags flags) {
-    return static_cast<blink::mojom::WebSandboxFlags>(flags);
-  }
-  static bool FromMojom(blink::mojom::WebSandboxFlags in,
-                        blink::WebSandboxFlags* out) {
-    *out = static_cast<blink::WebSandboxFlags>(in);
-    return true;
-  }
-};
 
 template <>
 class BLINK_COMMON_EXPORT
@@ -79,13 +27,17 @@ class BLINK_COMMON_EXPORT
       const blink::ParsedFeaturePolicyDeclaration& policy) {
     return policy.feature;
   }
-  static bool matches_all_origins(
+  static const std::map<url::Origin, blink::PolicyValue>& values(
       const blink::ParsedFeaturePolicyDeclaration& policy) {
-    return policy.matches_all_origins;
+    return policy.values;
   }
-  static const std::vector<url::Origin>& origins(
+  static const blink::PolicyValue& fallback_value(
       const blink::ParsedFeaturePolicyDeclaration& policy) {
-    return policy.origins;
+    return policy.fallback_value;
+  }
+  static const blink::PolicyValue& opaque_value(
+      const blink::ParsedFeaturePolicyDeclaration& policy) {
+    return policy.opaque_value;
   }
 
   static bool Read(blink::mojom::ParsedFeaturePolicyDeclarationDataView in,

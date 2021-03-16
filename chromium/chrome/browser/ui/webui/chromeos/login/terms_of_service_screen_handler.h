@@ -10,34 +10,67 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/chromeos/base/locale_util.h"
-#include "chrome/browser/chromeos/login/screens/terms_of_service_screen_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 
 namespace chromeos {
 
 class CoreOobeView;
+class TermsOfServiceScreen;
+
+// Interface for dependency injection between TermsOfServiceScreen and its
+// WebUI representation.
+class TermsOfServiceScreenView {
+ public:
+  constexpr static StaticOobeScreenId kScreenId{"terms-of-service"};
+
+  virtual ~TermsOfServiceScreenView() {}
+
+  // Sets screen this view belongs to.
+  virtual void SetScreen(TermsOfServiceScreen* screen) = 0;
+
+  // Shows the contents of the screen.
+  virtual void Show() = 0;
+
+  // Hides the contents of the screen.
+  virtual void Hide() = 0;
+
+  // Sets the domain name whose Terms of Service are being shown.
+  virtual void SetDomain(const std::string& domain) = 0;
+
+  // Called when the download of the Terms of Service fails. Show an error
+  // message to the user.
+  virtual void OnLoadError() = 0;
+
+  // Called when the download of the Terms of Service is successful. Shows the
+  // downloaded |terms_of_service| to the user.
+  virtual void OnLoadSuccess(const std::string& terms_of_service) = 0;
+
+  // Whether TOS are successfully loaded.
+  virtual bool AreTermsLoaded() = 0;
+};
 
 // The sole implementation of the TermsOfServiceScreenView, using WebUI.
 class TermsOfServiceScreenHandler : public BaseScreenHandler,
                                     public TermsOfServiceScreenView {
  public:
-  explicit TermsOfServiceScreenHandler(CoreOobeView* core_oobe_view);
-  ~TermsOfServiceScreenHandler() override;
+  using TView = TermsOfServiceScreenView;
 
-  // content::WebUIMessageHandler:
-  void RegisterMessages() override;
+  TermsOfServiceScreenHandler(JSCallsContainer* js_calls_container,
+                              CoreOobeView* core_oobe_view);
+  ~TermsOfServiceScreenHandler() override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
 
   // TermsOfServiceScreenView:
-  void SetDelegate(Delegate* screen) override;
+  void SetScreen(TermsOfServiceScreen* screen) override;
   void Show() override;
   void Hide() override;
   void SetDomain(const std::string& domain) override;
   void OnLoadError() override;
   void OnLoadSuccess(const std::string& terms_of_service) override;
+  bool AreTermsLoaded() override;
 
  private:
   // BaseScreenHandler:
@@ -60,15 +93,7 @@ class TermsOfServiceScreenHandler : public BaseScreenHandler,
   // nothing if the download is still in progress.
   void UpdateTermsOfServiceInUI();
 
-  // Called when the user declines the Terms of Service by clicking the "back"
-  // button.
-  void HandleBack();
-
-  // Called when the user accepts the Terms of Service by clicking the "accept
-  // and continue" button.
-  void HandleAccept();
-
-  TermsOfServiceScreenHandler::Delegate* screen_ = nullptr;
+  TermsOfServiceScreen* screen_ = nullptr;
 
   CoreOobeView* core_oobe_view_ = nullptr;
 

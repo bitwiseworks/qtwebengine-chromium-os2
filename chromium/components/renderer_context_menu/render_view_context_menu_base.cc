@@ -10,6 +10,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -17,9 +18,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/menu_item.h"
 #include "ppapi/buildflags/buildflags.h"
-#include "third_party/blink/public/web/web_context_menu_data.h"
 
-using blink::WebContextMenuData;
 using blink::WebString;
 using blink::WebURL;
 using content::BrowserContext;
@@ -204,6 +203,20 @@ void RenderViewContextMenuBase::AddMenuItem(int command_id,
   menu_model_.AddItem(command_id, title);
 }
 
+void RenderViewContextMenuBase::AddMenuItemWithIcon(
+    int command_id,
+    const base::string16& title,
+    const gfx::ImageSkia& image) {
+  menu_model_.AddItemWithIcon(command_id, title, image);
+}
+
+void RenderViewContextMenuBase::AddMenuItemWithIcon(
+    int command_id,
+    const base::string16& title,
+    const gfx::VectorIcon& icon) {
+  menu_model_.AddItemWithIcon(command_id, title, icon);
+}
+
 void RenderViewContextMenuBase::AddCheckItem(int command_id,
                                          const base::string16& title) {
   menu_model_.AddCheckItem(command_id, title);
@@ -217,6 +230,24 @@ void RenderViewContextMenuBase::AddSubMenu(int command_id,
                                        const base::string16& label,
                                        ui::MenuModel* model) {
   menu_model_.AddSubMenu(command_id, label, model);
+}
+
+void RenderViewContextMenuBase::AddSubMenuWithStringIdAndIcon(
+    int command_id,
+    int message_id,
+    ui::MenuModel* model,
+    const gfx::ImageSkia& image) {
+  menu_model_.AddSubMenuWithStringIdAndIcon(command_id, message_id, model,
+                                            image);
+}
+
+void RenderViewContextMenuBase::AddSubMenuWithStringIdAndIcon(
+    int command_id,
+    int message_id,
+    ui::MenuModel* model,
+    const gfx::VectorIcon& icon) {
+  menu_model_.AddSubMenuWithStringIdAndIcon(command_id, message_id, model,
+                                            icon);
 }
 
 void RenderViewContextMenuBase::UpdateMenuItem(int command_id,
@@ -337,6 +368,10 @@ void RenderViewContextMenuBase::ExecuteCommand(int id, int event_flags) {
   command_executed_ = true;
   RecordUsedItem(id);
 
+  // Notify all observers the command to be executed.
+  for (auto& observer : observers_)
+    observer.CommandWillBeExecuted(id);
+
   // If this command is is added by one of our observers, we dispatch
   // it to the observer.
   for (auto& observer : observers_) {
@@ -383,6 +418,9 @@ void RenderViewContextMenuBase::MenuClosed(ui::SimpleMenuModel* source) {
 
   source_web_contents_->SetShowingContextMenu(false);
   source_web_contents_->NotifyContextMenuClosed(params_.custom_context);
+  for (auto& observer : observers_) {
+    observer.OnMenuClosed();
+  }
 }
 
 RenderFrameHost* RenderViewContextMenuBase::GetRenderFrameHost() {

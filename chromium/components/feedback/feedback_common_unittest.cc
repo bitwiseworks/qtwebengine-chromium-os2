@@ -5,11 +5,11 @@
 #include "components/feedback/feedback_common.h"
 
 #include "base/bind.h"
+#include "components/feedback/feedback_report.h"
 #include "components/feedback/proto/common.pb.h"
 #include "components/feedback/proto/dom.pb.h"
 #include "components/feedback/proto/extension.pb.h"
 #include "components/feedback/proto/math.pb.h"
-#include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -100,4 +100,20 @@ TEST_F(FeedbackCommonTest, TestCompression) {
   EXPECT_EQ(1, report_.product_specific_binary_data_size());
   EXPECT_EQ(kLogsAttachmentName,
             report_.product_specific_binary_data(0).name());
+}
+
+TEST_F(FeedbackCommonTest, TestAllCrashIdsRemoval) {
+  feedback_->AddLog(feedback::FeedbackReport::kAllCrashReportIdsKey, kOne);
+  feedback_->set_user_email("nobody@example.com");
+  feedback_->PrepareReport(&report_);
+
+  EXPECT_EQ(0, report_.web_data().product_specific_data_size());
+}
+
+TEST_F(FeedbackCommonTest, TestAllCrashIdsRetention) {
+  feedback_->AddLog(feedback::FeedbackReport::kAllCrashReportIdsKey, kOne);
+  feedback_->set_user_email("nobody@google.com");
+  feedback_->PrepareReport(&report_);
+
+  EXPECT_EQ(1, report_.web_data().product_specific_data_size());
 }

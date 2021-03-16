@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/path_service.h"
@@ -18,11 +19,13 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/shell/browser/shell.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/manifest/manifest.h"
+#include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
 #include "third_party/blink/public/mojom/manifest/manifest_manager.mojom.h"
 
 namespace content {
@@ -38,7 +41,7 @@ class MockWebContentsDelegate : public WebContentsDelegate {
   }
 
   bool DidAddMessageToConsole(WebContents* source,
-                              int32_t level,
+                              blink::mojom::ConsoleMessageLevel log_level,
                               const base::string16& message,
                               int32_t line_no,
                               const base::string16& source_id) override;
@@ -56,7 +59,7 @@ class ManifestBrowserTest : public ContentBrowserTest,
   ManifestBrowserTest() : console_error_count_(0) {
     cors_embedded_test_server_.reset(new net::EmbeddedTestServer);
     cors_embedded_test_server_->ServeFilesFromSourceDirectory(
-        "content/test/data");
+        GetTestDataFilePath());
   }
 
   ~ManifestBrowserTest() override {}
@@ -97,13 +100,13 @@ class ManifestBrowserTest : public ContentBrowserTest,
     // The IPCs reporting console errors are not FIFO with the manifest IPCs.
     // Waiting for a round-trip channel-associated message will wait until any
     // already enqueued channel-associated IPCs arrive at the browser process.
-    blink::mojom::ManifestManagerAssociatedPtr ptr;
+    mojo::AssociatedRemote<blink::mojom::ManifestManager> remote;
     shell()
         ->web_contents()
         ->GetMainFrame()
         ->GetRemoteAssociatedInterfaces()
-        ->GetInterface(&ptr);
-    ptr.FlushForTesting();
+        ->GetInterface(&remote);
+    remote.FlushForTesting();
     return console_error_count_;
   }
 
@@ -126,7 +129,8 @@ class ManifestBrowserTest : public ContentBrowserTest,
   }
 
   // WebContentsObserver:
-  void DidUpdateFaviconURL(const std::vector<FaviconURL>& candidates) override {
+  void DidUpdateFaviconURL(
+      const std::vector<blink::mojom::FaviconURLPtr>& candidates) override {
     manifests_reported_when_favicon_url_updated_.push_back(
         reported_manifest_urls_.size());
   }
@@ -159,13 +163,14 @@ class ManifestBrowserTest : public ContentBrowserTest,
 // to know about |test_|.
 bool MockWebContentsDelegate::DidAddMessageToConsole(
     WebContents* source,
-    int32_t level,
+    blink::mojom::ConsoleMessageLevel log_level,
     const base::string16& message,
     int32_t line_no,
     const base::string16& source_id) {
   DCHECK(source == web_contents_);
 
-  if (level == logging::LOG_ERROR || level == logging::LOG_WARNING)
+  if (log_level == blink::mojom::ConsoleMessageLevel::kError ||
+      log_level == blink::mojom::ConsoleMessageLevel::kWarning)
     test_->OnReceivedConsoleError();
   return false;
 }
@@ -203,7 +208,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, 404Manifest) {
 }
 
 // If a page has an empty manifest, requesting the manifest should return the
-// empty manifest. The manifest URL should be non-empty.
+// manifest with default values. The manifest URL should be non-empty.
 IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, EmptyManifest) {
   GURL test_url =
       embedded_test_server()->GetURL("/manifest/empty-manifest.html");
@@ -211,8 +216,9 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, EmptyManifest) {
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
   GetManifestAndWait();
-  EXPECT_TRUE(manifest().IsEmpty());
+  EXPECT_FALSE(manifest().IsEmpty());
   EXPECT_FALSE(manifest_url().is_empty());
+  ASSERT_EQ(test_url.GetWithoutFilename(), manifest().scope);
   EXPECT_EQ(0, GetConsoleErrorCount());
   ASSERT_EQ(1u, reported_manifest_urls().size());
   EXPECT_EQ(manifest_url(), reported_manifest_urls()[0]);
@@ -293,7 +299,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, DynamicManifest) {
         ExecuteScript(shell(), "setManifestTo('" + manifest_link + "')"));
 
     GetManifestAndWait();
-    EXPECT_TRUE(manifest().IsEmpty());
+    EXPECT_FALSE(manifest().IsEmpty());
     EXPECT_FALSE(manifest_url().is_empty());
     expected_manifest_urls.push_back(manifest_url());
     EXPECT_EQ(expected_manifest_urls, reported_manifest_urls());
@@ -387,7 +393,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, CorsManifestWithAcessControls) {
 IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, MixedContentManifest) {
   std::unique_ptr<net::EmbeddedTestServer> https_server(
       new net::EmbeddedTestServer(net::EmbeddedTestServer::TYPE_HTTPS));
-  https_server->ServeFilesFromSourceDirectory("content/test/data");
+  https_server->ServeFilesFromSourceDirectory(GetTestDataFilePath());
 
   ASSERT_TRUE(https_server->Start());
 
@@ -420,9 +426,10 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, ParsingErrorsManifest) {
   ASSERT_TRUE(NavigateToURL(shell(), test_url));
 
   GetManifestAndWait();
-  EXPECT_TRUE(manifest().IsEmpty());
+  EXPECT_FALSE(manifest().IsEmpty());
   EXPECT_FALSE(manifest_url().is_empty());
-  EXPECT_EQ(6, GetConsoleErrorCount());
+  ASSERT_EQ(test_url.GetWithoutFilename(), manifest().scope);
+  EXPECT_EQ(7, GetConsoleErrorCount());
   ASSERT_EQ(1u, reported_manifest_urls().size());
   EXPECT_EQ(manifest_url(), reported_manifest_urls()[0]);
   ASSERT_EQ(1u, manifests_reported_when_favicon_url_updated().size());
@@ -572,7 +579,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, UseCredentialsSendCookies) {
   std::unique_ptr<net::EmbeddedTestServer> custom_embedded_test_server(
       new net::EmbeddedTestServer());
   custom_embedded_test_server->RegisterRequestHandler(
-      base::Bind(&CustomHandleRequestForCookies));
+      base::BindRepeating(&CustomHandleRequestForCookies));
 
   ASSERT_TRUE(custom_embedded_test_server->Start());
 
@@ -632,7 +639,7 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, NoUseCredentialsNoCookies) {
   std::unique_ptr<net::EmbeddedTestServer> custom_embedded_test_server(
       new net::EmbeddedTestServer());
   custom_embedded_test_server->RegisterRequestHandler(
-      base::Bind(&CustomHandleRequestForNoCookies));
+      base::BindRepeating(&CustomHandleRequestForNoCookies));
 
   ASSERT_TRUE(custom_embedded_test_server->Start());
 

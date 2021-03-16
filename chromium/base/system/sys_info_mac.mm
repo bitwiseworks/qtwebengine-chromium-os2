@@ -17,7 +17,6 @@
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_mach_port.h"
-#import "base/mac/sdk_forward_declarations.h"
 #include "base/process/process_metrics.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
@@ -58,15 +57,11 @@ std::string SysInfo::OperatingSystemVersion() {
 void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
                                             int32_t* minor_version,
                                             int32_t* bugfix_version) {
-  if (@available(macOS 10.10, *)) {
-    NSOperatingSystemVersion version =
-        [[NSProcessInfo processInfo] operatingSystemVersion];
-    *major_version = version.majorVersion;
-    *minor_version = version.minorVersion;
-    *bugfix_version = version.patchVersion;
-  } else {
-    NOTREACHED();
-  }
+  NSOperatingSystemVersion version =
+      [[NSProcessInfo processInfo] operatingSystemVersion];
+  *major_version = version.majorVersion;
+  *minor_version = version.minorVersion;
+  *bugfix_version = version.patchVersion;
 }
 
 // static

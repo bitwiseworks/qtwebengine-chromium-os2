@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -112,7 +112,7 @@ egl::Error DXGISwapChainWindowSurfaceWGL::initialize(const egl::Display *display
     return createSwapChain();
 }
 
-egl::Error DXGISwapChainWindowSurfaceWGL::makeCurrent()
+egl::Error DXGISwapChainWindowSurfaceWGL::makeCurrent(const gl::Context *context)
 {
     return egl::NoError();
 }
@@ -296,7 +296,7 @@ FramebufferImpl *DXGISwapChainWindowSurfaceWGL::createDefaultFramebuffer(
         }
     }
 
-    return new FramebufferGL(data, framebufferID, true);
+    return new FramebufferGL(data, framebufferID, true, false);
 }
 
 HDC DXGISwapChainWindowSurfaceWGL::getDC() const
@@ -429,7 +429,7 @@ egl::Error DXGISwapChainWindowSurfaceWGL::createSwapChain()
     {
         ASSERT(dxgiFactory2 != nullptr);
 
-        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {0};
+        DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
         swapChainDesc.BufferCount           = 1;
         swapChainDesc.Format                = mSwapChainFormat;
         swapChainDesc.Width                 = static_cast<UINT>(mWidth);

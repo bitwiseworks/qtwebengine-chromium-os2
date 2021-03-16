@@ -6,10 +6,11 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/generic_sensor/platform_sensor_provider.h"
 #include "services/device/generic_sensor/sensor_impl.h"
 #include "services/device/public/cpp/device_features.h"
@@ -36,24 +37,18 @@ bool IsExtraSensorClass(mojom::SensorType type) {
 
 }  // namespace
 
-// static
-void SensorProviderImpl::Create(
-    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
-    mojom::SensorProviderRequest request) {
-  PlatformSensorProvider* provider = PlatformSensorProvider::GetInstance();
-  if (provider) {
-    provider->SetFileTaskRunner(file_task_runner);
-    mojo::MakeStrongBinding(base::WrapUnique(new SensorProviderImpl(provider)),
-                            std::move(request));
-  }
-}
-
-SensorProviderImpl::SensorProviderImpl(PlatformSensorProvider* provider)
-    : provider_(provider), weak_ptr_factory_(this) {
+SensorProviderImpl::SensorProviderImpl(
+    std::unique_ptr<PlatformSensorProvider> provider)
+    : provider_(std::move(provider)) {
   DCHECK(provider_);
 }
 
 SensorProviderImpl::~SensorProviderImpl() {}
+
+void SensorProviderImpl::Bind(
+    mojo::PendingReceiver<mojom::SensorProvider> receiver) {
+  receivers_.Add(this, std::move(receiver));
+}
 
 void SensorProviderImpl::GetSensor(mojom::SensorType type,
                                    GetSensorCallback callback) {
@@ -72,10 +67,10 @@ void SensorProviderImpl::GetSensor(mojom::SensorType type,
 
   scoped_refptr<PlatformSensor> sensor = provider_->GetSensor(type);
   if (!sensor) {
-    PlatformSensorProviderBase::CreateSensorCallback cb = base::Bind(
-        &SensorProviderImpl::SensorCreated, weak_ptr_factory_.GetWeakPtr(),
-        type, base::Passed(&cloned_handle), base::Passed(&callback));
-    provider_->CreateSensor(type, cb);
+    provider_->CreateSensor(
+        type, base::BindOnce(&SensorProviderImpl::SensorCreated,
+                             weak_ptr_factory_.GetWeakPtr(), type,
+                             std::move(cloned_handle), std::move(callback)));
     return;
   }
 
@@ -97,12 +92,12 @@ void SensorProviderImpl::SensorCreated(
   auto init_params = mojom::SensorInitParams::New();
 
   auto sensor_impl = std::make_unique<SensorImpl>(sensor);
-  init_params->client_request = sensor_impl->GetClient();
+  init_params->client_receiver = sensor_impl->GetClient();
 
-  mojom::SensorPtrInfo sensor_ptr_info;
-  mojo::MakeStrongBinding(std::move(sensor_impl),
-                          mojo::MakeRequest(&sensor_ptr_info));
-  init_params->sensor = std::move(sensor_ptr_info);
+  mojo::PendingRemote<mojom::Sensor> pending_sensor;
+  sensor_receivers_.Add(std::move(sensor_impl),
+                        pending_sensor.InitWithNewPipeAndPassReceiver());
+  init_params->sensor = std::move(pending_sensor);
 
   init_params->memory = std::move(cloned_handle);
   init_params->buffer_offset = SensorReadingSharedBuffer::GetOffset(type);

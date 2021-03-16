@@ -7,8 +7,9 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -20,7 +21,7 @@ namespace {
 
 class MockAutofillClient : public TestAutofillClient {
  public:
-  MOCK_METHOD0(HideAutofillPopup, void());
+  MOCK_METHOD1(HideAutofillPopup, void(PopupHidingReason));
 };
 
 // Just a stub AutofillDriver implementation which announces its construction
@@ -92,14 +93,15 @@ class AutofillDriverFactoryTest : public testing::Test {
     return std::make_unique<CountingAutofillDriver>(instance_counter_.val());
   }
 
-  base::Callback<std::unique_ptr<AutofillDriver>()> CreateDriverCallback() {
-    return base::Bind(&AutofillDriverFactoryTest::CreateDriver,
-                      base::Unretained(this));
+  base::RepeatingCallback<std::unique_ptr<AutofillDriver>()>
+  CreateDriverCallback() {
+    return base::BindRepeating(&AutofillDriverFactoryTest::CreateDriver,
+                               base::Unretained(this));
   }
 
  protected:
   // For TestAutofillDriver.
-  base::test::ScopedTaskEnvironment task_environment_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 
   MockAutofillClient client_;
 
@@ -167,12 +169,12 @@ TEST_F(AutofillDriverFactoryTest, DeleteForKey) {
 }
 
 TEST_F(AutofillDriverFactoryTest, NavigationFinished) {
-  EXPECT_CALL(client_, HideAutofillPopup());
+  EXPECT_CALL(client_, HideAutofillPopup(PopupHidingReason::kNavigation));
   factory_.NavigationFinished();
 }
 
 TEST_F(AutofillDriverFactoryTest, TabHidden) {
-  EXPECT_CALL(client_, HideAutofillPopup());
+  EXPECT_CALL(client_, HideAutofillPopup(PopupHidingReason::kTabGone));
   factory_.TabHidden();
 }
 

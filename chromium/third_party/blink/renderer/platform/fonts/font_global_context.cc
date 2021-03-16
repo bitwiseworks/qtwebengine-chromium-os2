@@ -6,6 +6,7 @@
 
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_unique_name_lookup.h"
+#include "third_party/blink/renderer/platform/fonts/shaping/harfbuzz_font_cache.h"
 #include "third_party/blink/renderer/platform/wtf/thread_specific.h"
 
 namespace blink {
@@ -19,7 +20,9 @@ FontGlobalContext* FontGlobalContext::Get(CreateIfNeeded create_if_needed) {
   return *font_persistent;
 }
 
-FontGlobalContext::FontGlobalContext() : harfbuzz_font_funcs_(nullptr) {}
+FontGlobalContext::FontGlobalContext()
+    : harfbuzz_font_funcs_skia_advances_(nullptr),
+      harfbuzz_font_funcs_harfbuzz_advances_(nullptr) {}
 
 FontGlobalContext::~FontGlobalContext() = default;
 
@@ -31,16 +34,20 @@ FontUniqueNameLookup* FontGlobalContext::GetFontUniqueNameLookup() {
   return Get()->font_unique_name_lookup_.get();
 }
 
+HarfBuzzFontCache* FontGlobalContext::GetHarfBuzzFontCache() {
+  std::unique_ptr<HarfBuzzFontCache>& global_context_harfbuzz_font_cache =
+      Get()->harfbuzz_font_cache_;
+  if (!global_context_harfbuzz_font_cache) {
+    global_context_harfbuzz_font_cache = std::make_unique<HarfBuzzFontCache>();
+  }
+  return global_context_harfbuzz_font_cache.get();
+}
+
 void FontGlobalContext::ClearMemory() {
   if (!Get(kDoNotCreate))
     return;
 
   GetFontCache().Invalidate();
-}
-
-void FontGlobalContext::ClearForTesting() {
-  FontGlobalContext* ctx = Get();
-  ctx->font_cache_.Invalidate();
 }
 
 }  // namespace blink

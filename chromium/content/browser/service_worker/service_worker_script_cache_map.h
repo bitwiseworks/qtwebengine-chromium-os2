@@ -15,8 +15,8 @@
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_database.h"
 #include "content/common/content_export.h"
-#include "net/base/completion_callback.h"
-#include "net/url_request/url_request_status.h"
+#include "net/base/completion_once_callback.h"
+#include "net/base/net_errors.h"
 
 class GURL;
 
@@ -42,36 +42,36 @@ class CONTENT_EXPORT ServiceWorkerScriptCacheMap {
 
   // Used to retrieve the results of the initial run of a new version.
   void GetResources(
-      std::vector<ServiceWorkerDatabase::ResourceRecord>* resources);
+      std::vector<storage::mojom::ServiceWorkerResourceRecordPtr>* resources);
 
   // Used when loading an existing version.
   void SetResources(
-     const std::vector<ServiceWorkerDatabase::ResourceRecord>& resources);
+      const std::vector<storage::mojom::ServiceWorkerResourceRecordPtr>&
+          resources);
 
   // Writes the metadata of the existing script.
   void WriteMetadata(const GURL& url,
-                     const std::vector<uint8_t>& data,
-                     const net::CompletionCallback& callback);
+                     base::span<const uint8_t> data,
+                     net::CompletionOnceCallback callback);
   // Clears the metadata of the existing script.
-  void ClearMetadata(const GURL& url, const net::CompletionCallback& callback);
+  void ClearMetadata(const GURL& url, net::CompletionOnceCallback callback);
 
   size_t size() const { return resource_map_.size(); }
 
-  const net::URLRequestStatus& main_script_status() const {
-    return main_script_status_;
-  }
+  // net::Error code from trying to load the main script resource.
+  int main_script_net_error() const { return main_script_net_error_; }
 
   const std::string& main_script_status_message() const {
     return main_script_status_message_;
   }
 
  private:
-  typedef std::map<GURL, ServiceWorkerDatabase::ResourceRecord> ResourceMap;
+  typedef std::map<GURL, storage::mojom::ServiceWorkerResourceRecordPtr>
+      ResourceMap;
 
   // The version objects owns its script cache and provides a rawptr to it.
   friend class ServiceWorkerVersion;
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerVersionBrowserTest,
-                           ReadResourceFailure_WaitingWorker);
+  friend class ServiceWorkerVersionBrowserTest;
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerReadFromCacheJobTest, ResourceNotFound);
 
   ServiceWorkerScriptCacheMap(
@@ -81,16 +81,16 @@ class CONTENT_EXPORT ServiceWorkerScriptCacheMap {
 
   void OnMetadataWritten(
       std::unique_ptr<ServiceWorkerResponseMetadataWriter> writer,
-      const net::CompletionCallback& callback,
+      net::CompletionOnceCallback callback,
       int result);
 
   ServiceWorkerVersion* owner_;
   base::WeakPtr<ServiceWorkerContextCore> context_;
   ResourceMap resource_map_;
-  net::URLRequestStatus main_script_status_;
+  int main_script_net_error_ = net::OK;
   std::string main_script_status_message_;
 
-  base::WeakPtrFactory<ServiceWorkerScriptCacheMap> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerScriptCacheMap> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerScriptCacheMap);
 };

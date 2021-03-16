@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/modules/sensor/sensor.h"
 
+#include <utility>
+
 #include "services/device/public/cpp/generic_sensor/sensor_traits.h"
 #include "services/device/public/mojom/sensor.mojom-blink.h"
 #include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
@@ -15,6 +17,7 @@
 #include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_error_event.h"
 #include "third_party/blink/renderer/modules/sensor/sensor_provider_proxy.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
 
 namespace blink {
@@ -22,10 +25,11 @@ namespace blink {
 namespace {
 const double kWaitingIntervalThreshold = 0.01;
 
-bool AreFeaturesEnabled(Document* document,
-                        const Vector<mojom::FeaturePolicyFeature>& features) {
+bool AreFeaturesEnabled(
+    Document* document,
+    const Vector<mojom::blink::FeaturePolicyFeature>& features) {
   return std::all_of(features.begin(), features.end(),
-                     [document](mojom::FeaturePolicyFeature feature) {
+                     [document](mojom::blink::FeaturePolicyFeature feature) {
                        return document->IsFeatureEnabled(
                            feature, ReportOptions::kReportOnFailure);
                      });
@@ -37,8 +41,8 @@ Sensor::Sensor(ExecutionContext* execution_context,
                const SensorOptions* sensor_options,
                ExceptionState& exception_state,
                device::mojom::blink::SensorType type,
-               const Vector<mojom::FeaturePolicyFeature>& features)
-    : ContextLifecycleObserver(execution_context),
+               const Vector<mojom::blink::FeaturePolicyFeature>& features)
+    : ExecutionContextLifecycleObserver(execution_context),
       frequency_(0.0),
       type_(type),
       state_(SensorState::kIdle),
@@ -46,7 +50,7 @@ Sensor::Sensor(ExecutionContext* execution_context,
   // [SecureContext] in idl.
   DCHECK(execution_context->IsSecureContext());
   DCHECK(!features.IsEmpty());
-  Document* document = To<Document>(execution_context);
+  Document* document = Document::From(execution_context);
 
   if (!AreFeaturesEnabled(document, features)) {
     exception_state.ThrowSecurityError(
@@ -64,8 +68,9 @@ Sensor::Sensor(ExecutionContext* execution_context,
       String message = String::Format(
           "Maximum allowed frequency value for this sensor type is %.0f Hz.",
           max_allowed_frequency);
-      ConsoleMessage* console_message = ConsoleMessage::Create(
-          kJSMessageSource, kInfoMessageLevel, std::move(message));
+      auto* console_message = MakeGarbageCollected<ConsoleMessage>(
+          mojom::ConsoleMessageSource::kJavaScript,
+          mojom::ConsoleMessageLevel::kInfo, std::move(message));
       execution_context->AddConsoleMessage(console_message);
     }
   }
@@ -75,7 +80,7 @@ Sensor::Sensor(ExecutionContext* execution_context,
                const SpatialSensorOptions* options,
                ExceptionState& exception_state,
                device::mojom::blink::SensorType sensor_type,
-               const Vector<mojom::FeaturePolicyFeature>& features)
+               const Vector<mojom::blink::FeaturePolicyFeature>& features)
     : Sensor(execution_context,
              static_cast<const SensorOptions*>(options),
              exception_state,
@@ -112,23 +117,20 @@ bool Sensor::hasReading() const {
   return sensor_proxy_->GetReading().timestamp() != 0.0;
 }
 
-DOMHighResTimeStamp Sensor::timestamp(ScriptState* script_state,
-                                      bool& is_null) const {
+base::Optional<DOMHighResTimeStamp> Sensor::timestamp(
+    ScriptState* script_state) const {
   if (!hasReading()) {
-    is_null = true;
-    return 0.0;
+    return base::nullopt;
   }
 
   LocalDOMWindow* window = LocalDOMWindow::From(script_state);
   if (!window) {
-    is_null = true;
-    return 0.0;
+    return base::nullopt;
   }
 
   WindowPerformance* performance = DOMWindowPerformance::performance(*window);
   DCHECK(performance);
   DCHECK(sensor_proxy_);
-  is_null = false;
 
   if (WebTestSupport::IsRunningWebTest()) {
     // In web tests performance.now() * 0.001 is passed to the shared buffer.
@@ -136,13 +138,21 @@ DOMHighResTimeStamp Sensor::timestamp(ScriptState* script_state,
   }
 
   return performance->MonotonicTimeToDOMHighResTimeStamp(
-      TimeTicksFromSeconds(sensor_proxy_->GetReading().timestamp()));
+      base::TimeTicks() +
+      base::TimeDelta::FromSecondsD(sensor_proxy_->GetReading().timestamp()));
 }
 
-void Sensor::Trace(blink::Visitor* visitor) {
+DOMHighResTimeStamp Sensor::timestamp(ScriptState* script_state,
+                                      bool& is_null) const {
+  base::Optional<DOMHighResTimeStamp> result = timestamp(script_state);
+  is_null = !result;
+  return result.value_or(0);
+}
+
+void Sensor::Trace(Visitor* visitor) {
   visitor->Trace(sensor_proxy_);
   ActiveScriptWrappable::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextLifecycleObserver::Trace(visitor);
   EventTargetWithInlineData::Trace(visitor);
 }
 
@@ -174,7 +184,7 @@ void Sensor::InitSensorProxyIfNeeded() {
   if (sensor_proxy_)
     return;
 
-  Document* document = To<Document>(GetExecutionContext());
+  Document* document = Document::From(GetExecutionContext());
   if (!document || !document->GetFrame())
     return;
 
@@ -185,7 +195,7 @@ void Sensor::InitSensorProxyIfNeeded() {
     sensor_proxy_ = provider->CreateSensorProxy(type_, document->GetPage());
 }
 
-void Sensor::ContextDestroyed(ExecutionContext*) {
+void Sensor::ContextDestroyed() {
   if (!IsIdleOrErrored())
     Deactivate();
 
@@ -231,7 +241,7 @@ void Sensor::OnSensorReadingChanged() {
     pending_reading_notification_ = PostDelayedCancellableTask(
         *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
         std::move(sensor_reading_changed),
-        WTF::TimeDelta::FromSecondsD(waitingTime));
+        base::TimeDelta::FromSecondsD(waitingTime));
   }
 }
 
@@ -328,8 +338,8 @@ void Sensor::HandleError(DOMExceptionCode code,
 
   Deactivate();
 
-  auto* error =
-      DOMException::Create(code, sanitized_message, unsanitized_message);
+  auto* error = MakeGarbageCollected<DOMException>(code, sanitized_message,
+                                                   unsanitized_message);
   pending_error_notification_ = PostCancellableTask(
       *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
       WTF::Bind(&Sensor::NotifyError, WrapWeakPersistent(this),
@@ -347,12 +357,13 @@ void Sensor::NotifyActivated() {
   state_ = SensorState::kActivated;
 
   if (hasReading()) {
-    // If reading has already arrived, send initial 'reading' notification
-    // right away.
+    // If reading has already arrived, process the reading values (a subclass
+    // may do some filtering, for example) and then send an initial "reading"
+    // event right away.
     DCHECK(!pending_reading_notification_.IsActive());
     pending_reading_notification_ = PostCancellableTask(
         *GetExecutionContext()->GetTaskRunner(TaskType::kSensor), FROM_HERE,
-        WTF::Bind(&Sensor::NotifyReading, WrapWeakPersistent(this)));
+        WTF::Bind(&Sensor::OnSensorReadingChanged, WrapWeakPersistent(this)));
   }
 
   DispatchEvent(*Event::Create(event_type_names::kActivate));

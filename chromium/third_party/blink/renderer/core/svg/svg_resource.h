@@ -59,19 +59,18 @@ class TreeScope;
 //
 // <event> -> SVG...Element -> SVGResource -> SVGResourceClient(0..N)
 //
-class SVGResource : public GarbageCollectedFinalized<SVGResource> {
+class SVGResource : public GarbageCollected<SVGResource> {
  public:
   virtual ~SVGResource();
 
   virtual void Load(const Document&) {}
+  virtual void LoadWithoutCSP(const Document&) {}
 
   Element* Target() const { return target_; }
   LayoutSVGResourceContainer* ResourceContainer() const;
 
   void AddClient(SVGResourceClient&);
   void RemoveClient(SVGResourceClient&);
-
-  bool HasClients() const { return !clients_.IsEmpty(); }
 
   virtual void Trace(Visitor*);
 
@@ -95,6 +94,9 @@ class LocalSVGResource final : public SVGResource {
   void Unregister();
 
   void NotifyContentChanged(InvalidationModeMask);
+  void NotifyFilterPrimitiveChanged(
+      SVGFilterPrimitiveStandardAttributes& primitive,
+      const QualifiedName& attribute);
 
   void NotifyResourceAttached(LayoutSVGResourceContainer&);
   void NotifyResourceDestroyed(LayoutSVGResourceContainer&);
@@ -116,6 +118,7 @@ class ExternalSVGResource final : public SVGResource, private ResourceClient {
   explicit ExternalSVGResource(const KURL&);
 
   void Load(const Document&) override;
+  void LoadWithoutCSP(const Document&) override;
 
   void Trace(Visitor*) override;
 

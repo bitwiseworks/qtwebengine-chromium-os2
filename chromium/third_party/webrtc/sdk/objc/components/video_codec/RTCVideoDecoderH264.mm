@@ -96,11 +96,6 @@ void decompressionOutputCallback(void *decoderRef,
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
-- (NSInteger)startDecodeWithSettings:(RTCVideoEncoderSettings *)settings
-                       numberOfCores:(int)numberOfCores {
-  return WEBRTC_VIDEO_CODEC_OK;
-}
-
 - (NSInteger)decode:(RTCEncodedImage *)inputImage
         missingFrames:(BOOL)missingFrames
     codecSpecificInfo:(nullable id<RTCCodecSpecificInfo>)info
@@ -152,8 +147,11 @@ void decompressionOutputCallback(void *decoderRef,
       _decompressionSession, sampleBuffer, decodeFlags, frameDecodeParams.release(), nullptr);
 #if defined(WEBRTC_IOS)
   // Re-initialize the decoder if we have an invalid session while the app is
-  // active and retry the decode request.
-  if (status == kVTInvalidSessionErr && [self resetDecompressionSession] == WEBRTC_VIDEO_CODEC_OK) {
+  // active or decoder malfunctions and retry the decode request.
+  if ((status == kVTInvalidSessionErr || status == kVTVideoDecoderMalfunctionErr) &&
+      [self resetDecompressionSession] == WEBRTC_VIDEO_CODEC_OK) {
+    RTC_LOG(LS_INFO) << "Failed to decode frame with code: " << status
+                     << " retrying decode after decompression session reset";
     frameDecodeParams.reset(new RTCFrameDecodeParams(_callback, inputImage.timeStamp));
     status = VTDecompressionSessionDecodeFrame(
         _decompressionSession, sampleBuffer, decodeFlags, frameDecodeParams.release(), nullptr);

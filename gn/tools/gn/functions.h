@@ -147,6 +147,22 @@ Value RunExecutable(Scope* scope,
                     BlockNode* block,
                     Err* err);
 
+extern const char kFilterExclude[];
+extern const char kFilterExclude_HelpShort[];
+extern const char kFilterExclude_Help[];
+Value RunFilterExclude(Scope* scope,
+                       const FunctionCallNode* function,
+                       const std::vector<Value>& args,
+                       Err* err);
+
+extern const char kFilterInclude[];
+extern const char kFilterInclude_HelpShort[];
+extern const char kFilterInclude_Help[];
+Value RunFilterInclude(Scope* scope,
+                       const FunctionCallNode* function,
+                       const std::vector<Value>& args,
+                       Err* err);
+
 extern const char kForEach[];
 extern const char kForEach_HelpShort[];
 extern const char kForEach_Help[];
@@ -277,6 +293,15 @@ Value RunRebasePath(Scope* scope,
                     const FunctionCallNode* function,
                     const std::vector<Value>& args,
                     Err* err);
+
+extern const char kRustLibrary[];
+extern const char kRustLibrary_HelpShort[];
+extern const char kRustLibrary_Help[];
+Value RunRustLibrary(Scope* scope,
+                     const FunctionCallNode* function,
+                     const std::vector<Value>& args,
+                     BlockNode* block,
+                     Err* err);
 
 extern const char kSetDefaults[];
 extern const char kSetDefaults_HelpShort[];

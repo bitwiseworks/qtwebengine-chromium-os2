@@ -5,29 +5,30 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_KEYBOARD_KEYBOARD_LAYOUT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_KEYBOARD_KEYBOARD_LAYOUT_H_
 
-#include "third_party/blink/public/platform/modules/keyboard_lock/keyboard_lock.mojom-blink.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/blink/public/mojom/keyboard_lock/keyboard_lock.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/keyboard/keyboard_layout_map.h"
 
 namespace blink {
 
+class ExceptionState;
 class ScriptPromiseResolver;
 
-class KeyboardLayout final : public GarbageCollectedFinalized<KeyboardLayout>,
-                             public ContextLifecycleObserver {
+class KeyboardLayout final : public GarbageCollected<KeyboardLayout>,
+                             public ExecutionContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(KeyboardLayout);
-  WTF_MAKE_NONCOPYABLE(KeyboardLayout);
 
  public:
   explicit KeyboardLayout(ExecutionContext*);
   virtual ~KeyboardLayout() = default;
 
-  ScriptPromise GetKeyboardLayoutMap(ScriptState*);
+  ScriptPromise GetKeyboardLayoutMap(ScriptState*, ExceptionState&);
 
-  // ContextLifecycleObserver override.
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   // Returns true if the local frame is attached to the renderer.
@@ -44,7 +45,9 @@ class KeyboardLayout final : public GarbageCollectedFinalized<KeyboardLayout>,
 
   Member<ScriptPromiseResolver> script_promise_resolver_;
 
-  mojom::blink::KeyboardLockServicePtr service_;
+  mojo::Remote<mojom::blink::KeyboardLockService> service_;
+
+  DISALLOW_COPY_AND_ASSIGN(KeyboardLayout);
 };
 
 }  // namespace blink

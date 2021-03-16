@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -15,7 +16,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -183,6 +184,15 @@ class DownloadFileTest : public testing::Test {
 
   void ClearCallback() { sink_callback_.Reset(); }
 
+  void OnStreamActive(int64_t offset) {
+    DCHECK(download_file_->source_streams_.find(offset) !=
+           download_file_->source_streams_.end())
+        << "Can't find stream at offset : " << offset;
+    DownloadFileImpl::SourceStream* stream =
+        download_file_->source_streams_[offset].get();
+    download_file_->StreamActive(stream, MOJO_RESULT_OK);
+  }
+
   void SetInterruptReasonCallback(const base::Closure& closure,
                                   DownloadInterruptReason* reason_p,
                                   DownloadInterruptReason reason,
@@ -191,15 +201,22 @@ class DownloadFileTest : public testing::Test {
     closure.Run();
   }
 
-  bool CreateDownloadFile(int offset, bool calculate_hash) {
-    return CreateDownloadFile(offset, 0, calculate_hash,
-                              DownloadItem::ReceivedSlices());
+  bool CreateDownloadFile(bool calculate_hash) {
+    return CreateDownloadFile(0, calculate_hash, DownloadItem::ReceivedSlices(),
+                              -1);
   }
 
-  bool CreateDownloadFile(int offset,
-                          int length,
+  bool CreateDownloadFile(int length,
                           bool calculate_hash,
                           const DownloadItem::ReceivedSlices& received_slices) {
+    return CreateDownloadFile(length, calculate_hash,
+                              DownloadItem::ReceivedSlices(), -1);
+  }
+
+  bool CreateDownloadFile(int length,
+                          bool calculate_hash,
+                          const DownloadItem::ReceivedSlices& received_slices,
+                          int file_offset) {
     // There can be only one.
     DCHECK(!download_file_);
 
@@ -212,8 +229,22 @@ class DownloadFileTest : public testing::Test {
         .RetiresOnSaturation();
 
     std::unique_ptr<DownloadSaveInfo> save_info(new DownloadSaveInfo());
-    save_info->offset = offset;
-    save_info->length = length;
+    // Fill the file by repeatedly copying |kTestData1| if |file_offset| is
+    // positive.
+    if (file_offset > 0) {
+      base::CreateTemporaryFileInDir(download_dir_.GetPath(),
+                                     &save_info->file_path);
+      int len = file_offset;
+      int data_len = strlen(kTestData1);
+      while (len > 0) {
+        int bytes_to_write = len > data_len ? data_len : len;
+        base::AppendToFile(save_info->file_path, kTestData1, bytes_to_write);
+        len -= bytes_to_write;
+      }
+    }
+
+    save_info->offset = 0;
+    save_info->file_offset = file_offset;
 
     download_file_.reset(new TestDownloadFileImpl(
         std::move(save_info), download_dir_.GetPath(),
@@ -227,6 +258,8 @@ class DownloadFileTest : public testing::Test {
     base::WeakPtrFactory<DownloadFileTest> weak_ptr_factory(this);
     DownloadInterruptReason result = DOWNLOAD_INTERRUPT_REASON_NONE;
     base::RunLoop loop_runner;
+    download_file_->SetTaskRunnerForTesting(
+        base::SequencedTaskRunnerHandle::Get());
     download_file_->Initialize(
         base::BindRepeating(&DownloadFileTest::SetInterruptReasonCallback,
                             weak_ptr_factory.GetWeakPtr(),
@@ -364,16 +397,17 @@ class DownloadFileTest : public testing::Test {
   void InvokeRenameMethod(
       DownloadFileRenameMethodType method,
       const base::FilePath& full_path,
-      const DownloadFile::RenameCompletionCallback& completion_callback) {
+      DownloadFile::RenameCompletionCallback completion_callback) {
     switch (method) {
       case RENAME_AND_UNIQUIFY:
-        download_file_->RenameAndUniquify(full_path, completion_callback);
+        download_file_->RenameAndUniquify(full_path,
+                                          std::move(completion_callback));
         break;
 
       case RENAME_AND_ANNOTATE:
         download_file_->RenameAndAnnotate(
             full_path, "12345678-ABCD-1234-DCBA-123456789ABC", GURL(), GURL(),
-            completion_callback);
+            mojo::NullRemote(), std::move(completion_callback));
         break;
     }
   }
@@ -385,10 +419,10 @@ class DownloadFileTest : public testing::Test {
     DownloadInterruptReason result_reason(DOWNLOAD_INTERRUPT_REASON_NONE);
     base::FilePath result_path;
     base::RunLoop loop_runner;
-    DownloadFile::RenameCompletionCallback completion_callback =
-        base::Bind(&DownloadFileTest::SetRenameResult, base::Unretained(this),
-                   loop_runner.QuitClosure(), &result_reason, result_path_p);
-    InvokeRenameMethod(method, full_path, completion_callback);
+    DownloadFile::RenameCompletionCallback completion_callback = base::BindOnce(
+        &DownloadFileTest::SetRenameResult, base::Unretained(this),
+        loop_runner.QuitClosure(), &result_reason, result_path_p);
+    InvokeRenameMethod(method, full_path, std::move(completion_callback));
     loop_runner.Run();
     return result_reason;
   }
@@ -407,7 +441,7 @@ class DownloadFileTest : public testing::Test {
     // 1. RegisterCallback: Must called twice. One to set the callback, the
     // other to release the stream.
     // 2. Read: If filled with N buffer, called (N+1) times, where the last Read
-    // call doesn't read any data but returns STRAM_COMPLETE.
+    // call doesn't read any data but returns STREAM_COMPLETE.
     // The stream may terminate in the middle and less Read calls are expected.
     // 3. GetStatus: Only called if the stream is completed and last Read call
     // returns STREAM_COMPLETE.
@@ -461,6 +495,9 @@ class DownloadFileTest : public testing::Test {
   int64_t bytes_;
   int64_t bytes_per_sec_;
 
+  // Keep track of what data should be saved to the disk file.
+  std::string expected_data_;
+
  private:
   void SetRenameResult(const base::Closure& closure,
                        DownloadInterruptReason* reason_p,
@@ -474,10 +511,7 @@ class DownloadFileTest : public testing::Test {
     closure.Run();
   }
 
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-
-  // Keep track of what data should be saved to the disk file.
-  std::string expected_data_;
+  base::test::TaskEnvironment task_environment_;
 };
 
 // DownloadFile::RenameAndAnnotate and DownloadFile::RenameAndUniquify have a
@@ -502,10 +536,10 @@ class DownloadFileTestWithRename
 // DownloadFileTestWithRename.<FooTest> will be instantiated once with
 // RenameAndAnnotate as the value parameter and once with RenameAndUniquify as
 // the value parameter.
-INSTANTIATE_TEST_CASE_P(DownloadFile,
-                        DownloadFileTestWithRename,
-                        ::testing::Values(RENAME_AND_ANNOTATE,
-                                          RENAME_AND_UNIQUIFY));
+INSTANTIATE_TEST_SUITE_P(DownloadFile,
+                         DownloadFileTestWithRename,
+                         ::testing::Values(RENAME_AND_ANNOTATE,
+                                           RENAME_AND_UNIQUIFY));
 
 const char DownloadFileTest::kTestData1[] =
     "Let's write some data to the file!\n";
@@ -530,7 +564,7 @@ const int DownloadFileTest::kDummyRequestId = 67;
 // Rename the file before any data is downloaded, after some has, after it all
 // has, and after it's closed.
 TEST_P(DownloadFileTestWithRename, RenameFileFinal) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
   base::FilePath path_1(initial_path.InsertBeforeExtensionASCII("_1"));
@@ -550,6 +584,9 @@ TEST_P(DownloadFileTestWithRename, RenameFileFinal) {
   EXPECT_FALSE(base::PathExists(initial_path));
   EXPECT_TRUE(base::PathExists(path_1));
 
+  EXPECT_CALL(*input_stream_, RegisterDataReadyCallback(_))
+      .Times(1)
+      .RetiresOnSaturation();
   // Download the data.
   const char* chunks1[] = {kTestData1, kTestData2};
   AppendDataToFile(chunks1, 2);
@@ -565,6 +602,9 @@ TEST_P(DownloadFileTestWithRename, RenameFileFinal) {
   EXPECT_FALSE(base::PathExists(path_1));
   EXPECT_TRUE(base::PathExists(path_2));
 
+  EXPECT_CALL(*input_stream_, RegisterDataReadyCallback(_))
+      .Times(1)
+      .RetiresOnSaturation();
   const char* chunks2[] = {kTestData3};
   AppendDataToFile(chunks2, 1);
 
@@ -600,7 +640,7 @@ TEST_P(DownloadFileTestWithRename, RenameFileFinal) {
 // the above test because it only applies to RenameAndAnnotate().
 // RenameAndUniquify() doesn't overwrite by design.
 TEST_F(DownloadFileTest, RenameOverwrites) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
   base::FilePath path_1(initial_path.InsertBeforeExtensionASCII("_1"));
@@ -630,7 +670,7 @@ TEST_F(DownloadFileTest, RenameOverwrites) {
 // DownloadFileTestWithRename test because this only applies to
 // RenameAndUniquify().
 TEST_F(DownloadFileTest, RenameUniquifies) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
   base::FilePath path_1(initial_path.InsertBeforeExtensionASCII("_1"));
@@ -653,7 +693,7 @@ TEST_F(DownloadFileTest, RenameUniquifies) {
 // Test that RenameAndUniquify doesn't try to uniquify in the case where the
 // target filename is the same as the current filename.
 TEST_F(DownloadFileTest, RenameRecognizesSelfConflict) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
 
@@ -670,7 +710,7 @@ TEST_F(DownloadFileTest, RenameRecognizesSelfConflict) {
 
 // Test to make sure we get the proper error on failure.
 TEST_P(DownloadFileTestWithRename, RenameError) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
 
   // Create a subdirectory.
@@ -725,7 +765,7 @@ void TestRenameCompletionCallback(const base::Closure& closure,
 // base::MessageLoopCurrent::Get(). Each RunLoop processes that queue until it
 // sees a QuitClosure() targeted at itself, at which point it stops processing.
 TEST_P(DownloadFileTestWithRename, RenameWithErrorRetry) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
 
   // Create a subdirectory.
@@ -796,12 +836,15 @@ TEST_P(DownloadFileTestWithRename, RenameWithErrorRetry) {
 
 // Various tests of the StreamActive method.
 TEST_F(DownloadFileTest, StreamEmptySuccess) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
 
   // Test that calling the sink_callback_ on an empty stream shouldn't
   // do anything.
+  EXPECT_CALL(*input_stream_, RegisterDataReadyCallback(_))
+      .Times(1)
+      .RetiresOnSaturation();
   AppendDataToFile(nullptr, 0);
 
   // Finish the download this way and make sure we see it on the observer.
@@ -812,7 +855,7 @@ TEST_F(DownloadFileTest, StreamEmptySuccess) {
 }
 
 TEST_F(DownloadFileTest, StreamEmptyError) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
 
@@ -841,7 +884,7 @@ TEST_F(DownloadFileTest, StreamEmptyError) {
 }
 
 TEST_F(DownloadFileTest, StreamNonEmptySuccess) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
 
@@ -857,7 +900,7 @@ TEST_F(DownloadFileTest, StreamNonEmptySuccess) {
 }
 
 TEST_F(DownloadFileTest, StreamNonEmptyError) {
-  ASSERT_TRUE(CreateDownloadFile(0, true));
+  ASSERT_TRUE(CreateDownloadFile(true));
   base::FilePath initial_path(download_file_->FullPath());
   EXPECT_TRUE(base::PathExists(initial_path));
 
@@ -887,6 +930,58 @@ TEST_F(DownloadFileTest, StreamNonEmptyError) {
   DestroyDownloadFile(0);
 }
 
+// Tests that if file content validation succeeds, all the remaining data will
+// be writing to the file.
+TEST_F(DownloadFileTest, FileContentValidationSuccess) {
+  int stream_length = strlen(kTestData1) * 2;
+
+  ASSERT_TRUE(CreateDownloadFile(
+      stream_length /* length */, true /* calculate_hash */,
+      DownloadItem::ReceivedSlices(), strlen(kTestData1) - 1));
+  base::FilePath initial_path(download_file_->FullPath());
+  EXPECT_TRUE(base::PathExists(initial_path));
+
+  const char* chunks1[] = {kTestData1, kTestData1};
+  ::testing::Sequence s1;
+  SetupDataAppend(chunks1, 2 /* num_chunks */, input_stream_, s1);
+  SetupFinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, input_stream_, s1);
+  EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
+  sink_callback_.Run(MOJO_RESULT_OK);
+  VerifyStreamAndSize();
+  base::RunLoop().RunUntilIdle();
+  DestroyDownloadFile(0);
+}
+
+// Tests that if file content validation fails, an error will occur and no data
+// will be written.
+TEST_F(DownloadFileTest, FileContentValidationFail) {
+  int file_length = strlen(kTestData2) - 1;
+  int stream_length = strlen(kTestData1) + strlen(kTestData2);
+
+  ASSERT_TRUE(CreateDownloadFile(stream_length /* length */,
+                                 true /* calculate_hash */,
+                                 DownloadItem::ReceivedSlices(), file_length));
+  base::FilePath initial_path(download_file_->FullPath());
+  EXPECT_TRUE(base::PathExists(initial_path));
+  std::string file_content = std::string(kTestData1, 0, file_length);
+  expected_data_ = file_content;
+  VerifyStreamAndSize();
+
+  const char* chunks1[] = {kTestData2, kTestData1};
+  ::testing::Sequence s1;
+  // Only 1 chunk will be read, and it will generate an error after
+  // failing the validation.
+  SetupDataAppend(chunks1, 1 /* num_chunks */, input_stream_, s1);
+  EXPECT_CALL(*input_stream_, ClearDataReadyCallback());
+  EXPECT_CALL(*(observer_.get()),
+              MockDestinationError(DOWNLOAD_INTERRUPT_REASON_FILE_HASH_MISMATCH,
+                                   file_length, _));
+  sink_callback_.Run(MOJO_RESULT_OK);
+  base::RunLoop().RunUntilIdle();
+  expected_data_ = file_content;
+  DestroyDownloadFile(0);
+}
+
 // Tests for concurrent streams handling, used for parallel download.
 //
 // Activate both streams at the same time.
@@ -894,21 +989,19 @@ TEST_F(DownloadFileTest, MultipleStreamsWrite) {
   int64_t stream_0_length = GetBuffersLength(kTestData6, 2);
   int64_t stream_1_length = GetBuffersLength(kTestData7, 2);
 
-  ASSERT_TRUE(CreateDownloadFile(0, stream_0_length, true,
+  ASSERT_TRUE(CreateDownloadFile(stream_0_length, true,
                                  DownloadItem::ReceivedSlices()));
 
   PrepareStream(&input_stream_, 0, false, true, kTestData6, 2);
   PrepareStream(&additional_streams_[0], stream_0_length, true, true,
                 kTestData7, 2);
 
-  EXPECT_CALL(*additional_streams_[0], RegisterDataReadyCallback(_))
-      .RetiresOnSaturation();
   EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
 
   // Activate the streams.
   download_file_->AddInputStream(
-      std::unique_ptr<MockInputStream>(additional_streams_[0]), stream_0_length,
-      DownloadSaveInfo::kLengthFullContent);
+      std::unique_ptr<MockInputStream>(additional_streams_[0]),
+      stream_0_length);
   sink_callback_.Run(MOJO_RESULT_OK);
   base::RunLoop().RunUntilIdle();
 
@@ -922,7 +1015,7 @@ TEST_F(DownloadFileTest, MultipleStreamsWrite) {
 }
 
 // 3 streams write to one sink, the second stream has a limited length.
-TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
+TEST_F(DownloadFileTest, MultipleStreamsLimitedLength) {
   int64_t stream_0_length = GetBuffersLength(kTestData6, 2);
 
   // The second stream has a limited length and should be partially written
@@ -933,7 +1026,7 @@ TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
   // "Range:50-".
   int64_t stream_2_length = GetBuffersLength(kTestData6, 2);
 
-  ASSERT_TRUE(CreateDownloadFile(0, stream_0_length, true,
+  ASSERT_TRUE(CreateDownloadFile(stream_0_length, true,
                                  DownloadItem::ReceivedSlices()));
 
   PrepareStream(&input_stream_, 0, false, true, kTestData6, 2);
@@ -942,26 +1035,19 @@ TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
   PrepareStream(&additional_streams_[1], stream_0_length + stream_1_length,
                 true, true, kTestData6, 2);
 
-  EXPECT_CALL(*additional_streams_[0], RegisterDataReadyCallback(_))
-      .Times(1)
-      .RetiresOnSaturation();
-
   EXPECT_CALL(*additional_streams_[0], ClearDataReadyCallback())
       .Times(1)
-      .RetiresOnSaturation();
-
-  EXPECT_CALL(*additional_streams_[1], RegisterDataReadyCallback(_))
       .RetiresOnSaturation();
 
   EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
 
   // Activate all the streams.
-  download_file_->AddInputStream(
-      std::unique_ptr<MockInputStream>(additional_streams_[0]), stream_0_length,
-      stream_1_length);
-  download_file_->AddInputStream(
+   download_file_->AddInputStream(
       std::unique_ptr<MockInputStream>(additional_streams_[1]),
-      stream_0_length + stream_1_length, DownloadSaveInfo::kLengthFullContent);
+      stream_0_length + stream_1_length);
+  download_file_->AddInputStream(
+      std::unique_ptr<MockInputStream>(additional_streams_[0]),
+      stream_0_length);
   sink_callback_.Run(MOJO_RESULT_OK);
   base::RunLoop().RunUntilIdle();
 
@@ -985,7 +1071,7 @@ TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
 TEST_F(DownloadFileTest, MultipleStreamsFirstStreamWriteAllData) {
   int64_t stream_0_length = GetBuffersLength(kTestData8, 4);
 
-  ASSERT_TRUE(CreateDownloadFile(0, DownloadSaveInfo::kLengthFullContent, true,
+  ASSERT_TRUE(CreateDownloadFile(DownloadSaveInfo::kLengthFullContent, true,
                                  DownloadItem::ReceivedSlices()));
 
   PrepareStream(&input_stream_, 0, false, true, kTestData8, 4);
@@ -1002,7 +1088,7 @@ TEST_F(DownloadFileTest, MultipleStreamsFirstStreamWriteAllData) {
   additional_streams_[0] = new StrictMock<MockInputStream>();
   download_file_->AddInputStream(
       std::unique_ptr<MockInputStream>(additional_streams_[0]),
-      stream_0_length - 1, DownloadSaveInfo::kLengthFullContent);
+      stream_0_length - 1);
   base::RunLoop().RunUntilIdle();
 
   SourceStreamTestData stream_data_0(0, stream_0_length, true);
@@ -1018,7 +1104,7 @@ TEST_F(DownloadFileTest, MultipleStreamsFirstStreamWriteAllData) {
 TEST_F(DownloadFileTest, SecondStreamStartingOffsetAlreadyWritten) {
   int64_t stream_0_length = GetBuffersLength(kTestData6, 2);
 
-  ASSERT_TRUE(CreateDownloadFile(0, stream_0_length, true,
+  ASSERT_TRUE(CreateDownloadFile(stream_0_length, true,
                                  DownloadItem::ReceivedSlices()));
 
   Sequence seq;
@@ -1028,13 +1114,13 @@ TEST_F(DownloadFileTest, SecondStreamStartingOffsetAlreadyWritten) {
       .InSequence(seq)
       .WillOnce(Return(InputStream::EMPTY))
       .RetiresOnSaturation();
+  EXPECT_CALL(*input_stream_, RegisterDataReadyCallback(_))
+      .Times(1)
+      .RetiresOnSaturation();
   sink_callback_.Run(MOJO_RESULT_OK);
   base::RunLoop().RunUntilIdle();
 
   additional_streams_[0] = new StrictMock<MockInputStream>();
-  EXPECT_CALL(*additional_streams_[0], RegisterDataReadyCallback(_))
-      .WillRepeatedly(Invoke(this, &DownloadFileTest::RegisterCallback))
-      .RetiresOnSaturation();
   EXPECT_CALL(*additional_streams_[0], ClearDataReadyCallback())
       .WillRepeatedly(Invoke(this, &DownloadFileTest::ClearCallback))
       .RetiresOnSaturation();
@@ -1044,10 +1130,74 @@ TEST_F(DownloadFileTest, SecondStreamStartingOffsetAlreadyWritten) {
 
   download_file_->AddInputStream(
       std::unique_ptr<MockInputStream>(additional_streams_[0]),
-      strlen(kTestData1), DownloadSaveInfo::kLengthFullContent);
+      strlen(kTestData1));
 
   // The stream should get terminated and reset the callback.
   EXPECT_TRUE(sink_callback_.is_null());
+  download_file_->Cancel();
+  DestroyDownloadFile(0, false);
+}
+
+// The second stream successfully reads the data from its offset. However,
+// before it is able to write the data, the same block was written by
+// the first stream.
+TEST_F(DownloadFileTest, SecondStreamReadsOffsetWrittenByFirst) {
+  int64_t stream_0_length = GetBuffersLength(kTestData8, 4);
+
+  ASSERT_TRUE(CreateDownloadFile(stream_0_length, true,
+                                 DownloadItem::ReceivedSlices()));
+
+  // First stream writes the first 2 chunks.
+  Sequence seq;
+  SetupDataAppend(kTestData8, 2, input_stream_, seq, 0);
+
+  EXPECT_CALL(*input_stream_, Read(_, _))
+      .InSequence(seq)
+      .WillOnce(Return(InputStream::EMPTY))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*input_stream_, RegisterDataReadyCallback(_))
+      .Times(2)
+      .RetiresOnSaturation();
+  sink_callback_.Run(MOJO_RESULT_OK);
+  base::RunLoop().RunUntilIdle();
+
+  // The second stream is created and waiting for data.
+  additional_streams_[0] = new StrictMock<MockInputStream>();
+  EXPECT_CALL(*additional_streams_[0], RegisterDataReadyCallback(_))
+      .RetiresOnSaturation();
+  EXPECT_CALL(*additional_streams_[0], ClearDataReadyCallback())
+      .RetiresOnSaturation();
+  EXPECT_CALL(*additional_streams_[0], Read(_, _))
+      .WillOnce(Return(InputStream::EMPTY))
+      .RetiresOnSaturation();
+  int64_t offset = strlen(kTestData1) + strlen(kTestData2);
+  download_file_->AddInputStream(
+      std::unique_ptr<MockInputStream>(additional_streams_[0]), offset);
+  base::RunLoop().RunUntilIdle();
+
+  // First stream reads the 3rd chunk and writes it to disk.
+  const char* chunk[] = {kTestData4};
+  SetupDataAppend(chunk, 1, input_stream_, seq, offset);
+  EXPECT_CALL(*input_stream_, Read(_, _))
+      .InSequence(seq)
+      .WillOnce(Return(InputStream::EMPTY))
+      .RetiresOnSaturation();
+  sink_callback_.Run(MOJO_RESULT_OK);
+  base::RunLoop().RunUntilIdle();
+
+  // Second stream also reads the 3rd chunk, but it will be terminated.
+  SetupDataAppend(chunk, 1, additional_streams_[0], seq, offset);
+  OnStreamActive(offset);
+  base::RunLoop().RunUntilIdle();
+
+  // First stream writes the last chunk, and completes the download.
+  chunk[0] = kTestData5;
+  SetupDataAppend(chunk, 1, input_stream_, seq, offset + strlen(kTestData4));
+  SetupFinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, input_stream_, seq);
+  EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
+  sink_callback_.Run(MOJO_RESULT_OK);
+  base::RunLoop().RunUntilIdle();
+
   download_file_->Cancel();
   DestroyDownloadFile(0, false);
 }

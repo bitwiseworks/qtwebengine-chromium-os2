@@ -81,7 +81,7 @@ typedef struct SPS {
     uint32_t num_units_in_tick;
     uint32_t time_scale;
     int fixed_frame_rate_flag;
-    short offset_for_ref_frame[256]; // FIXME dyn aloc?
+    int32_t offset_for_ref_frame[256];
     int bitstream_restriction_flag;
     int num_reorder_frames;
     int scaling_matrix_present;
@@ -144,6 +144,8 @@ typedef struct H264ParamSets {
     /* currently active parameters sets */
     const PPS *pps;
     const SPS *sps;
+
+    int overread_warning_printed[2];
 } H264ParamSets;
 
 /**

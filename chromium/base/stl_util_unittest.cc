@@ -21,6 +21,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/containers/queue.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,6 +29,9 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+using ::testing::IsNull;
+using ::testing::Pair;
 
 // Used as test case to ensure the various base::STLXxx functions don't require
 // more than operators "<" and "==" on values stored in containers.
@@ -48,12 +52,24 @@ class ComparableValue {
 };
 
 template <typename Container>
+size_t GetSize(const Container& c) {
+  return c.size();
+}
+
+template <typename T>
+size_t GetSize(const std::forward_list<T>& l) {
+  return std::distance(l.begin(), l.end());
+}
+
+template <typename Container>
 void RunEraseTest() {
   const std::pair<Container, Container> test_data[] = {
       {Container(), Container()}, {{1, 2, 3}, {1, 3}}, {{1, 2, 3, 2}, {1, 3}}};
 
   for (auto test_case : test_data) {
-    base::Erase(test_case.first, 2);
+    size_t expected_erased =
+        GetSize(test_case.first) - GetSize(test_case.second);
+    EXPECT_EQ(expected_erased, base::Erase(test_case.first, 2));
     EXPECT_EQ(test_case.second, test_case.first);
   }
 }
@@ -72,18 +88,43 @@ void RunEraseIfTest() {
   };
 
   for (auto test_case : test_data) {
-    base::EraseIf(test_case.input, [](const std::pair<int, int>& elem) {
-      return !(elem.first & 1);
-    });
+    size_t expected_erased =
+        GetSize(test_case.input) - GetSize(test_case.erase_even);
+    EXPECT_EQ(expected_erased,
+              base::EraseIf(test_case.input, [](const auto& elem) {
+                return !(elem.first & 1);
+              }));
     EXPECT_EQ(test_case.erase_even, test_case.input);
   }
 
   for (auto test_case : test_data) {
-    base::EraseIf(test_case.input, [](const std::pair<int, int>& elem) {
-      return elem.first & 1;
-    });
+    size_t expected_erased =
+        GetSize(test_case.input) - GetSize(test_case.erase_odd);
+    EXPECT_EQ(expected_erased,
+              base::EraseIf(test_case.input,
+                            [](const auto& elem) { return elem.first & 1; }));
     EXPECT_EQ(test_case.erase_odd, test_case.input);
   }
+}
+
+template <typename Container>
+void RunConstCastIteratorTest() {
+  using std::begin;
+  using std::cbegin;
+
+  Container c = {1, 2, 3, 4, 5};
+  auto c_it = std::next(cbegin(c), 3);
+  auto it = base::ConstCastIterator(c, c_it);
+  static_assert(std::is_same<decltype(cbegin(std::declval<Container&>())),
+                             decltype(c_it)>::value,
+                "c_it is not a constant iterator.");
+  static_assert(std::is_same<decltype(begin(std::declval<Container&>())),
+                             decltype(it)>::value,
+                "it is not a iterator.");
+  EXPECT_EQ(c_it, it);
+  // Const casting the iterator should not modify the underlying container.
+  Container other = {1, 2, 3, 4, 5};
+  EXPECT_THAT(c, testing::ContainerEq(other));
 }
 
 struct CustomIntHash {
@@ -235,6 +276,19 @@ TEST(STLUtilTest, Data) {
   }
 }
 
+TEST(STLUtilTest, AsConst) {
+  int i = 123;
+  EXPECT_EQ(&i, &base::as_const(i));
+  static_assert(std::is_same<const int&, decltype(base::as_const(i))>::value,
+                "Error: base::as_const() returns an unexpected type");
+
+  const int ci = 456;
+  static_assert(&ci == &base::as_const(ci),
+                "Error: base::as_const() returns an unexpected reference");
+  static_assert(std::is_same<const int&, decltype(base::as_const(ci))>::value,
+                "Error: base::as_const() returns an unexpected type");
+}
+
 TEST(STLUtilTest, GetUnderlyingContainer) {
   {
     std::queue<int> queue({1, 2, 3, 4, 5});
@@ -278,6 +332,24 @@ TEST(STLUtilTest, GetUnderlyingContainer) {
     EXPECT_THAT(GetUnderlyingContainer(stack),
                 testing::ElementsAre(1, 2, 3, 4, 5));
   }
+}
+
+TEST(STLUtilTest, ConstCastIterator) {
+  // Sequence Containers
+  RunConstCastIteratorTest<std::forward_list<int>>();
+  RunConstCastIteratorTest<std::list<int>>();
+  RunConstCastIteratorTest<std::deque<int>>();
+  RunConstCastIteratorTest<std::vector<int>>();
+  RunConstCastIteratorTest<std::array<int, 5>>();
+  RunConstCastIteratorTest<int[5]>();
+
+  // Associative Containers
+  RunConstCastIteratorTest<std::set<int>>();
+  RunConstCastIteratorTest<std::multiset<int>>();
+
+  // Unordered Associative Containers
+  RunConstCastIteratorTest<std::unordered_set<int>>();
+  RunConstCastIteratorTest<std::unordered_multiset<int>>();
 }
 
 TEST(STLUtilTest, STLIsSorted) {
@@ -549,24 +621,22 @@ TEST(Erase, List) {
 
 TEST(Erase, Map) {
   RunEraseIfTest<std::map<int, int>>();
-  RunEraseIfTest<std::map<int, int, std::greater<int>>>();
+  RunEraseIfTest<std::map<int, int, std::greater<>>>();
 }
 
 TEST(Erase, Multimap) {
   RunEraseIfTest<std::multimap<int, int>>();
-  RunEraseIfTest<std::multimap<int, int, std::greater<int>>>();
+  RunEraseIfTest<std::multimap<int, int, std::greater<>>>();
 }
 
 TEST(Erase, Set) {
   RunEraseIfTest<std::set<std::pair<int, int>>>();
-  RunEraseIfTest<
-      std::set<std::pair<int, int>, std::greater<std::pair<int, int>>>>();
+  RunEraseIfTest<std::set<std::pair<int, int>, std::greater<>>>();
 }
 
 TEST(Erase, Multiset) {
   RunEraseIfTest<std::multiset<std::pair<int, int>>>();
-  RunEraseIfTest<
-      std::multiset<std::pair<int, int>, std::greater<std::pair<int, int>>>>();
+  RunEraseIfTest<std::multiset<std::pair<int, int>, std::greater<>>>();
 }
 
 TEST(Erase, UnorderedMap) {
@@ -592,18 +662,141 @@ TEST(Erase, IsNotIn) {
   std::vector<int> lhs = {0, 2, 2, 4, 4, 4, 6, 8, 10};
   std::vector<int> rhs = {1, 2, 2, 4, 5, 6, 7};
   std::vector<int> expected = {2, 2, 4, 6};
-  EraseIf(lhs, IsNotIn<std::vector<int>>(rhs));
+  EXPECT_EQ(5u, EraseIf(lhs, IsNotIn<std::vector<int>>(rhs)));
   EXPECT_EQ(expected, lhs);
 }
 
-TEST(ContainsValue, OrdinaryArrays) {
+TEST(STLUtilTest, GenericContains) {
   const char allowed_chars[] = {'a', 'b', 'c', 'd'};
-  EXPECT_TRUE(ContainsValue(allowed_chars, 'a'));
-  EXPECT_FALSE(ContainsValue(allowed_chars, 'z'));
-  EXPECT_FALSE(ContainsValue(allowed_chars, 0));
+
+  EXPECT_TRUE(Contains(allowed_chars, 'a'));
+  EXPECT_FALSE(Contains(allowed_chars, 'z'));
+  EXPECT_FALSE(Contains(allowed_chars, 0));
 
   const char allowed_chars_including_nul[] = "abcd";
-  EXPECT_TRUE(ContainsValue(allowed_chars_including_nul, 0));
+  EXPECT_TRUE(Contains(allowed_chars_including_nul, 0));
+}
+
+TEST(STLUtilTest, ContainsWithFindAndNpos) {
+  std::string str = "abcd";
+
+  EXPECT_TRUE(Contains(str, 'a'));
+  EXPECT_FALSE(Contains(str, 'z'));
+  EXPECT_FALSE(Contains(str, 0));
+}
+
+TEST(STLUtilTest, ContainsWithFindAndEnd) {
+  std::set<int> set = {1, 2, 3, 4};
+
+  EXPECT_TRUE(Contains(set, 1));
+  EXPECT_FALSE(Contains(set, 5));
+  EXPECT_FALSE(Contains(set, 0));
+}
+
+TEST(STLUtilTest, ContainsWithContains) {
+  flat_set<int> set = {1, 2, 3, 4};
+
+  EXPECT_TRUE(Contains(set, 1));
+  EXPECT_FALSE(Contains(set, 5));
+  EXPECT_FALSE(Contains(set, 0));
+}
+
+TEST(STLUtilTest, InsertOrAssign) {
+  std::map<std::string, int> my_map;
+  auto result = InsertOrAssign(my_map, "Hello", 42);
+  EXPECT_THAT(*result.first, Pair("Hello", 42));
+  EXPECT_TRUE(result.second);
+
+  result = InsertOrAssign(my_map, "Hello", 43);
+  EXPECT_THAT(*result.first, Pair("Hello", 43));
+  EXPECT_FALSE(result.second);
+}
+
+TEST(STLUtilTest, InsertOrAssignHint) {
+  std::map<std::string, int> my_map;
+  auto result = InsertOrAssign(my_map, my_map.end(), "Hello", 42);
+  EXPECT_THAT(*result, Pair("Hello", 42));
+
+  result = InsertOrAssign(my_map, my_map.begin(), "Hello", 43);
+  EXPECT_THAT(*result, Pair("Hello", 43));
+}
+
+TEST(STLUtilTest, InsertOrAssignWrongHints) {
+  std::map<int, int> my_map;
+  // Since we insert keys in sorted order, my_map.begin() will be a wrong hint
+  // after the first iteration. Check that insertion happens anyway.
+  for (int i = 0; i < 10; ++i) {
+    SCOPED_TRACE(i);
+    auto result = InsertOrAssign(my_map, my_map.begin(), i, i);
+    EXPECT_THAT(*result, Pair(i, i));
+  }
+
+  // Overwrite the keys we just inserted. Since we no longer insert into the
+  // map, my_map.end() will be a wrong hint for all iterations but the last.
+  for (int i = 0; i < 10; ++i) {
+    SCOPED_TRACE(10 + i);
+    auto result = InsertOrAssign(my_map, my_map.end(), i, 10 + i);
+    EXPECT_THAT(*result, Pair(i, 10 + i));
+  }
+}
+
+TEST(STLUtilTest, TryEmplace) {
+  std::map<std::string, std::unique_ptr<int>> my_map;
+  auto result = TryEmplace(my_map, "Hello", nullptr);
+  EXPECT_THAT(*result.first, Pair("Hello", IsNull()));
+  EXPECT_TRUE(result.second);
+
+  auto new_value = std::make_unique<int>(42);
+  result = TryEmplace(my_map, "Hello", std::move(new_value));
+  EXPECT_THAT(*result.first, Pair("Hello", IsNull()));
+  EXPECT_FALSE(result.second);
+  // |new_value| should not be touched following a failed insertion.
+  ASSERT_NE(nullptr, new_value);
+  EXPECT_EQ(42, *new_value);
+
+  result = TryEmplace(my_map, "World", std::move(new_value));
+  EXPECT_EQ("World", result.first->first);
+  EXPECT_EQ(42, *result.first->second);
+  EXPECT_TRUE(result.second);
+  EXPECT_EQ(nullptr, new_value);
+}
+
+TEST(STLUtilTest, TryEmplaceHint) {
+  std::map<std::string, std::unique_ptr<int>> my_map;
+  auto result = TryEmplace(my_map, my_map.begin(), "Hello", nullptr);
+  EXPECT_THAT(*result, Pair("Hello", IsNull()));
+
+  auto new_value = std::make_unique<int>(42);
+  result = TryEmplace(my_map, result, "Hello", std::move(new_value));
+  EXPECT_THAT(*result, Pair("Hello", IsNull()));
+  // |new_value| should not be touched following a failed insertion.
+  ASSERT_NE(nullptr, new_value);
+  EXPECT_EQ(42, *new_value);
+
+  result = TryEmplace(my_map, result, "World", std::move(new_value));
+  EXPECT_EQ("World", result->first);
+  EXPECT_EQ(42, *result->second);
+  EXPECT_EQ(nullptr, new_value);
+}
+
+TEST(STLUtilTest, TryEmplaceWrongHints) {
+  std::map<int, int> my_map;
+  // Since we emplace keys in sorted order, my_map.begin() will be a wrong hint
+  // after the first iteration. Check that emplacement happens anyway.
+  for (int i = 0; i < 10; ++i) {
+    SCOPED_TRACE(i);
+    auto result = TryEmplace(my_map, my_map.begin(), i, i);
+    EXPECT_THAT(*result, Pair(i, i));
+  }
+
+  // Fail to overwrite the keys we just inserted. Since we no longer emplace
+  // into the map, my_map.end() will be a wrong hint for all tried emplacements
+  // but the last.
+  for (int i = 0; i < 10; ++i) {
+    SCOPED_TRACE(10 + i);
+    auto result = TryEmplace(my_map, my_map.end(), i, 10 + i);
+    EXPECT_THAT(*result, Pair(i, i));
+  }
 }
 
 TEST(STLUtilTest, OptionalOrNullptr) {

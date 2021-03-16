@@ -6,7 +6,6 @@
 #define UI_OZONE_PLATFORM_DRM_GPU_DRM_THREAD_H_
 
 #include <stdint.h>
-
 #include <memory>
 
 #include "base/files/file.h"
@@ -14,14 +13,19 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "mojo/public/cpp/bindings/associated_receiver_set.h"
+#include "mojo/public/cpp/bindings/pending_associated_receiver.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
 #include "ui/gfx/native_pixmap_handle.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/platform/drm/common/display_types.h"
-#include "ui/ozone/public/interfaces/device_cursor.mojom.h"
-#include "ui/ozone/public/interfaces/drm_device.mojom.h"
+#include "ui/ozone/platform/drm/gpu/drm_device_generator.h"
+#include "ui/ozone/public/mojom/device_cursor.mojom.h"
+#include "ui/ozone/public/mojom/drm_device.mojom.h"
+#include "ui/ozone/public/overlay_surface_candidate.h"
 #include "ui/ozone/public/swap_completion_callback.h"
 
 namespace base {
@@ -59,29 +63,66 @@ class DrmThread : public base::Thread,
                   public ozone::mojom::DeviceCursor,
                   public ozone::mojom::DrmDevice {
  public:
+  using OverlayCapabilitiesCallback =
+      base::OnceCallback<void(gfx::AcceleratedWidget,
+                              const std::vector<OverlaySurfaceCandidate>&,
+                              const std::vector<OverlayStatus>&)>;
+
   DrmThread();
   ~DrmThread() override;
 
-  void Start(base::OnceClosure binding_completer);
+  void Start(base::OnceClosure receiver_completer,
+             std::unique_ptr<DrmDeviceGenerator> device_generator);
+
+  // Runs |task| once a DrmDevice is registered and |window| was created via
+  // CreateWindow(). |done| will be signaled if it's not null.
+  void RunTaskAfterWindowReady(gfx::AcceleratedWidget window,
+                               base::OnceClosure task,
+                               base::WaitableEvent* done);
 
   // Must be called on the DRM thread. All methods for use from the GPU thread.
   // DrmThreadProxy (on GPU)thread) is the client for these methods.
   void CreateBuffer(gfx::AcceleratedWidget widget,
                     const gfx::Size& size,
+                    const gfx::Size& framebuffer_size,
                     gfx::BufferFormat format,
                     gfx::BufferUsage usage,
                     uint32_t flags,
                     std::unique_ptr<GbmBuffer>* buffer,
                     scoped_refptr<DrmFramebuffer>* framebuffer);
-  void CreateBufferFromFds(gfx::AcceleratedWidget widget,
-                           const gfx::Size& size,
-                           gfx::BufferFormat format,
-                           std::vector<base::ScopedFD> fds,
-                           const std::vector<gfx::NativePixmapPlane>& planes,
-                           std::unique_ptr<GbmBuffer>* buffer,
-                           scoped_refptr<DrmFramebuffer>* framebuffer);
-  void AddBindingCursorDevice(ozone::mojom::DeviceCursorRequest request);
-  void AddBindingDrmDevice(ozone::mojom::DrmDeviceRequest request);
+  using CreateBufferAsyncCallback =
+      base::OnceCallback<void(std::unique_ptr<GbmBuffer>,
+                              scoped_refptr<DrmFramebuffer>)>;
+  void CreateBufferAsync(gfx::AcceleratedWidget widget,
+                         const gfx::Size& size,
+                         gfx::BufferFormat format,
+                         gfx::BufferUsage usage,
+                         uint32_t flags,
+                         CreateBufferAsyncCallback callback);
+  void CreateBufferFromHandle(gfx::AcceleratedWidget widget,
+                              const gfx::Size& size,
+                              gfx::BufferFormat format,
+                              gfx::NativePixmapHandle handle,
+                              std::unique_ptr<GbmBuffer>* buffer,
+                              scoped_refptr<DrmFramebuffer>* framebuffer);
+  void SetClearOverlayCacheCallback(base::RepeatingClosure callback);
+  void AddDrmDeviceReceiver(
+      mojo::PendingReceiver<ozone::mojom::DrmDevice> receiver);
+
+  // Verifies if the display controller can successfully scanout the given set
+  // of OverlaySurfaceCandidates and return the status associated with each
+  // candidate.
+  void CheckOverlayCapabilities(
+      gfx::AcceleratedWidget widget,
+      const std::vector<OverlaySurfaceCandidate>& candidates,
+      OverlayCapabilitiesCallback callback);
+
+  // Similar to CheckOverlayCapabilities() but stores the result in |result|
+  // instead of running a callback.
+  void CheckOverlayCapabilitiesSync(
+      gfx::AcceleratedWidget widget,
+      const std::vector<OverlaySurfaceCandidate>& candidates,
+      std::vector<OverlayStatus>* result);
 
   // DrmWindowProxy (on GPU thread) is the client for these methods.
   void SchedulePageFlip(gfx::AcceleratedWidget widget,
@@ -92,8 +133,8 @@ class DrmThread : public base::Thread,
   void IsDeviceAtomic(gfx::AcceleratedWidget widget, bool* is_atomic);
 
   // ozone::mojom::DrmDevice
-  void StartDrmDevice(StartDrmDeviceCallback callback) override;
-  void CreateWindow(gfx::AcceleratedWidget widget) override;
+  void CreateWindow(gfx::AcceleratedWidget widget,
+                    const gfx::Rect& initial_bounds) override;
   void DestroyWindow(gfx::AcceleratedWidget widget) override;
   void SetWindowBounds(gfx::AcceleratedWidget widget,
                        const gfx::Rect& bounds) override;
@@ -124,12 +165,10 @@ class DrmThread : public base::Thread,
       int64_t display_id,
       const std::vector<display::GammaRampRGBEntry>& degamma_lut,
       const std::vector<display::GammaRampRGBEntry>& gamma_lut) override;
-  void CheckOverlayCapabilities(
-      gfx::AcceleratedWidget widget,
-      const OverlaySurfaceCandidateList& overlays,
-      base::OnceCallback<void(gfx::AcceleratedWidget,
-                              const OverlaySurfaceCandidateList&,
-                              const OverlayStatusList&)> callback) override;
+  void SetPrivacyScreen(int64_t display_id, bool enabled) override;
+  void GetDeviceCursor(
+      mojo::PendingAssociatedReceiver<ozone::mojom::DeviceCursor> receiver)
+      override;
 
   // ozone::mojom::DeviceCursor
   void SetCursor(gfx::AcceleratedWidget widget,
@@ -143,27 +182,51 @@ class DrmThread : public base::Thread,
   void Init() override;
 
  private:
+  struct TaskInfo {
+    base::OnceClosure task;
+    base::WaitableEvent* done;
+
+    TaskInfo(base::OnceClosure task, base::WaitableEvent* done);
+    TaskInfo(TaskInfo&& other);
+    ~TaskInfo();
+  };
+
   void OnPlanesReadyForPageFlip(gfx::AcceleratedWidget widget,
                                 SwapCompletionOnceCallback submission_callback,
                                 PresentationOnceCallback presentation_callback,
                                 std::vector<DrmOverlayPlane> planes);
 
+  // Called when a DrmDevice or DrmWindow is created. Runs tasks that are now
+  // unblocked.
+  void ProcessPendingTasks();
+
   std::unique_ptr<DrmDeviceManager> device_manager_;
   std::unique_ptr<ScreenManager> screen_manager_;
   std::unique_ptr<DrmGpuDisplayManager> display_manager_;
 
-  base::OnceClosure complete_early_binding_requests_;
+  base::OnceClosure complete_early_receiver_requests_;
 
-  // The mojo implementation requires a BindingSet because the DrmThread serves
-  // requests from two different client threads.
-  mojo::BindingSet<ozone::mojom::DeviceCursor> cursor_bindings_;
+  // The mojo implementation requires an AssociatedReceiverSet because the
+  // DrmThread serves requests from two different client threads.
+  mojo::AssociatedReceiverSet<ozone::mojom::DeviceCursor> cursor_receivers_;
 
-  // The mojo implementation of DrmDevice requires a BindingSet because the
-  // DrmThread services requests from different client threads when operating in
-  // mus mode
-  mojo::BindingSet<ozone::mojom::DrmDevice> drm_bindings_;
+  // This is a ReceiverSet because the regular Receiver causes the sequence
+  // checker in InterfaceEndpointClient to fail during teardown.
+  // TODO(samans): Figure out why.
+  mojo::ReceiverSet<ozone::mojom::DrmDevice> drm_receivers_;
 
-  base::WeakPtrFactory<DrmThread> weak_ptr_factory_;
+  // The AcceleratedWidget from the last call to CreateWindow.
+  gfx::AcceleratedWidget last_created_window_ = gfx::kNullAcceleratedWidget;
+
+  // The tasks that are blocked on a DrmDevice and a certain AcceleratedWidget
+  // becoming available.
+  base::flat_map<gfx::AcceleratedWidget, std::vector<TaskInfo>> pending_tasks_;
+
+  // Holds the DrmDeviceGenerator that DrmDeviceManager will use. Will be passed
+  // on to DrmDeviceManager after the thread starts.
+  std::unique_ptr<DrmDeviceGenerator> device_generator_;
+
+  base::WeakPtrFactory<DrmThread> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DrmThread);
 };

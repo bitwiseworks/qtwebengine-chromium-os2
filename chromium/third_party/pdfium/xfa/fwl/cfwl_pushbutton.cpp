@@ -18,11 +18,11 @@
 #include "xfa/fwl/cfwl_notedriver.h"
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_themetext.h"
+#include "xfa/fwl/fwl_widgetdef.h"
 #include "xfa/fwl/ifwl_themeprovider.h"
 
 CFWL_PushButton::CFWL_PushButton(const CFWL_App* app)
-    : CFWL_Widget(app, pdfium::MakeUnique<CFWL_WidgetProperties>(), nullptr),
-      m_bBtnDown(false) {}
+    : CFWL_Widget(app, pdfium::MakeUnique<CFWL_WidgetProperties>(), nullptr) {}
 
 CFWL_PushButton::~CFWL_PushButton() {}
 
@@ -133,7 +133,9 @@ void CFWL_PushButton::OnProcessMessage(CFWL_Message* pMessage) {
     default:
       break;
   }
-  CFWL_Widget::OnProcessMessage(pMessage);
+  // Dst target could be |this|, continue only if not destroyed by above.
+  if (pMessage->GetDstTarget())
+    CFWL_Widget::OnProcessMessage(pMessage);
 }
 
 void CFWL_PushButton::OnDrawWidget(CXFA_Graphics* pGraphics,
@@ -215,12 +217,14 @@ void CFWL_PushButton::OnMouseLeave(CFWL_MessageMouse* pMsg) {
 }
 
 void CFWL_PushButton::OnKeyDown(CFWL_MessageKey* pMsg) {
-  if (pMsg->m_dwKeyCode != FWL_VKEY_Return)
+  if (pMsg->m_dwKeyCode != XFA_FWL_VKEY_Return)
     return;
 
   CFWL_EventMouse wmMouse(this);
   wmMouse.m_dwCmd = FWL_MouseCommand::LeftButtonUp;
   DispatchEvent(&wmMouse);
+  if (!wmMouse.GetSrcTarget())
+    return;
 
   CFWL_Event wmClick(CFWL_Event::Type::Click, this);
   DispatchEvent(&wmClick);

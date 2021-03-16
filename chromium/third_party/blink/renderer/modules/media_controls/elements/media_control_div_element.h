@@ -29,10 +29,10 @@ class MODULES_EXPORT MediaControlDivElement : public HTMLDivElement,
 
   bool IsDisabled() const override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
-  MediaControlDivElement(MediaControlsImpl&, MediaControlElementType);
+  MediaControlDivElement(MediaControlsImpl&);
 
  private:
   bool IsMediaControlElement() const final;

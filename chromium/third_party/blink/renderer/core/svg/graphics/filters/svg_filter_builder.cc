@@ -27,9 +27,11 @@
 #include "third_party/blink/renderer/core/svg/svg_filter_element.h"
 #include "third_party/blink/renderer/core/svg/svg_filter_primitive_standard_attributes.h"
 #include "third_party/blink/renderer/platform/graphics/filters/filter.h"
+#include "third_party/blink/renderer/platform/graphics/filters/filter_effect.h"
 #include "third_party/blink/renderer/platform/graphics/filters/paint_filter_effect.h"
 #include "third_party/blink/renderer/platform/graphics/filters/source_alpha.h"
 #include "third_party/blink/renderer/platform/graphics/filters/source_graphic.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -67,26 +69,21 @@ void SVGFilterGraphNodeMap::AddBuiltinEffect(FilterEffect* effect) {
   effect_references_.insert(effect, FilterEffectSet());
 }
 
-void SVGFilterGraphNodeMap::AddPrimitive(LayoutObject* object,
-                                         FilterEffect* effect) {
+void SVGFilterGraphNodeMap::AddPrimitive(
+    SVGFilterPrimitiveStandardAttributes& primitive,
+    FilterEffect* effect) {
   // The effect must be a newly created filter effect.
   DCHECK(!effect_references_.Contains(effect));
-  DCHECK(!object || !effect_renderer_.Contains(object));
+  DCHECK(!effect_element_.Contains(&primitive));
   effect_references_.insert(effect, FilterEffectSet());
-
-  unsigned number_of_input_effects = effect->InputEffects().size();
 
   // Add references from the inputs of this effect to the effect itself, to
   // allow determining what effects needs to be invalidated when a certain
   // effect changes.
-  for (unsigned i = 0; i < number_of_input_effects; ++i)
-    EffectReferences(effect->InputEffect(i)).insert(effect);
+  for (FilterEffect* input : effect->InputEffects())
+    EffectReferences(input).insert(effect);
 
-  // If object is null, that means the element isn't attached for some
-  // reason, which in turn mean that certain types of invalidation will not
-  // work (the LayoutObject -> FilterEffect mapping will not be defined).
-  if (object)
-    effect_renderer_.insert(object, effect);
+  effect_element_.insert(&primitive, effect);
 }
 
 void SVGFilterGraphNodeMap::InvalidateDependentEffects(FilterEffect* effect) {
@@ -95,13 +92,13 @@ void SVGFilterGraphNodeMap::InvalidateDependentEffects(FilterEffect* effect) {
 
   effect->DisposeImageFilters();
 
-  FilterEffectSet& effect_references = this->EffectReferences(effect);
+  FilterEffectSet& effect_references = EffectReferences(effect);
   for (FilterEffect* effect_reference : effect_references)
     InvalidateDependentEffects(effect_reference);
 }
 
-void SVGFilterGraphNodeMap::Trace(blink::Visitor* visitor) {
-  visitor->Trace(effect_renderer_);
+void SVGFilterGraphNodeMap::Trace(Visitor* visitor) {
+  visitor->Trace(effect_element_);
   visitor->Trace(effect_references_);
 }
 
@@ -110,21 +107,19 @@ SVGFilterBuilder::SVGFilterBuilder(FilterEffect* source_graphic,
                                    const PaintFlags* fill_flags,
                                    const PaintFlags* stroke_flags)
     : node_map_(node_map) {
-  FilterEffect* source_graphic_ref = source_graphic;
   builtin_effects_.insert(FilterInputKeywords::GetSourceGraphic(),
-                          source_graphic_ref);
+                          source_graphic);
   builtin_effects_.insert(FilterInputKeywords::SourceAlpha(),
-                          SourceAlpha::Create(source_graphic_ref));
+                          MakeGarbageCollected<SourceAlpha>(source_graphic));
   if (fill_flags) {
     builtin_effects_.insert(FilterInputKeywords::FillPaint(),
-                            PaintFilterEffect::Create(
-                                source_graphic_ref->GetFilter(), *fill_flags));
+                            MakeGarbageCollected<PaintFilterEffect>(
+                                source_graphic->GetFilter(), *fill_flags));
   }
   if (stroke_flags) {
-    builtin_effects_.insert(
-        FilterInputKeywords::StrokePaint(),
-        PaintFilterEffect::Create(source_graphic_ref->GetFilter(),
-                                  *stroke_flags));
+    builtin_effects_.insert(FilterInputKeywords::StrokePaint(),
+                            MakeGarbageCollected<PaintFilterEffect>(
+                                source_graphic->GetFilter(), *stroke_flags));
   }
   AddBuiltinEffects();
 }
@@ -147,10 +142,10 @@ static EColorInterpolation ColorInterpolationForElement(
   // "manually" (used by external SVG files.)
   if (const CSSPropertyValueSet* property_set =
           element.PresentationAttributeStyle()) {
-    const CSSValue* css_value =
-        property_set->GetPropertyCSSValue(CSSPropertyColorInterpolationFilters);
-    if (css_value && css_value->IsIdentifierValue()) {
-      return ToCSSIdentifierValue(*css_value).ConvertTo<EColorInterpolation>();
+    const CSSValue* css_value = property_set->GetPropertyCSSValue(
+        CSSPropertyID::kColorInterpolationFilters);
+    if (auto* identifier_value = DynamicTo<CSSIdentifierValue>(css_value)) {
+      return identifier_value->ConvertTo<EColorInterpolation>();
     }
   }
   // 'auto' is the default (per Filter Effects), but since the property is
@@ -177,14 +172,13 @@ void SVGFilterBuilder::BuildGraph(Filter* filter,
     if (!element->IsFilterEffect())
       continue;
 
-    SVGFilterPrimitiveStandardAttributes& effect_element =
-        ToSVGFilterPrimitiveStandardAttributes(*element);
+    auto& effect_element = To<SVGFilterPrimitiveStandardAttributes>(*element);
     FilterEffect* effect = effect_element.Build(this, filter);
     if (!effect)
       continue;
 
     if (node_map_)
-      node_map_->AddPrimitive(effect_element.GetLayoutObject(), effect);
+      node_map_->AddPrimitive(effect_element, effect);
 
     effect_element.SetStandardAttributes(effect, primitive_units,
                                          reference_box);
@@ -192,7 +186,7 @@ void SVGFilterBuilder::BuildGraph(Filter* filter,
         effect_element, filter_color_interpolation);
     effect->SetOperatingInterpolationSpace(
         ResolveInterpolationSpace(color_interpolation));
-    if (effect_element.TaintsOrigin(effect->InputsTaintOrigin()))
+    if (effect->InputsTaintOrigin() || effect_element.TaintsOrigin())
       effect->SetOriginTainted();
 
     Add(AtomicString(effect_element.result()->CurrentValue()->Value()), effect);
@@ -222,7 +216,7 @@ FilterEffect* SVGFilterBuilder::GetEffectById(const AtomicString& id) const {
   }
 
   if (last_effect_)
-    return last_effect_.Get();
+    return last_effect_;
 
   return builtin_effects_.at(FilterInputKeywords::GetSourceGraphic());
 }

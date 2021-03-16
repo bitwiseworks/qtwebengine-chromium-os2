@@ -9,11 +9,18 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
-#include "content/browser/appcache/appcache_response.h"
+#include "content/browser/appcache/appcache_disk_cache_ops.h"
+#include "content/browser/appcache/appcache_response_info.h"
 #include "content/browser/appcache/appcache_service_impl.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
+#include "third_party/blink/public/common/origin_trials/trial_token.h"
+#include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
+
+namespace {
+constexpr char kAppCacheOriginTrialName[] = "AppCache";
+}
 
 namespace content {
 
@@ -24,8 +31,7 @@ AppCacheStorage::AppCacheStorage(AppCacheServiceImpl* service)
     : last_cache_id_(kUnitializedId),
       last_group_id_(kUnitializedId),
       last_response_id_(kUnitializedId),
-      service_(service),
-      weak_factory_(this) {}
+      service_(service) {}
 
 AppCacheStorage::~AppCacheStorage() {
   DCHECK(delegate_references_.empty());
@@ -35,7 +41,7 @@ AppCacheStorage::DelegateReference::DelegateReference(
     Delegate* delegate, AppCacheStorage* storage)
     : delegate(delegate), storage(storage) {
   storage->delegate_references_.insert(
-      DelegateReferenceMap::value_type(delegate, this));
+      std::map<Delegate*, DelegateReference*>::value_type(delegate, this));
 }
 
 AppCacheStorage::DelegateReference::~DelegateReference() {
@@ -50,12 +56,11 @@ AppCacheStorage::ResponseInfoLoadTask::ResponseInfoLoadTask(
     : storage_(storage),
       manifest_url_(manifest_url),
       response_id_(response_id),
-      info_buffer_(new HttpResponseInfoIOBuffer) {
+      info_buffer_(base::MakeRefCounted<HttpResponseInfoIOBuffer>()) {
   storage_->pending_info_loads_[response_id] = base::WrapUnique(this);
 }
 
-AppCacheStorage::ResponseInfoLoadTask::~ResponseInfoLoadTask() {
-}
+AppCacheStorage::ResponseInfoLoadTask::~ResponseInfoLoadTask() = default;
 
 void AppCacheStorage::ResponseInfoLoadTask::StartIfNeeded() {
   if (reader_)
@@ -73,11 +78,14 @@ void AppCacheStorage::ResponseInfoLoadTask::OnReadComplete(int result) {
 
   scoped_refptr<AppCacheResponseInfo> info;
   if (result >= 0) {
-    info = new AppCacheResponseInfo(
+    info = base::MakeRefCounted<AppCacheResponseInfo>(
         storage_->GetWeakPtr(), manifest_url_, response_id_,
         std::move(info_buffer_->http_info), info_buffer_->response_data_size);
   }
-  FOR_EACH_DELEGATE(delegates_, OnResponseInfoLoaded(info.get(), response_id_));
+  AppCacheStorage::ForEachDelegate(
+      delegates_, [&](AppCacheStorage::Delegate* delegate) {
+        delegate->OnResponseInfoLoaded(info.get(), response_id_);
+      });
 
   // returning deletes this
 }
@@ -96,6 +104,37 @@ void AppCacheStorage::LoadResponseInfo(const GURL& manifest_url,
   DCHECK(id == info_load->response_id());
   info_load->AddDelegate(GetOrCreateDelegateReference(delegate));
   info_load->StartIfNeeded();
+}
+
+base::Time AppCacheStorage::GetOriginTrialExpiration(
+    const GURL& request_url,
+    const net::HttpResponseHeaders* response_headers,
+    base::Time current_time) {
+  if (!blink::TrialTokenValidator::IsTrialPossibleOnOrigin(request_url))
+    return base::Time();
+
+  if (!response_headers)
+    return base::Time();
+
+  blink::TrialTokenValidator validator;
+  std::string token_feature;
+  base::Time expiry_time;
+  url::Origin origin = url::Origin::Create(request_url);
+  size_t iter = 0;
+  std::string token;
+  while (response_headers->EnumerateHeader(&iter, "Origin-Trial", &token)) {
+    if (validator.ValidateToken(token, origin, current_time, &token_feature,
+                                &expiry_time) ==
+        blink::OriginTrialTokenStatus::kSuccess) {
+      if (token_feature == kAppCacheOriginTrialName)
+        return expiry_time;
+    }
+  }
+  return base::Time();
+}
+
+std::string AppCacheStorage::GetOriginTrialNameForTesting() {
+  return kAppCacheOriginTrialName;
 }
 
 base::WeakPtr<AppCacheStorage> AppCacheStorage::GetWeakPtr() {
@@ -132,8 +171,7 @@ void AppCacheStorage::NotifyStorageAccessed(const url::Origin& origin) {
   if (service()->quota_manager_proxy() &&
       usage_map_.find(origin) != usage_map_.end())
     service()->quota_manager_proxy()->NotifyStorageAccessed(
-        storage::QuotaClient::kAppcache, origin,
-        blink::mojom::StorageType::kTemporary);
+        origin, blink::mojom::StorageType::kTemporary);
 }
 
 }  // namespace content

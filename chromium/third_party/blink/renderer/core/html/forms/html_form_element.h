@@ -44,13 +44,9 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static HTMLFormElement* Create(Document&);
-
   explicit HTMLFormElement(Document&);
   ~HTMLFormElement() override;
   void Trace(Visitor*) override;
-
-  const AttrNameToTrustedType& GetCheckedAttributeTypes() const override;
 
   HTMLFormControlsCollection* elements();
   void GetNamedElements(const AtomicString&, HeapVector<Member<Element>>&);
@@ -59,8 +55,7 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   HTMLElement* item(unsigned index);
 
   String action() const;
-  void action(USVStringOrTrustedURL&) const;
-  void setAction(const USVStringOrTrustedURL&, ExceptionState&);
+  void setAction(const AtomicString&);
 
   String enctype() const { return attributes_.EncodingType(); }
   void setEnctype(const AtomicString&);
@@ -76,11 +71,14 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   void Disassociate(HTMLImageElement&);
   void DidAssociateByParser();
 
-  void PrepareForSubmission(Event&, HTMLFormControlElement* submit_button);
+  void PrepareForSubmission(const Event*,
+                            HTMLFormControlElement* submit_button);
   void submitFromJavaScript();
+  void requestSubmit(ExceptionState& exception_state);
+  void requestSubmit(HTMLElement* submitter, ExceptionState& exception_state);
   void reset();
 
-  void SubmitImplicitly(Event&, bool from_implicit_submission_trigger);
+  void SubmitImplicitly(const Event&, bool from_implicit_submission_trigger);
 
   String GetName() const;
 
@@ -92,7 +90,7 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   void setMethod(const AtomicString&);
 
   // Find the 'default button.'
-  // https://html.spec.whatwg.org/multipage/forms.html#default-button
+  // https://html.spec.whatwg.org/C/#default-button
   HTMLFormControlElement* FindDefaultButton() const;
 
   bool checkValidity();
@@ -111,7 +109,7 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   void InvalidateDefaultButtonStyle() const;
 
   // 'construct the entry list'
-  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#constructing-the-form-data-set
+  // https://html.spec.whatwg.org/C/#constructing-the-form-data-set
   // Returns nullptr if this form is already running this function.
   FormData* ConstructEntryList(HTMLFormControlElement* submit_button,
                                const WTF::TextEncoding& encoding);
@@ -134,9 +132,8 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   }
 
   void SubmitDialog(FormSubmission*);
-  void Submit(Event*, HTMLFormControlElement* submit_button);
-
-  void ScheduleFormSubmission(FormSubmission*);
+  void ScheduleFormSubmission(const Event*,
+                              HTMLFormControlElement* submit_button);
 
   void CollectListedElements(Node& root, ListedElement::List&) const;
   void CollectImageElements(Node& root, HeapVector<Member<HTMLImageElement>>&);
@@ -164,11 +161,6 @@ class CORE_EXPORT HTMLFormElement final : public HTMLElement {
   ListedElement::List listed_elements_;
   // Do not access image_elements_ directly. Use ImageElements() instead.
   HeapVector<Member<HTMLImageElement>> image_elements_;
-
-  // https://html.spec.whatwg.org/multipage/forms.html#planned-navigation
-  // Unlike the specification, we use this only for web-exposed submit()
-  // function in 'submit' event handler.
-  Member<FormSubmission> planned_navigation_;
 
   unsigned unique_renderer_form_id_;
 

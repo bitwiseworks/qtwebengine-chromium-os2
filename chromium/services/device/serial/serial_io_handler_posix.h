@@ -30,13 +30,12 @@ class SerialIoHandlerPosix : public SerialIoHandler {
   void CancelWriteImpl() override;
   bool ConfigurePortImpl() override;
   bool PostOpen() override;
+  void PreClose() override;
   bool Flush() const override;
   mojom::SerialPortControlSignalsPtr GetControlSignals() const override;
   bool SetControlSignals(
       const mojom::SerialHostControlSignals& control_signals) override;
   mojom::SerialConnectionInfoPtr GetPortInfo() const override;
-  bool SetBreak() override;
-  bool ClearBreak() override;
   int CheckReceiveError(char* buffer,
                         int buffer_len,
                         int bytes_read,
@@ -62,6 +61,9 @@ class SerialIoHandlerPosix : public SerialIoHandler {
 
   void EnsureWatchingReads();
   void EnsureWatchingWrites();
+
+  void StopWatchingFileRead();
+  void StopWatchingFileWrite();
 
   std::unique_ptr<base::FileDescriptorWatcher::Controller> file_read_watcher_;
   std::unique_ptr<base::FileDescriptorWatcher::Controller> file_write_watcher_;

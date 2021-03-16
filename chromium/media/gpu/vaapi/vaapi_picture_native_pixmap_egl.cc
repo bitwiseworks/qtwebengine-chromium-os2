@@ -17,19 +17,21 @@
 namespace media {
 
 VaapiPictureNativePixmapEgl::VaapiPictureNativePixmapEgl(
-    const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
+    scoped_refptr<VaapiWrapper> vaapi_wrapper,
     const MakeGLContextCurrentCallback& make_context_current_cb,
     const BindGLImageCallback& bind_image_cb,
     int32_t picture_buffer_id,
+    const gfx::Size& visible_size,
     const gfx::Size& size,
     uint32_t texture_id,
     uint32_t client_texture_id,
     uint32_t texture_target)
-    : VaapiPictureNativePixmap(vaapi_wrapper,
+    : VaapiPictureNativePixmap(std::move(vaapi_wrapper),
                                make_context_current_cb,
                                bind_image_cb,
                                picture_buffer_id,
                                size,
+                               visible_size,
                                texture_id,
                                client_texture_id,
                                texture_target) {
@@ -46,20 +48,18 @@ VaapiPictureNativePixmapEgl::~VaapiPictureNativePixmapEgl() {
   }
 }
 
-bool VaapiPictureNativePixmapEgl::Initialize() {
+bool VaapiPictureNativePixmapEgl::Initialize(
+    scoped_refptr<gfx::NativePixmap> pixmap) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(pixmap_);
+  DCHECK(pixmap);
+  DCHECK(pixmap->AreDmaBufFdsValid());
 
   // Create a |va_surface_| from dmabuf fds (pixmap->GetDmaBufFd)
-  va_surface_ = vaapi_wrapper_->CreateVASurfaceForPixmap(pixmap_);
+  va_surface_ = vaapi_wrapper_->CreateVASurfaceForPixmap(std::move(pixmap));
   if (!va_surface_) {
     LOG(ERROR) << "Failed creating VASurface for NativePixmap";
     return false;
   }
-
-  // On non-ozone, no need to import dmabuf fds into output the gl texture
-  // because the dmabuf fds have been made from it.
-  DCHECK(pixmap_->AreDmaBufFdsValid());
 
   if (bind_image_cb_ &&
       !bind_image_cb_.Run(client_texture_id_, texture_target_, gl_image_,
@@ -77,7 +77,8 @@ bool VaapiPictureNativePixmapEgl::Allocate(gfx::BufferFormat format) {
   if (make_context_current_cb_ && !make_context_current_cb_.Run())
     return false;
 
-  auto image = base::MakeRefCounted<gl::GLImageNativePixmap>(size_, format);
+  auto image =
+      base::MakeRefCounted<gl::GLImageNativePixmap>(visible_size_, format);
   // Create an EGLImage from a gl texture
   if (!image->InitializeFromTexture(texture_id_)) {
     DLOG(ERROR) << "Failed to initialize eglimage from texture id: "
@@ -92,9 +93,18 @@ bool VaapiPictureNativePixmapEgl::Allocate(gfx::BufferFormat format) {
     return false;
   }
 
+  if (size_.width() > static_cast<int>(native_pixmap_handle.planes[0].stride) ||
+      size_.GetArea() > static_cast<int>(native_pixmap_handle.planes[0].size)) {
+    DLOG(ERROR) << "EGLImage (stride=" << native_pixmap_handle.planes[0].stride
+                << ", size=" << native_pixmap_handle.planes[0].size
+                << "is smaller than size_=" << size_.ToString();
+    return false;
+  }
+
   // Convert NativePixmapHandle to NativePixmapDmaBuf.
   scoped_refptr<gfx::NativePixmap> native_pixmap_dmabuf(
-      new gfx::NativePixmapDmaBuf(size_, format, native_pixmap_handle));
+      new gfx::NativePixmapDmaBuf(size_, format,
+                                  std::move(native_pixmap_handle)));
   if (!native_pixmap_dmabuf->AreDmaBufFdsValid()) {
     DLOG(ERROR) << "Invalid dmabuf fds";
     return false;
@@ -105,18 +115,18 @@ bool VaapiPictureNativePixmapEgl::Allocate(gfx::BufferFormat format) {
     return false;
   }
 
-  // The |pixmap_| takes ownership of the dmabuf fds. So the only reason
-  // to keep a reference on the image is because the GPU service needs to
-  // track this image as it will be attached to a client texture.
-  pixmap_ = native_pixmap_dmabuf;
+  // The |va_surface_| created from |native_pixmap_dmabuf| shares the ownership
+  // of the buffer. So the only reason to keep a reference on the image is
+  // because the GPU service needs to track this image as it will be attached
+  // to a client texture.
   gl_image_ = image;
 
-  return Initialize();
+  return Initialize(std::move(native_pixmap_dmabuf));
 }
 
 bool VaapiPictureNativePixmapEgl::ImportGpuMemoryBufferHandle(
     gfx::BufferFormat format,
-    const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) {
+    gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   NOTIMPLEMENTED();
   return false;

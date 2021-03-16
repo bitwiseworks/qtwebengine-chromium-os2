@@ -107,7 +107,14 @@ def _gitiles_slugify(value, _separator):
   # some library. For now we just make accented characters turn into
   # underscores, just like other non-ASCII characters.
 
+  def decode_escaped_chars(regex_match):
+    # Python-Markdown encodes escaped sequences (ex. "\_") as "\x02 (integer
+    # ascii code) \x03". We decode the integer ascii code to align with Gitiles
+    # behavior (ex. 95 -> '_').
+    return chr(int(regex_match.group(1)))
+
   value = value.encode('ascii', 'replace')  # Non-ASCII turns into '?'.
+  value = re.sub(u'\x02(\\d+)\x03', decode_escaped_chars, value)
   value = re.sub(r'[^- a-zA-Z0-9]', '_', value)  # Non-alphanumerics to '_'.
   value = value.replace(u' ', u'-')
   value = re.sub(r'([-_])[-_]+', r'\1', value)  # Fold hyphens and underscores.
@@ -134,7 +141,7 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     if path.startswith('/chromium/src/+/master'):
       path = path[len('/chromium/src/+/master'):]
 
-    full_path = os.path.realpath(os.path.join(self.server.top_level, path[1:]))
+    full_path = os.path.normpath(os.path.join(self.server.top_level, path[1:]))
 
     if not full_path.startswith(self.server.top_level):
       self._DoUnknown()

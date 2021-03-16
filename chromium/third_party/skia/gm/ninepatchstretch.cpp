@@ -5,13 +5,24 @@
  * found in the LICENSE file.
  */
 
-#include "gm.h"
-#include "SkSurface.h"
-#include "sk_tool_utils.h"
+#include "gm/gm.h"
+#include "include/core/SkBitmap.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkFilterQuality.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkString.h"
+#include "include/core/SkSurface.h"
+#include "tools/ToolUtils.h"
 
 static sk_sp<SkSurface> make_surface(SkCanvas* root, int N) {
     SkImageInfo info = SkImageInfo::MakeN32Premul(N, N);
-    return sk_tool_utils::makeSurface(root, info);
+    return ToolUtils::makeSurface(root, info);
 }
 
 static sk_sp<SkImage> make_image(SkCanvas* root, SkIRect* center) {
@@ -43,16 +54,9 @@ static sk_sp<SkImage> make_image(SkCanvas* root, SkIRect* center) {
     return surface->makeImageSnapshot();
 }
 
-static void image_to_bitmap(const SkImage* image, SkBitmap* bm) {
-    SkImageInfo info = SkImageInfo::MakeN32Premul(image->width(), image->height());
-    bm->allocPixels(info);
-    image->readPixels(info, bm->getPixels(), bm->rowBytes(), 0, 0);
-}
-
 class NinePatchStretchGM : public skiagm::GM {
 public:
     sk_sp<SkImage>  fImage;
-    SkBitmap        fBitmap;
     SkIRect         fCenter;
 
     NinePatchStretchGM() {}
@@ -67,13 +71,12 @@ protected:
     }
 
     void onDraw(SkCanvas* canvas) override {
-        if (nullptr == fBitmap.pixelRef() || !fImage->isValid(canvas->getGrContext())) {
+        if (!fImage || !fImage->isValid(canvas->getGrContext())) {
             fImage = make_image(canvas, &fCenter);
-            image_to_bitmap(fImage.get(), &fBitmap);
         }
 
         // amount of bm that should not be stretched (unless we have to)
-        const SkScalar fixed = SkIntToScalar(fBitmap.width() - fCenter.width());
+        const SkScalar fixed = SkIntToScalar(fImage->width() - fCenter.width());
 
         const SkSize size[] = {
             { fixed * 4 / 5, fixed * 4 / 5 },   // shrink in both axes
@@ -82,7 +85,7 @@ protected:
             { fixed * 4,     fixed * 4 }
         };
 
-        canvas->drawBitmap(fBitmap, 10, 10, nullptr);
+        canvas->drawImage(fImage, 10, 10, nullptr);
 
         SkScalar x = SkIntToScalar(100);
         SkScalar y = SkIntToScalar(100);
@@ -96,8 +99,7 @@ protected:
                     int i = ix * 2 + iy;
                     SkRect r = SkRect::MakeXYWH(x + ix * fixed, y + iy * fixed,
                                                 size[i].width(), size[i].height());
-                    canvas->drawBitmapNine(fBitmap, fCenter, r, &paint);
-                    canvas->drawImageNine(fImage.get(), fCenter, r.makeOffset(360, 0), &paint);
+                    canvas->drawImageNine(fImage.get(), fCenter, r, &paint);
                 }
             }
         }

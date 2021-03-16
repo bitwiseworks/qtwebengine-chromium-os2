@@ -22,6 +22,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/url_utils.h"
+#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
 #include "sql/transaction.h"
@@ -37,7 +38,7 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 41;
+const int kCurrentVersionNumber = 42;
 const int kCompatibleVersionNumber = 16;
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
 
@@ -129,7 +130,6 @@ sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
       !InitSegmentTables() || !InitSyncTable())
     return LogInitFailure(InitStep::CREATE_TABLES);
   CreateMainURLIndex();
-  CreateKeywordSearchTermsIndices();
 
   // TODO(benjhayden) Remove at some point.
   meta_table_.DeleteKey("next_download_id");
@@ -250,6 +250,39 @@ int HistoryDatabase::CountUniqueHostsVisitedLastMonth() {
   return hosts.size();
 }
 
+int HistoryDatabase::CountUniqueDomainsVisited(base::Time begin_time,
+                                               base::Time end_time) {
+  sql::Statement url_sql(db_.GetUniqueStatement(
+      "SELECT urls.url FROM urls JOIN visits "
+      "WHERE urls.id = visits.url "
+      "AND (transition & ?) != 0 "              // CHAIN_END
+      "AND (transition & ?) NOT IN (?, ?, ?) "  // NO SUBFRAME or
+                                                // KEYWORD_GENERATED
+      "AND hidden = 0 AND visit_time >= ? AND visit_time < ?"));
+
+  url_sql.BindInt64(0, ui::PAGE_TRANSITION_CHAIN_END);
+  url_sql.BindInt64(1, ui::PAGE_TRANSITION_CORE_MASK);
+  url_sql.BindInt64(2, ui::PAGE_TRANSITION_AUTO_SUBFRAME);
+  url_sql.BindInt64(3, ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
+  url_sql.BindInt64(4, ui::PAGE_TRANSITION_KEYWORD_GENERATED);
+
+  url_sql.BindInt64(5, begin_time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  url_sql.BindInt64(6, end_time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+
+  std::set<std::string> domains;
+  while (url_sql.Step()) {
+    GURL url(url_sql.ColumnString(0));
+    std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
+        url, net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
+
+    // IP addresses, empty URLs, and URLs with empty or unregistered TLDs are
+    // all excluded.
+    if (!domain.empty())
+      domains.insert(domain);
+  }
+  return domains.size();
+}
+
 void HistoryDatabase::BeginExclusiveMode() {
   // We can't use set_exclusive_locking() since that only has an effect before
   // the DB is opened.
@@ -295,7 +328,6 @@ bool HistoryDatabase::RecreateAllTablesButURL() {
   if (!InitSegmentTables())
     return false;
 
-  CreateKeywordSearchTermsIndices();
   return true;
 }
 
@@ -333,7 +365,7 @@ SegmentID HistoryDatabase::GetSegmentID(VisitID visit_id) {
       "SELECT segment_id FROM visits WHERE id = ?"));
   s.BindInt64(0, visit_id);
 
-  if (!s.Step() || s.ColumnType(0) == sql::COLUMN_TYPE_NULL)
+  if (!s.Step() || s.GetColumnType(0) == sql::ColumnType::kNull)
     return 0;
   return s.ColumnInt64(0);
 }
@@ -582,6 +614,13 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
             visited_url_rowids_sorted)) {
       return LogMigrationFailure(40);
     }
+    cur_version++;
+    meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 41) {
+    if (!MigrateKeywordsSearchTermsLowerTermColumn())
+      return LogMigrationFailure(41);
     cur_version++;
     meta_table_.SetVersionNumber(cur_version);
   }

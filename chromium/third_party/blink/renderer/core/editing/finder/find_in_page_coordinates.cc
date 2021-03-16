@@ -33,6 +33,7 @@
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/range.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
+#include "third_party/blink/renderer/core/editing/visible_units.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/layout_block.h"
@@ -48,12 +49,12 @@ namespace blink {
 
 static const LayoutBlock* EnclosingScrollableAncestor(
     const LayoutObject* layout_object) {
-  DCHECK(!layout_object->IsLayoutView());
+  DCHECK(!IsA<LayoutView>(layout_object));
 
   // Trace up the containingBlocks until we reach either the layoutObject view
   // or a scrollable object.
   const LayoutBlock* container = layout_object->ContainingBlock();
-  while (!container->HasOverflowClip() && !container->IsLayoutView())
+  while (!container->HasOverflowClip() && !IsA<LayoutView>(container))
     container = container->ContainingBlock();
   return container;
 }
@@ -63,25 +64,22 @@ static FloatRect ToNormalizedRect(const FloatRect& absolute_rect,
                                   const LayoutBlock* container) {
   DCHECK(layout_object);
 
-  DCHECK(container || layout_object->IsLayoutView());
+  DCHECK(container || IsA<LayoutView>(layout_object));
   if (!container)
     return FloatRect();
 
   // We want to normalize by the max layout overflow size instead of only the
   // visible bounding box.  Quads and their enclosing bounding boxes need to be
   // used in order to keep results transform-friendly.
-  FloatPoint scrolled_origin;
+  PhysicalRect overflow_rect = container->FlipForWritingMode(
+      LayoutRect(LayoutPoint(), container->MaxLayoutOverflow()));
 
   // For overflow:scroll we need to get where the actual origin is independently
   // of the scroll.
   if (container->HasOverflowClip())
-    scrolled_origin = -FloatPoint(container->ScrolledContentOffset());
+    overflow_rect.Move(-PhysicalOffset(container->ScrolledContentOffset()));
 
-  FloatRect overflow_rect(scrolled_origin,
-                          FloatSize(container->MaxLayoutOverflow()));
-  FloatRect container_rect =
-      FloatRect(container->LocalToAbsoluteQuad(FloatQuad(overflow_rect))
-                    .EnclosingBoundingBox());
+  FloatRect container_rect(container->LocalToAbsoluteRect(overflow_rect));
 
   if (container_rect.IsEmpty())
     return FloatRect();
@@ -113,7 +111,7 @@ FloatRect FindInPageRectFromAbsoluteRect(
   for (const LayoutBox* layout_object = base_container; layout_object;) {
     // Go up the layout tree until we reach the root of the current frame (the
     // LayoutView).
-    while (!layout_object->IsLayoutView()) {
+    while (!IsA<LayoutView>(layout_object)) {
       const LayoutBlock* container = EnclosingScrollableAncestor(layout_object);
 
       // Compose the normalized rects.
@@ -127,7 +125,7 @@ FloatRect FindInPageRectFromAbsoluteRect(
       layout_object = container;
     }
 
-    DCHECK(layout_object->IsLayoutView());
+    DCHECK(IsA<LayoutView>(layout_object));
 
     // Jump to the layoutObject owning the frame, if any.
     layout_object = layout_object->GetFrame()
@@ -147,8 +145,8 @@ FloatRect FindInPageRectFromRange(const EphemeralRange& range) {
   if (!baseLayoutObject)
     return FloatRect();
 
-  return FindInPageRectFromAbsoluteRect(
-      LayoutObject::AbsoluteBoundingBoxRectForRange(range), baseLayoutObject);
+  return FindInPageRectFromAbsoluteRect(ComputeTextFloatRect(range),
+                                        baseLayoutObject);
 }
 
 }  // namespace blink

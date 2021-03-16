@@ -34,12 +34,11 @@ class StaleEntryFinalizerTask : public Task {
                           PrefetchStore* prefetch_store);
   ~StaleEntryFinalizerTask() override;
 
-  void Run() override;
-
   // Will be set to true upon after an error-free run.
   Result final_status() const { return final_status_; }
 
  private:
+  void Run() override;
   void OnFinished(Result result);
 
   // Not owned.
@@ -50,7 +49,7 @@ class StaleEntryFinalizerTask : public Task {
 
   Result final_status_ = Result::NO_MORE_WORK;
 
-  base::WeakPtrFactory<StaleEntryFinalizerTask> weak_ptr_factory_;
+  base::WeakPtrFactory<StaleEntryFinalizerTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(StaleEntryFinalizerTask);
 };
 

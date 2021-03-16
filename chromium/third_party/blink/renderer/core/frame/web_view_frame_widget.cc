@@ -6,28 +6,42 @@
 
 #include "third_party/blink/renderer/core/exported/web_view_impl.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/widget/widget_base.h"
 
 namespace blink {
 
-WebViewFrameWidget::WebViewFrameWidget(WebWidgetClient& client,
-                                       WebViewImpl& web_view)
-    : WebFrameWidgetBase(client), web_view_(&web_view), self_keep_alive_(this) {
-  // TODO(danakj): SetLayerTreeView() here as well, then we can Close() the
-  // WebViewImpl's widget bits in Close().
-  web_view_->SetWebWidgetClient(&client);
+WebViewFrameWidget::WebViewFrameWidget(
+    util::PassKey<WebFrameWidget>,
+    WebWidgetClient& client,
+    WebViewImpl& web_view,
+    CrossVariantMojoAssociatedRemote<mojom::blink::FrameWidgetHostInterfaceBase>
+        frame_widget_host,
+    CrossVariantMojoAssociatedReceiver<mojom::blink::FrameWidgetInterfaceBase>
+        frame_widget,
+    CrossVariantMojoAssociatedRemote<mojom::blink::WidgetHostInterfaceBase>
+        widget_host,
+    CrossVariantMojoAssociatedReceiver<mojom::blink::WidgetInterfaceBase>
+        widget)
+    : WebFrameWidgetBase(client,
+                         std::move(frame_widget_host),
+                         std::move(frame_widget),
+                         std::move(widget_host),
+                         std::move(widget)),
+      web_view_(&web_view),
+      self_keep_alive_(PERSISTENT_FROM_HERE, this) {
+  web_view_->SetMainFrameWidgetBase(this);
 }
 
 WebViewFrameWidget::~WebViewFrameWidget() = default;
 
 void WebViewFrameWidget::Close() {
-  // TODO(danakj): Close() the WebViewImpl here, when we reset the LayerTreeView
-  // in the constructor.
-  web_view_->SetWebWidgetClient(nullptr);
+  GetPage()->WillCloseAnimationHost(nullptr);
+  // Closing the WebViewFrameWidget happens in response to the local main frame
+  // being detached from the Page/WebViewImpl.
+  web_view_->SetMainFrameWidgetBase(nullptr);
   web_view_ = nullptr;
   WebFrameWidgetBase::Close();
-
-  // Note: this intentionally does not forward to WebView::close(), to make it
-  // easier to untangle the cleanup logic later.
   self_keep_alive_.Clear();
 }
 
@@ -37,10 +51,6 @@ WebSize WebViewFrameWidget::Size() {
 
 void WebViewFrameWidget::Resize(const WebSize& size) {
   web_view_->Resize(size);
-}
-
-void WebViewFrameWidget::ResizeVisualViewport(const WebSize& size) {
-  web_view_->ResizeVisualViewport(size);
 }
 
 void WebViewFrameWidget::DidEnterFullscreen() {
@@ -56,28 +66,50 @@ void WebViewFrameWidget::SetSuppressFrameRequestsWorkaroundFor704763Only(
   web_view_->SetSuppressFrameRequestsWorkaroundFor704763Only(
       suppress_frame_requests);
 }
-void WebViewFrameWidget::BeginFrame(base::TimeTicks last_frame_time) {
+
+void WebViewFrameWidget::DidBeginFrame() {
+  web_view_->DidBeginFrame();
+}
+
+void WebViewFrameWidget::BeginMainFrame(base::TimeTicks last_frame_time) {
   web_view_->BeginFrame(last_frame_time);
 }
 
+void WebViewFrameWidget::BeginUpdateLayers() {
+  web_view_->BeginUpdateLayers();
+}
+
+void WebViewFrameWidget::EndUpdateLayers() {
+  web_view_->EndUpdateLayers();
+}
+
+void WebViewFrameWidget::BeginCommitCompositorFrame() {
+  web_view_->BeginCommitCompositorFrame();
+}
+
+void WebViewFrameWidget::EndCommitCompositorFrame(
+    base::TimeTicks commit_start_time) {
+  web_view_->EndCommitCompositorFrame(commit_start_time);
+}
+
+void WebViewFrameWidget::RecordStartOfFrameMetrics() {
+  web_view_->RecordStartOfFrameMetrics();
+}
+
 void WebViewFrameWidget::RecordEndOfFrameMetrics(
-    base::TimeTicks frame_begin_time) {
-  web_view_->RecordEndOfFrameMetrics(frame_begin_time);
+    base::TimeTicks frame_begin_time,
+    cc::ActiveFrameSequenceTrackers trackers) {
+  web_view_->RecordEndOfFrameMetrics(frame_begin_time, trackers);
 }
 
-void WebViewFrameWidget::UpdateLifecycle(LifecycleUpdate requested_update,
-                                         LifecycleUpdateReason reason) {
+std::unique_ptr<cc::BeginMainFrameMetrics>
+WebViewFrameWidget::GetBeginMainFrameMetrics() {
+  return web_view_->GetBeginMainFrameMetrics();
+}
+
+void WebViewFrameWidget::UpdateLifecycle(WebLifecycleUpdate requested_update,
+                                         DocumentUpdateReason reason) {
   web_view_->UpdateLifecycle(requested_update, reason);
-}
-
-void WebViewFrameWidget::PaintContent(cc::PaintCanvas* canvas,
-                                      const WebRect& view_port) {
-  web_view_->PaintContent(canvas, view_port);
-}
-
-void WebViewFrameWidget::CompositeAndReadbackAsync(
-    base::OnceCallback<void(const SkBitmap&)> callback) {
-  web_view_->CompositeAndReadbackAsync(std::move(callback));
 }
 
 void WebViewFrameWidget::ThemeChanged() {
@@ -97,16 +129,18 @@ void WebViewFrameWidget::SetCursorVisibilityState(bool is_visible) {
   web_view_->SetCursorVisibilityState(is_visible);
 }
 
+void WebViewFrameWidget::OnFallbackCursorModeToggled(bool is_on) {
+  web_view_->OnFallbackCursorModeToggled(is_on);
+}
+
 void WebViewFrameWidget::ApplyViewportChanges(
     const ApplyViewportChangesArgs& args) {
   web_view_->ApplyViewportChanges(args);
 }
 
-void WebViewFrameWidget::RecordWheelAndTouchScrollingCount(
-    bool has_scrolled_by_wheel,
-    bool has_scrolled_by_touch) {
-  web_view_->RecordWheelAndTouchScrollingCount(has_scrolled_by_wheel,
-                                               has_scrolled_by_touch);
+void WebViewFrameWidget::RecordManipulationTypeCounts(
+    cc::ManipulationInfo info) {
+  web_view_->RecordManipulationTypeCounts(info);
 }
 void WebViewFrameWidget::SendOverscrollEventFromImplSide(
     const gfx::Vector2dF& overscroll_delta,
@@ -132,16 +166,12 @@ bool WebViewFrameWidget::SelectionBounds(WebRect& anchor,
   return web_view_->SelectionBounds(anchor, focus);
 }
 
-bool WebViewFrameWidget::IsAcceleratedCompositingActive() const {
-  return web_view_->IsAcceleratedCompositingActive();
-}
-
-void WebViewFrameWidget::WillCloseLayerTreeView() {
-  web_view_->WillCloseLayerTreeView();
-}
-
 WebURL WebViewFrameWidget::GetURLForDebugTrace() {
   return web_view_->GetURLForDebugTrace();
+}
+
+void WebViewFrameWidget::DidDetachLocalFrameTree() {
+  web_view_->DidDetachLocalMainFrame();
 }
 
 WebInputMethodController*
@@ -153,38 +183,14 @@ bool WebViewFrameWidget::ScrollFocusedEditableElementIntoView() {
   return web_view_->ScrollFocusedEditableElementIntoView();
 }
 
-void WebViewFrameWidget::Initialize() {}
-
-void WebViewFrameWidget::SetLayerTreeView(WebLayerTreeView*) {
-  // The WebViewImpl already has its LayerTreeView, the WebWidgetClient
-  // thus does not initialize and set another one here.
-  NOTREACHED();
-}
-
-base::WeakPtr<AnimationWorkletMutatorDispatcherImpl>
-WebViewFrameWidget::EnsureCompositorMutatorDispatcher(
-    scoped_refptr<base::SingleThreadTaskRunner>* mutator_task_runner) {
-  return web_view_->EnsureCompositorMutatorDispatcher(mutator_task_runner);
-}
-
-void WebViewFrameWidget::SetRootGraphicsLayer(GraphicsLayer* layer) {
-  web_view_->SetRootGraphicsLayer(layer);
-}
-
-GraphicsLayer* WebViewFrameWidget::RootGraphicsLayer() const {
-  return web_view_->RootGraphicsLayer();
-}
-
-void WebViewFrameWidget::SetRootLayer(scoped_refptr<cc::Layer> layer) {
-  web_view_->SetRootLayer(layer);
-}
-
-WebLayerTreeView* WebViewFrameWidget::GetLayerTreeView() const {
-  return web_view_->LayerTreeView();
-}
-
-CompositorAnimationHost* WebViewFrameWidget::AnimationHost() const {
-  return web_view_->AnimationHost();
+void WebViewFrameWidget::SetRootLayer(scoped_refptr<cc::Layer> root_layer) {
+  if (!web_view_->does_composite()) {
+    DCHECK(!root_layer);
+    return;
+  }
+  cc::LayerTreeHost* layer_tree_host = widget_base_->LayerTreeHost();
+  layer_tree_host->SetRootLayer(root_layer);
+  web_view_->DidChangeRootLayer(!!root_layer);
 }
 
 WebHitTestResult WebViewFrameWidget::HitTestResultAt(const gfx::Point& point) {
@@ -200,12 +206,20 @@ void WebViewFrameWidget::ZoomToFindInPageRect(
   web_view_->ZoomToFindInPageRect(rect_in_root_frame);
 }
 
-void WebViewFrameWidget::Trace(blink::Visitor* visitor) {
+void WebViewFrameWidget::Trace(Visitor* visitor) {
   WebFrameWidgetBase::Trace(visitor);
 }
 
 PageWidgetEventHandler* WebViewFrameWidget::GetPageWidgetEventHandler() {
   return web_view_.get();
+}
+
+LocalFrameView* WebViewFrameWidget::GetLocalFrameViewForAnimationScrolling() {
+  // Scrolling for the root frame is special we need to pass null indicating
+  // we are at the top of the tree when setting up the Animation. Which will
+  // cause ownership of the timeline and animation host.
+  // See ScrollingCoordinator::AnimationHostInitialized.
+  return nullptr;
 }
 
 }  // namespace blink

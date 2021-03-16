@@ -6,23 +6,36 @@
 
 #include <stddef.h>
 
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/permissions/attestation_permission_request.h"
-#include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
+#include "components/page_load_metrics/browser/metrics_web_contents_observer.h"
+#include "components/permissions/permission_request_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "crypto/sha2.h"
 #include "device/fido/features.h"
+#include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/common/error_utils.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/origin.h"
+
+#if defined(OS_WIN)
+#include "device/fido/win/webauthn_api.h"
+#endif  // defined(OS_WIN)
+
+namespace extensions {
+
+namespace api {
 
 namespace {
 
@@ -81,11 +94,20 @@ void RecordAttestationEvent(U2FAttestationPromptResult event) {
                             event);
 }
 
+content::RenderFrameHost* RenderFrameHostForTabAndFrameId(
+    content::BrowserContext* const browser_context,
+    const int tab_id,
+    const int frame_id) {
+  content::WebContents* web_contents = nullptr;
+  if (!ExtensionTabUtil::GetTabById(tab_id, browser_context,
+                                    /*include_incognito=*/true,
+                                    &web_contents)) {
+    return nullptr;
+  }
+  return ExtensionApiFrameIdMap::GetRenderFrameHostById(web_contents, frame_id);
+}
+
 }  // namespace
-
-namespace extensions {
-
-namespace api {
 
 void CryptotokenRegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
@@ -201,12 +223,35 @@ CryptotokenPrivateCanAppIdGetAttestationFunction::Run() {
     return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
   }
 
+  // If the origin is blocked, reject attestation.
+  if (device::DoesMatchWebAuthAttestationBlockedDomains(
+          url::Origin::Create(origin_url))) {
+    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
+  }
+
   // If prompting is disabled, allow attestation because that is the historical
   // behavior.
   if (!base::FeatureList::IsEnabled(
           ::features::kSecurityKeyAttestationPrompt)) {
     return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
   }
+
+#if defined(OS_WIN)
+  // If the request was handled by the Windows WebAuthn API on a version of
+  // Windows that shows an attestation permission prompt, don't show another
+  // one.
+  //
+  // Note that this does not account for the possibility of the
+  // WinWebAuthnApi having been disabled by a FidoDiscoveryFactory override,
+  // which may be done in tests or via the Virtual Authenticator WebDriver
+  // API.
+  if (base::FeatureList::IsEnabled(device::kWebAuthUseNativeWinApi) &&
+      device::WinWebAuthnApi::GetDefault()->IsAvailable() &&
+      device::WinWebAuthnApi::GetDefault()->Version() >=
+          WEBAUTHN_API_VERSION_2) {
+    return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
+  }
+#endif  // defined(OS_WIN)
 
   // Otherwise, show a permission prompt and pass the user's decision back.
   const GURL app_id_url(app_id);
@@ -215,14 +260,12 @@ CryptotokenPrivateCanAppIdGetAttestationFunction::Run() {
   content::WebContents* web_contents = nullptr;
   if (!ExtensionTabUtil::GetTabById(params->options.tab_id, browser_context(),
                                     true /* include incognito windows */,
-                                    nullptr /* out_browser */,
-                                    nullptr /* out_tab_strip */, &web_contents,
-                                    nullptr /* out_tab_index */)) {
+                                    &web_contents)) {
     return RespondNow(Error("cannot find specified tab"));
   }
 
-  PermissionRequestManager* permission_request_manager =
-      PermissionRequestManager::FromWebContents(web_contents);
+  permissions::PermissionRequestManager* permission_request_manager =
+      permissions::PermissionRequestManager::FromWebContents(web_contents);
   if (!permission_request_manager) {
     return RespondNow(Error("no PermissionRequestManager"));
   }
@@ -242,13 +285,39 @@ void CryptotokenPrivateCanAppIdGetAttestationFunction::Complete(bool result) {
   Respond(OneArgument(std::make_unique<base::Value>(result)));
 }
 
-CryptotokenPrivateCanProxyToWebAuthnFunction::
-    CryptotokenPrivateCanProxyToWebAuthnFunction() {}
+ExtensionFunction::ResponseAction
+CryptotokenPrivateRecordRegisterRequestFunction::Run() {
+  auto params =
+      cryptotoken_private::RecordRegisterRequest::Params::Create(*args_);
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  content::RenderFrameHost* frame = RenderFrameHostForTabAndFrameId(
+      browser_context(), params->tab_id, params->frame_id);
+  if (!frame) {
+    return RespondNow(Error("cannot find specified tab or frame"));
+  }
+
+  page_load_metrics::MetricsWebContentsObserver::RecordFeatureUsage(
+      frame, page_load_metrics::mojom::PageLoadFeatures(
+                 {blink::mojom::WebFeature::kU2FCryptotokenRegister}, {}, {}));
+  return RespondNow(NoArguments());
+}
 
 ExtensionFunction::ResponseAction
-CryptotokenPrivateCanProxyToWebAuthnFunction::Run() {
-  return RespondNow(OneArgument(std::make_unique<base::Value>(
-      base::FeatureList::IsEnabled(device::kWebAuthProxyCryptotoken))));
+CryptotokenPrivateRecordSignRequestFunction::Run() {
+  auto params = cryptotoken_private::RecordSignRequest::Params::Create(*args_);
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  content::RenderFrameHost* frame = RenderFrameHostForTabAndFrameId(
+      browser_context(), params->tab_id, params->frame_id);
+  if (!frame) {
+    return RespondNow(Error("cannot find specified tab or frame"));
+  }
+
+  page_load_metrics::MetricsWebContentsObserver::RecordFeatureUsage(
+      frame, page_load_metrics::mojom::PageLoadFeatures(
+                 {blink::mojom::WebFeature::kU2FCryptotokenSign}, {}, {}));
+  return RespondNow(NoArguments());
 }
 
 }  // namespace api

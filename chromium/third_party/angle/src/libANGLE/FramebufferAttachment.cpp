@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2014 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -22,36 +22,11 @@
 namespace gl
 {
 
-namespace
-{
-
-std::vector<Offset> TransformViewportOffsetArrayToVectorOfOffsets(const GLint *viewportOffsets,
-                                                                  GLsizei numViews)
-{
-    const size_t numViewsAsSizeT = static_cast<size_t>(numViews);
-    std::vector<Offset> offsetVector;
-    offsetVector.reserve(numViewsAsSizeT);
-    for (size_t i = 0u; i < numViewsAsSizeT; ++i)
-    {
-        offsetVector.emplace_back(Offset(viewportOffsets[i * 2u], viewportOffsets[i * 2u + 1u], 0));
-    }
-    return offsetVector;
-}
-
-}  // namespace
-
 ////// FramebufferAttachment::Target Implementation //////
 
-const GLsizei FramebufferAttachment::kDefaultNumViews         = 1;
-const GLenum FramebufferAttachment::kDefaultMultiviewLayout   = GL_NONE;
-const GLint FramebufferAttachment::kDefaultBaseViewIndex      = 0;
-const GLint FramebufferAttachment::kDefaultViewportOffsets[2] = {0};
-
-std::vector<Offset> FramebufferAttachment::GetDefaultViewportOffsetVector()
-{
-    return TransformViewportOffsetArrayToVectorOfOffsets(
-        FramebufferAttachment::kDefaultViewportOffsets, FramebufferAttachment::kDefaultNumViews);
-}
+const GLsizei FramebufferAttachment::kDefaultNumViews             = 1;
+const GLint FramebufferAttachment::kDefaultBaseViewIndex          = 0;
+const GLint FramebufferAttachment::kDefaultRenderToTextureSamples = 0;
 
 FramebufferAttachment::Target::Target() : mBinding(GL_NONE), mTextureIndex() {}
 
@@ -76,9 +51,9 @@ FramebufferAttachment::FramebufferAttachment()
     : mType(GL_NONE),
       mResource(nullptr),
       mNumViews(kDefaultNumViews),
-      mMultiviewLayout(kDefaultMultiviewLayout),
+      mIsMultiview(false),
       mBaseViewIndex(kDefaultBaseViewIndex),
-      mViewportOffsets(GetDefaultViewportOffsetVector())
+      mRenderToTextureSamples(kDefaultRenderToTextureSamples)
 {}
 
 FramebufferAttachment::FramebufferAttachment(const Context *context,
@@ -89,7 +64,7 @@ FramebufferAttachment::FramebufferAttachment(const Context *context,
     : mResource(nullptr)
 {
     attach(context, type, binding, textureIndex, resource, kDefaultNumViews, kDefaultBaseViewIndex,
-           kDefaultMultiviewLayout, kDefaultViewportOffsets);
+           false, kDefaultRenderToTextureSamples);
 }
 
 FramebufferAttachment::FramebufferAttachment(FramebufferAttachment &&other)
@@ -104,9 +79,9 @@ FramebufferAttachment &FramebufferAttachment::operator=(FramebufferAttachment &&
     std::swap(mTarget, other.mTarget);
     std::swap(mResource, other.mResource);
     std::swap(mNumViews, other.mNumViews);
-    std::swap(mMultiviewLayout, other.mMultiviewLayout);
+    std::swap(mIsMultiview, other.mIsMultiview);
     std::swap(mBaseViewIndex, other.mBaseViewIndex);
-    std::swap(mViewportOffsets, other.mViewportOffsets);
+    std::swap(mRenderToTextureSamples, other.mRenderToTextureSamples);
     return *this;
 }
 
@@ -123,10 +98,9 @@ void FramebufferAttachment::detach(const Context *context)
         mResource->onDetach(context);
         mResource = nullptr;
     }
-    mNumViews        = kDefaultNumViews;
-    mMultiviewLayout = kDefaultMultiviewLayout;
-    mBaseViewIndex   = kDefaultBaseViewIndex;
-    mViewportOffsets = GetDefaultViewportOffsetVector();
+    mNumViews      = kDefaultNumViews;
+    mIsMultiview   = false;
+    mBaseViewIndex = kDefaultBaseViewIndex;
 
     // not technically necessary, could omit for performance
     mTarget = Target();
@@ -139,8 +113,8 @@ void FramebufferAttachment::attach(const Context *context,
                                    FramebufferAttachmentObject *resource,
                                    GLsizei numViews,
                                    GLuint baseViewIndex,
-                                   GLenum multiviewLayout,
-                                   const GLint *viewportOffsets)
+                                   bool isMultiview,
+                                   GLsizei samples)
 {
     if (resource == nullptr)
     {
@@ -148,19 +122,12 @@ void FramebufferAttachment::attach(const Context *context,
         return;
     }
 
-    mType            = type;
-    mTarget          = Target(binding, textureIndex);
-    mNumViews        = numViews;
-    mBaseViewIndex   = baseViewIndex;
-    mMultiviewLayout = multiviewLayout;
-    if (multiviewLayout == GL_FRAMEBUFFER_MULTIVIEW_SIDE_BY_SIDE_ANGLE)
-    {
-        mViewportOffsets = TransformViewportOffsetArrayToVectorOfOffsets(viewportOffsets, numViews);
-    }
-    else
-    {
-        mViewportOffsets = GetDefaultViewportOffsetVector();
-    }
+    mType                   = type;
+    mTarget                 = Target(binding, textureIndex);
+    mNumViews               = numViews;
+    mBaseViewIndex          = baseViewIndex;
+    mIsMultiview            = isMultiview;
+    mRenderToTextureSamples = samples;
     resource->onAttach(context);
 
     if (mResource != nullptr)
@@ -173,32 +140,32 @@ void FramebufferAttachment::attach(const Context *context,
 
 GLuint FramebufferAttachment::getRedSize() const
 {
-    return getFormat().info->redBits;
+    return getSize().empty() ? 0 : getFormat().info->redBits;
 }
 
 GLuint FramebufferAttachment::getGreenSize() const
 {
-    return getFormat().info->greenBits;
+    return getSize().empty() ? 0 : getFormat().info->greenBits;
 }
 
 GLuint FramebufferAttachment::getBlueSize() const
 {
-    return getFormat().info->blueBits;
+    return getSize().empty() ? 0 : getFormat().info->blueBits;
 }
 
 GLuint FramebufferAttachment::getAlphaSize() const
 {
-    return getFormat().info->alphaBits;
+    return getSize().empty() ? 0 : getFormat().info->alphaBits;
 }
 
 GLuint FramebufferAttachment::getDepthSize() const
 {
-    return getFormat().info->depthBits;
+    return getSize().empty() ? 0 : getFormat().info->depthBits;
 }
 
 GLuint FramebufferAttachment::getStencilSize() const
 {
-    return getFormat().info->stencilBits;
+    return getSize().empty() ? 0 : getFormat().info->stencilBits;
 }
 
 GLenum FramebufferAttachment::getComponentType() const
@@ -214,12 +181,6 @@ GLenum FramebufferAttachment::getColorEncoding() const
 GLuint FramebufferAttachment::id() const
 {
     return mResource->getId();
-}
-
-const ImageIndex &FramebufferAttachment::getTextureImageIndex() const
-{
-    ASSERT(type() == GL_TEXTURE);
-    return mTarget.textureIndex();
 }
 
 TextureTarget FramebufferAttachment::cubeMapFace() const
@@ -249,19 +210,14 @@ bool FramebufferAttachment::isLayered() const
     return mTarget.textureIndex().isLayered();
 }
 
-GLenum FramebufferAttachment::getMultiviewLayout() const
+bool FramebufferAttachment::isMultiview() const
 {
-    return mMultiviewLayout;
+    return mIsMultiview;
 }
 
 GLint FramebufferAttachment::getBaseViewIndex() const
 {
     return mBaseViewIndex;
-}
-
-const std::vector<Offset> &FramebufferAttachment::getMultiviewViewportOffsets() const
-{
-    return mViewportOffsets;
 }
 
 Texture *FramebufferAttachment::getTexture() const
@@ -287,8 +243,8 @@ FramebufferAttachmentObject *FramebufferAttachment::getResource() const
 bool FramebufferAttachment::operator==(const FramebufferAttachment &other) const
 {
     if (mResource != other.mResource || mType != other.mType || mNumViews != other.mNumViews ||
-        mMultiviewLayout != other.mMultiviewLayout || mBaseViewIndex != other.mBaseViewIndex ||
-        mViewportOffsets != other.mViewportOffsets)
+        mIsMultiview != other.mIsMultiview || mBaseViewIndex != other.mBaseViewIndex ||
+        mRenderToTextureSamples != other.mRenderToTextureSamples)
     {
         return false;
     }
@@ -325,6 +281,17 @@ void FramebufferAttachment::setInitState(InitState initState) const
     mResource->setInitState(mTarget.textureIndex(), initState);
 }
 
+bool FramebufferAttachment::isBoundAsSamplerOrImage() const
+{
+    if (mType != GL_TEXTURE)
+    {
+        return false;
+    }
+
+    const gl::TextureState &textureState = getTexture()->getTextureState();
+    return textureState.isBoundAsImageTexture() || textureState.isBoundAsSamplerTexture();
+}
+
 ////// FramebufferAttachmentObject Implementation //////
 
 FramebufferAttachmentObject::FramebufferAttachmentObject() {}
@@ -335,9 +302,11 @@ angle::Result FramebufferAttachmentObject::getAttachmentRenderTarget(
     const Context *context,
     GLenum binding,
     const ImageIndex &imageIndex,
+    GLsizei samples,
     rx::FramebufferAttachmentRenderTarget **rtOut) const
 {
-    return getAttachmentImpl()->getAttachmentRenderTarget(context, binding, imageIndex, rtOut);
+    return getAttachmentImpl()->getAttachmentRenderTarget(context, binding, imageIndex, samples,
+                                                          rtOut);
 }
 
 angle::Result FramebufferAttachmentObject::initializeContents(const Context *context,

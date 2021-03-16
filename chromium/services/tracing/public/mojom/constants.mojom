@@ -4,7 +4,7 @@
 
 module tracing.mojom;
 
-const string kServiceName = "tracing";
+const uint32 kStopTracingRetryTimeMilliseconds = 100;
 
 // The label of agents that provide trace data of the format explained in
 // https://goo.gl/Dw8qPY.

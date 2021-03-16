@@ -22,9 +22,14 @@ namespace blink {
 class CSSParserContext;
 class CSSPropertyValue;
 class CSSStringValue;
-class CSSURIValue;
 class CSSValuePair;
 class StylePropertyShorthand;
+
+namespace cssvalue {
+
+class CSSURIValue;
+
+}
 
 // When these functions are successful, they will consume all the relevant
 // tokens from the range and also consume any whitespace which follows. When
@@ -44,19 +49,30 @@ enum class UnitlessQuirk { kAllow, kForbid };
 
 CSSPrimitiveValue* ConsumeInteger(
     CSSParserTokenRange&,
+    const CSSParserContext&,
     double minimum_value = -std::numeric_limits<double>::max());
-CSSPrimitiveValue* ConsumeIntegerOrNumberCalc(CSSParserTokenRange&);
-CSSPrimitiveValue* ConsumePositiveInteger(CSSParserTokenRange&);
-bool ConsumeNumberRaw(CSSParserTokenRange&, double& result);
-CSSPrimitiveValue* ConsumeNumber(CSSParserTokenRange&, ValueRange);
+CSSPrimitiveValue* ConsumeIntegerOrNumberCalc(CSSParserTokenRange&,
+                                              const CSSParserContext&);
+CSSPrimitiveValue* ConsumePositiveInteger(CSSParserTokenRange&,
+                                          const CSSParserContext&);
+bool ConsumeNumberRaw(CSSParserTokenRange&,
+                      const CSSParserContext& context,
+                      double& result);
+CSSPrimitiveValue* ConsumeNumber(CSSParserTokenRange&,
+                                 const CSSParserContext&,
+                                 ValueRange);
 CSSPrimitiveValue* ConsumeLength(CSSParserTokenRange&,
-                                 CSSParserMode,
+                                 const CSSParserContext&,
                                  ValueRange,
                                  UnitlessQuirk = UnitlessQuirk::kForbid);
-CSSPrimitiveValue* ConsumePercent(CSSParserTokenRange&, ValueRange);
+CSSPrimitiveValue* ConsumePercent(CSSParserTokenRange&,
+                                  const CSSParserContext&,
+                                  ValueRange);
+CSSPrimitiveValue* ConsumeAlphaValue(CSSParserTokenRange&,
+                                     const CSSParserContext&);
 CSSPrimitiveValue* ConsumeLengthOrPercent(
     CSSParserTokenRange&,
-    CSSParserMode,
+    const CSSParserContext&,
     ValueRange,
     UnitlessQuirk = UnitlessQuirk::kForbid);
 CSSPrimitiveValue* ConsumeSVGGeometryPropertyLength(CSSParserTokenRange&,
@@ -65,15 +81,17 @@ CSSPrimitiveValue* ConsumeSVGGeometryPropertyLength(CSSParserTokenRange&,
 
 CSSPrimitiveValue* ConsumeAngle(
     CSSParserTokenRange&,
-    const CSSParserContext*,
+    const CSSParserContext&,
     base::Optional<WebFeature> unitless_zero_feature);
 CSSPrimitiveValue* ConsumeAngle(
     CSSParserTokenRange&,
-    const CSSParserContext*,
+    const CSSParserContext&,
     base::Optional<WebFeature> unitless_zero_feature,
     double minimum_value,
     double maximum_value);
-CSSPrimitiveValue* ConsumeTime(CSSParserTokenRange&, ValueRange);
+CSSPrimitiveValue* ConsumeTime(CSSParserTokenRange&,
+                               const CSSParserContext&,
+                               ValueRange);
 CSSPrimitiveValue* ConsumeResolution(CSSParserTokenRange&);
 
 CSSIdentifierValue* ConsumeIdent(CSSParserTokenRange&);
@@ -88,14 +106,18 @@ CSSIdentifierValue* ConsumeIdent(CSSParserTokenRange&);
 CSSCustomIdentValue* ConsumeCustomIdent(CSSParserTokenRange&,
                                         const CSSParserContext&);
 CSSStringValue* ConsumeString(CSSParserTokenRange&);
-StringView ConsumeUrlAsStringView(CSSParserTokenRange&);
-CSSURIValue* ConsumeUrl(CSSParserTokenRange&, const CSSParserContext*);
+StringView ConsumeUrlAsStringView(CSSParserTokenRange&,
+                                  const CSSParserContext&);
+cssvalue::CSSURIValue* ConsumeUrl(CSSParserTokenRange&,
+                                  const CSSParserContext&);
 
 CSSValue* ConsumeColor(CSSParserTokenRange&,
-                       CSSParserMode,
+                       const CSSParserContext&,
                        bool accept_quirky_colors = false);
 
-CSSValue* ConsumeLineWidth(CSSParserTokenRange&, CSSParserMode, UnitlessQuirk);
+CSSValue* ConsumeLineWidth(CSSParserTokenRange&,
+                           const CSSParserContext&,
+                           UnitlessQuirk);
 
 CSSValuePair* ConsumePosition(CSSParserTokenRange&,
                               const CSSParserContext&,
@@ -108,7 +130,7 @@ bool ConsumePosition(CSSParserTokenRange&,
                      CSSValue*& result_x,
                      CSSValue*& result_y);
 bool ConsumeOneOrTwoValuedPosition(CSSParserTokenRange&,
-                                   CSSParserMode,
+                                   const CSSParserContext&,
                                    UnitlessQuirk,
                                    CSSValue*& result_x,
                                    CSSValue*& result_y);
@@ -122,11 +144,15 @@ enum class ConsumeGeneratedImagePolicy { kAllow, kForbid };
 
 CSSValue* ConsumeImage(
     CSSParserTokenRange&,
-    const CSSParserContext*,
+    const CSSParserContext&,
     ConsumeGeneratedImagePolicy = ConsumeGeneratedImagePolicy::kAllow);
-CSSValue* ConsumeImageOrNone(CSSParserTokenRange&, const CSSParserContext*);
+CSSValue* ConsumeImageOrNone(CSSParserTokenRange&, const CSSParserContext&);
+
+CSSValue* ConsumeAxis(CSSParserTokenRange&, const CSSParserContext& context);
 
 bool IsCSSWideKeyword(StringView);
+bool IsRevertKeyword(StringView);
+bool IsDefaultKeyword(StringView);
 
 CSSIdentifierValue* ConsumeShapeBox(CSSParserTokenRange&);
 

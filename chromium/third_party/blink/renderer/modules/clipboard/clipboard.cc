@@ -4,38 +4,37 @@
 
 #include "third_party/blink/renderer/modules/clipboard/clipboard.h"
 
+#include <utility>
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/clipboard/clipboard_promise.h"
 
 namespace blink {
 
 Clipboard::Clipboard(ExecutionContext* context)
-    : ContextLifecycleObserver(context) {}
+    : ExecutionContextClient(context) {
+  DCHECK(context);
+}
 
 ScriptPromise Clipboard::read(ScriptState* script_state) {
-  return ClipboardPromise::CreateForRead(script_state);
+  return ClipboardPromise::CreateForRead(GetExecutionContext(), script_state);
 }
 
 ScriptPromise Clipboard::readText(ScriptState* script_state) {
-  return ClipboardPromise::CreateForReadText(script_state);
+  return ClipboardPromise::CreateForReadText(GetExecutionContext(),
+                                             script_state);
 }
 
-ScriptPromise Clipboard::readImageExperimental(ScriptState* script_state) {
-  return ClipboardPromise::CreateForReadImage(script_state);
-}
-
-ScriptPromise Clipboard::write(ScriptState* script_state, DataTransfer* data) {
-  return ClipboardPromise::CreateForWrite(script_state, data);
+ScriptPromise Clipboard::write(ScriptState* script_state,
+                               const HeapVector<Member<ClipboardItem>>& data) {
+  return ClipboardPromise::CreateForWrite(GetExecutionContext(), script_state,
+                                          std::move(data));
 }
 
 ScriptPromise Clipboard::writeText(ScriptState* script_state,
                                    const String& data) {
-  return ClipboardPromise::CreateForWriteText(script_state, data);
-}
-
-ScriptPromise Clipboard::writeImageExperimental(ScriptState* script_state,
-                                                Blob* data) {
-  return ClipboardPromise::CreateForWriteImage(script_state, data);
+  return ClipboardPromise::CreateForWriteText(GetExecutionContext(),
+                                              script_state, data);
 }
 
 const AtomicString& Clipboard::InterfaceName() const {
@@ -43,12 +42,12 @@ const AtomicString& Clipboard::InterfaceName() const {
 }
 
 ExecutionContext* Clipboard::GetExecutionContext() const {
-  return ContextLifecycleObserver::GetExecutionContext();
+  return ExecutionContextClient::GetExecutionContext();
 }
 
-void Clipboard::Trace(blink::Visitor* visitor) {
+void Clipboard::Trace(Visitor* visitor) {
   EventTargetWithInlineData::Trace(visitor);
-  ContextLifecycleObserver::Trace(visitor);
+  ExecutionContextClient::Trace(visitor);
 }
 
 }  // namespace blink

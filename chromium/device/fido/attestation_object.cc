@@ -9,9 +9,47 @@
 #include "components/cbor/values.h"
 #include "components/cbor/writer.h"
 #include "device/fido/attestation_statement.h"
+#include "device/fido/authenticator_data.h"
 #include "device/fido/fido_constants.h"
+#include "device/fido/opaque_attestation_statement.h"
 
 namespace device {
+
+// static
+base::Optional<AttestationObject> AttestationObject::Parse(
+    const cbor::Value& value) {
+  if (!value.is_map()) {
+    return base::nullopt;
+  }
+  const cbor::Value::MapValue& map = value.GetMap();
+
+  const auto& format_it = map.find(cbor::Value(kFormatKey));
+  if (format_it == map.end() || !format_it->second.is_string()) {
+    return base::nullopt;
+  }
+  const std::string& fmt = format_it->second.GetString();
+
+  const auto& att_stmt_it = map.find(cbor::Value(kAttestationStatementKey));
+  if (att_stmt_it == map.end() || !att_stmt_it->second.is_map()) {
+    return base::nullopt;
+  }
+  std::unique_ptr<AttestationStatement> attestation_statement =
+      std::make_unique<OpaqueAttestationStatement>(
+          fmt, cbor::Value(att_stmt_it->second.GetMap()));
+
+  const auto& auth_data_it = map.find(cbor::Value(kAuthDataKey));
+  if (auth_data_it == map.end() || !auth_data_it->second.is_bytestring()) {
+    return base::nullopt;
+  }
+  base::Optional<AuthenticatorData> authenticator_data =
+      AuthenticatorData::DecodeAuthenticatorData(
+          auth_data_it->second.GetBytestring());
+  if (!authenticator_data) {
+    return base::nullopt;
+  }
+  return AttestationObject(std::move(*authenticator_data),
+                           std::move(attestation_statement));
+}
 
 AttestationObject::AttestationObject(
     AuthenticatorData data,
@@ -63,30 +101,15 @@ bool AttestationObject::IsAttestationCertificateInappropriatelyIdentifying() {
       ->IsAttestationCertificateInappropriatelyIdentifying();
 }
 
-std::vector<uint8_t> AttestationObject::SerializeToCBOREncodedBytes() const {
+cbor::Value AsCBOR(const AttestationObject& object) {
   cbor::Value::MapValue map;
   map[cbor::Value(kFormatKey)] =
-      cbor::Value(attestation_statement_->format_name());
-  map[cbor::Value(kAuthDataKey)] =
-      cbor::Value(authenticator_data_.SerializeToByteArray());
-  map[cbor::Value(kAttestationStatementKey)] =
-      cbor::Value(attestation_statement_->GetAsCBORMap());
-  return cbor::Writer::Write(cbor::Value(std::move(map)))
-      .value_or(std::vector<uint8_t>());
-}
-
-std::vector<uint8_t> SerializeToCtapStyleCborEncodedBytes(
-    const AttestationObject& object) {
-  cbor::Value::MapValue map;
-  map[cbor::Value(1)] =
       cbor::Value(object.attestation_statement().format_name());
-  map[cbor::Value(2)] =
+  map[cbor::Value(kAuthDataKey)] =
       cbor::Value(object.authenticator_data().SerializeToByteArray());
-  map[cbor::Value(3)] =
-      cbor::Value(object.attestation_statement().GetAsCBORMap());
-  auto encoded_bytes = cbor::Writer::Write(cbor::Value(std::move(map)));
-  DCHECK(encoded_bytes);
-  return std::move(*encoded_bytes);
+  map[cbor::Value(kAttestationStatementKey)] =
+      AsCBOR(object.attestation_statement());
+  return cbor::Value(std::move(map));
 }
 
 }  // namespace device

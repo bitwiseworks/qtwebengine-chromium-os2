@@ -5,8 +5,8 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_to_number.h"
 
 #include <type_traits>
-#include "third_party/blink/renderer/platform/wtf/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/dtoa.h"
+#include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 
 namespace WTF {
@@ -173,6 +173,20 @@ unsigned HexCharactersToUInt(const UChar* data,
                              NumberParsingOptions options,
                              bool* ok) {
   return ToIntegralType<unsigned, UChar, 16>(data, length, options, ok);
+}
+
+uint64_t HexCharactersToUInt64(const LChar* data,
+                               size_t length,
+                               NumberParsingOptions options,
+                               bool* ok) {
+  return ToIntegralType<uint64_t, LChar, 16>(data, length, options, ok);
+}
+
+uint64_t HexCharactersToUInt64(const UChar* data,
+                               size_t length,
+                               NumberParsingOptions options,
+                               bool* ok) {
+  return ToIntegralType<uint64_t, UChar, 16>(data, length, options, ok);
 }
 
 int CharactersToInt(const LChar* data,

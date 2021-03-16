@@ -9,9 +9,11 @@
 #include "tools/gn/config_values_extractors.h"
 #include "tools/gn/escape.h"
 #include "tools/gn/filesystem_utils.h"
+#include "tools/gn/frameworks_utils.h"
 #include "tools/gn/path_output.h"
 #include "tools/gn/target.h"
 #include "tools/gn/toolchain.h"
+#include "tools/gn/variables.h"
 
 struct DefineWriter {
   DefineWriter() { options.mode = ESCAPE_NINJA_COMMAND; }
@@ -33,6 +35,54 @@ struct DefineWriter {
 
   EscapeOptions options;
   bool escape_strings = false;
+};
+
+struct FrameworkDirsWriter {
+  FrameworkDirsWriter(PathOutput& path_output, const std::string& tool_switch)
+      : path_output_(path_output), tool_switch_(tool_switch) {}
+
+  ~FrameworkDirsWriter() = default;
+
+  void operator()(const SourceDir& d, std::ostream& out) const {
+    std::ostringstream path_out;
+    path_output_.WriteDir(path_out, d, PathOutput::DIR_NO_LAST_SLASH);
+    const std::string& path = path_out.str();
+    if (path[0] == '"')
+      out << " \"" << tool_switch_ << path.substr(1);
+    else
+      out << " " << tool_switch_ << path;
+  }
+
+  PathOutput& path_output_;
+  std::string tool_switch_;
+};
+
+struct FrameworksWriter {
+  explicit FrameworksWriter(const std::string& tool_switch)
+      : FrameworksWriter(ESCAPE_NINJA_COMMAND, false, tool_switch) {}
+  FrameworksWriter(EscapingMode mode,
+                   bool escape_strings,
+                   const std::string& tool_switch)
+      : escape_strings_(escape_strings), tool_switch_(tool_switch) {
+    options_.mode = mode;
+  }
+
+  void operator()(const std::string& s, std::ostream& out) const {
+    out << " " << tool_switch_;
+    base::StringPiece framework_name = GetFrameworkName(s);
+
+    if (escape_strings_) {
+      std::string dest;
+      base::EscapeJSONString(framework_name, false, &dest);
+      EscapeStringToStream(out, dest, options_);
+      return;
+    }
+    EscapeStringToStream(out, framework_name, options_);
+  }
+
+  EscapeOptions options_;
+  bool escape_strings_;
+  std::string tool_switch_;
 };
 
 struct IncludeWriter {
@@ -61,9 +111,9 @@ struct IncludeWriter {
 // tool-specific (e.g. "cflags_c"). For non-tool-specific flags (e.g.
 // "defines") tool_type should be TYPE_NONE.
 void WriteOneFlag(const Target* target,
-                  SubstitutionType subst_enum,
+                  const Substitution* subst_enum,
                   bool has_precompiled_headers,
-                  Toolchain::ToolType tool_type,
+                  const char* tool_name,
                   const std::vector<std::string>& (ConfigValues::*getter)()
                       const,
                   EscapeOptions flag_escape_options,
@@ -74,11 +124,11 @@ void WriteOneFlag(const Target* target,
 // Fills |outputs| with the object or gch file for the precompiled header of the
 // given type (flag type and tool type must match).
 void GetPCHOutputFiles(const Target* target,
-                       Toolchain::ToolType tool_type,
+                       const char* tool_name,
                        std::vector<OutputFile>* outputs);
 
-std::string GetGCCPCHOutputExtension(Toolchain::ToolType tool_type);
-std::string GetWindowsPCHObjectExtension(Toolchain::ToolType tool_type,
+std::string GetGCCPCHOutputExtension(const char* tool_name);
+std::string GetWindowsPCHObjectExtension(const char* tool_name,
                                          const std::string& obj_extension);
 
 #endif  // TOOLS_GN_NINJA_TARGET_COMMAND_WRITER_H_

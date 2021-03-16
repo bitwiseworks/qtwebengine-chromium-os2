@@ -59,7 +59,7 @@ class DesktopCaptureApiTest : public ExtensionApiTest {
 
  protected:
   GURL GetURLForPath(const std::string& host, const std::string& path) {
-    std::string port = base::UintToString(embedded_test_server()->port());
+    std::string port = base::NumberToString(embedded_test_server()->port());
     GURL::Replacements replacements;
     replacements.SetHostStr(host);
     replacements.SetPortStr(port);
@@ -149,8 +149,8 @@ IN_PROC_BROWSER_TEST_F(DesktopCaptureApiTest, DISABLED_Delegation) {
   // Load extension.
   base::FilePath extension_path =
       test_data_dir_.AppendASCII("desktop_capture_delegate");
-  const Extension* extension = LoadExtensionWithFlags(
-      extension_path, ExtensionBrowserTest::kFlagNone);
+  const Extension* extension =
+      LoadExtensionWithFlags(extension_path, kFlagNone);
   ASSERT_TRUE(extension);
 
   ui_test_utils::NavigateToURL(

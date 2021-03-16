@@ -73,18 +73,32 @@ class CC_EXPORT ImageDecodeCache {
     return ScopedTaskType::kInRaster;
   }
 
+  static devtools_instrumentation::ScopedImageDecodeTask::ImageType
+  ToScopedImageType(ImageType image_type) {
+    using ScopedImageType =
+        devtools_instrumentation::ScopedImageDecodeTask::ImageType;
+    if (image_type == ImageType::kWEBP)
+      return ScopedImageType::kWebP;
+    if (image_type == ImageType::kJPEG)
+      return ScopedImageType::kJpeg;
+    return ScopedImageType::kOther;
+  }
+
   virtual ~ImageDecodeCache() {}
 
   struct CC_EXPORT TaskResult {
-    explicit TaskResult(bool need_unref);
-    explicit TaskResult(scoped_refptr<TileTask> task);
+    explicit TaskResult(bool need_unref,
+                        bool is_at_raster_decode,
+                        bool can_do_hardware_accelerated_decode);
+    explicit TaskResult(scoped_refptr<TileTask> task,
+                        bool can_do_hardware_accelerated_decode);
     TaskResult(const TaskResult& result);
     ~TaskResult();
 
-    bool IsAtRaster() const { return !task && !need_unref; }
-
     scoped_refptr<TileTask> task;
     bool need_unref = false;
+    bool is_at_raster_decode = false;
+    bool can_do_hardware_accelerated_decode = false;
   };
   // Fill in an TileTask which will decode the given image when run. In
   // case the image is already cached, fills in nullptr. Returns true if the
@@ -144,8 +158,9 @@ class CC_EXPORT ImageDecodeCache {
   // draw).
   virtual bool UseCacheForDrawImage(const DrawImage& image) const = 0;
 
- protected:
-  void RecordImageMipLevelUMA(int mip_level);
+  // Should be called periodically to record statistics about cache use and
+  // performance.
+  virtual void RecordStats() = 0;
 };
 
 }  // namespace cc

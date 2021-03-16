@@ -7,12 +7,14 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/api_unittest.h"
+#include "extensions/browser/unloaded_extension_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
@@ -170,12 +172,11 @@ class PowerAPITest : public ApiUnitTest {
   bool CallFunction(FunctionType type,
                     const std::string& args,
                     const extensions::Extension* extension) {
-    scoped_refptr<UIThreadExtensionFunction> function(
-        type == REQUEST ?
-        static_cast<UIThreadExtensionFunction*>(
-            new PowerRequestKeepAwakeFunction) :
-        static_cast<UIThreadExtensionFunction*>(
-            new PowerReleaseKeepAwakeFunction));
+    scoped_refptr<ExtensionFunction> function(
+        type == REQUEST
+            ? static_cast<ExtensionFunction*>(new PowerRequestKeepAwakeFunction)
+            : static_cast<ExtensionFunction*>(
+                  new PowerReleaseKeepAwakeFunction));
     function->set_extension(extension);
     return api_test_utils::RunFunction(function.get(), args, browser_context());
   }

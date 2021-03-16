@@ -11,16 +11,6 @@
 
 namespace blink {
 
-RTCVoidRequestPromiseImpl* RTCVoidRequestPromiseImpl::Create(
-    base::Optional<RTCSetSessionDescriptionOperation> operation,
-    RTCPeerConnection* requester,
-    ScriptPromiseResolver* resolver,
-    const char* interface_name,
-    const char* property_name) {
-  return MakeGarbageCollected<RTCVoidRequestPromiseImpl>(
-      std::move(operation), requester, resolver, interface_name, property_name);
-}
-
 RTCVoidRequestPromiseImpl::RTCVoidRequestPromiseImpl(
     base::Optional<RTCSetSessionDescriptionOperation> operation,
     RTCPeerConnection* requester,
@@ -74,7 +64,7 @@ void RTCVoidRequestPromiseImpl::Clear() {
   requester_.Clear();
 }
 
-void RTCVoidRequestPromiseImpl::Trace(blink::Visitor* visitor) {
+void RTCVoidRequestPromiseImpl::Trace(Visitor* visitor) {
   visitor->Trace(resolver_);
   visitor->Trace(requester_);
   RTCVoidRequest::Trace(visitor);

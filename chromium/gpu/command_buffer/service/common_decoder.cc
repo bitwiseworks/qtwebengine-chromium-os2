@@ -12,6 +12,8 @@
 #include "base/numerics/safe_math.h"
 #include "base/stl_util.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
+#include "gpu/command_buffer/service/decoder_client.h"
+#include "ui/gfx/ipc/color/gfx_param_traits.h"
 
 namespace gpu {
 namespace {
@@ -127,8 +129,10 @@ bool CommonDecoder::Bucket::GetAsStrings(
   return true;
 }
 
-CommonDecoder::CommonDecoder(CommandBufferServiceBase* command_buffer_service)
+CommonDecoder::CommonDecoder(DecoderClient* client,
+                             CommandBufferServiceBase* command_buffer_service)
     : command_buffer_service_(command_buffer_service),
+      client_(client),
       max_bucket_size_(kDefaultMaxBucketSize) {
   DCHECK(command_buffer_service_);
 }
@@ -361,6 +365,48 @@ error::Error CommonDecoder::HandleGetBucketData(uint32_t immediate_data_size,
   }
   memcpy(data, src, size);
   return error::kNoError;
+}
+
+error::Error CommonDecoder::HandleInsertFenceSync(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile cmd::InsertFenceSync& c =
+      *static_cast<const volatile cmd::InsertFenceSync*>(cmd_data);
+
+  const uint64_t release_count = c.release_count();
+  client_->OnFenceSyncRelease(release_count);
+  // Exit inner command processing loop so that we check the scheduling state
+  // and yield if necessary as we may have unblocked a higher priority
+  // context.
+  ExitCommandProcessingEarly();
+  return error::kNoError;
+}
+
+bool CommonDecoder::ReadColorSpace(uint32_t shm_id,
+                                   uint32_t shm_offset,
+                                   uint32_t color_space_size,
+                                   gfx::ColorSpace* color_space) {
+  // Use the default (invalid) color space if no space was serialized.
+  if (!shm_id && !shm_offset && !color_space_size) {
+    *color_space = gfx::ColorSpace();
+    return true;
+  }
+
+  const char* data = static_cast<const char*>(
+      GetAddressAndCheckSize(shm_id, shm_offset, color_space_size));
+  if (!data) {
+    return false;
+  }
+
+  // Make a copy to reduce the risk of a time of check to time of use attack.
+  std::vector<char> color_space_data(data, data + color_space_size);
+  base::Pickle color_space_pickle(color_space_data.data(), color_space_size);
+  base::PickleIterator iterator(color_space_pickle);
+  if (!IPC::ParamTraits<gfx::ColorSpace>::Read(&color_space_pickle, &iterator,
+                                               color_space)) {
+    return false;
+  }
+  return true;
 }
 
 }  // namespace gpu

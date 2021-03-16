@@ -14,7 +14,7 @@
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]
-}
+} 
 source $testdir/tester.tcl
 set testprefix rtreecheck
 
@@ -65,8 +65,8 @@ proc setup_simple_db {{module rtree}} {
 }
 
 setup_simple_db
-do_execsql_test 2.1 {
-  SELECT rtreecheck('r1')
+do_execsql_test 2.1 { 
+  SELECT rtreecheck('r1') 
 } {ok}
 
 do_execsql_test 2.2 {
@@ -74,26 +74,26 @@ do_execsql_test 2.2 {
   UPDATE r1_node SET data = swap_int32(data, 23, 29);
 }
 
-do_execsql_test 2.3 {
-  SELECT rtreecheck('r1')
+do_execsql_test 2.3 { 
+  SELECT rtreecheck('r1') 
 } {{Dimension 0 of cell 0 on node 1 is corrupt
 Dimension 1 of cell 3 on node 1 is corrupt}}
 
 setup_simple_db
 do_execsql_test 2.4 {
   DELETE FROM r1_rowid WHERE rowid = 3;
-  SELECT rtreecheck('r1')
+  SELECT rtreecheck('r1') 
 } {{Mapping (3 -> 1) missing from %_rowid table
 Wrong number of entries in %_rowid table - expected 5, actual 4}}
 
 setup_simple_db
 do_execsql_test 2.5 {
   UPDATE r1_rowid SET nodeno=2 WHERE rowid=3;
-  SELECT rtreecheck('r1')
+  SELECT rtreecheck('r1') 
 } {{Found (3 -> 2) in %_rowid table, expected (3 -> 1)}}
 
 reset_db
-do_execsql_test 3.0 {
+do_execsql_test 3.0 { 
   CREATE VIRTUAL TABLE r1 USING rtree_i32(id, x1, x2);
   INSERT INTO r1 VALUES(1, 0x7FFFFFFF*-1, 0x7FFFFFFF);
   INSERT INTO r1 VALUES(2, 0x7FFFFFFF*-1, 5);
@@ -104,13 +104,13 @@ do_execsql_test 3.0 {
   INSERT INTO r1 VALUES(7, 5, 0x00000080);
   INSERT INTO r1 VALUES(8, 5, 0x40490fdb);
   INSERT INTO r1 VALUES(9, 0x7f800000, 0x7f900000);
-  SELECT rtreecheck('r1')
+  SELECT rtreecheck('r1') 
 } {ok}
 
-do_execsql_test 3.1 {
+do_execsql_test 3.1 { 
   CREATE VIRTUAL TABLE r2 USING rtree_i32(id, x1, x2);
   INSERT INTO r2 VALUES(2, -1*(1<<31), -1*(1<<31)+5);
-  SELECT rtreecheck('r2')
+  SELECT rtreecheck('r2') 
 } {ok}
 
 sqlite3_db_config db DEFENSIVE 0

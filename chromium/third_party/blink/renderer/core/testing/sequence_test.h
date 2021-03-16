@@ -19,8 +19,6 @@ class SequenceTest final : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SequenceTest* create() { return MakeGarbageCollected<SequenceTest>(); }
-
   SequenceTest();
   ~SequenceTest() override;
 
@@ -37,7 +35,7 @@ class SequenceTest final : public ScriptWrappable {
 
   bool unionReceivedSequence(const DoubleOrDoubleSequence& arg);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   HeapVector<Member<Element>> element_sequence_;

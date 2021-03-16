@@ -5,8 +5,10 @@
 #include "services/network/public/cpp/host_resolver_mojom_traits.h"
 
 #include "mojo/public/cpp/base/time_mojom_traits.h"
+#include "net/dns/public/dns_over_https_server_config.h"
 #include "services/network/public/cpp/ip_address_mojom_traits.h"
 #include "services/network/public/cpp/ip_endpoint_mojom_traits.h"
+#include "services/network/public/mojom/host_resolver.mojom.h"
 
 namespace mojo {
 
@@ -20,6 +22,7 @@ using network::mojom::DnsOverHttpsServerDataView;
 using network::mojom::DnsOverHttpsServerPtr;
 using network::mojom::DnsQueryType;
 using network::mojom::MdnsListenClient;
+using network::mojom::OptionalSecureDnsMode;
 using network::mojom::ResolveHostParameters;
 
 namespace {
@@ -85,8 +88,7 @@ bool ReadHostData(mojo::ArrayDataView<DnsHostDataView> data,
 
 bool ReadDnsOverHttpsServerData(
     mojo::ArrayDataView<DnsOverHttpsServerDataView> data,
-    base::Optional<std::vector<net::DnsConfig::DnsOverHttpsServerConfig>>*
-        out) {
+    base::Optional<std::vector<net::DnsOverHttpsServerConfig>>* out) {
   if (data.is_null()) {
     out->reset();
     return true;
@@ -108,13 +110,41 @@ bool ReadDnsOverHttpsServerData(
   return true;
 }
 
+OptionalSecureDnsMode ToOptionalSecureDnsMode(
+    base::Optional<net::DnsConfig::SecureDnsMode> optional) {
+  if (!optional)
+    return OptionalSecureDnsMode::NO_OVERRIDE;
+  switch (optional.value()) {
+    case net::DnsConfig::SecureDnsMode::OFF:
+      return OptionalSecureDnsMode::OFF;
+    case net::DnsConfig::SecureDnsMode::AUTOMATIC:
+      return OptionalSecureDnsMode::AUTOMATIC;
+    case net::DnsConfig::SecureDnsMode::SECURE:
+      return OptionalSecureDnsMode::SECURE;
+  }
+}
+
 }  // namespace
+
+base::Optional<net::DnsConfig::SecureDnsMode> FromOptionalSecureDnsMode(
+    OptionalSecureDnsMode mode) {
+  switch (mode) {
+    case OptionalSecureDnsMode::NO_OVERRIDE:
+      return base::nullopt;
+    case OptionalSecureDnsMode::OFF:
+      return net::DnsConfig::SecureDnsMode::OFF;
+    case OptionalSecureDnsMode::AUTOMATIC:
+      return net::DnsConfig::SecureDnsMode::AUTOMATIC;
+    case OptionalSecureDnsMode::SECURE:
+      return net::DnsConfig::SecureDnsMode::SECURE;
+  }
+}
 
 // static
 base::Optional<std::vector<DnsHostPtr>>
 StructTraits<DnsConfigOverridesDataView, net::DnsConfigOverrides>::hosts(
     const net::DnsConfigOverrides& overrides) {
-  if (!overrides.dns_over_https_servers)
+  if (!overrides.hosts)
     return base::nullopt;
 
   std::vector<DnsHostPtr> out_hosts;
@@ -161,13 +191,27 @@ StructTraits<DnsConfigOverridesDataView, net::DnsConfigOverrides>::
     return base::nullopt;
 
   std::vector<DnsOverHttpsServerPtr> out_servers;
-  for (net::DnsConfig::DnsOverHttpsServerConfig server :
+  for (net::DnsOverHttpsServerConfig server :
        overrides.dns_over_https_servers.value()) {
     out_servers.push_back(
         DnsOverHttpsServer::New(server.server_template, server.use_post));
   }
 
   return base::make_optional(std::move(out_servers));
+}
+
+// static
+OptionalSecureDnsMode
+StructTraits<DnsConfigOverridesDataView, net::DnsConfigOverrides>::
+    secure_dns_mode(const net::DnsConfigOverrides& overrides) {
+  return ToOptionalSecureDnsMode(overrides.secure_dns_mode);
+}
+
+// static
+DnsConfigOverrides::Tristate
+StructTraits<DnsConfigOverridesDataView, net::DnsConfigOverrides>::
+    allow_dns_over_https_upgrade(const net::DnsConfigOverrides& overrides) {
+  return ToTristate(overrides.allow_dns_over_https_upgrade);
 }
 
 // static
@@ -213,6 +257,13 @@ bool StructTraits<DnsConfigOverridesDataView, net::DnsConfigOverrides>::Read(
     return false;
   }
 
+  out->secure_dns_mode = FromOptionalSecureDnsMode(data.secure_dns_mode());
+
+  out->allow_dns_over_https_upgrade =
+      FromTristate(data.allow_dns_over_https_upgrade());
+  if (!data.ReadDisabledUpgradeProviders(&out->disabled_upgrade_providers))
+    return false;
+
   return true;
 }
 
@@ -232,6 +283,9 @@ DnsQueryType EnumTraits<DnsQueryType, net::DnsQueryType>::ToMojom(
       return DnsQueryType::PTR;
     case net::DnsQueryType::SRV:
       return DnsQueryType::SRV;
+    case net::DnsQueryType::ESNI:
+      NOTIMPLEMENTED();
+      return DnsQueryType::UNSPECIFIED;
   }
 }
 
@@ -274,6 +328,8 @@ EnumTraits<ResolveHostParameters::Source, net::HostResolverSource>::ToMojom(
       return ResolveHostParameters::Source::DNS;
     case net::HostResolverSource::MULTICAST_DNS:
       return ResolveHostParameters::Source::MULTICAST_DNS;
+    case net::HostResolverSource::LOCAL_ONLY:
+      return ResolveHostParameters::Source::LOCAL_ONLY;
   }
 }
 
@@ -293,6 +349,9 @@ bool EnumTraits<ResolveHostParameters::Source, net::HostResolverSource>::
       return true;
     case ResolveHostParameters::Source::MULTICAST_DNS:
       *output = net::HostResolverSource::MULTICAST_DNS;
+      return true;
+    case ResolveHostParameters::Source::LOCAL_ONLY:
+      *output = net::HostResolverSource::LOCAL_ONLY;
       return true;
   }
 }
@@ -328,6 +387,53 @@ bool EnumTraits<MdnsListenClient::UpdateType,
       *output = net::HostResolver::MdnsListener::Delegate::UpdateType::REMOVED;
       return true;
   }
+}
+
+// static
+network::mojom::SecureDnsMode
+EnumTraits<network::mojom::SecureDnsMode, net::DnsConfig::SecureDnsMode>::
+    ToMojom(net::DnsConfig::SecureDnsMode secure_dns_mode) {
+  switch (secure_dns_mode) {
+    case net::DnsConfig::SecureDnsMode::OFF:
+      return network::mojom::SecureDnsMode::OFF;
+    case net::DnsConfig::SecureDnsMode::AUTOMATIC:
+      return network::mojom::SecureDnsMode::AUTOMATIC;
+    case net::DnsConfig::SecureDnsMode::SECURE:
+      return network::mojom::SecureDnsMode::SECURE;
+  }
+  NOTREACHED();
+  return network::mojom::SecureDnsMode::OFF;
+}
+
+// static
+bool EnumTraits<network::mojom::SecureDnsMode, net::DnsConfig::SecureDnsMode>::
+    FromMojom(network::mojom::SecureDnsMode in,
+              net::DnsConfig::SecureDnsMode* out) {
+  switch (in) {
+    case network::mojom::SecureDnsMode::OFF:
+      *out = net::DnsConfig::SecureDnsMode::OFF;
+      return true;
+    case network::mojom::SecureDnsMode::AUTOMATIC:
+      *out = net::DnsConfig::SecureDnsMode::AUTOMATIC;
+      return true;
+    case network::mojom::SecureDnsMode::SECURE:
+      *out = net::DnsConfig::SecureDnsMode::SECURE;
+      return true;
+  }
+  return false;
+}
+
+// static
+bool StructTraits<
+    network::mojom::ResolveErrorInfoDataView,
+    net::ResolveErrorInfo>::Read(network::mojom::ResolveErrorInfoDataView data,
+                                 net::ResolveErrorInfo* out) {
+  // There should not be a secure network error if the error code indicates no
+  // error.
+  if (data.error() == net::OK && data.is_secure_network_error())
+    return false;
+  *out = net::ResolveErrorInfo(data.error(), data.is_secure_network_error());
+  return true;
 }
 
 }  // namespace mojo

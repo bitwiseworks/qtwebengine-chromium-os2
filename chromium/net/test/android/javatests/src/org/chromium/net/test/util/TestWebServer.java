@@ -13,7 +13,6 @@ import org.chromium.base.ApiCompatibilityUtils;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.net.URI;
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -283,15 +282,15 @@ public class TestWebServer extends WebServer {
      * Sets a redirect.
      *
      * @param requestPath The path to respond to.
-     * @param targetPath The path to redirect to.
+     * @param targetLocation The path (or absolute URL) to redirect to.
      * @return The full URL including the path that should be requested to get the expected
      *         response.
      */
-    public String setRedirect(String requestPath, String targetPath) {
+    public String setRedirect(String requestPath, String targetLocation) {
         List<Pair<String, String>> responseHeaders = new ArrayList<Pair<String, String>>();
-        responseHeaders.add(Pair.create("Location", targetPath));
+        responseHeaders.add(Pair.create("Location", targetLocation));
 
-        return setResponseInternal(requestPath, ApiCompatibilityUtils.getBytesUtf8(targetPath),
+        return setResponseInternal(requestPath, ApiCompatibilityUtils.getBytesUtf8(targetLocation),
                 responseHeaders, null, RESPONSE_STATUS_MOVED_TEMPORARILY);
     }
 
@@ -353,8 +352,9 @@ public class TestWebServer extends WebServer {
      */
     public HTTPRequest getLastRequest(String requestPath) {
         synchronized (mLock) {
-            if (!mLastRequestMap.containsKey(requestPath))
+            if (!mLastRequestMap.containsKey(requestPath)) {
                 throw new IllegalArgumentException("Path not set: " + requestPath);
+            }
             return mLastRequestMap.get(requestPath);
         }
     }
@@ -393,12 +393,13 @@ public class TestWebServer extends WebServer {
         boolean copyBinaryBodyToResponse = false;
         boolean contentLengthAlreadyIncluded = false;
         boolean contentTypeAlreadyIncluded = false;
-        String path = URI.create(request.getURI()).getPath();
         StringBuilder textBody = new StringBuilder();
+
+        String requestURI = request.getURI();
 
         Response response;
         synchronized (mLock) {
-            response = mResponseMap.get(path);
+            response = mResponseMap.get(requestURI);
         }
 
         if (response == null || response.mIsNotFound) {
@@ -442,9 +443,9 @@ public class TestWebServer extends WebServer {
                 }
             }
             synchronized (mLock) {
-                mResponseCountMap.put(
-                        path, Integer.valueOf(mResponseCountMap.get(path).intValue() + 1));
-                mLastRequestMap.put(path, request);
+                mResponseCountMap.put(requestURI,
+                        Integer.valueOf(mResponseCountMap.get(requestURI).intValue() + 1));
+                mLastRequestMap.put(requestURI, request);
             }
         }
 
@@ -457,17 +458,18 @@ public class TestWebServer extends WebServer {
         stream.println();
 
         if (textBody.length() != 0) {
-            if (!contentTypeAlreadyIncluded && (path.endsWith(".html") || path.endsWith(".htm"))) {
+            if (!contentTypeAlreadyIncluded
+                    && (requestURI.endsWith(".html") || requestURI.endsWith(".htm"))) {
                 stream.println("Content-Type: text/html");
             }
             stream.println("Content-Length: " + textBody.length());
             stream.println();
             stream.print(textBody.toString());
         } else if (copyBinaryBodyToResponse) {
-            if (!contentTypeAlreadyIncluded && path.endsWith(".js")) {
+            if (!contentTypeAlreadyIncluded && requestURI.endsWith(".js")) {
                 stream.println("Content-Type: application/javascript");
             } else if (!contentTypeAlreadyIncluded
-                    && (path.endsWith(".html") || path.endsWith(".htm"))) {
+                    && (requestURI.endsWith(".html") || requestURI.endsWith(".htm"))) {
                 stream.println("Content-Type: text/html");
             }
             if (!contentLengthAlreadyIncluded) {

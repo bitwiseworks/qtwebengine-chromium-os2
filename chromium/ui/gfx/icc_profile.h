@@ -15,6 +15,11 @@
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size);
 
+namespace IPC {
+template <class P>
+struct ParamTraits;
+}  // namespace IPC
+
 namespace gfx {
 
 // Used to represent a full ICC profile, usually retrieved from a monitor. It
@@ -41,48 +46,31 @@ class COLOR_SPACE_EXPORT ICCProfile {
   // processes).
   static ICCProfile FromData(const void* icc_profile, size_t size);
 
-  // Create a profile for a parametric color space. Returns an invalid profile
-  // if the specified space is not parametric.
-  static ICCProfile FromParametricColorSpace(
-      const gfx::ColorSpace& color_space);
+  // Create a profile for a color space. Returns an invalid profile if the
+  // specified space is not expressable as an ICCProfile.
+  static ICCProfile FromColorSpace(const gfx::ColorSpace& color_space);
 
-  // Return a ColorSpace that references this ICCProfile. ColorTransforms
-  // created using this ColorSpace will match this ICCProfile precisely.
+  // Return a ColorSpace that best represents this ICCProfile.
   ColorSpace GetColorSpace() const;
+
+  // Return a ColorSpace with the primaries from this ICCProfile and an
+  // sRGB transfer function.
+  ColorSpace GetPrimariesOnlyColorSpace() const;
+
+  // Returns true if GetColorSpace returns an accurate representation of this
+  // ICCProfile. This could be false if the result of GetColorSpace had to
+  // approximate transfer functions.
+  bool IsColorSpaceAccurate() const;
 
   // Return the data for the profile.
   std::vector<char> GetData() const;
 
-  // Histogram how we this was approximated by a gfx::ColorSpace. Only
-  // histogram a given profile once per display.
-  void HistogramDisplay(int64_t display_id) const;
-
  private:
-  // This method is used to hard-code the |id_| to a specific value. It is used
-  // only when a profile is received via IPC.
-  static ICCProfile FromDataWithId(const void* data, size_t size, uint64_t id);
-
-  // This method is used by ColorTransform to construct LUT based transforms.
-  static sk_sp<SkColorSpace> GetSkColorSpaceFromId(uint64_t id);
-
   class Internals : public base::RefCountedThreadSafe<ICCProfile::Internals> {
    public:
-    Internals(std::vector<char>, uint64_t id);
-    void HistogramDisplay(int64_t display_id);
-
-    // This must match ICCProfileAnalyzeResult enum in histograms.xml.
-    enum AnalyzeResult {
-      kICCFailedToParse = 5,
-      kICCNoProfile = 10,
-      kICCFailedToMakeUsable = 11,
-      kICCExtractedMatrixAndTrFn = 12,
-      kMaxValue = kICCExtractedMatrixAndTrFn,
-    };
+    explicit Internals(std::vector<char>);
 
     const std::vector<char> data_;
-
-    // The result of attepting to extract a color space from the color profile.
-    AnalyzeResult analyze_result_ = kICCNoProfile;
 
     // True iff we can create a valid ColorSpace (and ColorTransform) from this
     // object. The transform may be LUT-based (using an SkColorSpaceXform to
@@ -94,27 +82,13 @@ class COLOR_SPACE_EXPORT ICCProfile {
     // profile will be analytic and not LUT-based.
     bool is_parametric_ = false;
 
-    // If |is_valid_| but not |is_parametric_|, then |id_| is assigned a
-    // non-zero value that can be used to look up this ICCProfile from a
-    // ColorSpace for the purpose of creating a LUT based ColorTransform.
-    uint64_t id_ = 0;
-
-    // Results of Skia parsing the ICC profile data.
-    sk_sp<SkColorSpace> sk_color_space_;
-
     // The best-fit parametric primaries and transfer function.
     skcms_Matrix3x3 to_XYZD50_;
-    SkColorSpaceTransferFn transfer_fn_;
-
-    // The set of display ids which have have caused this ICC profile to be
-    // recorded in UMA histograms. Only record an ICC profile once per display
-    // id (since the same profile will be re-read repeatedly, e.g, when displays
-    // are resized).
-    std::set<int64_t> histogrammed_display_ids_;
+    skcms_TransferFunction transfer_fn_;
 
    protected:
     friend class base::RefCountedThreadSafe<ICCProfile::Internals>;
-    AnalyzeResult Initialize();
+    void Initialize();
     virtual ~Internals();
   };
   scoped_refptr<Internals> internals_;

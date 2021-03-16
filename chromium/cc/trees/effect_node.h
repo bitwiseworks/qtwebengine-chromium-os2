@@ -6,11 +6,12 @@
 #define CC_TREES_EFFECT_NODE_H_
 
 #include "cc/cc_export.h"
+#include "cc/paint/element_id.h"
 #include "cc/paint/filter_operations.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 #include "ui/gfx/geometry/point_f.h"
-#include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size_f.h"
+#include "ui/gfx/rrect_f.h"
 
 namespace base {
 namespace trace_event {
@@ -20,9 +21,39 @@ class TracedValue;
 
 namespace cc {
 
+enum class RenderSurfaceReason : uint8_t {
+  kNone,
+  kRoot,
+  k3dTransformFlattening,
+  // Defines the scope of the backdrop for child blend mode or backdrop filter.
+  kBackdropScope,
+  kBlendMode,
+  kBlendModeDstIn,
+  kOpacity,
+  kOpacityAnimation,
+  kFilter,
+  kFilterAnimation,
+  kBackdropFilter,
+  kBackdropFilterAnimation,
+  kRoundedCorner,
+  kClipPath,
+  kClipAxisAlignment,
+  kMask,
+  kTrilinearFiltering,
+  kCache,
+  kCopyRequest,
+  kMirrored,
+  // This must be the last value because it's used in tracing code to know the
+  // number of reasons.
+  kTest,
+};
+
+CC_EXPORT const char* RenderSurfaceReasonToString(RenderSurfaceReason);
+
 struct CC_EXPORT EffectNode {
   EffectNode();
   EffectNode(const EffectNode& other);
+  ~EffectNode();
 
   enum StableIdLabels { INVALID_STABLE_ID = 0 };
 
@@ -41,20 +72,27 @@ struct CC_EXPORT EffectNode {
 
   FilterOperations filters;
   FilterOperations backdrop_filters;
-  gfx::RectF backdrop_filter_bounds;
+  base::Optional<gfx::RRectF> backdrop_filter_bounds;
   float backdrop_filter_quality;
   gfx::PointF filters_origin;
+
+  // The element id corresponding to the mask to apply to the filtered backdrop
+  // image.
+  ElementId backdrop_mask_element_id;
+
+  // Bounds of rounded corner rrect in the space of the transform node
+  // associated with this effect node.
+  gfx::RRectF rounded_corner_bounds;
 
   SkBlendMode blend_mode;
 
   gfx::Vector2dF surface_contents_scale;
 
-  gfx::Size unscaled_mask_target_size;
-
-  bool has_render_surface : 1;
   bool cache_render_surface : 1;
   bool has_copy_request : 1;
   bool hidden_by_backface_visibility : 1;
+  // Whether the contents should continue to be visible when rotated such that
+  // its back face is facing toward the camera. It's true by default.
   bool double_sided : 1;
   bool trilinear_filtering : 1;
   bool is_drawn : 1;
@@ -65,10 +103,15 @@ struct CC_EXPORT EffectNode {
   // of exact timeline) filter animation.
   bool has_potential_filter_animation : 1;
   // Whether this node has a potentially running (i.e., irrespective
+  // of exact timeline) backdrop-filter animation.
+  bool has_potential_backdrop_filter_animation : 1;
+  // Whether this node has a potentially running (i.e., irrespective
   // of exact timeline) opacity animation.
   bool has_potential_opacity_animation : 1;
   // Whether this node has a currently running filter animation.
   bool is_currently_animating_filter : 1;
+  // Whether this node has a currently running backdrop-filter animation.
+  bool is_currently_animating_backdrop_filter : 1;
   // Whether this node has a currently running opacity animation.
   bool is_currently_animating_opacity : 1;
   // Whether this node has a child node with kDstIn blend mode.
@@ -77,6 +120,12 @@ struct CC_EXPORT EffectNode {
   // frame. Needed in order to compute damage rect.
   bool effect_changed : 1;
   bool subtree_has_copy_request : 1;
+  // If set, the effect node tries to not trigger a render surface due to it
+  // having a rounded corner.
+  bool is_fast_rounded_corner : 1;
+  // RenderSurfaceReason::kNone if this effect node should not create a render
+  // surface, or the reason that this effect node should create one.
+  RenderSurfaceReason render_surface_reason;
   // The transform node index of the transform to apply to this effect
   // node's content when rendering to a surface.
   int transform_id;
@@ -87,11 +136,12 @@ struct CC_EXPORT EffectNode {
   // This is the id of the ancestor effect node that induces a
   // RenderSurfaceImpl.
   int target_id;
-  // The layer id of the mask layer, if any, to apply to this effect
-  // node's content when rendering to a surface.
-  int mask_layer_id;
   int closest_ancestor_with_cached_render_surface_id;
   int closest_ancestor_with_copy_request_id;
+
+  bool HasRenderSurface() const {
+    return render_surface_reason != RenderSurfaceReason::kNone;
+  }
 
   bool operator==(const EffectNode& other) const;
 

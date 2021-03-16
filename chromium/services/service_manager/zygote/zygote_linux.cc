@@ -47,7 +47,7 @@
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 
 // See
-// https://chromium.googlesource.com/chromium/src/+/master/docs/linux_zygote.md
+// https://chromium.googlesource.com/chromium/src/+/master/docs/linux/zygote.md
 
 namespace service_manager {
 
@@ -62,13 +62,6 @@ int LookUpFd(const base::GlobalDescriptors::Mapping& fd_mapping, uint32_t key) {
       return fd_mapping[index].fd;
   }
   return -1;
-}
-
-void CreatePipe(base::ScopedFD* read_pipe, base::ScopedFD* write_pipe) {
-  int raw_pipe[2];
-  PCHECK(0 == pipe(raw_pipe));
-  read_pipe->reset(raw_pipe[0]);
-  write_pipe->reset(raw_pipe[1]);
 }
 
 void KillAndReap(pid_t pid, ZygoteForkDelegate* helper) {
@@ -106,7 +99,7 @@ bool Zygote::ProcessRequests() {
   // browser on it.
   // A SOCK_DGRAM is installed in fd 5. This is the sandbox IPC channel.
   // See
-  // https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md
+  // https://chromium.googlesource.com/chromium/src/+/master/docs/linux/sandbox_ipc.md
 
   // We need to accept SIGCHLD, even though our handler is a no-op because
   // otherwise we cannot wait on children. (According to POSIX 2001.)
@@ -427,7 +420,7 @@ int Zygote::ForkWithRealPid(const std::string& process_type,
     // Helpers should never return in the child process.
     CHECK_NE(pid, 0);
   } else {
-    CreatePipe(&read_pipe, &write_pipe);
+    PCHECK(base::CreatePipe(&read_pipe, &write_pipe));
     if (sandbox_flags_ & service_manager::SandboxLinux::kPIDNS &&
         sandbox_flags_ & service_manager::SandboxLinux::kUserNS) {
       pid = sandbox::NamespaceSandbox::ForkInNewPidNamespace(

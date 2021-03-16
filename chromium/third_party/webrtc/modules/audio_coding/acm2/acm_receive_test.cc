@@ -19,7 +19,6 @@
 #include "modules/audio_coding/neteq/tools/audio_sink.h"
 #include "modules/audio_coding/neteq/tools/packet.h"
 #include "modules/audio_coding/neteq/tools/packet_source.h"
-#include "modules/include/module_common_types.h"
 #include "test/gtest.h"
 
 namespace webrtc {
@@ -120,18 +119,15 @@ void AcmReceiveTestOldApi::Run() {
       AfterGetAudio();
     }
 
-    // Insert packet after converting from RTPHeader to WebRtcRTPHeader.
-    WebRtcRTPHeader header;
-    header.header = packet->header();
-    header.frameType = kAudioFrameSpeech;
-    EXPECT_EQ(0,
-              acm_->IncomingPacket(
-                  packet->payload(),
-                  static_cast<int32_t>(packet->payload_length_bytes()), header))
+    EXPECT_EQ(0, acm_->IncomingPacket(
+                     packet->payload(),
+                     static_cast<int32_t>(packet->payload_length_bytes()),
+                     packet->header()))
         << "Failure when inserting packet:" << std::endl
-        << "  PT = " << static_cast<int>(header.header.payloadType) << std::endl
-        << "  TS = " << header.header.timestamp << std::endl
-        << "  SN = " << header.header.sequenceNumber;
+        << "  PT = " << static_cast<int>(packet->header().payloadType)
+        << std::endl
+        << "  TS = " << packet->header().timestamp << std::endl
+        << "  SN = " << packet->header().sequenceNumber;
   }
 }
 

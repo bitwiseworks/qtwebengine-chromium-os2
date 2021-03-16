@@ -14,8 +14,6 @@
 #include "base/trace_event/trace_event.h"
 #include "cc/base/histograms.h"
 #include "cc/trees/layer_tree_frame_sink_client.h"
-#include "components/viz/client/hit_test_data_provider.h"
-#include "components/viz/client/local_surface_id_provider.h"
 #include "components/viz/common/features.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/hit_test/hit_test_region_list.h"
@@ -67,9 +65,9 @@ AsyncLayerTreeFrameSink::UnboundMessagePipes::UnboundMessagePipes() = default;
 AsyncLayerTreeFrameSink::UnboundMessagePipes::~UnboundMessagePipes() = default;
 
 bool AsyncLayerTreeFrameSink::UnboundMessagePipes::HasUnbound() const {
-  return client_request.is_pending() &&
-         (compositor_frame_sink_info.is_valid() ^
-          compositor_frame_sink_associated_info.is_valid());
+  return client_receiver.is_valid() &&
+         (compositor_frame_sink_remote.is_valid() ^
+          compositor_frame_sink_associated_remote.is_valid());
 }
 
 AsyncLayerTreeFrameSink::UnboundMessagePipes::UnboundMessagePipes(
@@ -83,25 +81,16 @@ AsyncLayerTreeFrameSink::AsyncLayerTreeFrameSink(
                          std::move(worker_context_provider),
                          std::move(params->compositor_task_runner),
                          params->gpu_memory_buffer_manager),
-      hit_test_data_provider_(std::move(params->hit_test_data_provider)),
-      local_surface_id_provider_(std::move(params->local_surface_id_provider)),
       synthetic_begin_frame_source_(
           std::move(params->synthetic_begin_frame_source)),
       pipes_(std::move(params->pipes)),
-      client_binding_(this),
-      enable_surface_synchronization_(params->enable_surface_synchronization),
       wants_animate_only_begin_frames_(params->wants_animate_only_begin_frames),
       receive_begin_frame_histogram_(
           GetHistogramNamed("GraphicsPipeline.%s.ReceivedBeginFrame",
                             params->client_name)),
       submit_begin_frame_histogram_(GetHistogramNamed(
           "GraphicsPipeline.%s.SubmitCompositorFrameAfterBeginFrame",
-          params->client_name)),
-      weak_factory_(this) {
-  // We should not create hit test data provider if we want to use cc layer tree
-  // to generated data.
-  if (features::IsVizHitTestingSurfaceLayerEnabled())
-    DCHECK(!params->hit_test_data_provider);
+          params->client_name)) {
   DETACH_FROM_THREAD(thread_checker_);
 }
 
@@ -114,22 +103,22 @@ bool AsyncLayerTreeFrameSink::BindToClient(LayerTreeFrameSinkClient* client) {
     return false;
 
   DCHECK(pipes_.HasUnbound());
-  if (pipes_.compositor_frame_sink_info.is_valid()) {
-    compositor_frame_sink_.Bind(std::move(pipes_.compositor_frame_sink_info));
-    compositor_frame_sink_.set_connection_error_with_reason_handler(
+  if (pipes_.compositor_frame_sink_remote.is_valid()) {
+    compositor_frame_sink_.Bind(std::move(pipes_.compositor_frame_sink_remote));
+    compositor_frame_sink_.set_disconnect_with_reason_handler(
         base::BindOnce(&AsyncLayerTreeFrameSink::OnMojoConnectionError,
                        weak_factory_.GetWeakPtr()));
     compositor_frame_sink_ptr_ = compositor_frame_sink_.get();
-  } else if (pipes_.compositor_frame_sink_associated_info.is_valid()) {
+  } else if (pipes_.compositor_frame_sink_associated_remote.is_valid()) {
     compositor_frame_sink_associated_.Bind(
-        std::move(pipes_.compositor_frame_sink_associated_info));
-    compositor_frame_sink_associated_.set_connection_error_with_reason_handler(
+        std::move(pipes_.compositor_frame_sink_associated_remote));
+    compositor_frame_sink_associated_.set_disconnect_with_reason_handler(
         base::BindOnce(&AsyncLayerTreeFrameSink::OnMojoConnectionError,
                        weak_factory_.GetWeakPtr()));
     compositor_frame_sink_ptr_ = compositor_frame_sink_associated_.get();
   }
-  client_binding_.Bind(std::move(pipes_.client_request),
-                       compositor_task_runner_);
+  client_receiver_.Bind(std::move(pipes_.client_receiver),
+                        compositor_task_runner_);
 
   if (synthetic_begin_frame_source_) {
     client->SetBeginFrameSource(synthetic_begin_frame_source_.get());
@@ -150,7 +139,7 @@ void AsyncLayerTreeFrameSink::DetachFromClient() {
   client_->SetBeginFrameSource(nullptr);
   begin_frame_source_.reset();
   synthetic_begin_frame_source_.reset();
-  client_binding_.Close();
+  client_receiver_.reset();
   compositor_frame_sink_.reset();
   compositor_frame_sink_associated_.reset();
   compositor_frame_sink_ptr_ = nullptr;
@@ -161,7 +150,6 @@ void AsyncLayerTreeFrameSink::SetLocalSurfaceId(
     const viz::LocalSurfaceId& local_surface_id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(local_surface_id.is_valid());
-  DCHECK(enable_surface_synchronization_);
   local_surface_id_ = local_surface_id;
 }
 
@@ -172,10 +160,7 @@ void AsyncLayerTreeFrameSink::SubmitCompositorFrame(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(compositor_frame_sink_ptr_);
   DCHECK(frame.metadata.begin_frame_ack.has_damage);
-  DCHECK_LE(viz::BeginFrameArgs::kStartingFrameNumber,
-            frame.metadata.begin_frame_ack.sequence_number);
-  TRACE_EVENT1("cc,benchmark", "AsyncLayerTreeFrameSink::SubmitCompositorFrame",
-               "source_frame_number_", source_frame_number_);
+  DCHECK(frame.metadata.begin_frame_ack.frame_id.IsSequenceValid());
 
   // It's possible to request an immediate composite from cc which will bypass
   // BeginFrame. In that case, we cannot collect full graphics pipeline data.
@@ -186,34 +171,16 @@ void AsyncLayerTreeFrameSink::SubmitCompositorFrame(
     pipeline_reporting_frame_times_.erase(it);
   }
 
-  if (!enable_surface_synchronization_) {
-    const viz::LocalSurfaceIdAllocation& local_surface_id_allocation =
-        local_surface_id_provider_->GetLocalSurfaceIdAllocationForFrame(frame);
-    local_surface_id_ = local_surface_id_allocation.local_surface_id();
-    frame.metadata.local_surface_id_allocation_time =
-        local_surface_id_allocation.allocation_time();
-  } else {
-    if (local_surface_id_ == last_submitted_local_surface_id_) {
-      DCHECK_EQ(last_submitted_device_scale_factor_,
-                frame.device_scale_factor());
-      DCHECK_EQ(last_submitted_size_in_pixels_.height(),
-                frame.size_in_pixels().height());
-      DCHECK_EQ(last_submitted_size_in_pixels_.width(),
-                frame.size_in_pixels().width());
-    }
+  if (local_surface_id_ == last_submitted_local_surface_id_) {
+    DCHECK_EQ(last_submitted_device_scale_factor_, frame.device_scale_factor());
+    DCHECK_EQ(last_submitted_size_in_pixels_.height(),
+              frame.size_in_pixels().height());
+    DCHECK_EQ(last_submitted_size_in_pixels_.width(),
+              frame.size_in_pixels().width());
   }
 
-  TRACE_EVENT_FLOW_BEGIN0(TRACE_DISABLED_BY_DEFAULT("cc.debug.ipc"),
-                          "SubmitCompositorFrame", local_surface_id_.hash());
-  bool tracing_enabled;
-  TRACE_EVENT_CATEGORY_GROUP_ENABLED(TRACE_DISABLED_BY_DEFAULT("cc.debug.ipc"),
-                                     &tracing_enabled);
-
-  base::Optional<viz::HitTestRegionList> hit_test_region_list;
-  if (hit_test_data_provider_)
-    hit_test_region_list = hit_test_data_provider_->GetHitTestData(frame);
-  else
-    hit_test_region_list = client_->BuildHitTestData();
+  base::Optional<viz::HitTestRegionList> hit_test_region_list =
+      client_->BuildHitTestData();
 
   if (show_hit_test_borders && hit_test_region_list)
     hit_test_region_list->flags |= viz::HitTestRegionFlags::kHitTestDebug;
@@ -245,12 +212,22 @@ void AsyncLayerTreeFrameSink::SubmitCompositorFrame(
     last_submitted_device_scale_factor_ = frame.device_scale_factor();
     last_submitted_size_in_pixels_ = frame.size_in_pixels();
 
+    // These traces are split into two due to the incoming flow using
+    // TRACE_ID_LOCAL, and the outgoing flow using TRACE_ID_GLOBAL. This is
+    // needed to ensure the incoming flow is not messed up. The outgoing flow is
+    // going to a different process.
+    TRACE_EVENT_WITH_FLOW2(
+        TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
+        "LocalSurfaceId.Submission.Flow",
+        TRACE_ID_LOCAL(local_surface_id_.submission_trace_id()),
+        TRACE_EVENT_FLAG_FLOW_IN, "step", "SubmitCompositorFrame", "surface_id",
+        local_surface_id_.ToString());
     TRACE_EVENT_WITH_FLOW2(
         TRACE_DISABLED_BY_DEFAULT("viz.surface_id_flow"),
         "LocalSurfaceId.Submission.Flow",
         TRACE_ID_GLOBAL(local_surface_id_.submission_trace_id()),
-        TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "step",
-        "SubmitCompositorFrame", "surface_id", local_surface_id_.ToString());
+        TRACE_EVENT_FLAG_FLOW_OUT, "step", "SubmitCompositorFrame",
+        "surface_id", local_surface_id_.ToString());
   }
 
   // The trace_id is negated in order to keep the Graphics.Pipeline and
@@ -262,42 +239,39 @@ void AsyncLayerTreeFrameSink::SubmitCompositorFrame(
                          "SubmitHitTestData");
 
   compositor_frame_sink_ptr_->SubmitCompositorFrame(
-      local_surface_id_, std::move(frame), std::move(hit_test_region_list),
-      tracing_enabled ? base::TimeTicks::Now().since_origin().InMicroseconds()
-                      : 0);
+      local_surface_id_, std::move(frame), std::move(hit_test_region_list), 0);
 }
 
 void AsyncLayerTreeFrameSink::DidNotProduceFrame(
     const viz::BeginFrameAck& ack) {
   DCHECK(compositor_frame_sink_ptr_);
   DCHECK(!ack.has_damage);
-  DCHECK_LE(viz::BeginFrameArgs::kStartingFrameNumber, ack.sequence_number);
+  DCHECK(ack.frame_id.IsSequenceValid());
 
   // TODO(yiyix): Remove duplicated calls of DidNotProduceFrame from the same
   // BeginFrames. https://crbug.com/881949
   auto it = pipeline_reporting_frame_times_.find(ack.trace_id);
   if (it != pipeline_reporting_frame_times_.end()) {
+    TRACE_EVENT_WITH_FLOW1("viz,benchmark", "Graphics.Pipeline",
+                           TRACE_ID_GLOBAL(ack.trace_id),
+                           TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
+                           "step", "DidNotProduceFrame");
     compositor_frame_sink_ptr_->DidNotProduceFrame(ack);
     pipeline_reporting_frame_times_.erase(it);
   }
 }
 
 void AsyncLayerTreeFrameSink::DidAllocateSharedBitmap(
-    mojo::ScopedSharedBufferHandle buffer,
+    base::ReadOnlySharedMemoryRegion region,
     const viz::SharedBitmapId& id) {
   DCHECK(compositor_frame_sink_ptr_);
-  compositor_frame_sink_ptr_->DidAllocateSharedBitmap(std::move(buffer), id);
+  compositor_frame_sink_ptr_->DidAllocateSharedBitmap(std::move(region), id);
 }
 
 void AsyncLayerTreeFrameSink::DidDeleteSharedBitmap(
     const viz::SharedBitmapId& id) {
   DCHECK(compositor_frame_sink_ptr_);
   compositor_frame_sink_ptr_->DidDeleteSharedBitmap(id);
-}
-
-void AsyncLayerTreeFrameSink::ForceAllocateNewId() {
-  DCHECK(!enable_surface_synchronization_);
-  local_surface_id_provider_->ForceAllocateNewId();
 }
 
 void AsyncLayerTreeFrameSink::DidReceiveCompositorFrameAck(
@@ -309,8 +283,8 @@ void AsyncLayerTreeFrameSink::DidReceiveCompositorFrameAck(
 
 void AsyncLayerTreeFrameSink::OnBeginFrame(
     const viz::BeginFrameArgs& args,
-    const base::flat_map<uint32_t, gfx::PresentationFeedback>& feedbacks) {
-  for (const auto& pair : feedbacks) {
+    const viz::FrameTimingDetailsMap& timing_details) {
+  for (const auto& pair : timing_details) {
     client_->DidPresentCompositorFrame(pair.first, pair.second);
   }
 
@@ -365,6 +339,13 @@ void AsyncLayerTreeFrameSink::ReclaimResources(
 
 void AsyncLayerTreeFrameSink::OnNeedsBeginFrames(bool needs_begin_frames) {
   DCHECK(compositor_frame_sink_ptr_);
+  if (needs_begin_frames_ != needs_begin_frames) {
+    if (needs_begin_frames_) {
+      TRACE_EVENT_ASYNC_END0("cc,benchmark", "NeedsBeginFrames", this);
+    } else {
+      TRACE_EVENT_ASYNC_BEGIN0("cc,benchmark", "NeedsBeginFrames", this);
+    }
+  }
   needs_begin_frames_ = needs_begin_frames;
   compositor_frame_sink_ptr_->SetNeedsBeginFrame(needs_begin_frames);
 }

@@ -8,16 +8,15 @@
 #ifndef GrYUVProvider_DEFINED
 #define GrYUVProvider_DEFINED
 
-#include "GrTypes.h"
-#include "SkImageInfo.h"
-#include "SkYUVAIndex.h"
-#include "SkYUVASizeInfo.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkYUVAIndex.h"
+#include "include/core/SkYUVASizeInfo.h"
+#include "include/gpu/GrTypes.h"
+#include "include/private/GrTypesPriv.h"
 
-class GrContext;
 class GrBackendFormat;
-struct GrSurfaceDesc;
-class GrTexture;
-class GrTextureProxy;
+class GrRecordingContext;
+class GrSurfaceProxyView;
 class SkCachedData;
 
 /**
@@ -41,11 +40,12 @@ public:
      *
      *  On failure (e.g. the provider had no data), this returns NULL.
      */
-    sk_sp<GrTextureProxy> refAsTextureProxy(GrContext*,
-                                            const GrBackendFormat&,
-                                            const GrSurfaceDesc&,
-                                            SkColorSpace* srcColorSpace,
-                                            SkColorSpace* dstColorSpace);
+    GrSurfaceProxyView refAsTextureProxyView(GrRecordingContext*,
+                                             SkISize,
+                                             GrColorType colorType,
+                                             SkColorSpace* srcColorSpace,
+                                             SkColorSpace* dstColorSpace,
+                                             SkBudgeted budgeted);
 
     sk_sp<SkCachedData> getPlanes(SkYUVASizeInfo*, SkYUVAIndex[SkYUVAIndex::kIndexCount],
                                   SkYUVColorSpace*, const void* planes[SkYUVASizeInfo::kMaxCount]);
@@ -86,7 +86,7 @@ private:
     // This is used as release callback for the YUV data that we capture in an SkImage when
     // uploading to a gpu. When the upload is complete and we release the SkImage this callback will
     // release the underlying data.
-    static void YUVGen_DataReleaseProc(const void*, void* data);
+    static void YUVGen_DataReleaseProc(void*, void* data);
 };
 
 #endif

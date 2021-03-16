@@ -164,5 +164,43 @@ message PowerSupplyProperties {
   // sources or sinks (i.e. to either deliver or receive charge).
   optional bool supports_dual_role_devices = 19;
 
-  // Next ID to use: 20
+  // Current battery voltage level.
+  optional double battery_voltage = 20;
+
+  // Battery manufacturer reported in sysfs as either "manufacturer" or
+  // "vendor". Ex.: "SIMPLO"
+  optional string battery_vendor = 21;
+
+  // Battery cycle count representing the total number of times all the
+  // battery's power has been used.
+  optional int64 battery_cycle_count = 22;
+
+  // Battery serial number reported in sysfs.
+  optional string battery_serial_number = 23;
+
+  // Battery design capacity measured in ampere-hours (Ah).
+  optional double battery_charge_full_design = 24;
+
+  // Battery full capacity measured in ampere-hours (Ah).
+  optional double battery_charge_full = 25;
+
+  // Battery voltage min design measured in V.
+  optional double battery_voltage_min_design = 26;
+
+  // Current battery charge right now, measured in ampere-hours (Ah).
+  optional double battery_charge = 27;
+
+  // Battery model name reported by |model_name|.
+  optional string battery_model_name = 28;
+
+  // Battery current as of now, measured in amperes (A).
+  optional double battery_current = 29;
+
+  // Battery technology read from sysfs.
+  optional string battery_technology = 30;
+
+  // Battery status read from sysfs.
+  optional string battery_status = 31;
+
+  // Next ID to use: 32
 }

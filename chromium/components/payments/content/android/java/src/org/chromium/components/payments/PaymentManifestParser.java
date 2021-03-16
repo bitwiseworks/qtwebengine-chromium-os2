@@ -7,9 +7,10 @@ package org.chromium.components.payments;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.NativeMethods;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.url.URI;
 
-import java.net.URI;
 import java.net.URISyntaxException;
 
 /** Parses payment manifests in a utility process. */
@@ -53,14 +54,16 @@ public class PaymentManifestParser {
     public void createNative(WebContents webContents) {
         ThreadUtils.assertOnUiThread();
         assert mNativePaymentManifestParserAndroid == 0;
-        mNativePaymentManifestParserAndroid = nativeCreatePaymentManifestParserAndroid(webContents);
+        mNativePaymentManifestParserAndroid =
+                PaymentManifestParserJni.get().createPaymentManifestParserAndroid(webContents);
     }
 
     /** Releases the resources held by the native side. */
     public void destroyNative() {
         ThreadUtils.assertOnUiThread();
         assert mNativePaymentManifestParserAndroid != 0;
-        nativeDestroyPaymentManifestParserAndroid(mNativePaymentManifestParserAndroid);
+        PaymentManifestParserJni.get().destroyPaymentManifestParserAndroid(
+                mNativePaymentManifestParserAndroid);
         mNativePaymentManifestParserAndroid = 0;
     }
 
@@ -73,13 +76,17 @@ public class PaymentManifestParser {
     /**
      * Parses the payment method manifest file asynchronously.
      *
-     * @param content  The content to parse.
+     * @param manifestUrl The URL of the payment method manifest that is being parsed. Used for
+     * resolving the optionally relative URL of the default application.
+     * @param content The content to parse.
      * @param callback The callback to invoke when finished parsing.
      */
-    public void parsePaymentMethodManifest(String content, ManifestParseCallback callback) {
+    public void parsePaymentMethodManifest(
+            URI manifestUrl, String content, ManifestParseCallback callback) {
         ThreadUtils.assertOnUiThread();
         assert mNativePaymentManifestParserAndroid != 0;
-        nativeParsePaymentMethodManifest(mNativePaymentManifestParserAndroid, content, callback);
+        PaymentManifestParserJni.get().parsePaymentMethodManifest(
+                mNativePaymentManifestParserAndroid, manifestUrl, content, callback);
     }
 
     /**
@@ -91,7 +98,8 @@ public class PaymentManifestParser {
     public void parseWebAppManifest(String content, ManifestParseCallback callback) {
         ThreadUtils.assertOnUiThread();
         assert mNativePaymentManifestParserAndroid != 0;
-        nativeParseWebAppManifest(mNativePaymentManifestParserAndroid, content, callback);
+        PaymentManifestParserJni.get().parseWebAppManifest(
+                mNativePaymentManifestParserAndroid, content, callback);
     }
 
     @CalledByNative
@@ -126,12 +134,13 @@ public class PaymentManifestParser {
         manifest[sectionIndex].fingerprints[fingerprintIndex] = fingerprint;
     }
 
-    private static native long nativeCreatePaymentManifestParserAndroid(WebContents webContents);
-    private static native void nativeDestroyPaymentManifestParserAndroid(
-            long nativePaymentManifestParserAndroid);
-    private static native void nativeParsePaymentMethodManifest(
-            long nativePaymentManifestParserAndroid, String content,
-            ManifestParseCallback callback);
-    private static native void nativeParseWebAppManifest(long nativePaymentManifestParserAndroid,
-            String content, ManifestParseCallback callback);
+    @NativeMethods
+    interface Natives {
+        long createPaymentManifestParserAndroid(WebContents webContents);
+        void destroyPaymentManifestParserAndroid(long nativePaymentManifestParserAndroid);
+        void parsePaymentMethodManifest(long nativePaymentManifestParserAndroid, URI manifestUrl,
+                String content, ManifestParseCallback callback);
+        void parseWebAppManifest(long nativePaymentManifestParserAndroid, String content,
+                ManifestParseCallback callback);
+    }
 }

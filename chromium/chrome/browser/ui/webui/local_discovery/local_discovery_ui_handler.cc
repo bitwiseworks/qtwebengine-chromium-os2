@@ -79,13 +79,13 @@ void ReadDevicesList(const CloudPrintPrinterList::DeviceList& devices,
                      const std::set<std::string>& local_ids,
                      base::ListValue* devices_list) {
   for (const auto& i : devices) {
-    if (base::ContainsKey(local_ids, i.id)) {
+    if (base::Contains(local_ids, i.id)) {
       devices_list->Append(CreateDeviceInfo(i));
     }
   }
 
   for (const auto& i : devices) {
-    if (!base::ContainsKey(local_ids, i.id)) {
+    if (!base::Contains(local_ids, i.id)) {
       devices_list->Append(CreateDeviceInfo(i));
     }
   }
@@ -119,7 +119,7 @@ LocalDiscoveryUIHandler::LocalDiscoveryUIHandler()
 
 LocalDiscoveryUIHandler::~LocalDiscoveryUIHandler() {
   Profile* profile = Profile::FromWebUI(web_ui());
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   if (identity_manager)
     identity_manager->RemoveObserver(this);
@@ -152,10 +152,12 @@ void LocalDiscoveryUIHandler::RegisterMessages() {
       "openCloudPrintURL",
       base::BindRepeating(&LocalDiscoveryUIHandler::HandleOpenCloudPrintURL,
                           base::Unretained(this)));
+#if !defined(OS_CHROMEOS)
   web_ui()->RegisterMessageCallback(
       "showSyncUI",
       base::BindRepeating(&LocalDiscoveryUIHandler::HandleShowSyncUI,
                           base::Unretained(this)));
+#endif
 
   // Cloud print connector related messages
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
@@ -191,7 +193,7 @@ void LocalDiscoveryUIHandler::HandleStart(const base::ListValue* args) {
         cloud_print::PrivetHTTPAsynchronousFactory::CreateInstance(
             url_loader_factory);
 
-    identity::IdentityManager* identity_manager =
+    signin::IdentityManager* identity_manager =
         IdentityManagerFactory::GetForProfile(profile);
     if (identity_manager)
       identity_manager->AddObserver(this);
@@ -209,6 +211,11 @@ void LocalDiscoveryUIHandler::HandleStart(const base::ListValue* args) {
 
 void LocalDiscoveryUIHandler::HandleRegisterDevice(
     const base::ListValue* args) {
+  if (IsUserProfileRestricted()) {
+    OnSetupError();
+    return;
+  }
+
   std::string device;
   bool rv = args->GetString(0, &device);
   DCHECK(rv);
@@ -219,15 +226,16 @@ void LocalDiscoveryUIHandler::HandleRegisterDevice(
     return;
   }
 
-  if (it->second.version < kCloudDevicesPrivetVersion) {
-    privet_resolution_ = privet_http_factory_->CreatePrivetHTTP(device);
-    privet_resolution_->Start(
-        it->second.address,
-        base::Bind(&LocalDiscoveryUIHandler::StartRegisterHTTP,
-                   base::Unretained(this)));
-  } else {
+  if (it->second.version >= kCloudDevicesPrivetVersion) {
     OnSetupError();
+    return;
   }
+
+  privet_resolution_ = privet_http_factory_->CreatePrivetHTTP(device);
+  privet_resolution_->Start(
+      it->second.address,
+      base::Bind(&LocalDiscoveryUIHandler::StartRegisterHTTP,
+                 base::Unretained(this)));
 }
 
 void LocalDiscoveryUIHandler::HandleCancelRegistration(
@@ -253,6 +261,11 @@ void LocalDiscoveryUIHandler::HandleRequestDeviceList(
 
 void LocalDiscoveryUIHandler::HandleOpenCloudPrintURL(
     const base::ListValue* args) {
+  // Opening of the Cloud Print URL should be disabled if the profile is
+  // restricted.
+  if (IsUserProfileRestricted())
+    return;
+
   std::string id;
   bool rv = args->GetString(0, &id);
   DCHECK(rv);
@@ -266,6 +279,7 @@ void LocalDiscoveryUIHandler::HandleOpenCloudPrintURL(
                                 ui::PAGE_TRANSITION_FROM_API);
 }
 
+#if !defined(OS_CHROMEOS)
 void LocalDiscoveryUIHandler::HandleShowSyncUI(
     const base::ListValue* args) {
   Browser* browser = chrome::FindBrowserWithWebContents(
@@ -274,6 +288,7 @@ void LocalDiscoveryUIHandler::HandleShowSyncUI(
   chrome::ShowBrowserSignin(
       browser, signin_metrics::AccessPoint::ACCESS_POINT_DEVICES_PAGE);
 }
+#endif
 
 void LocalDiscoveryUIHandler::StartRegisterHTTP(
     std::unique_ptr<cloud_print::PrivetHTTPClient> http_client) {
@@ -296,8 +311,7 @@ void LocalDiscoveryUIHandler::OnPrivetRegisterClaimToken(
     const GURL& url) {
   web_ui()->CallJavascriptFunctionUnsafe(
       "local_discovery.onRegistrationConfirmedOnPrinter");
-  if (!base::ContainsKey(device_descriptions_,
-                         current_http_client_->GetName())) {
+  if (!base::Contains(device_descriptions_, current_http_client_->GetName())) {
     SendRegisterError();
     return;
   }
@@ -412,12 +426,12 @@ void LocalDiscoveryUIHandler::OnDeviceListUnavailable() {
 }
 
 void LocalDiscoveryUIHandler::OnPrimaryAccountSet(
-    const AccountInfo& primary_account_info) {
+    const CoreAccountInfo& primary_account_info) {
   CheckUserLoggedIn();
 }
 
 void LocalDiscoveryUIHandler::OnPrimaryAccountCleared(
-    const AccountInfo& previous_primary_account_info) {
+    const CoreAccountInfo& previous_primary_account_info) {
   CheckUserLoggedIn();
 }
 
@@ -455,7 +469,7 @@ void LocalDiscoveryUIHandler::SendRegisterDone(
 
 std::string LocalDiscoveryUIHandler::GetSyncAccount() const {
   Profile* profile = Profile::FromWebUI(web_ui());
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
 
   std::string email;
@@ -478,9 +492,9 @@ void LocalDiscoveryUIHandler::ResetCurrentRegistration() {
 
 void LocalDiscoveryUIHandler::CheckUserLoggedIn() {
   base::Value logged_in_value(!GetSyncAccount().empty());
-  base::Value is_supervised_value(IsUserSupervisedOrOffTheRecord());
+  base::Value is_restricted_value(IsUserProfileRestricted());
   web_ui()->CallJavascriptFunctionUnsafe("local_discovery.setUserLoggedIn",
-                                         logged_in_value, is_supervised_value);
+                                         logged_in_value, is_restricted_value);
 }
 
 void LocalDiscoveryUIHandler::CheckListingDone() {
@@ -512,7 +526,7 @@ std::unique_ptr<GCDApiFlow> LocalDiscoveryUIHandler::CreateApiFlow() {
   if (!profile)
     return std::unique_ptr<GCDApiFlow>();
 
-  identity::IdentityManager* identity_manager =
+  signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(profile);
   if (!(identity_manager && identity_manager->HasPrimaryAccount()))
     return std::unique_ptr<GCDApiFlow>();
@@ -525,9 +539,10 @@ std::unique_ptr<GCDApiFlow> LocalDiscoveryUIHandler::CreateApiFlow() {
   return GCDApiFlow::Create(url_loader_factory, identity_manager);
 }
 
-bool LocalDiscoveryUIHandler::IsUserSupervisedOrOffTheRecord() {
+bool LocalDiscoveryUIHandler::IsUserProfileRestricted() {
   Profile* profile = Profile::FromWebUI(web_ui());
-  return profile->IsSupervised() || profile->IsOffTheRecord();
+  return profile->IsSupervised() || profile->IsOffTheRecord() ||
+         !profile->GetPrefs()->GetBoolean(prefs::kLocalDiscoveryEnabled);
 }
 
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)

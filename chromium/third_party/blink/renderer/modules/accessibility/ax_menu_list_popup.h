@@ -37,10 +37,6 @@ class HTMLElement;
 
 class AXMenuListPopup final : public AXMockObject {
  public:
-  static AXMenuListPopup* Create(AXObjectCacheImpl& ax_object_cache) {
-    return MakeGarbageCollected<AXMenuListPopup>(ax_object_cache);
-  }
-
   explicit AXMenuListPopup(AXObjectCacheImpl&);
 
   AXRestriction Restriction() const override;
@@ -73,7 +69,12 @@ class AXMenuListPopup final : public AXMockObject {
   DISALLOW_COPY_AND_ASSIGN(AXMenuListPopup);
 };
 
-DEFINE_AX_OBJECT_TYPE_CASTS(AXMenuListPopup, IsMenuListPopup());
+template <>
+struct DowncastTraits<AXMenuListPopup> {
+  static bool AllowFrom(const AXObject& object) {
+    return object.IsMenuListPopup();
+  }
+};
 
 }  // namespace blink
 

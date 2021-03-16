@@ -26,6 +26,9 @@ bool CXFA_FFImage::IsLoaded() {
 }
 
 bool CXFA_FFImage::LoadWidget() {
+  // Prevents destruction of the CXFA_ContentLayoutItem that owns |this|.
+  RetainPtr<CXFA_ContentLayoutItem> retain_layout(m_pLayoutItem.Get());
+
   if (GetNode()->GetImageImage())
     return true;
 
@@ -34,14 +37,14 @@ bool CXFA_FFImage::LoadWidget() {
 
 void CXFA_FFImage::RenderWidget(CXFA_Graphics* pGS,
                                 const CFX_Matrix& matrix,
-                                uint32_t dwStatus) {
-  if (!IsMatchVisibleStatus(dwStatus))
+                                HighlightOption highlight) {
+  if (!HasVisibleStatus())
     return;
 
   CFX_Matrix mtRotate = GetRotateMatrix();
   mtRotate.Concat(matrix);
 
-  CXFA_FFWidget::RenderWidget(pGS, mtRotate, dwStatus);
+  CXFA_FFWidget::RenderWidget(pGS, mtRotate, highlight);
 
   RetainPtr<CFX_DIBitmap> pDIBitmap = GetNode()->GetImageImage();
   if (!pDIBitmap)

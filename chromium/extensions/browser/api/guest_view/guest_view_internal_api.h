@@ -10,16 +10,16 @@
 
 namespace extensions {
 
-class GuestViewInternalCreateGuestFunction : public UIThreadExtensionFunction {
+class GuestViewInternalCreateGuestFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.createGuest",
-                             GUESTVIEWINTERNAL_CREATEGUEST);
+                             GUESTVIEWINTERNAL_CREATEGUEST)
   GuestViewInternalCreateGuestFunction();
 
  protected:
   ~GuestViewInternalCreateGuestFunction() override {}
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ResponseAction Run() final;
 
  private:
@@ -27,16 +27,16 @@ class GuestViewInternalCreateGuestFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(GuestViewInternalCreateGuestFunction);
 };
 
-class GuestViewInternalDestroyGuestFunction : public UIThreadExtensionFunction {
+class GuestViewInternalDestroyGuestFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.destroyGuest",
-                             GUESTVIEWINTERNAL_DESTROYGUEST);
+                             GUESTVIEWINTERNAL_DESTROYGUEST)
   GuestViewInternalDestroyGuestFunction();
 
  protected:
   ~GuestViewInternalDestroyGuestFunction() override;
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ResponseAction Run() final;
 
  private:
@@ -44,17 +44,17 @@ class GuestViewInternalDestroyGuestFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(GuestViewInternalDestroyGuestFunction);
 };
 
-class GuestViewInternalSetSizeFunction : public UIThreadExtensionFunction {
+class GuestViewInternalSetSizeFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.setSize",
-                             GUESTVIEWINTERNAL_SETAUTOSIZE);
+                             GUESTVIEWINTERNAL_SETAUTOSIZE)
 
   GuestViewInternalSetSizeFunction();
 
  protected:
   ~GuestViewInternalSetSizeFunction() override;
 
-  // UIThreadExtensionFunction:
+  // ExtensionFunction:
   ResponseAction Run() final;
 
  private:

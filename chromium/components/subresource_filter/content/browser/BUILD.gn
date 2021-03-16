@@ -41,10 +41,9 @@ static_library("browser") {
   deps = [
     "//base",
     "//components/prefs:prefs",
-    "//components/safe_browsing/db:database_manager",
-    "//components/safe_browsing/db:util",
+    "//components/safe_browsing/core/db:database_manager",
+    "//components/safe_browsing/core/db:util",
     "//components/subresource_filter/content/common",
-    "//components/subresource_filter/content/mojom",
     "//components/subresource_filter/core/browser",
     "//components/subresource_filter/core/common",
     "//components/ukm:ukm",
@@ -55,6 +54,7 @@ static_library("browser") {
     "//url",
   ]
   public_deps = [
+    "//components/subresource_filter/content/mojom",
     "//third_party/flatbuffers:flatbuffers",
     "//ui/base",
   ]
@@ -67,6 +67,8 @@ static_library("test_support") {
     "async_document_subresource_filter_test_utils.h",
     "fake_safe_browsing_database_manager.cc",
     "fake_safe_browsing_database_manager.h",
+    "subframe_navigation_test_utils.cc",
+    "subframe_navigation_test_utils.h",
     "subresource_filter_observer_test_utils.cc",
     "subresource_filter_observer_test_utils.h",
   ]
@@ -75,12 +77,14 @@ static_library("test_support") {
     "//base/test:test_support",
     "//components/subresource_filter/core/common",
     "//content/public/browser",
+    "//content/test:test_support",
+    "//net",
     "//testing/gtest:gtest",
     "//url",
   ]
   public_deps = [
-    "//components/safe_browsing/db:test_database_manager",
-    "//components/safe_browsing/db:util",
+    "//components/safe_browsing/core/db:test_database_manager",
+    "//components/safe_browsing/core/db:util",
   ]
 }
 
@@ -103,9 +107,8 @@ source_set("unit_tests") {
     ":test_support",
     "//base/test:test_support",
     "//components/prefs:test_support",
-    "//components/safe_browsing/db:util",
+    "//components/safe_browsing/core/db:util",
     "//components/subresource_filter/content/common",
-    "//components/subresource_filter/content/mojom",
     "//components/subresource_filter/core/browser",
     "//components/subresource_filter/core/browser:test_support",
     "//components/subresource_filter/core/common",
@@ -117,4 +120,5 @@ source_set("unit_tests") {
     "//ipc:test_support",
     "//testing/gtest",
   ]
+  public_deps = [ "//components/subresource_filter/content/mojom" ]
 }

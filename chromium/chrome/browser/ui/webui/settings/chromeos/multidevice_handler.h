@@ -13,7 +13,7 @@
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chromeos/components/multidevice/remote_device_ref.h"
 #include "chromeos/services/multidevice_setup/public/cpp/multidevice_setup_client.h"
-#include "chromeos/services/multidevice_setup/public/mojom/multidevice_setup.mojom.h"
+#include "chromeos/services/multidevice_setup/public/mojom/multidevice_setup.mojom-forward.h"
 #include "components/prefs/pref_change_registrar.h"
 
 class PrefService;
@@ -82,7 +82,6 @@ class MultideviceHandler
   void OnSetFeatureStateEnabledResult(const std::string& js_callback_id,
                                       bool success);
 
-  void RegisterPrefChangeListeners();
   void NotifySmartLockSignInEnabledChanged();
   void NotifySmartLockSignInAllowedChanged();
   // Generate android sms info dictionary containing the messages for web
@@ -126,7 +125,7 @@ class MultideviceHandler
       android_sms_app_manager_observer_;
 
   // Used to cancel callbacks when JavaScript becomes disallowed.
-  base::WeakPtrFactory<MultideviceHandler> callback_weak_ptr_factory_;
+  base::WeakPtrFactory<MultideviceHandler> callback_weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MultideviceHandler);
 };

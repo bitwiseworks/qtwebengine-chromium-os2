@@ -16,6 +16,8 @@ This is meant to be used on a dSYM file. If only an unstripped executable is
 present, use show_mod_init_func.py.
 """
 
+from __future__ import print_function
+
 import optparse
 import re
 import subprocess
@@ -39,7 +41,8 @@ def ParseDsymutil(binary):
   static initializers.
   """
 
-  child = subprocess.Popen(['dsymutil', '-s', binary], stdout=subprocess.PIPE)
+  child = subprocess.Popen(['tools/clang/dsymutil/bin/dsymutil', '-s', binary],
+     stdout=subprocess.PIPE)
   for line in child.stdout:
     file_match = dsymutil_file_re.search(line)
     if file_match:
@@ -51,9 +54,9 @@ def ParseDsymutil(binary):
       else:
         match = dsymutil_re.search(line)
         if match:
-          print current_filename
-          print current_o_filename
-          print
+          print(current_filename)
+          print(current_o_filename)
+          print()
 
 
 def main():

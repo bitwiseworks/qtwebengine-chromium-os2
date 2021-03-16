@@ -12,6 +12,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/proxy_resolution/proxy_config_with_annotation.h"
 
@@ -38,7 +39,7 @@ class PollingProxyConfigService::Core
   // (observers should not be called past this point).
   void Orphan() {
     base::AutoLock lock(lock_);
-    origin_task_runner_ = NULL;
+    origin_task_runner_ = nullptr;
   }
 
   bool GetLatestProxyConfig(ProxyConfigWithAnnotation* config) {
@@ -93,10 +94,10 @@ class PollingProxyConfigService::Core
     last_poll_time_ = base::TimeTicks::Now();
     poll_task_outstanding_ = true;
     poll_task_queued_ = false;
-    base::PostTaskWithTraits(
+    base::ThreadPool::PostTask(
         FROM_HERE,
         {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
-        base::Bind(&Core::PollAsync, this, get_config_func_));
+        base::BindOnce(&Core::PollAsync, this, get_config_func_));
   }
 
  private:
@@ -110,7 +111,7 @@ class PollingProxyConfigService::Core
     base::AutoLock lock(lock_);
     if (origin_task_runner_.get()) {
       origin_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&Core::GetConfigCompleted, this, config));
+          FROM_HERE, base::BindOnce(&Core::GetConfigCompleted, this, config));
     }
   }
 

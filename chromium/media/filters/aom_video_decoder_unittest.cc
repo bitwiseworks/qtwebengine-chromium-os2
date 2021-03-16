@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/limits.h"
@@ -25,9 +27,13 @@ using ::testing::_;
 
 namespace media {
 
+namespace {
+
 MATCHER(ContainsDecoderErrorLog, "") {
   return CONTAINS_STRING(arg, "aom_codec_decode() failed");
 }
+
+}  // namespace
 
 class AomVideoDecoderTest : public testing::Test {
  public:
@@ -43,10 +49,10 @@ class AomVideoDecoderTest : public testing::Test {
 
   void InitializeWithConfigWithResult(const VideoDecoderConfig& config,
                                       bool success) {
-    decoder_->Initialize(
-        config, false, nullptr, NewExpectedBoolCB(success),
-        base::Bind(&AomVideoDecoderTest::FrameReady, base::Unretained(this)),
-        base::NullCallback());
+    decoder_->Initialize(config, false, nullptr, NewExpectedBoolCB(success),
+                         base::BindRepeating(&AomVideoDecoderTest::FrameReady,
+                                             base::Unretained(this)),
+                         base::NullCallback());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -147,24 +153,24 @@ class AomVideoDecoderTest : public testing::Test {
     DecodeStatus status;
     EXPECT_CALL(*this, DecodeDone(_)).WillOnce(testing::SaveArg<0>(&status));
 
-    decoder_->Decode(
-        std::move(buffer),
-        base::Bind(&AomVideoDecoderTest::DecodeDone, base::Unretained(this)));
+    decoder_->Decode(std::move(buffer),
+                     base::BindOnce(&AomVideoDecoderTest::DecodeDone,
+                                    base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
 
     return status;
   }
 
-  void FrameReady(const scoped_refptr<VideoFrame>& frame) {
+  void FrameReady(scoped_refptr<VideoFrame> frame) {
     DCHECK(!frame->metadata()->IsTrue(VideoFrameMetadata::END_OF_STREAM));
-    output_frames_.push_back(frame);
+    output_frames_.push_back(std::move(frame));
   }
 
   MOCK_METHOD1(DecodeDone, void(DecodeStatus));
 
   testing::StrictMock<MockMediaLog> media_log_;
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
   std::unique_ptr<AomVideoDecoder> decoder_;
 
   scoped_refptr<DecoderBuffer> i_frame_buffer_;

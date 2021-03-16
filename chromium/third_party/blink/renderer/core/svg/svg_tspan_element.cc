@@ -25,19 +25,19 @@
 
 namespace blink {
 
-inline SVGTSpanElement::SVGTSpanElement(Document& document)
+SVGTSpanElement::SVGTSpanElement(Document& document)
     : SVGTextPositioningElement(svg_names::kTSpanTag, document) {}
 
-DEFINE_NODE_FACTORY(SVGTSpanElement)
-
-LayoutObject* SVGTSpanElement::CreateLayoutObject(const ComputedStyle&) {
+LayoutObject* SVGTSpanElement::CreateLayoutObject(const ComputedStyle&,
+                                                  LegacyLayout) {
   return new LayoutSVGTSpan(this);
 }
 
 bool SVGTSpanElement::LayoutObjectIsNeeded(const ComputedStyle& style) const {
   if (parentNode() &&
-      (IsSVGAElement(*parentNode()) || IsSVGTextElement(*parentNode()) ||
-       IsSVGTextPathElement(*parentNode()) || IsSVGTSpanElement(*parentNode())))
+      (IsA<SVGAElement>(*parentNode()) || IsA<SVGTextElement>(*parentNode()) ||
+       IsA<SVGTextPathElement>(*parentNode()) ||
+       IsA<SVGTSpanElement>(*parentNode())))
     return SVGElement::LayoutObjectIsNeeded(style);
 
   return false;

@@ -12,11 +12,11 @@
 #include <jni.h>
 #include <sys/stat.h>
 
-#include "ResourceFactory.h"
-#include "SkStream.h"
-#include "SkTo.h"
+#include "include/core/SkStream.h"
+#include "include/private/SkTo.h"
+#include "tools/ResourceFactory.h"
 
-#include "skqp.h"
+#include "tools/skqp/src/skqp.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 extern "C" {
@@ -115,7 +115,7 @@ void Java_org_skia_skqp_SkQP_nInit(JNIEnv* env, jobject object, jobject assetMan
     jassert(env, gAAssetManager,);
 
     std::lock_guard<std::mutex> lock(gMutex);
-    gSkQP.init(&gAndroidAssetManager, reportDirectory.c_str());
+    gSkQP.init(&gAndroidAssetManager, nullptr, reportDirectory.c_str());
 
     auto backends = gSkQP.getSupportedBackends();
     jassert(env, backends.size() > 0,);

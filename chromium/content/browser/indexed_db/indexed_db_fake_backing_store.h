@@ -24,14 +24,18 @@ class IndexedDBKeyRange;
 
 namespace content {
 
-class IndexedDBFactory;
-
 class IndexedDBFakeBackingStore : public IndexedDBBackingStore {
  public:
   IndexedDBFakeBackingStore();
-  IndexedDBFakeBackingStore(IndexedDBFactory* factory,
-                            base::SequencedTaskRunner* task_runner);
-  leveldb::Status DeleteDatabase(const base::string16& name) override;
+  IndexedDBFakeBackingStore(
+      BlobFilesCleanedCallback blob_files_cleaned,
+      ReportOutstandingBlobsCallback report_outstanding_blobs,
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
+  ~IndexedDBFakeBackingStore() override;
+
+  leveldb::Status DeleteDatabase(
+      const base::string16& name,
+      TransactionalLevelDBTransaction* transaction) override;
 
   leveldb::Status PutRecord(IndexedDBBackingStore::Transaction* transaction,
                             int64_t database_id,
@@ -76,7 +80,7 @@ class IndexedDBFakeBackingStore : public IndexedDBBackingStore {
                                         int64_t index_id,
                                         const blink::IndexedDBKey&,
                                         const RecordIdentifier&) override;
-  void ReportBlobUnused(int64_t database_id, int64_t blob_key) override;
+  void ReportBlobUnused(int64_t database_id, int64_t blob_number) override;
   std::unique_ptr<Cursor> OpenObjectStoreKeyCursor(
       Transaction* transaction,
       int64_t database_id,
@@ -110,12 +114,14 @@ class IndexedDBFakeBackingStore : public IndexedDBBackingStore {
 
   class FakeTransaction : public IndexedDBBackingStore::Transaction {
    public:
+    FakeTransaction(leveldb::Status phase_two_result,
+                    blink::mojom::IDBTransactionMode mode);
     explicit FakeTransaction(leveldb::Status phase_two_result);
-    void Begin() override;
-    leveldb::Status CommitPhaseOne(scoped_refptr<BlobWriteCallback>) override;
+    void Begin(std::vector<ScopeLock> locks) override;
+    leveldb::Status CommitPhaseOne(BlobWriteCallback) override;
     leveldb::Status CommitPhaseTwo() override;
     uint64_t GetTransactionSize() override;
-    void Rollback() override;
+    leveldb::Status Rollback() override;
 
    private:
     leveldb::Status result_;
@@ -123,10 +129,11 @@ class IndexedDBFakeBackingStore : public IndexedDBBackingStore {
     DISALLOW_COPY_AND_ASSIGN(FakeTransaction);
   };
 
- protected:
-  friend class base::RefCounted<IndexedDBFakeBackingStore>;
-  ~IndexedDBFakeBackingStore() override;
+  std::unique_ptr<IndexedDBBackingStore::Transaction> CreateTransaction(
+      blink::mojom::IDBTransactionDurability durability,
+      blink::mojom::IDBTransactionMode mode) override;
 
+ protected:
  private:
   DISALLOW_COPY_AND_ASSIGN(IndexedDBFakeBackingStore);
 };

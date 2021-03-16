@@ -40,7 +40,24 @@ class MockInputRouterClient : public InputRouterClient,
       const blink::WebGestureEvent& gesture_event,
       const ui::LatencyInfo& latency_info) override;
   bool IsWheelScrollInProgress() override;
+  bool IsAutoscrollInProgress() override;
   void SetMouseCapture(bool capture) override {}
+  void RequestMouseLock(bool user_gesture,
+                        bool privileged,
+                        bool unadjusted_movement,
+                        mojom::WidgetInputHandlerHost::RequestMouseLockCallback
+                            response) override {}
+  void RequestMouseLockChange(
+      bool unadjusted_movement,
+      mojom::WidgetInputHandlerHost::RequestMouseLockCallback response)
+      override {}
+  void UnlockMouse() override {}
+  void FallbackCursorModeLockCursor(bool left,
+                                    bool right,
+                                    bool up,
+                                    bool down) override {}
+  void FallbackCursorModeSetCursorVisibility(bool visible) override {}
+  gfx::Size GetRootWidgetViewportSize() override;
 
   bool GetAndResetFilterEventCalled();
   ui::DidOverscrollParams GetAndResetOverscroll();

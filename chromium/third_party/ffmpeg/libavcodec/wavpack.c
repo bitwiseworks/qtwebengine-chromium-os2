@@ -940,13 +940,23 @@ static int wavpack_decode_block(AVCodecContext *avctx, int block_no,
             case 3:
                 chmask = bytestream2_get_le32(&gb);
                 break;
+            case 4:
+                size = bytestream2_get_byte(&gb);
+                chan  |= (bytestream2_get_byte(&gb) & 0xF) << 8;
+                chan  += 1;
+                if (avctx->channels != chan)
+                    av_log(avctx, AV_LOG_WARNING, "%i channels signalled"
+                           " instead of %i.\n", chan, avctx->channels);
+                chmask = bytestream2_get_le24(&gb);
+                break;
             case 5:
                 size = bytestream2_get_byte(&gb);
-                if (avctx->channels != size)
-                    av_log(avctx, AV_LOG_WARNING, "%i channels signalled"
-                           " instead of %i.\n", size, avctx->channels);
                 chan  |= (bytestream2_get_byte(&gb) & 0xF) << 8;
-                chmask = bytestream2_get_le16(&gb);
+                chan  += 1;
+                if (avctx->channels != chan)
+                    av_log(avctx, AV_LOG_WARNING, "%i channels signalled"
+                           " instead of %i.\n", chan, avctx->channels);
+                chmask = bytestream2_get_le32(&gb);
                 break;
             default:
                 av_log(avctx, AV_LOG_ERROR, "Invalid channel info size %d\n",
@@ -1104,9 +1114,7 @@ static int wavpack_decode_frame(AVCodecContext *avctx, void *data,
         avctx->bits_per_raw_sample = ((frame_flags & 0x03) + 1) << 3;
     }
 
-    while (buf_size > 0) {
-        if (buf_size <= WV_HEADER_SIZE)
-            break;
+    while (buf_size > WV_HEADER_SIZE) {
         frame_size = AV_RL32(buf + 4) - 12;
         buf       += 20;
         buf_size  -= 20;

@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_pump_for_io.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string16.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/device/serial/serial_io_handler.h"
 
@@ -30,8 +31,6 @@ class SerialIoHandlerWin : public SerialIoHandler,
   bool SetControlSignals(
       const mojom::SerialHostControlSignals& control_signals) override;
   mojom::SerialConnectionInfoPtr GetPortInfo() const override;
-  bool SetBreak() override;
-  bool ClearBreak() override;
   bool PostOpen() override;
 
  private:
@@ -48,7 +47,7 @@ class SerialIoHandlerWin : public SerialIoHandler,
                      DWORD bytes_transfered,
                      DWORD error) override;
 
-  void OnDeviceRemoved(const std::string& device_path);
+  void OnDeviceRemoved(const base::string16& device_path);
 
   // Context used for asynchronous WaitCommEvent calls.
   std::unique_ptr<base::MessagePumpForIO::IOContext> comm_context_;
@@ -70,7 +69,7 @@ class SerialIoHandlerWin : public SerialIoHandler,
   // The helper lives on the UI thread and holds a weak reference back to the
   // handler that owns it.
   UiThreadHelper* helper_;
-  base::WeakPtrFactory<SerialIoHandlerWin> weak_factory_;
+  base::WeakPtrFactory<SerialIoHandlerWin> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SerialIoHandlerWin);
 };

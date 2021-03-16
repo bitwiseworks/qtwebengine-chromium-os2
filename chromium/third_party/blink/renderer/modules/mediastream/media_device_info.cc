@@ -25,24 +25,17 @@
 
 #include "third_party/blink/renderer/modules/mediastream/media_device_info.h"
 
+#include "third_party/blink/public/mojom/mediastream/media_devices.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_object_builder.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 
 namespace blink {
 
-MediaDeviceInfo* MediaDeviceInfo::Create(const String& device_id,
-                                         const String& label,
-                                         const String& group_id,
-                                         MediaDeviceType device_type) {
-  return MakeGarbageCollected<MediaDeviceInfo>(device_id, label, group_id,
-                                               device_type);
-}
-
 MediaDeviceInfo::MediaDeviceInfo(const String& device_id,
                                  const String& label,
                                  const String& group_id,
-                                 MediaDeviceType device_type)
+                                 mojom::blink::MediaDeviceType device_type)
     : device_id_(device_id),
       label_(label),
       group_id_(group_id),
@@ -54,11 +47,11 @@ String MediaDeviceInfo::deviceId() const {
 
 String MediaDeviceInfo::kind() const {
   switch (device_type_) {
-    case MediaDeviceType::MEDIA_AUDIO_INPUT:
+    case mojom::blink::MediaDeviceType::MEDIA_AUDIO_INPUT:
       return "audioinput";
-    case MediaDeviceType::MEDIA_AUDIO_OUTPUT:
+    case mojom::blink::MediaDeviceType::MEDIA_AUDIO_OUTPUT:
       return "audiooutput";
-    case MediaDeviceType::MEDIA_VIDEO_INPUT:
+    case mojom::blink::MediaDeviceType::MEDIA_VIDEO_INPUT:
       return "videoinput";
     default:
       NOTREACHED();
@@ -74,7 +67,7 @@ String MediaDeviceInfo::groupId() const {
   return group_id_;
 }
 
-MediaDeviceType MediaDeviceInfo::DeviceType() const {
+mojom::blink::MediaDeviceType MediaDeviceInfo::DeviceType() const {
   return device_type_;
 }
 

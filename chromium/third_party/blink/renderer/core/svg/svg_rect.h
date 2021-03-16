@@ -23,7 +23,8 @@
 #include "third_party/blink/renderer/core/svg/properties/svg_property_helper.h"
 #include "third_party/blink/renderer/core/svg/svg_parsing_error.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 
 namespace blink {
 
@@ -33,16 +34,10 @@ class SVGRect final : public SVGPropertyHelper<SVGRect> {
  public:
   typedef SVGRectTearOff TearOffType;
 
-  static SVGRect* Create() { return MakeGarbageCollected<SVGRect>(); }
-
   static SVGRect* CreateInvalid() {
     SVGRect* rect = MakeGarbageCollected<SVGRect>();
     rect->SetInvalid();
     return rect;
-  }
-
-  static SVGRect* Create(const FloatRect& rect) {
-    return MakeGarbageCollected<SVGRect>(rect);
   }
 
   SVGRect();
@@ -66,7 +61,7 @@ class SVGRect final : public SVGPropertyHelper<SVGRect> {
   SVGParsingError SetValueAsString(const String&);
 
   void Add(SVGPropertyBase*, SVGElement*) override;
-  void CalculateAnimatedValue(SVGAnimationElement*,
+  void CalculateAnimatedValue(const SVGAnimateElement&,
                               float percentage,
                               unsigned repeat_count,
                               SVGPropertyBase* from,
@@ -89,7 +84,12 @@ class SVGRect final : public SVGPropertyHelper<SVGRect> {
   FloatRect value_;
 };
 
-DEFINE_SVG_PROPERTY_TYPE_CASTS(SVGRect);
+template <>
+struct DowncastTraits<SVGRect> {
+  static bool AllowFrom(const SVGPropertyBase& value) {
+    return value.GetType() == SVGRect::ClassType();
+  }
+};
 
 }  // namespace blink
 

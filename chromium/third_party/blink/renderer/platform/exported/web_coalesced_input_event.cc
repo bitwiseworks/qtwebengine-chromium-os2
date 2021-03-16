@@ -4,53 +4,13 @@
 
 #include "third_party/blink/public/platform/web_coalesced_input_event.h"
 
-#include "third_party/blink/public/platform/web_gesture_event.h"
-#include "third_party/blink/public/platform/web_keyboard_event.h"
-#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
-#include "third_party/blink/public/platform/web_pointer_event.h"
-#include "third_party/blink/public/platform/web_touch_event.h"
+#include "third_party/blink/public/common/input/web_gesture_event.h"
+#include "third_party/blink/public/common/input/web_keyboard_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+#include "third_party/blink/public/common/input/web_pointer_event.h"
+#include "third_party/blink/public/common/input/web_touch_event.h"
 
 namespace blink {
-
-namespace {
-
-struct WebInputEventDelete {
-  template <class EventType>
-  bool Execute(WebInputEvent* event) const {
-    if (!event)
-      return false;
-    DCHECK_EQ(sizeof(EventType), event->size());
-    delete static_cast<EventType*>(event);
-    return true;
-  }
-};
-
-template <typename Operator, typename ArgIn>
-bool Apply(Operator op, WebInputEvent::Type type, const ArgIn& arg_in) {
-  if (WebInputEvent::IsMouseEventType(type))
-    return op.template Execute<WebMouseEvent>(arg_in);
-  if (type == WebInputEvent::kMouseWheel)
-    return op.template Execute<WebMouseWheelEvent>(arg_in);
-  if (WebInputEvent::IsKeyboardEventType(type))
-    return op.template Execute<WebKeyboardEvent>(arg_in);
-  if (WebInputEvent::IsTouchEventType(type))
-    return op.template Execute<WebTouchEvent>(arg_in);
-  if (WebInputEvent::IsGestureEventType(type))
-    return op.template Execute<WebGestureEvent>(arg_in);
-  if (WebInputEvent::IsPointerEventType(type))
-    return op.template Execute<WebPointerEvent>(arg_in);
-
-  NOTREACHED() << "Unknown webkit event type " << type;
-  return false;
-}
-}
-
-void WebCoalescedInputEvent::WebInputEventDeleter::operator()(
-    WebInputEvent* event) const {
-  if (!event)
-    return;
-  Apply(WebInputEventDelete(), event->GetType(), event);
-}
 
 WebInputEvent* WebCoalescedInputEvent::EventPointer() {
   return event_.get();
@@ -58,7 +18,7 @@ WebInputEvent* WebCoalescedInputEvent::EventPointer() {
 
 void WebCoalescedInputEvent::AddCoalescedEvent(
     const blink::WebInputEvent& event) {
-  coalesced_events_.push_back(MakeWebScopedInputEvent(event));
+  coalesced_events_.emplace_back(MakeWebScopedInputEvent(event));
 }
 
 const WebInputEvent& WebCoalescedInputEvent::Event() const {
@@ -74,17 +34,17 @@ const WebInputEvent& WebCoalescedInputEvent::CoalescedEvent(
   return *coalesced_events_[index].get();
 }
 
-std::vector<const WebInputEvent*>
+WebVector<const WebInputEvent*>
 WebCoalescedInputEvent::GetCoalescedEventsPointers() const {
-  std::vector<const WebInputEvent*> events;
+  WebVector<const WebInputEvent*> events;
   for (const auto& event : coalesced_events_)
-    events.push_back(event.get());
+    events.emplace_back(event.get());
   return events;
 }
 
 void WebCoalescedInputEvent::AddPredictedEvent(
     const blink::WebInputEvent& event) {
-  predicted_events_.push_back(MakeWebScopedInputEvent(event));
+  predicted_events_.emplace_back(MakeWebScopedInputEvent(event));
 }
 
 size_t WebCoalescedInputEvent::PredictedEventSize() const {
@@ -96,39 +56,39 @@ const WebInputEvent& WebCoalescedInputEvent::PredictedEvent(
   return *predicted_events_[index].get();
 }
 
-std::vector<const WebInputEvent*>
+WebVector<const WebInputEvent*>
 WebCoalescedInputEvent::GetPredictedEventsPointers() const {
-  std::vector<const WebInputEvent*> events;
+  WebVector<const WebInputEvent*> events;
   for (const auto& event : predicted_events_)
-    events.push_back(event.get());
+    events.emplace_back(event.get());
   return events;
 }
 
 WebCoalescedInputEvent::WebCoalescedInputEvent(const WebInputEvent& event) {
   event_ = MakeWebScopedInputEvent(event);
-  coalesced_events_.push_back(MakeWebScopedInputEvent(event));
+  coalesced_events_.emplace_back(MakeWebScopedInputEvent(event));
 }
 
 WebCoalescedInputEvent::WebCoalescedInputEvent(
     const WebInputEvent& event,
-    const std::vector<const WebInputEvent*>& coalesced_events,
-    const std::vector<const WebInputEvent*>& predicted_events) {
+    const WebVector<const WebInputEvent*>& coalesced_events,
+    const WebVector<const WebInputEvent*>& predicted_events) {
   event_ = MakeWebScopedInputEvent(event);
   for (auto* const coalesced_event : coalesced_events)
-    coalesced_events_.push_back(MakeWebScopedInputEvent(*coalesced_event));
+    coalesced_events_.emplace_back(MakeWebScopedInputEvent(*coalesced_event));
   for (auto* const predicted_event : predicted_events)
-    predicted_events_.push_back(MakeWebScopedInputEvent(*predicted_event));
+    predicted_events_.emplace_back(MakeWebScopedInputEvent(*predicted_event));
 }
 
 WebCoalescedInputEvent::WebCoalescedInputEvent(
     const WebPointerEvent& event,
-    const std::vector<WebPointerEvent>& coalesced_events,
-    const std::vector<WebPointerEvent>& predicted_events) {
+    const WebVector<WebPointerEvent>& coalesced_events,
+    const WebVector<WebPointerEvent>& predicted_events) {
   event_ = MakeWebScopedInputEvent(event);
   for (const auto& coalesced_event : coalesced_events)
-    coalesced_events_.push_back(MakeWebScopedInputEvent(coalesced_event));
+    coalesced_events_.emplace_back(MakeWebScopedInputEvent(coalesced_event));
   for (const auto& predicted_event : predicted_events)
-    predicted_events_.push_back(MakeWebScopedInputEvent(predicted_event));
+    predicted_events_.emplace_back(MakeWebScopedInputEvent(predicted_event));
 }
 
 WebCoalescedInputEvent::WebCoalescedInputEvent(

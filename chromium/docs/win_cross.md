@@ -1,23 +1,26 @@
 # Cross-compiling Chrome/win
 
+As many Chromium developers are on Linux/Mac, cross-compiling Chromium for
+Windows targets facilitates development for Windows targets on non-Windows
+machines.
+
 It's possible to build most parts of the codebase on a Linux or Mac host while
-targeting Windows.  This document describes how to set that up, and current
-restrictions.
+targeting Windows.  It's also possible to run the locally-built binaries on
+swarming.  This document describes how to set that up, and current restrictions.
+
+## Limitations
 
 What does *not* work:
 
-* goma. Sorry. ([internal bug](http://b/64390790)) You can use the
-  [jumbo build](jumbo.md) for faster build times.
-* 64-bit renderer processes don't use V8 snapshots, slowing down their startup
-  ([bug](https://crbug.com/803591))
-* on Mac hosts, building a 32-bit chrome ([bug](https://crbug.com/794838))
+* `js2gtest` tests are omitted from the build ([bug](https://crbug.com/1010561))
+* on Mac hosts, 32-bit builds don't work ([bug](https://crbug.com/794838) has
+  more information, and this is unlikely to ever change)
 
 All other targets build fine (including `chrome`, `browser_tests`, ...).
 
-Uses of `.asm` files have been stubbed out.  As a result, some of Skia's
-software rendering fast paths are not present in cross builds, Crashpad cannot
-report crashes, and NaCl defaults to disabled and cannot be enabled in
-cross builds ([.asm bug](https://crbug.com/762167)).
+Uses of `.asm` files have been stubbed out.  As a result, Crashpad cannot
+report crashes, and NaCl defaults to disabled and cannot be enabled in cross
+builds ([.asm bug](https://crbug.com/762167)).
 
 ## .gclient setup
 
@@ -77,17 +80,37 @@ Add `target_os = "win"` to your args.gn.  Then just build, e.g.
 
     ninja -C out/gnwin base_unittests.exe
 
+## Goma
+
+For now, one needs to use the rbe backend, not the borg backend
+(default for Googlers).
+Use cloud backend instead.
+
+```shell
+    goma_auth.py login
+
+    # GOMA_* are needed for Googlers only
+    export GOMA_SERVER_HOST=goma.chromium.org
+    export GOMA_RPC_EXTRA_PARAMS=?rbe
+
+    goma_ctl.py ensure_start
+```
+
+
 ## Copying and running chrome
 
 A convenient way to copy chrome over to a Windows box is to build the
 `mini_installer` target.  Then, copy just `mini_installer.exe` over
 to the Windows box and run it to install the chrome you just built.
 
+Note that the `mini_installer` doesn't include PDB files. PDB files are needed
+to correctly symbolize stack traces (or if you want to attach a debugger).
+
 ## Running tests on swarming
 
 You can run the Windows binaries you built on swarming, like so:
 
-    tools/run-swarmed.py -C out/gnwin -t base_unittests [ --gtest_filter=... ]
+    tools/run-swarmed.py out/gnwin base_unittests [ --gtest_filter=... ]
 
 See the contents of run-swarmed.py for how to do this manually.
 

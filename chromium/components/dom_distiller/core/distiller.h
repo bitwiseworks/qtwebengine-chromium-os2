@@ -31,10 +31,10 @@ class DistillerImpl;
 
 class Distiller {
  public:
-  typedef base::Callback<void(std::unique_ptr<DistilledArticleProto>)>
-      DistillationFinishedCallback;
-  typedef base::Callback<void(const ArticleDistillationUpdate&)>
-      DistillationUpdateCallback;
+  using DistillationFinishedCallback =
+      base::OnceCallback<void(std::unique_ptr<DistilledArticleProto>)>;
+  using DistillationUpdateCallback =
+      base::RepeatingCallback<void(const ArticleDistillationUpdate&)>;
 
   virtual ~Distiller() {}
 
@@ -46,7 +46,7 @@ class Distiller {
   // distillation is completed.
   virtual void DistillPage(const GURL& url,
                            std::unique_ptr<DistillerPage> distiller_page,
-                           const DistillationFinishedCallback& finished_cb,
+                           DistillationFinishedCallback finished_cb,
                            const DistillationUpdateCallback& update_cb) = 0;
 };
 
@@ -80,7 +80,7 @@ class DistillerImpl : public Distiller {
 
   void DistillPage(const GURL& url,
                    std::unique_ptr<DistillerPage> distiller_page,
-                   const DistillationFinishedCallback& finished_cb,
+                   DistillationFinishedCallback finished_cb,
                    const DistillationUpdateCallback& update_cb) override;
 
   void SetMaxNumPagesInArticle(size_t max_num_pages);
@@ -100,7 +100,7 @@ class DistillerImpl : public Distiller {
     // Relative page number of the page.
     int page_num;
     std::vector<std::unique_ptr<DistillerURLFetcher>> image_fetchers_;
-    scoped_refptr<base::RefCountedData<DistilledPageProto> >
+    scoped_refptr<base::RefCountedData<DistilledPageProto>>
         distilled_page_proto;
 
    private:
@@ -188,7 +188,7 @@ class DistillerImpl : public Distiller {
 
   bool destruction_allowed_;
 
-  base::WeakPtrFactory<DistillerImpl> weak_factory_;
+  base::WeakPtrFactory<DistillerImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DistillerImpl);
 };

@@ -8,7 +8,7 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/shared_memory.h"
+#include "base/memory/unsafe_shared_memory_region.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/constants.h"
@@ -69,7 +69,7 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
     const GPUCreateCommandBufferConfig& init_params,
     base::UnsafeSharedMemoryRegion shared_state_shm) {
   TRACE_EVENT0("gpu", "RasterBufferStub::Initialize");
-  FastSetActiveURL(active_url_, active_url_hash_, channel_);
+  UpdateActiveUrl();
 
   GpuChannelManager* manager = channel_->gpu_channel_manager();
   DCHECK(manager);
@@ -85,7 +85,7 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
     return ContextResult::kFatalFailure;
   }
 
-  if (init_params.attribs.gpu_preference != gl::PreferIntegratedGpu ||
+  if (init_params.attribs.gpu_preference != gl::GpuPreference::kLowPower ||
       init_params.attribs.context_type != CONTEXT_TYPE_OPENGLES2 ||
       init_params.attribs.bind_generates_resource) {
     LOG(ERROR) << "ContextResult::kFatalFailure: Incompatible creation attribs "
@@ -103,7 +103,7 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
   }
 
   if (!shared_context_state->IsGLInitialized()) {
-    if (!shared_context_state->MakeCurrent(nullptr) ||
+    if (!shared_context_state->MakeCurrent(nullptr, true /* needs_gl */) ||
         !shared_context_state->InitializeGL(
             manager->gpu_preferences(),
             base::MakeRefCounted<gles2::FeatureInfo>(
@@ -114,31 +114,20 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
     }
   }
 
-  gpu::GpuMemoryBufferFactory* gmb_factory =
-      manager->gpu_memory_buffer_factory();
-  context_group_ = base::MakeRefCounted<gles2::ContextGroup>(
-      manager->gpu_preferences(), gles2::PassthroughCommandDecoderSupported(),
-      manager->mailbox_manager(), CreateMemoryTracker(init_params),
-      manager->shader_translator_cache(),
-      manager->framebuffer_completeness_cache(),
-      shared_context_state->feature_info(),
-      init_params.attribs.bind_generates_resource, channel_->image_manager(),
-      gmb_factory ? gmb_factory->AsImageFactory() : nullptr,
-      /*progress_reporter=*/manager->watchdog(), manager->gpu_feature_info(),
-      manager->discardable_manager(),
-      manager->passthrough_discardable_manager(),
-      manager->shared_image_manager());
-
   surface_ = shared_context_state->surface();
   share_group_ = shared_context_state->share_group();
   use_virtualized_gl_context_ =
       shared_context_state->use_virtualized_gl_contexts();
 
-  command_buffer_ = std::make_unique<CommandBufferService>(
-      this, context_group_->transfer_buffer_manager());
+  memory_tracker_ = CreateMemoryTracker(init_params);
+
+  command_buffer_ =
+      std::make_unique<CommandBufferService>(this, memory_tracker_.get());
   std::unique_ptr<raster::RasterDecoder> decoder(raster::RasterDecoder::Create(
-      this, command_buffer_.get(), manager->outputter(), context_group_.get(),
-      shared_context_state));
+      this, command_buffer_.get(), manager->outputter(),
+      manager->gpu_feature_info(), manager->gpu_preferences(),
+      memory_tracker_.get(), manager->shared_image_manager(),
+      shared_context_state, channel()->is_gpu_host()));
 
   sync_point_client_state_ =
       channel_->sync_point_manager()->CreateSyncPointClientState(
@@ -149,15 +138,10 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
                                                                         : "0");
 
   scoped_refptr<gl::GLContext> context = shared_context_state->context();
-  if (!shared_context_state->MakeCurrent(nullptr)) {
+  if (!shared_context_state->MakeCurrent(nullptr, false /* needs_gl */)) {
     LOG(ERROR) << "ContextResult::kTransientFailure: "
                   "Failed to make context current.";
     return gpu::ContextResult::kTransientFailure;
-  }
-
-  if (!context_group_->has_program_cache() &&
-      !context_group_->feature_info()->workarounds().disable_program_cache) {
-    context_group_->set_program_cache(manager->program_cache());
   }
 
   // Initialize the decoder with either the view or pbuffer GLContext.
@@ -186,28 +170,26 @@ gpu::ContextResult RasterCommandBufferStub::Initialize(
       std::move(shared_state_shm), std::move(shared_state_mapping)));
 
   if (!active_url_.is_empty())
-    manager->delegate()->DidCreateOffscreenContext(active_url_);
+    manager->delegate()->DidCreateOffscreenContext(active_url_.url());
 
   manager->delegate()->DidCreateContextSuccessfully();
   initialized_ = true;
   return gpu::ContextResult::kSuccess;
 }
 
-// RasterInterface clients should not manipulate the front buffer.
-void RasterCommandBufferStub::OnTakeFrontBuffer(const Mailbox& mailbox) {
-  NOTREACHED();
+MemoryTracker* RasterCommandBufferStub::GetMemoryTracker() const {
+  return memory_tracker_.get();
 }
-void RasterCommandBufferStub::OnReturnFrontBuffer(const Mailbox& mailbox,
-                                                  bool is_lost) {
-  NOTREACHED();
+
+bool RasterCommandBufferStub::HandleMessage(const IPC::Message& message) {
+  return false;
 }
 
 void RasterCommandBufferStub::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {}
 
 void RasterCommandBufferStub::SetActiveURL(GURL url) {
-  active_url_ = std::move(url);
-  active_url_hash_ = base::Hash(active_url_.possibly_invalid_spec());
-  FastSetActiveURL(active_url_, active_url_hash_, channel_);
+  active_url_ = ContextUrl(std::move(url));
+  UpdateActiveUrl();
 }
 
 }  // namespace gpu

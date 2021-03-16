@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/media/media_browsertest.h"
 #include "content/common/media/media_player_delegate_messages.h"
@@ -41,7 +42,7 @@ class MediaSuspendTest : public MediaBrowserTest {
       const base::string16 kLoaded = base::ASCIIToUTF16("LOADED");
       TitleWatcher title_watcher(shell()->web_contents(), kLoaded);
       title_watcher.AlsoWaitForTitle(kError);
-      NavigateToURL(shell(), gurl);
+      EXPECT_TRUE(NavigateToURL(shell(), gurl));
       ASSERT_EQ(kLoaded, title_watcher.WaitAndGetTitle());
     }
 

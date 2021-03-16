@@ -13,8 +13,8 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
+#include "base/test/task_environment.h"
 #include "sql/database.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
@@ -23,15 +23,13 @@
 #include "storage/browser/quota/quota_database.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom-shared.h"
 #include "url/gurl.h"
 
-using storage::QuotaDatabase;
+namespace storage {
 
-namespace content {
 namespace {
-
 const char kDBFileName[] = "quota_manager.db";
-
 }  // namespace
 
 // Declared to shorten the line lengths.
@@ -574,7 +572,7 @@ class QuotaDatabaseTest : public testing::Test {
     db->CommitTransaction();
   }
 
-  base::MessageLoop message_loop_;
+  base::test::SingleThreadTaskEnvironment task_environment_;
 };
 
 TEST_F(QuotaDatabaseTest, LazyOpen) {
@@ -688,4 +686,4 @@ TEST_F(QuotaDatabaseTest, OpenCorruptedDatabase) {
   }
 }
 
-}  // namespace content
+}  // namespace storage

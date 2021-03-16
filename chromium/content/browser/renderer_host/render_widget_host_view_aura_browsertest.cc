@@ -7,7 +7,9 @@
 #include "base/bind.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/test_timeouts.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/browser/devtools/protocol/devtools_protocol_test_support.h"
 #include "content/browser/renderer_host/delegated_frame_host.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
@@ -19,6 +21,7 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/shell/browser/shell.h"
+#include "ui/events/event_utils.h"
 
 namespace content {
 namespace {
@@ -80,11 +83,12 @@ class RenderWidgetHostViewAuraBrowserTest : public ContentBrowserTest {
 #if defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
                        StaleFrameContentOnEvictionNormal) {
-  NavigateToURL(shell(), GURL(kMinimalPageDataURL));
+  EXPECT_TRUE(NavigateToURL(shell(), GURL(kMinimalPageDataURL)));
 
-  // Wait for first frame activation when a surface is embedded.
-  while (!GetDelegatedFrameHost()->HasSavedFrame())
-    GiveItSomeTime();
+  // Make sure the renderer submits at least one frame before hiding it.
+  RenderFrameSubmissionObserver submission_observer(shell()->web_contents());
+  if (!submission_observer.render_frame_count())
+    submission_observer.WaitForAnyFrameSubmission();
 
   FakeWebContentsDelegate delegate;
   delegate.SetShowStaleContentOnEviction(true);
@@ -120,7 +124,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
                        StaleFrameContentOnEvictionRejected) {
-  NavigateToURL(shell(), GURL(kMinimalPageDataURL));
+  EXPECT_TRUE(NavigateToURL(shell(), GURL(kMinimalPageDataURL)));
 
   // Wait for first frame activation when a surface is embedded.
   while (!GetDelegatedFrameHost()->HasSavedFrame())
@@ -160,7 +164,7 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
                        StaleFrameContentOnEvictionNone) {
-  NavigateToURL(shell(), GURL(kMinimalPageDataURL));
+  EXPECT_TRUE(NavigateToURL(shell(), GURL(kMinimalPageDataURL)));
 
   // Wait for first frame activation when a surface is embedded.
   while (!GetDelegatedFrameHost()->HasSavedFrame())
@@ -192,5 +196,106 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraBrowserTest,
       GetDelegatedFrameHost()->stale_content_layer_->has_external_content());
 }
 #endif  // #if defined(OS_CHROMEOS)
+
+class RenderWidgetHostViewAuraDevtoolsBrowserTest
+    : public content::DevToolsProtocolTest {
+ public:
+  RenderWidgetHostViewAuraDevtoolsBrowserTest() = default;
+
+ protected:
+  aura::Window* window() {
+    return reinterpret_cast<content::RenderWidgetHostViewAura*>(
+               shell()->web_contents()->GetRenderWidgetHostView())
+        ->window();
+  }
+
+  bool HasChildPopup() const {
+    return reinterpret_cast<content::RenderWidgetHostViewAura*>(
+               shell()->web_contents()->GetRenderWidgetHostView())
+        ->popup_child_host_view_;
+  }
+};
+
+// This test opens a select popup which inside breaks the debugger
+// which enters a nested event loop.
+IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewAuraDevtoolsBrowserTest,
+                       NoCrashOnSelect) {
+  GURL page(
+      "data:text/html;charset=utf-8,"
+      "<!DOCTYPE html>"
+      "<html>"
+      "<body>"
+      "<select id=\"ddlChoose\">"
+      " <option value=\"\">Choose</option>"
+      " <option value=\"A\">A</option>"
+      " <option value=\"B\">B</option>"
+      " <option value=\"C\">C</option>"
+      "</select>"
+      "<script type=\"text/javascript\">"
+      "  document.getElementById('ddlChoose').addEventListener('change', "
+      "    function () {"
+      "      debugger;"
+      "    });"
+      "  function focusSelectMenu() {"
+      "    document.getElementById('ddlChoose').focus();"
+      "  }"
+      "  function noop() {"
+      "  }"
+      "</script>"
+      "</body>"
+      "</html>");
+
+  EXPECT_TRUE(NavigateToURL(shell(), page));
+  auto* wc = shell()->web_contents();
+  Attach();
+  SendCommand("Debugger.enable", nullptr);
+
+  ASSERT_TRUE(ExecuteScript(wc, "focusSelectMenu();"));
+  SimulateKeyPress(wc, ui::DomKey::FromCharacter(' '), ui::DomCode::SPACE,
+                   ui::VKEY_SPACE, false, false, false, false);
+
+  // Wait until popup is opened.
+  while (!HasChildPopup()) {
+    base::RunLoop().RunUntilIdle();
+    base::PlatformThread::Sleep(TestTimeouts::tiny_timeout());
+  }
+
+  // Send down and enter to select next item and cause change listener to fire.
+  // The event listener causes devtools to break (and enter a nested event
+  // loop).
+  ui::KeyEvent press_down(ui::ET_KEY_PRESSED, ui::VKEY_DOWN,
+                          ui::DomCode::ARROW_DOWN, ui::EF_NONE,
+                          ui::DomKey::ARROW_DOWN, ui::EventTimeForNow());
+  ui::KeyEvent release_down(ui::ET_KEY_RELEASED, ui::VKEY_DOWN,
+                            ui::DomCode::ARROW_DOWN, ui::EF_NONE,
+                            ui::DomKey::ARROW_DOWN, ui::EventTimeForNow());
+  ui::KeyEvent press_enter(ui::ET_KEY_PRESSED, ui::VKEY_RETURN,
+                           ui::DomCode::ENTER, ui::EF_NONE, ui::DomKey::ENTER,
+                           ui::EventTimeForNow());
+  ui::KeyEvent release_enter(ui::ET_KEY_RELEASED, ui::VKEY_RETURN,
+                             ui::DomCode::ENTER, ui::EF_NONE, ui::DomKey::ENTER,
+                             ui::EventTimeForNow());
+  auto* host_view_aura = static_cast<content::RenderWidgetHostViewAura*>(
+      wc->GetRenderWidgetHostView());
+  host_view_aura->OnKeyEvent(&press_down);
+  host_view_aura->OnKeyEvent(&release_down);
+  host_view_aura->OnKeyEvent(&press_enter);
+  host_view_aura->OnKeyEvent(&release_enter);
+  WaitForNotification("Debugger.paused");
+
+  // Close the widget window while inside the nested event loop.
+  // This will cause the RenderWidget to be destroyed while we are inside a
+  // method and used to cause UAF when the nested event loop unwinds.
+  window()->Hide();
+
+  // Disconnect devtools causes script to resume. This causes the unwind of the
+  // nested event loop. The RenderWidget that was entered has been destroyed,
+  // make sure that we detect this and don't touch any members in the class.
+  Detach();
+
+  // Try to access the renderer process, it would have died if
+  // crbug.com/1032984 wasn't fixed.
+  ASSERT_TRUE(ExecuteScript(wc, "noop();"));
+}
 
 }  // namespace content

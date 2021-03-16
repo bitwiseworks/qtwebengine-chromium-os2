@@ -15,8 +15,13 @@
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
+#include "services/tracing/public/cpp/perfetto/flow_event_utils.h"
+#include "services/tracing/public/cpp/perfetto/macros.h"
 
 namespace {
+
+using perfetto::protos::pbzero::ChromeLatencyInfo;
+using perfetto::protos::pbzero::TrackEvent;
 
 const size_t kMaxLatencyInfoNumber = 100;
 
@@ -24,41 +29,27 @@ const char* GetComponentName(ui::LatencyComponentType type) {
 #define CASE_TYPE(t) case ui::t:  return #t
   switch (type) {
     CASE_TYPE(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_SCROLL_LISTENER_UPDATE_MAIN_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_RENDERER_MAIN_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_RENDERER_INVALIDATE_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_RENDERER_COMPOSITOR_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_UI_MAIN_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_UI_COMPOSITOR_COMPONENT);
-    CASE_TYPE(LATENCY_BEGIN_FRAME_DISPLAY_COMPOSITOR_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_SCROLL_UPDATE_ORIGINAL_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_FIRST_SCROLL_UPDATE_ORIGINAL_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_UI_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_RENDERING_SCHEDULED_MAIN_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_RENDERING_SCHEDULED_IMPL_COMPONENT);
-    CASE_TYPE(INPUT_EVENT_LATENCY_FORWARD_SCROLL_UPDATE_TO_MAIN_COMPONENT);
-    CASE_TYPE(INPUT_EVENT_LATENCY_ACK_RWH_COMPONENT);
+    CASE_TYPE(INPUT_EVENT_LATENCY_SCROLL_UPDATE_LAST_EVENT_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_RENDERER_MAIN_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_RENDERER_SWAP_COMPONENT);
     CASE_TYPE(DISPLAY_COMPOSITOR_RECEIVED_FRAME_COMPONENT);
     CASE_TYPE(INPUT_EVENT_GPU_SWAP_BUFFER_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_FRAME_SWAP_COMPONENT);
     default:
-      DLOG(WARNING) << "Unhandled LatencyComponentType.\n";
-      break;
+      NOTREACHED() << "Unhandled LatencyComponentType: " << type;
+      return "unknown";
   }
 #undef CASE_TYPE
-  return "unknown";
 }
 
 bool IsInputLatencyBeginComponent(ui::LatencyComponentType type) {
   return type == ui::INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT;
-}
-
-bool IsTraceBeginComponent(ui::LatencyComponentType type) {
-  return (IsInputLatencyBeginComponent(type) ||
-          type == ui::LATENCY_BEGIN_SCROLL_LISTENER_UPDATE_MAIN_COMPONENT);
 }
 
 // This class is for converting latency info to trace buffer friendly format.
@@ -126,9 +117,11 @@ LatencyInfo::LatencyInfo(SourceEventType type)
       began_(false),
       terminated_(false),
       source_event_type_(type),
-      scroll_update_delta_(0) {}
+      scroll_update_delta_(0),
+      predicted_scroll_update_delta_(0) {}
 
 LatencyInfo::LatencyInfo(const LatencyInfo& other) = default;
+LatencyInfo::LatencyInfo(LatencyInfo&& other) = default;
 
 LatencyInfo::~LatencyInfo() {}
 
@@ -139,7 +132,10 @@ LatencyInfo::LatencyInfo(int64_t trace_id, bool terminated)
       began_(false),
       terminated_(terminated),
       source_event_type_(SourceEventType::UNKNOWN),
-      scroll_update_delta_(0) {}
+      scroll_update_delta_(0),
+      predicted_scroll_update_delta_(0) {}
+
+LatencyInfo& LatencyInfo::operator=(const LatencyInfo& other) = default;
 
 bool LatencyInfo::Verify(const std::vector<LatencyInfo>& latency_info,
                          const char* referring_msg) {
@@ -156,14 +152,20 @@ bool LatencyInfo::Verify(const std::vector<LatencyInfo>& latency_info,
 
 void LatencyInfo::TraceIntermediateFlowEvents(
     const std::vector<LatencyInfo>& latency_info,
-    const char* event_name) {
+    perfetto::protos::pbzero::ChromeLatencyInfo::Step step) {
   for (auto& latency : latency_info) {
     if (latency.trace_id() == -1)
       continue;
-    TRACE_EVENT_WITH_FLOW1("input,benchmark", "LatencyInfo.Flow",
-                           TRACE_ID_DONT_MANGLE(latency.trace_id()),
-                           TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT,
-                           "step", event_name);
+
+    TRACE_EVENT(
+        "input,benchmark", "LatencyInfo.Flow",
+        [&latency, &step](perfetto::EventContext ctx) {
+          ChromeLatencyInfo* info = ctx.event()->set_chrome_latency_info();
+          info->set_step(step);
+          info->set_trace_id(latency.trace_id());
+          tracing::FillFlowEvent(ctx, TrackEvent::LegacyEvent::FLOW_INOUT,
+                                 latency.trace_id());
+        });
   }
 }
 
@@ -181,7 +183,7 @@ void LatencyInfo::CopyLatencyFrom(const LatencyInfo& other,
 
   for (const auto& lc : other.latency_components()) {
     if (lc.first == type) {
-      AddLatencyNumberWithTimestamp(lc.first, lc.second, 1);
+      AddLatencyNumberWithTimestamp(lc.first, lc.second);
     }
   }
 
@@ -205,7 +207,7 @@ void LatencyInfo::AddNewLatencyFrom(const LatencyInfo& other) {
 
   for (const auto& lc : other.latency_components()) {
     if (!FindLatency(lc.first, nullptr)) {
-      AddLatencyNumberWithTimestamp(lc.first, lc.second, 1);
+      AddLatencyNumberWithTimestamp(lc.first, lc.second);
     }
   }
 
@@ -218,33 +220,29 @@ void LatencyInfo::AddNewLatencyFrom(const LatencyInfo& other) {
 }
 
 void LatencyInfo::AddLatencyNumber(LatencyComponentType component) {
-  AddLatencyNumberWithTimestampImpl(component, base::TimeTicks::Now(), 1,
-                                    nullptr);
+  AddLatencyNumberWithTimestampImpl(component, base::TimeTicks::Now(), nullptr);
 }
 
 void LatencyInfo::AddLatencyNumberWithTraceName(
     LatencyComponentType component,
     const char* trace_name_str) {
-  AddLatencyNumberWithTimestampImpl(component, base::TimeTicks::Now(), 1,
+  AddLatencyNumberWithTimestampImpl(component, base::TimeTicks::Now(),
                                     trace_name_str);
 }
 
-void LatencyInfo::AddLatencyNumberWithTimestamp(
-    LatencyComponentType component,
-    base::TimeTicks time,
-    uint32_t event_count) {
-  AddLatencyNumberWithTimestampImpl(component, time, event_count, nullptr);
+void LatencyInfo::AddLatencyNumberWithTimestamp(LatencyComponentType component,
+                                                base::TimeTicks time) {
+  AddLatencyNumberWithTimestampImpl(component, time, nullptr);
 }
 
 void LatencyInfo::AddLatencyNumberWithTimestampImpl(
     LatencyComponentType component,
     base::TimeTicks time,
-    uint32_t event_count,
     const char* trace_name_str) {
   const unsigned char* latency_info_enabled =
       g_latency_info_enabled.Get().latency_info_enabled;
 
-  if (IsTraceBeginComponent(component)) {
+  if (IsInputLatencyBeginComponent(component)) {
     // Should only ever add begin component once.
     CHECK(!began_);
     began_ = true;
@@ -267,25 +265,19 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
         ts = base::TimeTicks::Now();
       }
 
-      if (trace_name_str) {
-        if (IsInputLatencyBeginComponent(component))
-          trace_name_ = std::string("InputLatency::") + trace_name_str;
-        else
-          trace_name_ = std::string("Latency::") + trace_name_str;
-      }
-
-      TRACE_EVENT_COPY_ASYNC_BEGIN_WITH_TIMESTAMP0(
-          kTraceCategoriesForAsyncEvents,
-          trace_name_.c_str(),
-          TRACE_ID_DONT_MANGLE(trace_id_),
-          ts);
+      TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
+          kTraceCategoriesForAsyncEvents, trace_name_str,
+          TRACE_ID_GLOBAL(trace_id_), ts);
     }
 
-    TRACE_EVENT_WITH_FLOW1("input,benchmark",
-                           "LatencyInfo.Flow",
-                           TRACE_ID_DONT_MANGLE(trace_id_),
-                           TRACE_EVENT_FLAG_FLOW_OUT,
-                           "trace_id", trace_id_);
+    TRACE_EVENT("input,benchmark", "LatencyInfo.Flow",
+                [this](perfetto::EventContext ctx) {
+                  ChromeLatencyInfo* info =
+                      ctx.event()->set_chrome_latency_info();
+                  info->set_trace_id(trace_id_);
+                  tracing::FillFlowEvent(ctx, TrackEvent::LegacyEvent::FLOW_OUT,
+                                         trace_id_);
+                });
   }
 
   auto it = latency_components_.find(component);
@@ -305,14 +297,25 @@ void LatencyInfo::Terminate() {
   terminated_ = true;
 
   if (*g_latency_info_enabled.Get().latency_info_enabled) {
-    TRACE_EVENT_COPY_ASYNC_END1(
-        kTraceCategoriesForAsyncEvents, trace_name_.c_str(),
-        TRACE_ID_DONT_MANGLE(trace_id_), "data", AsTraceableData());
+    // The name field is not needed for NESTABLE events because we only need the
+    // category to know which event to close. In fact the name will not be
+    // emitted internally.
+    //
+    // TODO(nuskos): Once we have the new TraceEvent macros that support Tracks
+    // we can migrate this macro to it (and the name will no longer be there).
+    TRACE_EVENT_NESTABLE_ASYNC_END1(kTraceCategoriesForAsyncEvents,
+                                    /* name = */ "", TRACE_ID_GLOBAL(trace_id_),
+                                    "data", AsTraceableData());
   }
 
-  TRACE_EVENT_WITH_FLOW0("input,benchmark", "LatencyInfo.Flow",
-                         TRACE_ID_DONT_MANGLE(trace_id_),
-                         TRACE_EVENT_FLAG_FLOW_IN);
+  TRACE_EVENT("input,benchmark", "LatencyInfo.Flow",
+              [this](perfetto::EventContext ctx) {
+                ChromeLatencyInfo* info =
+                    ctx.event()->set_chrome_latency_info();
+                info->set_trace_id(trace_id_);
+                tracing::FillFlowEvent(ctx, TrackEvent::LegacyEvent::FLOW_IN,
+                                       trace_id_);
+              });
 }
 
 void LatencyInfo::CoalesceScrollUpdateWith(const LatencyInfo& other) {
@@ -325,6 +328,15 @@ void LatencyInfo::CoalesceScrollUpdateWith(const LatencyInfo& other) {
   }
 
   scroll_update_delta_ += other.scroll_update_delta();
+  predicted_scroll_update_delta_ += other.predicted_scroll_update_delta();
+}
+
+LatencyInfo LatencyInfo::ScaledBy(float scale) const {
+  ui::LatencyInfo scaled_latency_info(*this);
+  scaled_latency_info.set_scroll_update_delta(scroll_update_delta_ * scale);
+  scaled_latency_info.set_predicted_scroll_update_delta(
+      predicted_scroll_update_delta_ * scale);
+  return scaled_latency_info;
 }
 
 std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
@@ -339,6 +351,7 @@ LatencyInfo::AsTraceableData() {
     record_data->Set(GetComponentName(lc.first), std::move(component_info));
   }
   record_data->SetDouble("trace_id", static_cast<double>(trace_id_));
+  record_data->SetBoolean("is_coalesced", coalesced_);
   return LatencyInfoTracedValue::FromValue(std::move(record_data));
 }
 

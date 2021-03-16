@@ -45,6 +45,12 @@ class PLATFORM_EXPORT GradientGeneratedImage final : public GeneratedImage {
 
   bool ApplyShader(PaintFlags&, const SkMatrix&) override;
 
+  DarkModeClassification CheckTypeSpecificConditionsForDarkMode(
+      const FloatRect& dest_rect,
+      DarkModeImageClassifier* classifier) override {
+    return DarkModeClassification::kApplyFilter;
+  }
+
  protected:
   void Draw(cc::PaintCanvas*,
             const PaintFlags&,
@@ -53,7 +59,9 @@ class PLATFORM_EXPORT GradientGeneratedImage final : public GeneratedImage {
             RespectImageOrientationEnum,
             ImageClampingMode,
             ImageDecodingMode) override;
-  void DrawTile(GraphicsContext&, const FloatRect&) override;
+  void DrawTile(GraphicsContext&,
+                const FloatRect&,
+                RespectImageOrientationEnum) override;
 
   GradientGeneratedImage(scoped_refptr<Gradient> generator,
                          const FloatSize& size)

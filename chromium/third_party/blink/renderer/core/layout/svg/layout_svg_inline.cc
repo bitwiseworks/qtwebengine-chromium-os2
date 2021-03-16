@@ -36,10 +36,10 @@ bool LayoutSVGInline::IsChildAllowed(LayoutObject* child,
   if (child->IsText())
     return SVGLayoutSupport::IsLayoutableTextNode(child);
 
-  if (IsSVGAElement(*GetNode())) {
+  if (IsA<SVGAElement>(*GetNode())) {
     Node* child_node = child->GetNode();
     // Disallow direct descendant 'a'.
-    if (child_node && IsSVGAElement(*child_node))
+    if (child_node && IsA<SVGAElement>(*child_node))
       return false;
   }
 
@@ -60,31 +60,32 @@ InlineFlowBox* LayoutSVGInline::CreateInlineFlowBox() {
 }
 
 FloatRect LayoutSVGInline::ObjectBoundingBox() const {
-  if (const LayoutSVGText* text_root =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    return text_root->ObjectBoundingBox();
-
-  return FloatRect();
+  FloatRect bounds;
+  for (InlineFlowBox* box : *LineBoxes())
+    bounds.Unite(FloatRect(box->FrameRect()));
+  return bounds;
 }
 
 FloatRect LayoutSVGInline::StrokeBoundingBox() const {
-  if (const LayoutSVGText* text_root =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    return text_root->StrokeBoundingBox();
-
-  return FloatRect();
+  if (!FirstLineBox())
+    return FloatRect();
+  return SVGLayoutSupport::ExtendTextBBoxWithStroke(*this, ObjectBoundingBox());
 }
 
 FloatRect LayoutSVGInline::VisualRectInLocalSVGCoordinates() const {
-  if (const LayoutSVGText* text_root =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    return text_root->VisualRectInLocalSVGCoordinates();
-
-  return FloatRect();
+  if (!FirstLineBox())
+    return FloatRect();
+  const LayoutSVGText* text_root =
+      LayoutSVGText::LocateLayoutSVGTextAncestor(this);
+  if (!text_root)
+    return FloatRect();
+  return SVGLayoutSupport::ComputeVisualRectForText(
+      *this, ObjectBoundingBox(), text_root->ObjectBoundingBox());
 }
 
-LayoutRect LayoutSVGInline::VisualRectInDocument() const {
-  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View());
+PhysicalRect LayoutSVGInline::VisualRectInDocument(
+    VisualRectFlags flags) const {
+  return SVGLayoutSupport::VisualRectInAncestorSpace(*this, *View(), flags);
 }
 
 void LayoutSVGInline::MapLocalToAncestor(const LayoutBoxModelObject* ancestor,
@@ -102,26 +103,17 @@ const LayoutObject* LayoutSVGInline::PushMappingToContainer(
 
 void LayoutSVGInline::AbsoluteQuads(Vector<FloatQuad>& quads,
                                     MapCoordinatesFlags mode) const {
-  const LayoutSVGText* text_root =
-      LayoutSVGText::LocateLayoutSVGTextAncestor(this);
-  if (!text_root)
-    return;
-
-  FloatRect text_bounding_box = text_root->StrokeBoundingBox();
   for (InlineFlowBox* box : *LineBoxes()) {
+    FloatRect box_rect(box->FrameRect());
     quads.push_back(LocalToAbsoluteQuad(
-        FloatRect(text_bounding_box.X() + box->X().ToFloat(),
-                  text_bounding_box.Y() + box->Y().ToFloat(),
-                  box->LogicalWidth().ToFloat(),
-                  box->LogicalHeight().ToFloat()),
-        mode));
+        SVGLayoutSupport::ExtendTextBBoxWithStroke(*this, box_rect), mode));
   }
 }
 
 void LayoutSVGInline::WillBeDestroyed() {
   SVGResourcesCache::ClientDestroyed(*this);
-  SVGResources::ClearClipPathFilterMask(ToSVGElement(*GetNode()), Style());
-  SVGResources::ClearPaints(ToSVGElement(*GetNode()), Style());
+  SVGResources::ClearClipPathFilterMask(To<SVGElement>(*GetNode()), Style());
+  SVGResources::ClearPaints(To<SVGElement>(*GetNode()), Style());
   LayoutInline::WillBeDestroyed();
 }
 
@@ -136,28 +128,24 @@ void LayoutSVGInline::StyleDidChange(StyleDifference diff,
     SetNeedsBoundariesUpdate();
 
   LayoutInline::StyleDidChange(diff, old_style);
-  SVGResources::UpdateClipPathFilterMask(ToSVGElement(*GetNode()), old_style,
+  SVGResources::UpdateClipPathFilterMask(To<SVGElement>(*GetNode()), old_style,
                                          StyleRef());
-  SVGResources::UpdatePaints(ToSVGElement(*GetNode()), old_style, StyleRef());
+  SVGResources::UpdatePaints(To<SVGElement>(*GetNode()), old_style, StyleRef());
   SVGResourcesCache::ClientStyleChanged(*this, diff, StyleRef());
 }
 
 void LayoutSVGInline::AddChild(LayoutObject* child,
                                LayoutObject* before_child) {
   LayoutInline::AddChild(child, before_child);
-  SVGResourcesCache::ClientWasAddedToTree(*child, child->StyleRef());
-
-  if (LayoutSVGText* text_layout_object =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    text_layout_object->SubtreeChildWasAdded();
+  SVGResourcesCache::ClientWasAddedToTree(*child);
+  LayoutSVGText::NotifySubtreeStructureChanged(
+      this, layout_invalidation_reason::kChildChanged);
 }
 
 void LayoutSVGInline::RemoveChild(LayoutObject* child) {
   SVGResourcesCache::ClientWillBeRemovedFromTree(*child);
-
-  if (LayoutSVGText* text_layout_object =
-          LayoutSVGText::LocateLayoutSVGTextAncestor(this))
-    text_layout_object->SubtreeChildWillBeRemoved();
+  LayoutSVGText::NotifySubtreeStructureChanged(
+      this, layout_invalidation_reason::kChildChanged);
   LayoutInline::RemoveChild(child);
 }
 

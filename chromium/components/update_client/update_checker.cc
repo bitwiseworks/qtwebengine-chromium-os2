@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
@@ -18,6 +19,7 @@
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -129,14 +131,13 @@ void UpdateCheckerImpl::CheckForUpdates(
   ids_checked_ = ids_checked;
   update_check_callback_ = std::move(update_check_callback);
 
-  base::PostTaskWithTraitsAndReply(
+  base::ThreadPool::PostTaskAndReply(
       FROM_HERE, kTaskTraits,
       base::BindOnce(&UpdateCheckerImpl::ReadUpdaterStateAttributes,
                      base::Unretained(this)),
       base::BindOnce(&UpdateCheckerImpl::CheckForUpdatesHelper,
-                     base::Unretained(this), session_id,
-                     base::ConstRef(components), additional_attributes,
-                     enabled_component_updates));
+                     base::Unretained(this), session_id, std::cref(components),
+                     additional_attributes, enabled_component_updates));
 }
 
 // This function runs on the blocking pool task runner.

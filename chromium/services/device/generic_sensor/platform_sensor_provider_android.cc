@@ -9,9 +9,9 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/singleton.h"
-#include "jni/PlatformSensorProvider_jni.h"
 #include "services/device/generic_sensor/absolute_orientation_euler_angles_fusion_algorithm_using_accelerometer_and_magnetometer.h"
+#include "services/device/generic_sensor/jni_headers/PlatformSensorProvider_jni.h"
+#include "services/device/generic_sensor/linear_acceleration_fusion_algorithm_using_accelerometer.h"
 #include "services/device/generic_sensor/orientation_euler_angles_fusion_algorithm_using_quaternion.h"
 #include "services/device/generic_sensor/orientation_quaternion_fusion_algorithm_using_euler_angles.h"
 #include "services/device/generic_sensor/platform_sensor_android.h"
@@ -22,13 +22,6 @@ using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
 
 namespace device {
-
-// static
-PlatformSensorProviderAndroid* PlatformSensorProviderAndroid::GetInstance() {
-  return base::Singleton<
-      PlatformSensorProviderAndroid,
-      base::LeakySingletonTraits<PlatformSensorProviderAndroid>>::get();
-}
 
 PlatformSensorProviderAndroid::PlatformSensorProviderAndroid() {
   JNIEnv* env = AttachCurrentThread();
@@ -45,21 +38,27 @@ void PlatformSensorProviderAndroid::SetSensorManagerToNullForTesting() {
 void PlatformSensorProviderAndroid::CreateSensorInternal(
     mojom::SensorType type,
     SensorReadingSharedBuffer* reading_buffer,
-    const CreateSensorCallback& callback) {
+    CreateSensorCallback callback) {
   JNIEnv* env = AttachCurrentThread();
 
   // Some of the sensors may not be available depending on the device and
   // Android version, so the fallback ensures selection of the best possible
   // option.
   switch (type) {
+    case mojom::SensorType::LINEAR_ACCELERATION:
+      CreateLinearAccelerationSensor(env, reading_buffer, std::move(callback));
+      break;
     case mojom::SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES:
-      CreateAbsoluteOrientationEulerAnglesSensor(env, reading_buffer, callback);
+      CreateAbsoluteOrientationEulerAnglesSensor(env, reading_buffer,
+                                                 std::move(callback));
       break;
     case mojom::SensorType::ABSOLUTE_ORIENTATION_QUATERNION:
-      CreateAbsoluteOrientationQuaternionSensor(env, reading_buffer, callback);
+      CreateAbsoluteOrientationQuaternionSensor(env, reading_buffer,
+                                                std::move(callback));
       break;
     case mojom::SensorType::RELATIVE_ORIENTATION_EULER_ANGLES:
-      CreateRelativeOrientationEulerAnglesSensor(env, reading_buffer, callback);
+      CreateRelativeOrientationEulerAnglesSensor(env, reading_buffer,
+                                                 std::move(callback));
       break;
     default: {
       ScopedJavaLocalRef<jobject> sensor =
@@ -67,15 +66,43 @@ void PlatformSensorProviderAndroid::CreateSensorInternal(
                                                    static_cast<jint>(type));
 
       if (!sensor.obj()) {
-        callback.Run(nullptr);
+        std::move(callback).Run(nullptr);
         return;
       }
 
       auto concrete_sensor = base::MakeRefCounted<PlatformSensorAndroid>(
           type, reading_buffer, this, sensor);
-      callback.Run(concrete_sensor);
+      std::move(callback).Run(concrete_sensor);
       break;
     }
+  }
+}
+
+// For LINEAR_ACCELERATION we see if the platform supports it directly through
+// TYPE_LINEAR_ACCELERATION. If not we use a fusion algorithm to remove the
+// contribution of gravity from the raw ACCELEROMETER.
+void PlatformSensorProviderAndroid::CreateLinearAccelerationSensor(
+    JNIEnv* env,
+    SensorReadingSharedBuffer* reading_buffer,
+    CreateSensorCallback callback) {
+  ScopedJavaLocalRef<jobject> sensor = Java_PlatformSensorProvider_createSensor(
+      env, j_object_,
+      static_cast<jint>(mojom::SensorType::LINEAR_ACCELERATION));
+
+  if (sensor.obj()) {
+    auto concrete_sensor = base::MakeRefCounted<PlatformSensorAndroid>(
+        mojom::SensorType::LINEAR_ACCELERATION, reading_buffer, this, sensor);
+
+    std::move(callback).Run(concrete_sensor);
+  } else {
+    auto sensor_fusion_algorithm =
+        std::make_unique<LinearAccelerationFusionAlgorithmUsingAccelerometer>();
+
+    // If this PlatformSensorFusion object is successfully initialized,
+    // |callback| will be run with a reference to this object.
+    PlatformSensorFusion::Create(reading_buffer, this,
+                                 std::move(sensor_fusion_algorithm),
+                                 std::move(callback));
   }
 }
 
@@ -90,7 +117,7 @@ void PlatformSensorProviderAndroid::CreateSensorInternal(
 void PlatformSensorProviderAndroid::CreateAbsoluteOrientationEulerAnglesSensor(
     JNIEnv* env,
     SensorReadingSharedBuffer* reading_buffer,
-    const CreateSensorCallback& callback) {
+    CreateSensorCallback callback) {
   if (static_cast<bool>(Java_PlatformSensorProvider_hasSensorType(
           env, j_object_,
           static_cast<jint>(
@@ -102,7 +129,8 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationEulerAnglesSensor(
     // If this PlatformSensorFusion object is successfully initialized,
     // |callback| will be run with a reference to this object.
     PlatformSensorFusion::Create(reading_buffer, this,
-                                 std::move(sensor_fusion_algorithm), callback);
+                                 std::move(sensor_fusion_algorithm),
+                                 std::move(callback));
   } else {
     auto sensor_fusion_algorithm = std::make_unique<
         AbsoluteOrientationEulerAnglesFusionAlgorithmUsingAccelerometerAndMagnetometer>();
@@ -110,7 +138,8 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationEulerAnglesSensor(
     // If this PlatformSensorFusion object is successfully initialized,
     // |callback| will be run with a reference to this object.
     PlatformSensorFusion::Create(reading_buffer, this,
-                                 std::move(sensor_fusion_algorithm), callback);
+                                 std::move(sensor_fusion_algorithm),
+                                 std::move(callback));
   }
 }
 
@@ -122,7 +151,7 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationEulerAnglesSensor(
 void PlatformSensorProviderAndroid::CreateAbsoluteOrientationQuaternionSensor(
     JNIEnv* env,
     SensorReadingSharedBuffer* reading_buffer,
-    const CreateSensorCallback& callback) {
+    CreateSensorCallback callback) {
   ScopedJavaLocalRef<jobject> sensor = Java_PlatformSensorProvider_createSensor(
       env, j_object_,
       static_cast<jint>(mojom::SensorType::ABSOLUTE_ORIENTATION_QUATERNION));
@@ -132,7 +161,7 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationQuaternionSensor(
         mojom::SensorType::ABSOLUTE_ORIENTATION_QUATERNION, reading_buffer,
         this, sensor);
 
-    callback.Run(concrete_sensor);
+    std::move(callback).Run(concrete_sensor);
   } else {
     auto sensor_fusion_algorithm =
         std::make_unique<OrientationQuaternionFusionAlgorithmUsingEulerAngles>(
@@ -141,7 +170,8 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationQuaternionSensor(
     // If this PlatformSensorFusion object is successfully initialized,
     // |callback| will be run with a reference to this object.
     PlatformSensorFusion::Create(reading_buffer, this,
-                                 std::move(sensor_fusion_algorithm), callback);
+                                 std::move(sensor_fusion_algorithm),
+                                 std::move(callback));
   }
 }
 
@@ -150,7 +180,7 @@ void PlatformSensorProviderAndroid::CreateAbsoluteOrientationQuaternionSensor(
 void PlatformSensorProviderAndroid::CreateRelativeOrientationEulerAnglesSensor(
     JNIEnv* env,
     SensorReadingSharedBuffer* reading_buffer,
-    const CreateSensorCallback& callback) {
+    CreateSensorCallback callback) {
   if (static_cast<bool>(Java_PlatformSensorProvider_hasSensorType(
           env, j_object_,
           static_cast<jint>(
@@ -162,9 +192,10 @@ void PlatformSensorProviderAndroid::CreateRelativeOrientationEulerAnglesSensor(
     // If this PlatformSensorFusion object is successfully initialized,
     // |callback| will be run with a reference to this object.
     PlatformSensorFusion::Create(reading_buffer, this,
-                                 std::move(sensor_fusion_algorithm), callback);
+                                 std::move(sensor_fusion_algorithm),
+                                 std::move(callback));
   } else {
-    callback.Run(nullptr);
+    std::move(callback).Run(nullptr);
   }
 }
 

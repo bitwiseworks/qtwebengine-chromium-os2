@@ -22,12 +22,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_HASH_TRAITS_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_HASH_TRAITS_H_
 
-#include <string.h>  // For memset.
 #include <limits>
 #include <memory>
 #include <type_traits>
 #include <utility>
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
 #include "third_party/blink/renderer/platform/wtf/hash_table_deleted_value_type.h"
@@ -43,6 +42,27 @@ struct EnumOrGenericHashTraits;
 template <typename T>
 struct HashTraits;
 
+namespace {
+template <typename T, bool use_atomic_writes = IsTraceable<T>::value>
+void ClearMemoryAtomically(T* slot, size_t size) {
+  size_t* address = reinterpret_cast<size_t*>(slot);
+  // This method is called for clearing hash table entires that are removed. In
+  // case Oilpan concurrent marking is tracing the hash table at the same time,
+  // there might be a data race between the marker reading the entry and zeroing
+  // the entry. Using atomic reads here resolves any possible races.
+  // Note that sizeof(T) might not be a multiple of sizeof(size_t). The last
+  // sizeof(T)%sizeof(size_t) bytes don't require atomic write as it cannot hold
+  // a pointer (i.e it will not be traceable).
+  if (use_atomic_writes) {
+    for (; size >= sizeof(size_t); size -= sizeof(size_t), ++address) {
+      WTF::AsAtomicPtr(address)->store(0, std::memory_order_relaxed);
+    }
+  }
+  DCHECK(!use_atomic_writes || (size < sizeof(size_t)));
+  memset(address, 0, size);
+}
+}  // namespace
+
 template <typename T>
 struct GenericHashTraitsBase<false, T> {
   // The emptyValueIsZero flag is used to optimize allocation of empty hash
@@ -57,7 +77,10 @@ struct GenericHashTraitsBase<false, T> {
 
 // The starting table size. Can be overridden when we know beforehand that a
 // hash table will have at least N entries.
-#if defined(MEMORY_SANITIZER_INITIAL_SIZE)
+#if defined(MEMORY_TOOL_REPLACES_ALLOCATOR)
+  // The allocation pool for nodes is one big chunk that ASAN has no insight
+  // into, so it can cloak errors. Make it as small as possible to force nodes
+  // to be allocated individually where ASAN can see them.
   static const unsigned kMinimumTableSize = 1;
 #else
   static const unsigned kMinimumTableSize = 8;
@@ -83,10 +106,13 @@ struct GenericHashTraitsBase<false, T> {
     static const bool value = !std::is_pod<T>::value;
   };
 
-  static const WeakHandlingFlag kWeakHandlingFlag =
-      IsWeak<T>::value ? kWeakHandling : kNoWeakHandling;
-
   static constexpr bool kCanHaveDeletedValue = true;
+
+  // The kHasMovingCallback value is only used for HashTable backing stores.
+  // Currently it is needed for LinkedHashSet to register moving callback on
+  // write barrier. Users of this value have to provide RegisterMovingCallback
+  // function.
+  static constexpr bool kHasMovingCallback = false;
 };
 
 // Default integer traits disallow both 0 and -1 as keys (max value instead of
@@ -190,7 +216,7 @@ struct HashTraits<P*> : GenericHashTraits<P*> {
   static void ConstructDeletedValue(P*& slot, bool) {
     slot = reinterpret_cast<P*>(-1);
   }
-  static bool IsDeletedValue(P* value) {
+  static bool IsDeletedValue(std::add_const_t<P>* value) {
     return value == reinterpret_cast<P*>(-1);
   }
 };
@@ -368,8 +394,9 @@ struct PairHashTraits
     // at a later point, the same assumptions around memory zeroing must
     // hold as they did at the initial allocation.  Therefore we zero the
     // value part of the slot here for GC collections.
-    if (zero_value)
-      memset(reinterpret_cast<void*>(&slot.second), 0, sizeof(slot.second));
+    if (zero_value) {
+      ClearMemoryAtomically(&slot.second, sizeof(slot.second));
+    }
   }
   static bool IsDeletedValue(const TraitType& value) {
     return FirstTraits::IsDeletedValue(value.first);
@@ -396,6 +423,10 @@ struct KeyValuePair {
   KeyTypeArg key;
   ValueTypeArg value;
 };
+
+template <typename K, typename V>
+struct IsWeak<KeyValuePair<K, V>>
+    : std::integral_constant<bool, IsWeak<K>::value || IsWeak<V>::value> {};
 
 template <typename KeyTraitsArg, typename ValueTraitsArg>
 struct KeyValuePairHashTraits
@@ -431,19 +462,14 @@ struct KeyValuePairHashTraits
         ValueTraits::template NeedsToForbidGCOnMove<>::value;
   };
 
-  static const WeakHandlingFlag kWeakHandlingFlag =
-      (KeyTraits::kWeakHandlingFlag == kWeakHandling ||
-       ValueTraits::kWeakHandlingFlag == kWeakHandling)
-          ? kWeakHandling
-          : kNoWeakHandling;
-
   static const unsigned kMinimumTableSize = KeyTraits::kMinimumTableSize;
 
   static void ConstructDeletedValue(TraitType& slot, bool zero_value) {
     KeyTraits::ConstructDeletedValue(slot.key, zero_value);
     // See similar code in this file for why we need to do this.
-    if (zero_value)
-      memset(reinterpret_cast<void*>(&slot.value), 0, sizeof(slot.value));
+    if (zero_value) {
+      ClearMemoryAtomically(&slot.value, sizeof(slot.value));
+    }
   }
   static bool IsDeletedValue(const TraitType& value) {
     return KeyTraits::IsDeletedValue(value.key);

@@ -2,6 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//components/safe_browsing/buildflags.gni")
+
+if (is_android) {
+  import("//build/config/android/config.gni")
+  import("//build/config/android/rules.gni")
+}
+
 source_set("internal") {
   visibility = [
     ":for_tests",
@@ -13,6 +20,7 @@ source_set("internal") {
   ]
 
   sources = [
+    "all_download_event_notifier.cc",
     "base_file.cc",
     "base_file_win.cc",
     "download_create_info.cc",
@@ -28,12 +36,11 @@ source_set("internal") {
     "download_job_factory.cc",
     "download_job_impl.cc",
     "download_job_impl.h",
+    "download_path_reservation_tracker.cc",
     "download_response_handler.cc",
     "download_stats.cc",
     "download_task_runner.cc",
     "download_ukm_helper.cc",
-    "download_url_loader_factory_getter.cc",
-    "download_url_loader_factory_getter_impl.cc",
     "download_utils.cc",
     "download_worker.cc",
     "download_worker.h",
@@ -47,12 +54,17 @@ source_set("internal") {
     "resource_downloader.h",
     "save_package_download_job.cc",
     "save_package_download_job.h",
+    "simple_download_manager.cc",
+    "simple_download_manager_coordinator.cc",
     "stream_handle_input_stream.cc",
     "url_download_handler_factory.cc",
     "url_download_request_handle.cc",
+    "url_loader_factory_provider.cc",
   ]
 
   public_deps = [
+    "//components/services/quarantine/public/mojom",
+    "//mojo/public/cpp/bindings",
     "//services/network/public/mojom",
   ]
 
@@ -61,15 +73,58 @@ source_set("internal") {
     "//components/download/database",
     "//components/download/public/common:interfaces",
     "//components/download/quarantine",
+    "//components/filename_generation",
     "//components/leveldb_proto",
+    "//components/safe_browsing:buildflags",
     "//mojo/public/c/system",
     "//net",
+    "//services/device/public/mojom:mojom",
     "//services/metrics/public/cpp:ukm_builders",
     "//services/network/public/cpp",
+    "//services/service_manager/public/cpp:cpp",
   ]
+
+  # TODO(crbug/1056278): Enable this on Fuchsia
+  if (safe_browsing_mode > 0 && !is_fuchsia) {
+    deps += [ "//components/safe_browsing/core:file_type_policies" ]
+  }
+
+  if (is_win) {
+    deps += [ "//components/services/quarantine/public/cpp:features" ]
+  }
+
+  if (is_android) {
+    sources += [
+      "android/download_collection_bridge.cc",
+      "android/download_collection_bridge.h",
+    ]
+
+    deps += [ ":jni_headers" ]
+  }
 
   if (is_posix || is_fuchsia) {
     sources += [ "base_file_posix.cc" ]
+  }
+}
+
+if (is_android) {
+  android_library("internal_java") {
+    sources = [
+      "android/java/src/org/chromium/components/download/DownloadCollectionBridge.java",
+      "android/java/src/org/chromium/components/download/DownloadDelegate.java",
+    ]
+
+    deps = [
+      "//base:base_java",
+      "//base:jni_java",
+      "//third_party/android_provider:android_provider_java",
+    ]
+    annotation_processor_deps = [ "//base/android/jni_generator:jni_processor" ]
+  }
+
+  generate_jni("jni_headers") {
+    visibility = [ ":*" ]
+    sources = [ "android/java/src/org/chromium/components/download/DownloadCollectionBridge.java" ]
   }
 }
 
@@ -79,9 +134,7 @@ source_set("internal") {
 group("for_tests") {
   visibility = [ ":unit_tests" ]
   if (!is_component_build) {
-    public_deps = [
-      ":internal",
-    ]
+    public_deps = [ ":internal" ]
   }
 }
 
@@ -93,11 +146,13 @@ source_set("unit_tests") {
   }
 
   sources = [
+    "all_download_event_notifier_unittest.cc",
     "base_file_unittest.cc",
     "base_file_win_unittest.cc",
     "download_db_cache_unittest.cc",
     "download_file_unittest.cc",
     "download_item_impl_unittest.cc",
+    "download_path_reservation_tracker_unittest.cc",
     "download_stats_unittest.cc",
     "download_ukm_helper_unittest.cc",
     "parallel_download_job_unittest.cc",

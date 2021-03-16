@@ -8,36 +8,47 @@
 
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
+#include "net/base/network_isolation_key.h"
+#include "net/cookies/site_for_cookies.h"
 #include "net/log/net_log_capture_mode.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace net {
 
-std::unique_ptr<base::Value> NetLogURLRequestConstructorCallback(
-    const GURL* url,
+base::Value NetLogURLRequestConstructorParams(
+    const GURL& url,
     RequestPriority priority,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("url", url->possibly_invalid_spec());
-  dict->SetString("priority", RequestPriorityToString(priority));
-  return std::move(dict);
+    NetworkTrafficAnnotationTag traffic_annotation) {
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetStringKey("url", url.possibly_invalid_spec());
+  dict.SetStringKey("priority", RequestPriorityToString(priority));
+  dict.SetIntKey("traffic_annotation", traffic_annotation.unique_id_hash_code);
+  return dict;
 }
 
-std::unique_ptr<base::Value> NetLogURLRequestStartCallback(
-    const GURL* url,
-    const std::string* method,
+base::Value NetLogURLRequestStartParams(
+    const GURL& url,
+    const std::string& method,
     int load_flags,
     PrivacyMode privacy_mode,
-    int64_t upload_id,
-    NetLogCaptureMode /* capture_mode */) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("url", url->possibly_invalid_spec());
-  dict->SetString("method", *method);
-  dict->SetInteger("load_flags", load_flags);
-  dict->SetInteger("privacy_mode", privacy_mode == PRIVACY_MODE_ENABLED);
+    const NetworkIsolationKey& network_isolation_key,
+    const SiteForCookies& site_for_cookies,
+    const base::Optional<url::Origin>& initiator,
+    int64_t upload_id) {
+  base::Value dict(base::Value::Type::DICTIONARY);
+  dict.SetStringKey("url", url.possibly_invalid_spec());
+  dict.SetStringKey("method", method);
+  dict.SetIntKey("load_flags", load_flags);
+  dict.SetIntKey("privacy_mode", privacy_mode == PRIVACY_MODE_ENABLED);
+  dict.SetStringKey("network_isolation_key",
+                    network_isolation_key.ToDebugString());
+  dict.SetStringKey("site_for_cookies", site_for_cookies.ToDebugString());
+  dict.SetStringKey("initiator", initiator.has_value() ? initiator->Serialize()
+                                                       : "not an origin");
   if (upload_id > -1)
-    dict->SetString("upload_id", base::Int64ToString(upload_id));
-  return std::move(dict);
+    dict.SetStringKey("upload_id", base::NumberToString(upload_id));
+  return dict;
 }
 
 }  // namespace net

@@ -70,9 +70,9 @@ base::File CreateFileForDrop(base::FilePath* file_path) {
     } else {
 #if defined(OS_WIN)
       base::string16 suffix =
-          base::ASCIIToUTF16("-") + base::IntToString16(seq);
+          base::ASCIIToUTF16("-") + base::NumberToString16(seq);
 #else
-      std::string suffix = std::string("-") + base::IntToString(seq);
+      std::string suffix = std::string("-") + base::NumberToString(seq);
 #endif
       new_file_path = file_path->InsertBeforeExtension(suffix);
     }
@@ -92,28 +92,24 @@ base::File CreateFileForDrop(base::FilePath* file_path) {
 }
 
 PromiseFileFinalizer::PromiseFileFinalizer(
-    DragDownloadFile* drag_file_downloader)
-    : drag_file_downloader_(drag_file_downloader) {
-}
+    std::unique_ptr<DragDownloadFile> drag_file_downloader)
+    : drag_file_downloader_(std::move(drag_file_downloader)) {}
 
 void PromiseFileFinalizer::OnDownloadCompleted(
     const base::FilePath& file_path) {
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
 }
 
 void PromiseFileFinalizer::OnDownloadAborted() {
-  base::PostTaskWithTraits(
-      FROM_HERE, {BrowserThread::UI},
-      base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
+  base::PostTask(FROM_HERE, {BrowserThread::UI},
+                 base::BindOnce(&PromiseFileFinalizer::Cleanup, this));
 }
 
 PromiseFileFinalizer::~PromiseFileFinalizer() {}
 
 void PromiseFileFinalizer::Cleanup() {
-  if (drag_file_downloader_.get())
-    drag_file_downloader_ = nullptr;
+  drag_file_downloader_.reset();
 }
 
 }  // namespace content

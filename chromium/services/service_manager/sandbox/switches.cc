@@ -26,10 +26,17 @@ const char kNetworkSandbox[] = "network";
 const char kPpapiSandbox[] = "ppapi";
 const char kUtilitySandbox[] = "utility";
 const char kCdmSandbox[] = "cdm";
-const char kXrCompositingSandbox[] = "xr_compositing";
-const char kPdfCompositorSandbox[] = "pdf_compositor";
-const char kProfilingSandbox[] = "profiling";
+const char kPrintCompositorSandbox[] = "print_compositor";
 const char kAudioSandbox[] = "audio";
+const char kSharingServiceSandbox[] = "sharing_service";
+const char kSodaSandbox[] = "soda";
+
+#if defined(OS_WIN)
+const char kPdfConversionSandbox[] = "pdf_conversion";
+const char kProxyResolverSandbox[] = "proxy_resolver";
+const char kXrCompositingSandbox[] = "xr_compositing";
+#endif  // OS_WIN
+
 #if defined(OS_CHROMEOS)
 const char kImeSandbox[] = "ime";
 #endif  // OS_CHROMEOS
@@ -47,9 +54,6 @@ const char kAllowNoSandboxJob[] = "allow-no-sandbox-job";
 // Allows debugging of sandboxed processes (see zygote_main_linux.cc).
 const char kAllowSandboxDebugging[] = "allow-sandbox-debugging";
 
-// Disable appcontainer/lowbox for renderer on Win8+ platforms.
-const char kDisableAppContainer[] = "disable-appcontainer";
-
 // Disables the GPU process sandbox.
 const char kDisableGpuSandbox[] = "disable-gpu-sandbox";
 
@@ -65,8 +69,8 @@ const char kDisableSetuidSandbox[] = "disable-setuid-sandbox";
 // Disables the Win32K process mitigation policy for child processes.
 const char kDisableWin32kLockDown[] = "disable-win32k-lockdown";
 
-// Ensable appcontainer/lowbox for renderer on Win8+ platforms.
-const char kEnableAppContainer[] = "enable-appcontainer";
+// Command line flag to enable the audio service sandbox.
+const char kEnableAudioServiceSandbox[] = "enable-audio-service-sandbox";
 
 // Allows shmat() system call in the GPU sandbox.
 const char kGpuSandboxAllowSysVShm[] = "gpu-sandbox-allow-sysv-shm";
@@ -77,6 +81,12 @@ const char kGpuSandboxFailuresFatal[] = "gpu-sandbox-failures-fatal";
 // Disables the sandbox for all process types that are normally sandboxed.
 const char kNoSandbox[] = "no-sandbox";
 
+#if defined(OS_LINUX)
+// Instructs the zygote to launch without a sandbox. Processes forked from this
+// type of zygote will apply their own custom sandboxes later.
+const char kNoZygoteSandbox[] = "no-zygote-sandbox";
+#endif
+
 #if defined(OS_WIN)
 // Allows third party modules to inject by disabling the BINARY_SIGNATURE
 // mitigation policy on Win10+. Also has other effects in ELF.
@@ -84,15 +94,6 @@ const char kAllowThirdPartyModules[] = "allow-third-party-modules";
 
 // Add additional capabilities to the AppContainer sandbox on the GPU process.
 const char kAddGpuAppContainerCaps[] = "add-gpu-appcontainer-caps";
-
-// Disables AppContainer sandbox on the GPU process.
-const char kDisableGpuAppContainer[] = "disable-gpu-appcontainer";
-
-// Disables low-privilege AppContainer sandbox on the GPU process.
-const char kDisableGpuLpac[] = "disable-gpu-lpac";
-
-// Enables AppContainer sandbox on the GPU process.
-const char kEnableGpuAppContainer[] = "enable-gpu-appcontainer";
 
 // Disables the sandbox and gives the process elevated privileges.
 const char kNoSandboxAndElevatedPrivileges[] = "no-sandbox-and-elevated";
@@ -121,7 +122,7 @@ const char kUtilityProcess[] = "utility";
 #if defined(OS_WIN)
 
 bool IsWin32kLockdownEnabled() {
-  return base::win::GetVersion() >= base::win::VERSION_WIN8 &&
+  return base::win::GetVersion() >= base::win::Version::WIN8 &&
          !base::CommandLine::ForCurrentProcess()->HasSwitch(
              switches::kDisableWin32kLockDown);
 }

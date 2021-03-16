@@ -38,11 +38,10 @@
 #include "third_party/blink/renderer/modules/webdatabase/sql_transaction.h"
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sqlite_database.h"
 #include "third_party/blink/renderer/modules/webdatabase/sqlite/sqlite_statement.h"
-#include "third_party/blink/renderer/platform/wtf/text/cstring.h"
 
 namespace blink {
 
-void SQLStatement::OnSuccessV8Impl::Trace(blink::Visitor* visitor) {
+void SQLStatement::OnSuccessV8Impl::Trace(Visitor* visitor) {
   visitor->Trace(callback_);
   OnSuccessCallback::Trace(visitor);
 }
@@ -57,7 +56,7 @@ bool SQLStatement::OnSuccessV8Impl::OnSuccess(SQLTransaction* transaction,
   return callback_->handleEvent(nullptr, transaction, result_set).IsJust();
 }
 
-void SQLStatement::OnErrorV8Impl::Trace(blink::Visitor* visitor) {
+void SQLStatement::OnErrorV8Impl::Trace(Visitor* visitor) {
   visitor->Trace(callback_);
   OnErrorCallback::Trace(visitor);
 }
@@ -83,12 +82,6 @@ bool SQLStatement::OnErrorV8Impl::OnError(SQLTransaction* transaction,
   return return_value;
 }
 
-SQLStatement* SQLStatement::Create(Database* database,
-                                   OnSuccessCallback* callback,
-                                   OnErrorCallback* error_callback) {
-  return MakeGarbageCollected<SQLStatement>(database, callback, error_callback);
-}
-
 SQLStatement::SQLStatement(Database* database,
                            OnSuccessCallback* callback,
                            OnErrorCallback* error_callback)
@@ -97,11 +90,11 @@ SQLStatement::SQLStatement(Database* database,
 
   if (HasCallback() || HasErrorCallback()) {
     probe::AsyncTaskScheduled(database->GetExecutionContext(), "SQLStatement",
-                              this);
+                              &async_task_id_);
   }
 }
 
-void SQLStatement::Trace(blink::Visitor* visitor) {
+void SQLStatement::Trace(Visitor* visitor) {
   visitor->Trace(backend_);
   visitor->Trace(success_callback_);
   visitor->Trace(error_callback_);
@@ -130,14 +123,14 @@ bool SQLStatement::PerformCallback(SQLTransaction* transaction) {
   SQLErrorData* error = backend_->SqlError();
 
   probe::AsyncTask async_task(transaction->GetDatabase()->GetExecutionContext(),
-                              this);
+                              &async_task_id_);
 
   // Call the appropriate statement callback and track if it resulted in an
   // error, because then we need to jump to the transaction error callback.
   if (error) {
     if (error_callback) {
-      callback_error =
-          error_callback->OnError(transaction, SQLError::Create(*error));
+      callback_error = error_callback->OnError(
+          transaction, MakeGarbageCollected<SQLError>(*error));
     }
   } else if (callback) {
     callback_error =

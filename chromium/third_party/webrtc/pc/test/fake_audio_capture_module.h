@@ -22,11 +22,10 @@
 
 #include <memory>
 
-#include "common_types.h"  // NOLINT(build/include)
+#include "api/scoped_refptr.h"
 #include "modules/audio_device/include/audio_device.h"
 #include "rtc_base/critical_section.h"
 #include "rtc_base/message_handler.h"
-#include "rtc_base/scoped_ref_ptr.h"
 
 namespace rtc {
 class Thread;
@@ -129,6 +128,8 @@ class FakeAudioCaptureModule : public webrtc::AudioDeviceModule,
   int32_t EnableBuiltInAGC(bool enable) override { return -1; }
   bool BuiltInNSIsAvailable() const override { return false; }
   int32_t EnableBuiltInNS(bool enable) override { return -1; }
+
+  int32_t GetPlayoutUnderrunCount() const override { return -1; }
 #if defined(WEBRTC_IOS)
   int GetPlayoutAudioParameters(
       webrtc::AudioParameters* params) const override {

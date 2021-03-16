@@ -81,7 +81,8 @@ api::tabs::Tab CreateTabModelHelper(
     int index,
     bool pinned,
     bool active,
-    const Extension* extension) {
+    const Extension* extension,
+    Feature::Context context) {
   api::tabs::Tab tab_struct;
 
   const GURL& url = current_navigation.virtual_url();
@@ -100,7 +101,11 @@ api::tabs::Tab CreateTabModelHelper(
   tab_struct.index = index;
   tab_struct.pinned = pinned;
   tab_struct.active = active;
-  ExtensionTabUtil::ScrubTabForExtension(extension, nullptr, &tab_struct);
+
+  ExtensionTabUtil::ScrubTabBehavior scrub_tab_behavior =
+      ExtensionTabUtil::GetScrubTabBehavior(extension, context, url);
+  ExtensionTabUtil::ScrubTabForExtension(extension, nullptr, &tab_struct,
+                                         scrub_tab_behavior);
   return tab_struct;
 }
 
@@ -146,9 +151,9 @@ api::tabs::Tab SessionsGetRecentlyClosedFunction::CreateTabModel(
     const sessions::TabRestoreService::Tab& tab,
     bool active) {
   return CreateTabModelHelper(tab.navigations[tab.current_navigation_index],
-                              base::IntToString(tab.id.id()),
+                              base::NumberToString(tab.id.id()),
                               tab.tabstrip_index, tab.pinned, active,
-                              extension());
+                              extension(), source_context_type());
 }
 
 std::unique_ptr<api::windows::Window>
@@ -162,7 +167,7 @@ SessionsGetRecentlyClosedFunction::CreateWindowModel(
         CreateTabModel(*tab, tab->tabstrip_index == window.selected_tab_index));
 
   return CreateWindowModelHelper(
-      std::move(tabs), base::IntToString(window.id.id()),
+      std::move(tabs), base::NumberToString(window.id.id()),
       api::windows::WINDOW_TYPE_NORMAL, api::windows::WINDOW_STATE_NORMAL);
 }
 
@@ -228,7 +233,7 @@ api::tabs::Tab SessionsGetDevicesFunction::CreateTabModel(
   std::string session_id = SessionId(session_tag, tab.tab_id.id()).ToString();
   return CreateTabModelHelper(
       tab.navigations[tab.normalized_navigation_index()], session_id, tab_index,
-      tab.pinned, active, extension());
+      tab.pinned, active, extension(), source_context_type());
 }
 
 std::unique_ptr<api::windows::Window>
@@ -236,6 +241,11 @@ SessionsGetDevicesFunction::CreateWindowModel(
     const sessions::SessionWindow& window,
     const std::string& session_tag) {
   DCHECK(!window.tabs.empty());
+
+  // Ignore app popup window for now because we do not have a corresponding
+  // api::windows::WindowType value.
+  if (window.type == sessions::SessionWindow::TYPE_APP_POPUP)
+    return nullptr;
 
   // Prune tabs that are not syncable or are NewTabPage. Then, sort the tabs
   // from most recent to least recent.
@@ -246,8 +256,9 @@ SessionsGetDevicesFunction::CreateWindowModel(
       continue;
     const sessions::SerializedNavigationEntry& current_navigation =
         tab->navigations.at(tab->normalized_navigation_index());
-    if (search::IsNTPURL(current_navigation.virtual_url(),
-                         Profile::FromBrowserContext(browser_context()))) {
+    if (search::IsNTPOrRelatedURL(
+            current_navigation.virtual_url(),
+            Profile::FromBrowserContext(browser_context()))) {
       continue;
     }
     tabs_in_window.push_back(tab);
@@ -268,12 +279,20 @@ SessionsGetDevicesFunction::CreateWindowModel(
 
   api::windows::WindowType type = api::windows::WINDOW_TYPE_NONE;
   switch (window.type) {
-    case sessions::SessionWindow::TYPE_TABBED:
+    case sessions::SessionWindow::TYPE_NORMAL:
       type = api::windows::WINDOW_TYPE_NORMAL;
       break;
     case sessions::SessionWindow::TYPE_POPUP:
       type = api::windows::WINDOW_TYPE_POPUP;
       break;
+    case sessions::SessionWindow::TYPE_APP:
+      type = api::windows::WINDOW_TYPE_APP;
+      break;
+    case sessions::SessionWindow::TYPE_DEVTOOLS:
+      type = api::windows::WINDOW_TYPE_DEVTOOLS;
+      break;
+    case sessions::SessionWindow::TYPE_APP_POPUP:
+      NOTREACHED();
   }
 
   api::windows::WindowState state = api::windows::WINDOW_STATE_NONE;
@@ -382,8 +401,11 @@ ExtensionFunction::ResponseAction SessionsGetDevicesFunction::Run() {
 
 ExtensionFunction::ResponseValue SessionsRestoreFunction::GetRestoredTabResult(
     content::WebContents* contents) {
+  ExtensionTabUtil::ScrubTabBehavior scrub_tab_behavior =
+      ExtensionTabUtil::GetScrubTabBehavior(extension(), source_context_type(),
+                                            contents);
   std::unique_ptr<api::tabs::Tab> tab(ExtensionTabUtil::CreateTabObject(
-      contents, ExtensionTabUtil::kScrubTab, extension()));
+      contents, scrub_tab_behavior, extension()));
   std::unique_ptr<api::sessions::Session> restored_session(
       CreateSessionModelHelper(base::Time::Now().ToTimeT(), std::move(tab),
                                std::unique_ptr<api::windows::Window>()));
@@ -400,7 +422,8 @@ SessionsRestoreFunction::GetRestoredWindowResult(int window_id) {
   }
   std::unique_ptr<base::DictionaryValue> window_value(
       ExtensionTabUtil::CreateWindowValueForExtension(
-          *browser, extension(), ExtensionTabUtil::kPopulateTabs));
+          *browser, extension(), ExtensionTabUtil::kPopulateTabs,
+          source_context_type()));
   std::unique_ptr<api::windows::Window> window(
       api::windows::Window::FromValue(*window_value));
   return ArgumentList(Restore::Results::Create(*CreateSessionModelHelper(

@@ -4,6 +4,7 @@
 
 #include "content/browser/android/synchronous_compositor_sync_call_bridge.h"
 
+#include "base/bind.h"
 #include "base/task/post_task.h"
 #include "content/browser/android/synchronous_compositor_host.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -16,9 +17,7 @@ namespace content {
 
 SynchronousCompositorSyncCallBridge::SynchronousCompositorSyncCallBridge(
     SynchronousCompositorHost* host)
-    : routing_id_(host->routing_id()),
-      host_(host),
-      begin_frame_condition_(&lock_) {
+    : host_(host), begin_frame_condition_(&lock_) {
   DCHECK(host);
 }
 
@@ -42,7 +41,8 @@ void SynchronousCompositorSyncCallBridge::RemoteClosedOnIOThread() {
 bool SynchronousCompositorSyncCallBridge::ReceiveFrameOnIOThread(
     int layer_tree_frame_sink_id,
     uint32_t metadata_version,
-    base::Optional<viz::CompositorFrame> compositor_frame) {
+    base::Optional<viz::CompositorFrame> compositor_frame,
+    base::Optional<viz::HitTestRegionList> hit_test_region_list) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   base::AutoLock lock(lock_);
   if (remote_state_ != RemoteState::READY || frame_futures_.empty())
@@ -55,14 +55,14 @@ bool SynchronousCompositorSyncCallBridge::ReceiveFrameOnIOThread(
   frame_futures_.pop_front();
 
   if (compositor_frame) {
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::UI},
-        base::BindOnce(&SynchronousCompositorSyncCallBridge::
-                           ProcessFrameMetadataOnUIThread,
-                       this, metadata_version,
-                       compositor_frame->metadata.Clone()));
+    base::PostTask(FROM_HERE, {BrowserThread::UI},
+                   base::BindOnce(&SynchronousCompositorSyncCallBridge::
+                                      ProcessFrameMetadataOnUIThread,
+                                  this, metadata_version,
+                                  compositor_frame->metadata.Clone()));
     frame_ptr->frame.reset(new viz::CompositorFrame);
     *frame_ptr->frame = std::move(*compositor_frame);
+    frame_ptr->hit_test_region_list = std::move(hit_test_region_list);
   }
   future->SetFrame(std::move(frame_ptr));
   return true;
@@ -80,14 +80,13 @@ bool SynchronousCompositorSyncCallBridge::BeginFrameResponseOnIOThread(
   return true;
 }
 
-bool SynchronousCompositorSyncCallBridge::WaitAfterVSyncOnUIThread(
-    ui::WindowAndroid* window_android) {
+bool SynchronousCompositorSyncCallBridge::WaitAfterVSyncOnUIThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   base::AutoLock lock(lock_);
   if (remote_state_ != RemoteState::READY)
     return false;
   CHECK(!begin_frame_response_valid_);
-  window_android->AddBeginFrameCompletionCallback(base::BindOnce(
+  host_->AddBeginFrameCompletionCallback(base::BindOnce(
       &SynchronousCompositorSyncCallBridge::BeginFrameCompleteOnUIThread,
       this));
   return true;

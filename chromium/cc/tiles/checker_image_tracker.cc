@@ -11,34 +11,26 @@
 
 namespace cc {
 namespace {
-// The enum for recording checker-imaging decision UMA metric. Keep this
-// consistent with the ordering in CheckerImagingDecision in enums.xml.
-// Note that this enum is used to back a UMA histogram so should be treated as
-// append only.
 enum class CheckerImagingDecision {
-  kCanChecker = 0,
+  kCanChecker,
 
   // Animation State vetoes.
-  kVetoedAnimatedImage = 1,
-  kVetoedVideoFrame = 2,
-  // TODO(vmpstr): 3 used to be kVetoedAnimationUnknown, remove it somehow?
-  kVetoedMultipartImage = 4,
+  kVetoedAnimatedImage,
+  kVetoedVideoFrame,
+  kVetoedMultipartImage,
 
   // Load state vetoes.
-  kVetoedPartiallyLoadedImage = 5,
-  // TODO(vmpstr): 6 used to be kVetoedLoadStateUnknown, remove it somehow?
+  kVetoedPartiallyLoadedImage,
 
   // Size associated vetoes.
-  kVetoedSmallerThanCheckeringSize = 7,
-  kVetoedLargerThanCacheSize = 8,
+  kVetoedSmallerThanCheckeringSize,
+  kVetoedLargerThanCacheSize,
 
   // Vetoed because checkering of images has been disabled.
-  kVetoedForceDisable = 9,
-
-  // 10 used to be kVetoedNotRequiredForActivation.
+  kVetoedForceDisable,
 
   // Sync was requested by the embedder.
-  kVetoedSyncRequested = 11,
+  kVetoedSyncRequested,
 
   kCheckerImagingDecisionCount
 };
@@ -135,8 +127,7 @@ CheckerImageTracker::CheckerImageTracker(ImageController* image_controller,
     : image_controller_(image_controller),
       client_(client),
       enable_checker_imaging_(enable_checker_imaging),
-      min_image_bytes_to_checker_(min_image_bytes_to_checker),
-      weak_factory_(this) {}
+      min_image_bytes_to_checker_(min_image_bytes_to_checker) {}
 
 CheckerImageTracker::~CheckerImageTracker() = default;
 
@@ -210,6 +201,7 @@ void CheckerImageTracker::ClearTracker(bool can_clear_decode_policy_tracking) {
   image_id_to_decode_.clear();
 
   if (can_clear_decode_policy_tracking) {
+    decoding_mode_map_.clear();
     image_async_decode_state_.clear();
   } else {
     // If we can't clear the decode policy, we need to make sure we still
@@ -235,8 +227,8 @@ void CheckerImageTracker::DidFinishImageDecode(
     ImageController::ImageDecodeResult result) {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
                "CheckerImageTracker::DidFinishImageDecode");
-  TRACE_EVENT_ASYNC_END0("cc", "CheckerImageTracker::DeferImageDecode",
-                         image_id);
+  TRACE_EVENT_NESTABLE_ASYNC_END0("cc", "CheckerImageTracker::DeferImageDecode",
+                                  TRACE_ID_LOCAL(image_id));
 
   DCHECK_NE(ImageController::ImageDecodeResult::DECODE_NOT_REQUIRED, result);
   DCHECK_EQ(outstanding_image_decode_.value().stable_id(), image_id);
@@ -278,6 +270,9 @@ bool CheckerImageTracker::ShouldCheckerImage(const DrawImage& draw_image,
   if (!enable_checker_imaging_)
     return false;
 
+  if (!image.IsLazyGenerated())
+    return false;
+
   // If the image was invalidated on the current sync tree and the tile is
   // for the active tree, continue checkering it on the active tree to ensure
   // the image update is atomic for the frame.
@@ -307,13 +302,6 @@ bool CheckerImageTracker::ShouldCheckerImage(const DrawImage& draw_image,
       std::pair<PaintImage::Id, DecodeState>(image_id, DecodeState()));
   auto it = insert_result.first;
   if (insert_result.second) {
-    CheckerImagingDecision decision = CheckerImagingDecision::kCanChecker;
-    // If the mode is sync, then don't checker this image.
-    // TODO(vmpstr): Figure out if we should do something different in other
-    // cases.
-    if (decoding_mode_hint == PaintImage::DecodingMode::kSync)
-      decision = CheckerImagingDecision::kVetoedSyncRequested;
-
     // The following conditions must be true for an image to be checkerable:
     //
     // 1) Complete: The data for the image should have been completely loaded.
@@ -330,11 +318,9 @@ bool CheckerImageTracker::ShouldCheckerImage(const DrawImage& draw_image,
     //
     // Note that we only need to do this check if we didn't veto above in this
     // block.
-    if (decision == CheckerImagingDecision::kCanChecker) {
-      decision = GetCheckerImagingDecision(
-          image, draw_image.src_rect(), min_image_bytes_to_checker_,
-          image_controller_->image_cache_max_limit_bytes());
-    }
+    CheckerImagingDecision decision = GetCheckerImagingDecision(
+        image, draw_image.src_rect(), min_image_bytes_to_checker_,
+        image_controller_->image_cache_max_limit_bytes());
 
     if (decision == CheckerImagingDecision::kCanChecker && force_disabled_) {
       // Get the decision for all the veto reasons first, so we can UMA the
@@ -346,10 +332,6 @@ bool CheckerImageTracker::ShouldCheckerImage(const DrawImage& draw_image,
     it->second.policy = decision == CheckerImagingDecision::kCanChecker
                             ? DecodePolicy::ASYNC
                             : DecodePolicy::SYNC;
-
-    UMA_HISTOGRAM_ENUMERATION(
-        "Compositing.Renderer.CheckerImagingDecision", decision,
-        CheckerImagingDecision::kCheckerImagingDecisionCount);
 
     TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("cc.debug"),
                  "CheckerImageTracker::CheckerImagingDecision", "image_params",
@@ -387,6 +369,7 @@ void CheckerImageTracker::UpdateDecodeState(const DrawImage& draw_image,
       std::max(decode_state->scale.fHeight, draw_image.scale().fHeight));
   decode_state->filter_quality =
       std::max(decode_state->filter_quality, draw_image.filter_quality());
+  decode_state->color_space = draw_image.target_color_space();
   decode_state->frame_index = draw_image.frame_index();
 }
 
@@ -426,7 +409,7 @@ void CheckerImageTracker::ScheduleNextImageDecode() {
         it->second.filter_quality,
         SkMatrix::MakeScale(it->second.scale.width(),
                             it->second.scale.height()),
-        it->second.frame_index);
+        it->second.frame_index, it->second.color_space);
     outstanding_image_decode_.emplace(candidate);
     break;
   }
@@ -440,8 +423,8 @@ void CheckerImageTracker::ScheduleNextImageDecode() {
 
   PaintImage::Id image_id = outstanding_image_decode_.value().stable_id();
   DCHECK_EQ(image_id_to_decode_.count(image_id), 0u);
-  TRACE_EVENT_ASYNC_BEGIN0("cc", "CheckerImageTracker::DeferImageDecode",
-                           image_id);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
+      "cc", "CheckerImageTracker::DeferImageDecode", TRACE_ID_LOCAL(image_id));
   ImageController::ImageDecodeRequestId request_id =
       image_controller_->QueueImageDecode(
           draw_image, base::BindOnce(&CheckerImageTracker::DidFinishImageDecode,
@@ -454,6 +437,9 @@ void CheckerImageTracker::ScheduleNextImageDecode() {
 void CheckerImageTracker::UpdateImageDecodingHints(
     base::flat_map<PaintImage::Id, PaintImage::DecodingMode>
         decoding_mode_map) {
+  if (!enable_checker_imaging_)
+    return;
+
   // Merge the |decoding_mode_map| with our member map, keeping the more
   // conservative values.
   // TODO(vmpstr): Figure out if and how do we clear this value to ensure that

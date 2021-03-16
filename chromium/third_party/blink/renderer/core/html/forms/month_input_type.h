@@ -37,8 +37,6 @@ namespace blink {
 
 class MonthInputType final : public BaseTemporalInputType {
  public:
-  static InputType* Create(HTMLInputElement&);
-
   explicit MonthInputType(HTMLInputElement& element)
       : BaseTemporalInputType(element) {}
 
@@ -46,7 +44,7 @@ class MonthInputType final : public BaseTemporalInputType {
   void CountUsage() override;
   const AtomicString& FormControlType() const override;
   double ValueAsDate() const override;
-  String SerializeWithMilliseconds(double) const override;
+  String SerializeWithDate(const base::Optional<base::Time>&) const override;
   Decimal ParseToNumber(const String&, const Decimal&) const override;
   Decimal DefaultValueForStepUp() const override;
   StepRange CreateStepRange(AnyStepHandling) const override;
@@ -68,6 +66,7 @@ class MonthInputType final : public BaseTemporalInputType {
                      bool has_hour,
                      bool has_minute,
                      bool has_second) const override;
+  String AriaRoleForPickerIndicator() const override;
 };
 
 }  // namespace blink

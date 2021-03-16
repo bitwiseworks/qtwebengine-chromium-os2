@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/html/forms/html_option_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_select_element.h"
 #include "third_party/blink/renderer/core/html/html_document.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
@@ -22,8 +23,8 @@ AtomicString Id(const HTMLOptionElement* option) {
 class OptionListTest : public testing::Test {
  protected:
   void SetUp() override {
-    HTMLDocument* document = HTMLDocument::CreateForTest();
-    HTMLSelectElement* select = HTMLSelectElement::Create(*document);
+    auto* document = MakeGarbageCollected<HTMLDocument>();
+    auto* select = MakeGarbageCollected<HTMLSelectElement>(*document);
     document->AppendChild(select);
     select_ = select;
   }
@@ -40,12 +41,12 @@ TEST_F(OptionListTest, Empty) {
 }
 
 TEST_F(OptionListTest, OptionOnly) {
-  Select().SetInnerHTMLFromString(
+  Select().setInnerHTML(
       "text<input><option id=o1></option><input><option "
       "id=o2></option><input>");
-  auto* div = ToHTMLElement(
+  auto* div = To<HTMLElement>(
       Select().GetDocument().CreateRawElement(html_names::kDivTag));
-  div->SetInnerHTMLFromString("<option id=o3></option>");
+  div->setInnerHTML("<option id=o3></option>");
   Select().AppendChild(div);
   OptionList list = Select().GetOptionList();
   OptionList::Iterator iter = list.begin();
@@ -58,7 +59,7 @@ TEST_F(OptionListTest, OptionOnly) {
 }
 
 TEST_F(OptionListTest, Optgroup) {
-  Select().SetInnerHTMLFromString(
+  Select().setInnerHTML(
       "<optgroup><option id=g11></option><option id=g12></option></optgroup>"
       "<optgroup><option id=g21></option></optgroup>"
       "<optgroup></optgroup>"
@@ -78,8 +79,8 @@ TEST_F(OptionListTest, Optgroup) {
   ++iter;
   EXPECT_EQ(list.end(), iter);
 
-  ToHTMLElement(Select().firstChild())
-      ->SetInnerHTMLFromString(
+  To<HTMLElement>(Select().firstChild())
+      ->setInnerHTML(
           "<optgroup><option id=gg11></option></optgroup>"
           "<option id=g11></option>");
   list = Select().GetOptionList();

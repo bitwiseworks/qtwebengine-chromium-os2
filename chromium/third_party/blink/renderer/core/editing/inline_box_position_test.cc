@@ -25,6 +25,8 @@ std::ostream& operator<<(std::ostream& ostream,
 class InlineBoxPositionTest : public EditingTestBase {};
 
 TEST_F(InlineBoxPositionTest, ComputeInlineBoxPositionBidiIsolate) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   // InlineBoxPosition is a legacy-only data structure.
   ScopedLayoutNGForTest scoped_layout_ng(false);
 
@@ -43,22 +45,29 @@ TEST_F(InlineBoxPositionTest, ComputeInlineBoxPositionBidiIsolate) {
 
 // http://crbug.com/716093
 TEST_F(InlineBoxPositionTest, ComputeInlineBoxPositionMixedEditable) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   // InlineBoxPosition is a legacy-only data structure.
   ScopedLayoutNGForTest scoped_layout_ng(false);
 
   SetBodyContent(
       "<div contenteditable id=sample>abc<input contenteditable=false></div>");
   Element* const sample = GetDocument().getElementById("sample");
+  Element* const input = GetDocument().QuerySelector("input");
+  const InlineBox* const input_wrapper_box =
+      ToLayoutBox(input->GetLayoutObject())->InlineBoxWrapper();
 
   const InlineBoxPosition& actual = ComputeInlineBoxPosition(
       PositionWithAffinity(Position::LastPositionInNode(*sample)));
   // Should not be in infinite-loop
-  EXPECT_EQ(nullptr, actual.inline_box);
-  EXPECT_EQ(0, actual.offset_in_box);
+  EXPECT_EQ(input_wrapper_box, actual.inline_box);
+  EXPECT_EQ(1, actual.offset_in_box);
 }
 
 // http://crbug.com/841363
 TEST_F(InlineBoxPositionTest, InFlatTreeAfterInputWithPlaceholderDoesntCrash) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   // InlineBoxPosition is a legacy-only data structure.
   ScopedLayoutNGForTest scoped_layout_ng(false);
 
@@ -76,6 +85,8 @@ TEST_F(InlineBoxPositionTest, InFlatTreeAfterInputWithPlaceholderDoesntCrash) {
 }
 
 TEST_F(InlineBoxPositionTest, DownstreamBeforeLineBreakLTR) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   // InlineBoxPosition is a legacy-only data structure.
   ScopedLayoutNGForTest scoped_layout_ng(false);
 
@@ -98,6 +109,8 @@ TEST_F(InlineBoxPositionTest, DownstreamBeforeLineBreakLTR) {
 }
 
 TEST_F(InlineBoxPositionTest, DownstreamBeforeLineBreakRTL) {
+  if (RuntimeEnabledFeatures::LayoutNGFragmentItemEnabled())
+    return;
   // InlineBoxPosition is a legacy-only data structure.
   ScopedLayoutNGForTest scoped_layout_ng(false);
 

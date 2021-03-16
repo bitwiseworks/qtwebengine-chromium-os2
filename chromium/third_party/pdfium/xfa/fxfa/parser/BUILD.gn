@@ -2,13 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/jumbo.gni")
 import("../../../pdfium.gni")
 import("../../../testing/test.gni")
 
 assert(pdf_enable_xfa)
 
-jumbo_source_set("parser") {
+source_set("parser") {
   sources = [
     "cscript_datawindow.cpp",
     "cscript_datawindow.h",
@@ -134,14 +133,10 @@ jumbo_source_set("parser") {
     "cxfa_connectionset.h",
     "cxfa_connectstring.cpp",
     "cxfa_connectstring.h",
-    "cxfa_containerlayoutitem.cpp",
-    "cxfa_containerlayoutitem.h",
     "cxfa_contentarea.cpp",
     "cxfa_contentarea.h",
     "cxfa_contentcopy.cpp",
     "cxfa_contentcopy.h",
-    "cxfa_contentlayoutitem.cpp",
-    "cxfa_contentlayoutitem.h",
     "cxfa_copies.cpp",
     "cxfa_copies.h",
     "cxfa_corner.cpp",
@@ -314,8 +309,6 @@ jumbo_source_set("parser") {
     "cxfa_interactive.h",
     "cxfa_issuers.cpp",
     "cxfa_issuers.h",
-    "cxfa_itemlayoutprocessor.cpp",
-    "cxfa_itemlayoutprocessor.h",
     "cxfa_items.cpp",
     "cxfa_items.h",
     "cxfa_jog.cpp",
@@ -328,14 +321,6 @@ jumbo_source_set("parser") {
     "cxfa_labelprinter.h",
     "cxfa_layout.cpp",
     "cxfa_layout.h",
-    "cxfa_layoutcontext.cpp",
-    "cxfa_layoutcontext.h",
-    "cxfa_layoutitem.cpp",
-    "cxfa_layoutitem.h",
-    "cxfa_layoutpagemgr.cpp",
-    "cxfa_layoutpagemgr.h",
-    "cxfa_layoutprocessor.cpp",
-    "cxfa_layoutprocessor.h",
     "cxfa_level.cpp",
     "cxfa_level.h",
     "cxfa_line.cpp",
@@ -627,8 +612,6 @@ jumbo_source_set("parser") {
     "cxfa_traversal.h",
     "cxfa_traverse.cpp",
     "cxfa_traverse.h",
-    "cxfa_traversestrategy_contentareacontainerlayoutitem.h",
-    "cxfa_traversestrategy_layoutitem.h",
     "cxfa_traversestrategy_xfacontainernode.h",
     "cxfa_traversestrategy_xfanode.h",
     "cxfa_treelist.cpp",
@@ -698,20 +681,15 @@ jumbo_source_set("parser") {
     "xfa_utils.h",
   ]
   deps = [
-    "../../../core/fpdfapi",
     "../../../core/fxcodec",
     "../../../core/fxcrt",
     "../../../core/fxge",
-    "../../../fxbarcode",
     "../../../fxjs",
     "../../fde",
     "../../fgas",
     "../../fxgraphics",
   ]
-  allow_circular_includes_from = [
-    "../../fgas",
-    "../../../fxjs",
-  ]
+  allow_circular_includes_from = [ "../../../fxjs" ]
   configs += [
     "../../../:pdfium_core_config",
     "../../:xfa_warnings",
@@ -723,6 +701,7 @@ pdfium_unittest_source_set("unittests") {
   sources = [
     "cxfa_document_parser_unittest.cpp",
     "cxfa_localevalue_unittest.cpp",
+    "cxfa_measurement_unittest.cpp",
     "cxfa_node_unittest.cpp",
     "cxfa_nodeiteratortemplate_unittest.cpp",
     "cxfa_xmllocale_unittest.cpp",
@@ -731,13 +710,12 @@ pdfium_unittest_source_set("unittests") {
   ]
   deps = [
     ":parser",
+    "../../../fxjs",
   ]
   pdfium_root_dir = "../../../"
 }
 
 pdfium_embeddertest_source_set("embeddertests") {
-  sources = [
-    "cxfa_document_parser_embeddertest.cpp",
-  ]
+  sources = [ "cxfa_document_parser_embeddertest.cpp" ]
   pdfium_root_dir = "../../../"
 }

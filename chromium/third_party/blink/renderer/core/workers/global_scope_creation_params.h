@@ -7,12 +7,16 @@
 
 #include <memory>
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/unguessable_token.h"
-#include "services/network/public/mojom/referrer_policy.mojom-shared.h"
-#include "services/service_manager/public/mojom/interface_provider.mojom-blink.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "services/network/public/mojom/ip_address_space.mojom-blink-forward.h"
+#include "services/network/public/mojom/referrer_policy.mojom-blink-forward.h"
 #include "third_party/blink/public/common/feature_policy/feature_policy.h"
-#include "third_party/blink/public/mojom/net/ip_address_space.mojom-blink.h"
-#include "third_party/blink/public/mojom/script/script_type.mojom-blink.h"
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
+#include "third_party/blink/public/mojom/browser_interface_broker.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/script/script_type.mojom-blink-forward.h"
+#include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_worker_fetch_context.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_cache_options.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -29,10 +33,6 @@ namespace blink {
 
 class WorkerClients;
 
-// TODO(nhiroki): Remove this option after off-the-main-thread worker script
-// fetch is enabled for all worker types (https://crbug.com/835717).
-enum class OffMainThreadWorkerScriptFetchOption { kDisabled, kEnabled };
-
 // GlobalScopeCreationParams contains parameters for initializing
 // WorkerGlobalScope or WorkletGlobalScope.
 struct CORE_EXPORT GlobalScopeCreationParams final {
@@ -42,22 +42,25 @@ struct CORE_EXPORT GlobalScopeCreationParams final {
   GlobalScopeCreationParams(
       const KURL& script_url,
       mojom::ScriptType script_type,
-      OffMainThreadWorkerScriptFetchOption,
+      const String& global_scope_name,
       const String& user_agent,
+      const base::Optional<UserAgentMetadata>& ua_metadata,
       scoped_refptr<WebWorkerFetchContext>,
-      const Vector<CSPHeaderAndType>& content_security_policy_parsed_headers,
+      const Vector<CSPHeaderAndType>& outside_content_security_policy_headers,
       network::mojom::ReferrerPolicy referrer_policy,
       const SecurityOrigin*,
       bool starter_secure_context,
       HttpsState starter_https_state,
       WorkerClients*,
-      mojom::IPAddressSpace,
+      std::unique_ptr<WebContentSettingsClient>,
+      base::Optional<network::mojom::IPAddressSpace>,
       const Vector<String>* origin_trial_tokens,
       const base::UnguessableToken& parent_devtools_token,
       std::unique_ptr<WorkerSettings>,
       V8CacheOptions,
       WorkletModuleResponsesMap*,
-      service_manager::mojom::blink::InterfaceProviderPtrInfo = {},
+      mojo::PendingRemote<mojom::blink::BrowserInterfaceBroker>
+          browser_interface_broker = mojo::NullRemote(),
       BeginFrameProviderParams begin_frame_provider_params = {},
       const FeaturePolicy* parent_feature_policy = nullptr,
       base::UnguessableToken agent_cluster_id = {});
@@ -67,7 +70,7 @@ struct CORE_EXPORT GlobalScopeCreationParams final {
   // The URL to be used as the worker global scope's URL.
   // According to the spec, this should be response URL of the top-level
   // worker script after the top-level worker script is loaded.
-  // https://html.spec.whatwg.org/multipage/workers.html#run-a-worker
+  // https://html.spec.whatwg.org/C/#run-a-worker
   //
   // However, this can't be set to response URL in case of module workers or
   // off-the-main-thread fetch, because at the time of GlobalScopeCreationParams
@@ -79,13 +82,17 @@ struct CORE_EXPORT GlobalScopeCreationParams final {
   KURL script_url;
 
   mojom::ScriptType script_type;
-  OffMainThreadWorkerScriptFetchOption off_main_thread_fetch_option;
 
+  String global_scope_name;
   String user_agent;
+  UserAgentMetadata ua_metadata;
 
   scoped_refptr<WebWorkerFetchContext> web_worker_fetch_context;
 
-  Vector<CSPHeaderAndType> content_security_policy_parsed_headers;
+  // TODO(bashi): This contains "inside" CSP headers for on-the-main-thread
+  // service/shared worker script fetch. Add a separate parameter for "inside"
+  // CSP headers.
+  Vector<CSPHeaderAndType> outside_content_security_policy_headers;
 
   network::mojom::ReferrerPolicy referrer_policy;
   std::unique_ptr<Vector<String>> origin_trial_tokens;
@@ -126,7 +133,12 @@ struct CORE_EXPORT GlobalScopeCreationParams final {
   // supplies no extra 'clients', m_workerClients can be left as empty/null.
   CrossThreadPersistent<WorkerClients> worker_clients;
 
-  mojom::IPAddressSpace address_space;
+  std::unique_ptr<WebContentSettingsClient> content_settings_client;
+
+  // Worker script response's address space. This is valid only when the worker
+  // script is fetched on the main thread (i.e., when
+  // |off_main_thread_fetch_option| is kDisabled).
+  base::Optional<network::mojom::IPAddressSpace> response_address_space;
 
   base::UnguessableToken parent_devtools_token;
 
@@ -136,7 +148,8 @@ struct CORE_EXPORT GlobalScopeCreationParams final {
 
   CrossThreadPersistent<WorkletModuleResponsesMap> module_responses_map;
 
-  service_manager::mojom::blink::InterfaceProviderPtrInfo interface_provider;
+  mojo::PendingRemote<mojom::blink::BrowserInterfaceBroker>
+      browser_interface_broker;
 
   BeginFrameProviderParams begin_frame_provider_params;
 

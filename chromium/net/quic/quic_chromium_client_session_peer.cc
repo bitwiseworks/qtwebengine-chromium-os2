@@ -16,7 +16,9 @@ void QuicChromiumClientSessionPeer::SetHostname(
   quic::QuicServerId server_id(hostname,
                                session->session_key_.server_id().port(),
                                session->session_key_.privacy_mode());
-  session->session_key_ = QuicSessionKey(server_id, SocketTag());
+  session->session_key_ =
+      QuicSessionKey(server_id, SocketTag(), NetworkIsolationKey(),
+                     false /* disable_secure_dns */);
 }
 
 // static
@@ -38,6 +40,12 @@ QuicChromiumClientStream* QuicChromiumClientSessionPeer::CreateOutgoingStream(
              ? session->CreateOutgoingReliableStreamImpl(
                    TRAFFIC_ANNOTATION_FOR_TESTS)
              : nullptr;
+}
+
+// static
+bool QuicChromiumClientSessionPeer::GetSessionGoingAway(
+    QuicChromiumClientSession* session) {
+  return session->going_away_;
 }
 
 }  // namespace test

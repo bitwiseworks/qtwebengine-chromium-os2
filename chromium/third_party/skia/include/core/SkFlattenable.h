@@ -8,7 +8,7 @@
 #ifndef SkFlattenable_DEFINED
 #define SkFlattenable_DEFINED
 
-#include "SkRefCnt.h"
+#include "include/core/SkRefCnt.h"
 
 class SkData;
 class SkReadBuffer;
@@ -37,7 +37,7 @@ public:
         kSkShaderBase_Type,
         kSkUnused_Type,     // used to be SkUnitMapper
         kSkUnused_Type2,
-        kSkNormalSource_Type,
+        kSkUnused_Type3,    // use to be NormalSource,
     };
 
     typedef sk_sp<SkFlattenable> (*Factory)(SkReadBuffer&);

@@ -8,6 +8,8 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "pc/rtp_transport.h"
+
 #include <cstdint>
 #include <set>
 #include <string>
@@ -16,7 +18,6 @@
 #include "api/rtp_headers.h"
 #include "api/rtp_parameters.h"
 #include "p2p/base/fake_packet_transport.h"
-#include "pc/rtp_transport.h"
 #include "pc/test/rtp_transport_test_util.h"
 #include "rtc_base/buffer.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
@@ -30,38 +31,6 @@ constexpr uint16_t kLocalNetId = 1;
 constexpr uint16_t kRemoteNetId = 2;
 constexpr int kLastPacketId = 100;
 constexpr int kTransportOverheadPerPacket = 28;  // Ipv4(20) + UDP(8).
-
-TEST(RtpTransportTest, SetRtcpParametersCantDisableRtcpMux) {
-  RtpTransport transport(kMuxDisabled);
-  RtpTransportParameters params;
-  transport.SetParameters(params);
-  params.rtcp.mux = false;
-  EXPECT_FALSE(transport.SetParameters(params).ok());
-}
-
-TEST(RtpTransportTest, SetRtcpParametersEmptyCnameUsesExisting) {
-  static const char kName[] = "name";
-  RtpTransport transport(kMuxDisabled);
-  RtpTransportParameters params_with_name;
-  params_with_name.rtcp.cname = kName;
-  transport.SetParameters(params_with_name);
-  EXPECT_EQ(transport.GetParameters().rtcp.cname, kName);
-
-  RtpTransportParameters params_without_name;
-  transport.SetParameters(params_without_name);
-  EXPECT_EQ(transport.GetParameters().rtcp.cname, kName);
-}
-
-TEST(RtpTransportTest, SetRtpTransportKeepAliveNotSupported) {
-  // Tests that we warn users that keep-alive isn't supported yet.
-  // TODO(sprang): Wire up keep-alive and remove this test.
-  RtpTransport transport(kMuxDisabled);
-  RtpTransportParameters params;
-  params.keepalive.timeout_interval_ms = 1;
-  auto result = transport.SetParameters(params);
-  EXPECT_FALSE(result.ok());
-  EXPECT_EQ(RTCErrorType::INVALID_MODIFICATION, result.type());
-}
 
 class SignalObserver : public sigslot::has_slots<> {
  public:
@@ -86,7 +55,7 @@ class SignalObserver : public sigslot::has_slots<> {
 
   absl::optional<rtc::NetworkRoute> network_route() { return network_route_; }
   void OnNetworkRouteChanged(absl::optional<rtc::NetworkRoute> network_route) {
-    network_route_ = std::move(network_route);
+    network_route_ = network_route;
   }
 
   void OnSentPacket(rtc::PacketTransportInternal* packet_transport,
@@ -186,16 +155,16 @@ TEST(RtpTransportTest, SetRtpTransportWithNetworkRouteChanged) {
   rtc::NetworkRoute network_route;
   // Set a non-null RTP transport with a new network route.
   network_route.connected = true;
-  network_route.local_network_id = kLocalNetId;
-  network_route.remote_network_id = kRemoteNetId;
+  network_route.local = rtc::RouteEndpoint::CreateWithNetworkId(kLocalNetId);
+  network_route.remote = rtc::RouteEndpoint::CreateWithNetworkId(kRemoteNetId);
   network_route.last_sent_packet_id = kLastPacketId;
   network_route.packet_overhead = kTransportOverheadPerPacket;
   fake_rtp.SetNetworkRoute(absl::optional<rtc::NetworkRoute>(network_route));
   transport.SetRtpPacketTransport(&fake_rtp);
   ASSERT_TRUE(observer.network_route());
   EXPECT_TRUE(observer.network_route()->connected);
-  EXPECT_EQ(kLocalNetId, observer.network_route()->local_network_id);
-  EXPECT_EQ(kRemoteNetId, observer.network_route()->remote_network_id);
+  EXPECT_EQ(kLocalNetId, observer.network_route()->local.network_id());
+  EXPECT_EQ(kRemoteNetId, observer.network_route()->remote.network_id());
   EXPECT_EQ(kTransportOverheadPerPacket,
             observer.network_route()->packet_overhead);
   EXPECT_EQ(kLastPacketId, observer.network_route()->last_sent_packet_id);
@@ -215,16 +184,16 @@ TEST(RtpTransportTest, SetRtcpTransportWithNetworkRouteChanged) {
   rtc::NetworkRoute network_route;
   // Set a non-null RTCP transport with a new network route.
   network_route.connected = true;
-  network_route.local_network_id = kLocalNetId;
-  network_route.remote_network_id = kRemoteNetId;
+  network_route.local = rtc::RouteEndpoint::CreateWithNetworkId(kLocalNetId);
+  network_route.remote = rtc::RouteEndpoint::CreateWithNetworkId(kRemoteNetId);
   network_route.last_sent_packet_id = kLastPacketId;
   network_route.packet_overhead = kTransportOverheadPerPacket;
   fake_rtcp.SetNetworkRoute(absl::optional<rtc::NetworkRoute>(network_route));
   transport.SetRtcpPacketTransport(&fake_rtcp);
   ASSERT_TRUE(observer.network_route());
   EXPECT_TRUE(observer.network_route()->connected);
-  EXPECT_EQ(kLocalNetId, observer.network_route()->local_network_id);
-  EXPECT_EQ(kRemoteNetId, observer.network_route()->remote_network_id);
+  EXPECT_EQ(kLocalNetId, observer.network_route()->local.network_id());
+  EXPECT_EQ(kRemoteNetId, observer.network_route()->remote.network_id());
   EXPECT_EQ(kTransportOverheadPerPacket,
             observer.network_route()->packet_overhead);
   EXPECT_EQ(kLastPacketId, observer.network_route()->last_sent_packet_id);
@@ -293,11 +262,11 @@ TEST(RtpTransportTest, SignalDemuxedRtcp) {
   TransportObserver observer(&transport);
 
   // An rtcp packet.
-  const char data[] = {0, 73, 0, 0};
+  const unsigned char data[] = {0x80, 73, 0, 0};
   const int len = 4;
   const rtc::PacketOptions options;
   const int flags = 0;
-  fake_rtp.SendPacket(data, len, options, flags);
+  fake_rtp.SendPacket(reinterpret_cast<const char*>(data), len, options, flags);
   EXPECT_EQ(0, observer.rtp_count());
   EXPECT_EQ(1, observer.rtcp_count());
 }

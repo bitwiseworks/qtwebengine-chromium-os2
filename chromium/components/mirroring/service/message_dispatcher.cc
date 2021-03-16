@@ -4,9 +4,11 @@
 
 #include "components/mirroring/service/message_dispatcher.h"
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
+#include "base/timer/timer.h"
 
 namespace mirroring {
 
@@ -48,11 +50,11 @@ class MessageDispatcher::RequestHolder {
 };
 
 MessageDispatcher::MessageDispatcher(
-    mojom::CastMessageChannelPtr outbound_channel,
-    mojom::CastMessageChannelRequest inbound_channel,
+    mojo::PendingRemote<mojom::CastMessageChannel> outbound_channel,
+    mojo::PendingReceiver<mojom::CastMessageChannel> inbound_channel,
     ErrorCallback error_callback)
     : outbound_channel_(std::move(outbound_channel)),
-      binding_(this, std::move(inbound_channel)),
+      receiver_(this, std::move(inbound_channel)),
       error_callback_(std::move(error_callback)),
       last_sequence_number_(base::RandInt(0, 1e9)) {
   DCHECK(outbound_channel_);
@@ -69,7 +71,7 @@ MessageDispatcher::~MessageDispatcher() {
 void MessageDispatcher::Send(mojom::CastMessagePtr message) {
   if (message->message_namespace != mojom::kWebRtcNamespace &&
       message->message_namespace != mojom::kRemotingNamespace) {
-    DVLOG(2) << "Ignore message with unknown namespace = "
+    DVLOG(2) << "Ignoring message with unknown namespace = "
              << message->message_namespace;
     return;  // Ignore message with wrong namespace.
   }

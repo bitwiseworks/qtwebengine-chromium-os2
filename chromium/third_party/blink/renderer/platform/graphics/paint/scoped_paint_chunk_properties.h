@@ -6,17 +6,16 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_GRAPHICS_PAINT_SCOPED_PAINT_CHUNK_PROPERTIES_H_
 
 #include "base/macros.h"
-#include "base/optional.h"
 #include "third_party/blink/renderer/platform/graphics/paint/display_item.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
 #include "third_party/blink/renderer/platform/graphics/paint/property_tree_state.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
 class ScopedPaintChunkProperties {
-  DISALLOW_NEW();
+  STACK_ALLOCATED();
 
  public:
   // Use new PropertyTreeState for the scope.
@@ -26,13 +25,13 @@ class ScopedPaintChunkProperties {
                              DisplayItem::Type type)
       : paint_controller_(paint_controller),
         previous_properties_(paint_controller.CurrentPaintChunkProperties()) {
-    paint_controller_.UpdateCurrentPaintChunkProperties(
-        PaintChunk::Id(client, type), properties);
+    PaintChunk::Id id(client, type);
+    paint_controller_.UpdateCurrentPaintChunkProperties(&id, properties);
   }
 
   // Use new transform state, and keep the current other properties.
   ScopedPaintChunkProperties(PaintController& paint_controller,
-                             const TransformPaintPropertyNode* transform,
+                             const TransformPaintPropertyNode& transform,
                              const DisplayItemClient& client,
                              DisplayItem::Type type)
       : ScopedPaintChunkProperties(
@@ -43,7 +42,7 @@ class ScopedPaintChunkProperties {
 
   // Use new clip state, and keep the current other properties.
   ScopedPaintChunkProperties(PaintController& paint_controller,
-                             const ClipPaintPropertyNode* clip,
+                             const ClipPaintPropertyNode& clip,
                              const DisplayItemClient& client,
                              DisplayItem::Type type)
       : ScopedPaintChunkProperties(
@@ -54,7 +53,7 @@ class ScopedPaintChunkProperties {
 
   // Use new effect state, and keep the current other properties.
   ScopedPaintChunkProperties(PaintController& paint_controller,
-                             const EffectPaintPropertyNode* effect,
+                             const EffectPaintPropertyNode& effect,
                              const DisplayItemClient& client,
                              DisplayItem::Type type)
       : ScopedPaintChunkProperties(
@@ -69,13 +68,13 @@ class ScopedPaintChunkProperties {
     // ScopedPaintChunkProperties. The painter should create another scope of
     // paint properties with new id, or the new chunk will use the id of the
     // first display item as its id.
-    paint_controller_.UpdateCurrentPaintChunkProperties(base::nullopt,
+    paint_controller_.UpdateCurrentPaintChunkProperties(nullptr,
                                                         previous_properties_);
   }
 
  private:
   static PropertyTreeState GetPaintChunkProperties(
-      const TransformPaintPropertyNode* transform,
+      const TransformPaintPropertyNode& transform,
       PaintController& paint_controller) {
     PropertyTreeState properties(
         paint_controller.CurrentPaintChunkProperties());
@@ -84,7 +83,7 @@ class ScopedPaintChunkProperties {
   }
 
   static PropertyTreeState GetPaintChunkProperties(
-      const ClipPaintPropertyNode* clip,
+      const ClipPaintPropertyNode& clip,
       PaintController& paint_controller) {
     PropertyTreeState properties(
         paint_controller.CurrentPaintChunkProperties());
@@ -93,7 +92,7 @@ class ScopedPaintChunkProperties {
   }
 
   static PropertyTreeState GetPaintChunkProperties(
-      const EffectPaintPropertyNode* effect,
+      const EffectPaintPropertyNode& effect,
       PaintController& paint_controller) {
     PropertyTreeState properties(
         paint_controller.CurrentPaintChunkProperties());

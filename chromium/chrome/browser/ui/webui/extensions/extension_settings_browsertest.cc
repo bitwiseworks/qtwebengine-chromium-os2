@@ -10,6 +10,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/api/developer_private/developer_private_api.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -91,13 +92,9 @@ void ExtensionSettingsUIBrowserTest::AddManagedPolicyProvider() {
 }
 
 void ExtensionSettingsUIBrowserTest::SetAutoConfirmUninstall() {
-  uninstall_auto_confirm_.reset(new extensions::ScopedTestDialogAutoConfirm(
-      extensions::ScopedTestDialogAutoConfirm::ACCEPT));
-}
-
-void ExtensionSettingsUIBrowserTest::EnableErrorConsole() {
-  error_console_override_.reset(new extensions::FeatureSwitch::ScopedOverride(
-      extensions::FeatureSwitch::error_console(), true));
+  uninstall_auto_confirm_ =
+      std::make_unique<extensions::ScopedTestDialogAutoConfirm>(
+          extensions::ScopedTestDialogAutoConfirm::ACCEPT);
 }
 
 void ExtensionSettingsUIBrowserTest::SetDevModeEnabled(bool enabled) {
@@ -201,7 +198,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionSettingsUIBrowserTest, ListenerRegistration) {
   ui_test_utils::NavigateToURLWithDisposition(
       browser(), GURL("chrome://extensions"),
       WindowOpenDisposition::NEW_FOREGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
   {
     SCOPED_TRACE("With page loaded");
@@ -220,8 +217,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionSettingsUIBrowserTest, ListenerRegistration) {
   }
 }
 
+// Flaky on Windows: crbug.com/
+#if defined(OS_WIN)
+#define MAYBE_ActivityLogInactiveWithoutSwitch \
+  DISABLED_ActivityLogInactiveWithoutSwitch
+#else
+#define MAYBE_ActivityLogInactiveWithoutSwitch ActivityLogInactiveWithoutSwitch
+#endif  // OS_WIN
 IN_PROC_BROWSER_TEST_F(ExtensionSettingsUIBrowserTest,
-                       ActivityLogInactiveWithoutSwitch) {
+                       MAYBE_ActivityLogInactiveWithoutSwitch) {
   // Navigate to chrome://extensions which is a whitelisted URL for the
   // chrome.activityLogPrivate API.
   GURL extensions_url("chrome://extensions");
@@ -250,7 +254,7 @@ class ExtensionsActivityLogTest : public ExtensionSettingsUIBrowserTest {
   // Enable command line flags for test.
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(switches::kEnableExtensionActivityLogging);
-  };
+  }
 };
 
 IN_PROC_BROWSER_TEST_F(ExtensionsActivityLogTest, TestActivityLogVisible) {
@@ -276,7 +280,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsActivityLogTest, TestActivityLogVisible) {
   // The querySelectors and shadowRoots are used here in order to penetrate
   // multiple nested shadow DOMs created by Polymer components
   // in the chrome://extensions page.
-  // See chrome/browser/resources/md_extensions for the Polymer code.
+  // See chrome/browser/resources/extensions for the Polymer code.
   // This test only serves as an end to end test, and most of the functionality
   // is covered in the JS unit tests.
   bool has_api_call = false;
@@ -285,10 +289,18 @@ IN_PROC_BROWSER_TEST_F(ExtensionsActivityLogTest, TestActivityLogVisible) {
       R"(let manager = document.querySelector('extensions-manager');
          let activityLog =
              manager.shadowRoot.querySelector('extensions-activity-log');
-         activityLog.onDataFetched.promise.then(() => {
-             Polymer.dom.flush();
-             let item = activityLog.shadowRoot.querySelector(
-                 'activity-log-item');
+         let activityLogHistory =
+             activityLog.shadowRoot.querySelector('activity-log-history');
+         const polymerPath =
+             'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+         Promise.all([
+           activityLogHistory.whenDataFetched(),
+           import(polymerPath),
+         ]).then((results) => {
+             const polymerModule = results[1];
+             polymerModule.flush();
+             let item = activityLogHistory.shadowRoot.querySelector(
+                 'activity-log-history-item');
              let activityKey = item.shadowRoot.getElementById('activity-key');
              window.domAutomationController.send(
                  activityKey.innerText === 'test.sendMessage');

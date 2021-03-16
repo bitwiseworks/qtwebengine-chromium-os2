@@ -23,8 +23,8 @@ class TrackGroup {
         has_src_lang(false) {}
 
   HeapVector<Member<TextTrack>> tracks;
-  Member<TextTrack> visible_track;
-  Member<TextTrack> default_track;
+  TextTrack* visible_track;
+  TextTrack* default_track;
   GroupKind kind;
   bool has_src_lang;
 };
@@ -141,7 +141,7 @@ void AutomaticTrackSelection::EnableDefaultMetadataTextTracks(
     const TrackGroup& group) {
   DCHECK(group.tracks.size());
 
-  // https://html.spec.whatwg.org/multipage/embedded-content.html#honor-user-preferences-for-automatic-text-track-selection
+  // https://html.spec.whatwg.org/C/#honor-user-preferences-for-automatic-text-track-selection
 
   // 4. If there are any text tracks in the media element's list of text
   // tracks whose text track kind is metadata that correspond to track

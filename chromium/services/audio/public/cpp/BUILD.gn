@@ -4,8 +4,6 @@
 
 source_set("cpp") {
   sources = [
-    "audio_system_factory.cc",
-    "audio_system_factory.h",
     "audio_system_to_service_adapter.cc",
     "audio_system_to_service_adapter.h",
     "debug_recording_session.cc",
@@ -18,6 +16,12 @@ source_set("cpp") {
     "input_ipc.h",
     "output_device.cc",
     "output_device.h",
+    "sounds/audio_stream_handler.cc",
+    "sounds/audio_stream_handler.h",
+    "sounds/sounds_manager.cc",
+    "sounds/sounds_manager.h",
+    "sounds/test_data.cc",
+    "sounds/test_data.h",
   ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
@@ -26,7 +30,6 @@ source_set("cpp") {
     "//base",
     "//media",
     "//services/audio/public/mojom",
-    "//services/service_manager/public/cpp",
   ]
 }
 
@@ -40,14 +43,12 @@ source_set("test_support") {
     "fake_system_info.h",
   ]
 
-  deps = [
-    "//testing/gmock",
-  ]
+  deps = [ "//testing/gmock" ]
 
   public_deps = [
     "//base",
     "//media",
+    "//services/audio",
     "//services/audio/public/mojom",
-    "//services/service_manager/public/cpp",
   ]
 }

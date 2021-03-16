@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/core/animation/effect_model.h"
 
-#include "third_party/blink/renderer/core/animation/keyframe_effect_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_keyframe_effect_options.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
@@ -17,7 +17,8 @@ EffectModel::StringToCompositeOperation(const String& composite_string) {
     return base::nullopt;
   if (composite_string == "add")
     return kCompositeAdd;
-  // TODO(crbug.com/788440): Support accumulate.
+  if (composite_string == "accumulate")
+    return kCompositeAccumulate;
   return kCompositeReplace;
 }
 
@@ -26,6 +27,8 @@ String EffectModel::CompositeOperationToString(
   if (!composite)
     return "auto";
   switch (composite.value()) {
+    case EffectModel::kCompositeAccumulate:
+      return "accumulate";
     case EffectModel::kCompositeAdd:
       return "add";
     case EffectModel::kCompositeReplace:

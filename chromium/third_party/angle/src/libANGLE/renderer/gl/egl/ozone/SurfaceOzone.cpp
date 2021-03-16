@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2016 The ANGLE Project Authors. All rights reserved.
+// Copyright 2016 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -34,7 +34,7 @@ FramebufferImpl *SurfaceOzone::createDefaultFramebuffer(const gl::Context *conte
     return mBuffer->framebufferGL(context, state);
 }
 
-egl::Error SurfaceOzone::makeCurrent()
+egl::Error SurfaceOzone::makeCurrent(const gl::Context *context)
 {
     return egl::NoError();
 }

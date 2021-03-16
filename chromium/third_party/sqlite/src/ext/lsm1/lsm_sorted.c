@@ -14,7 +14,7 @@
 **
 **   The maximum page size is 65536 bytes.
 **
-**   Since all records are equal to or larger than 2 bytes in size, and
+**   Since all records are equal to or larger than 2 bytes in size, and 
 **   some space within the page is consumed by the page footer, there must
 **   be less than 2^15 records on each page.
 **
@@ -41,22 +41,22 @@
 **      aaaaa bbbbb ccc <footer>    cc eeeee fffff g <footer>    gggg....
 **
 ** RECORD FORMAT:
-**
+** 
 **   The first byte of the record is a flags byte. It is a combination
 **   of the following flags (defined in lsmInt.h):
 **
 **       LSM_START_DELETE
-**       LSM_END_DELETE
+**       LSM_END_DELETE 
 **       LSM_POINT_DELETE
-**       LSM_INSERT
+**       LSM_INSERT    
 **       LSM_SEPARATOR
 **       LSM_SYSTEMKEY
 **
-**   Immediately following the type byte is a pointer to the smallest key
-**   in the next file that is larger than the key in the current record. The
-**   pointer is encoded as a varint. When added to the 32-bit page number
+**   Immediately following the type byte is a pointer to the smallest key 
+**   in the next file that is larger than the key in the current record. The 
+**   pointer is encoded as a varint. When added to the 32-bit page number 
 **   stored in the footer, it is the page number of the page that contains the
-**   smallest key in the next sorted file that is larger than this key.
+**   smallest key in the next sorted file that is larger than this key. 
 **
 **   Next is the number of bytes in the key, encoded as a varint.
 **
@@ -116,7 +116,7 @@ struct LsmBlob {
 /*
 ** A SegmentPtr object may be used for one of two purposes:
 **
-**   * To iterate and/or seek within a single Segment (the combination of a
+**   * To iterate and/or seek within a single Segment (the combination of a 
 **     main run and an optional sorted run).
 **
 **   * To iterate through the separators array of a segment.
@@ -238,7 +238,7 @@ struct MultiCursor {
 **   If set, this cursor will not visit SORTED_DELETE keys.
 **
 ** CURSOR_FLUSH_FREELIST
-**   This cursor is being used to create a new toplevel. It should also
+**   This cursor is being used to create a new toplevel. It should also 
 **   iterate through the contents of the in-memory free block list.
 **
 ** CURSOR_IGNORE_SYSTEM
@@ -251,7 +251,7 @@ struct MultiCursor {
 **   Set if it is Ok to call lsm_csr_prev().
 **
 ** CURSOR_READ_SEPARATORS
-**   Set if this cursor should visit the separator keys in segment
+**   Set if this cursor should visit the separator keys in segment 
 **   aPtr[nPtr-1].
 **
 ** CURSOR_SEEK_EQ
@@ -279,7 +279,7 @@ struct Hierarchy {
 ** aSave:
 **   When mergeWorkerNextPage() is called to advance to the next page in
 **   the output segment, if the bStore flag for an element of aSave[] is
-**   true, it is cleared and the corresponding iPgno value is set to the
+**   true, it is cleared and the corresponding iPgno value is set to the 
 **   page number of the page just completed.
 **
 **   aSave[0] is used to record the pointer value to be pushed into the
@@ -343,20 +343,20 @@ int lsmGetU16(u8 *aOut){
 }
 
 u32 lsmGetU32(u8 *aOut){
-  return ((u32)aOut[0] << 24)
-       + ((u32)aOut[1] << 16)
-       + ((u32)aOut[2] << 8)
+  return ((u32)aOut[0] << 24) 
+       + ((u32)aOut[1] << 16) 
+       + ((u32)aOut[2] << 8) 
        + ((u32)aOut[3]);
 }
 
 u64 lsmGetU64(u8 *aOut){
-  return ((u64)aOut[0] << 56)
-       + ((u64)aOut[1] << 48)
-       + ((u64)aOut[2] << 40)
-       + ((u64)aOut[3] << 32)
+  return ((u64)aOut[0] << 56) 
+       + ((u64)aOut[1] << 48) 
+       + ((u64)aOut[2] << 40) 
+       + ((u64)aOut[3] << 32) 
        + ((u64)aOut[4] << 24)
-       + ((u32)aOut[5] << 16)
-       + ((u32)aOut[6] << 8)
+       + ((u32)aOut[5] << 16) 
+       + ((u32)aOut[6] << 8) 
        + ((u32)aOut[7]);
 }
 
@@ -503,7 +503,7 @@ static int pageObjGetNRec(Page *pPg){
 }
 
 /*
-** Return the decoded (possibly relative) pointer value stored in cell
+** Return the decoded (possibly relative) pointer value stored in cell 
 ** iCell from page aData/nData.
 */
 static LsmPgno pageGetRecordPtr(u8 *aData, int nData, int iCell){
@@ -591,9 +591,9 @@ static LsmPgno pageGetBtreeRef(Page *pPg, int iKey){
 static int pageGetBtreeKey(
   Segment *pSeg,                  /* Segment page pPg belongs to */
   Page *pPg,
-  int iKey,
-  LsmPgno *piPtr,
-  int *piTopic,
+  int iKey, 
+  LsmPgno *piPtr, 
+  int *piTopic, 
   void **ppKey,
   int *pnKey,
   LsmBlob *pBlob
@@ -671,7 +671,7 @@ static int btreeCursorNext(BtreeCursor *pCsr){
   int rc = LSM_OK;
 
   BtreePg *pPg = &pCsr->aPg[pCsr->iPg];
-  int nCell;
+  int nCell; 
   u8 *aData;
   int nData;
 
@@ -700,7 +700,7 @@ static int btreeCursorNext(BtreeCursor *pCsr){
     /* Read the key */
     rc = btreeCursorLoadKey(pCsr);
 
-    /* Unless the cursor is at EOF, descend to cell -1 (yes, negative one) of
+    /* Unless the cursor is at EOF, descend to cell -1 (yes, negative one) of 
     ** the left-most most descendent. */
     if( pCsr->iPg>=0 ){
       pCsr->aPg[pCsr->iPg].iCell++;
@@ -833,7 +833,7 @@ static int sortedKeyCompare(
 }
 
 static int btreeCursorRestore(
-  BtreeCursor *pCsr,
+  BtreeCursor *pCsr, 
   int (*xCmp)(void *, int, void *, int),
   MergeInput *p
 ){
@@ -873,7 +873,7 @@ static int btreeCursorRestore(
       int iPg = 0;
       int iLoad = (int)pSeg->iRoot;
       Page *pPg = pCsr->aPg[nDepth-1].pPage;
-
+ 
       if( pageObjGetNRec(pPg)==0 ){
         /* This can happen when pPg is the right-most leaf in the b-tree.
         ** In this case, set the iTopicSeek/pSeek/nSeek key to a value
@@ -904,7 +904,7 @@ static int btreeCursorRestore(
           assert( (pageGetFlags(aData, nData) & SEGMENT_BTREE_FLAG) );
 
           iLoad = (int)pageGetPtr(aData, nData);
-          iCell2 = pageGetNRec(aData, nData);
+          iCell2 = pageGetNRec(aData, nData); 
           iMax = iCell2-1;
           iMin = 0;
 
@@ -937,7 +937,7 @@ static int btreeCursorRestore(
           pCsr->aPg[iPg].pPage = pPg2;
           pCsr->aPg[iPg].iCell = iCell2;
           iPg++;
-          assert( iPg!=nDepth-1
+          assert( iPg!=nDepth-1 
                || lsmFsRedirectPage(pCsr->pFS, pSeg->pRedirect, iLoad)==iLeaf
           );
         }
@@ -982,7 +982,7 @@ static int btreeCursorNew(
 ){
   int rc = LSM_OK;
   BtreeCursor *pCsr;
-
+  
   assert( pSeg->iRoot );
   pCsr = lsmMallocZeroRc(pDb->pEnv, sizeof(BtreeCursor), &rc);
   if( pCsr ){
@@ -1126,7 +1126,7 @@ static void sortedSplitkey(lsm_db *pDb, Level *pLevel, int *pRc){
     LsmBlob blob = {0, 0, 0, 0};
     u8 *aData;
     int nData;
-
+  
     aData = lsmFsPageData(pPg, &nData);
     if( pageGetFlags(aData, nData) & SEGMENT_BTREE_FLAG ){
       void *pKey;
@@ -1177,7 +1177,7 @@ static int segmentPtrIgnoreSeparators(MultiCursor *pCsr, SegmentPtr *pPtr){
 }
 
 static int segmentPtrAdvance(
-  MultiCursor *pCsr,
+  MultiCursor *pCsr, 
   SegmentPtr *pPtr,
   int bReverse
 ){
@@ -1199,10 +1199,10 @@ static int segmentPtrAdvance(
 
     if( iCell>=pPtr->nCell || iCell<0 ){
       do {
-        rc = segmentPtrNextPage(pPtr, eDir);
-      }while( rc==LSM_OK
-           && pPtr->pPg
-           && (pPtr->nCell==0 || (pPtr->flags & SEGMENT_BTREE_FLAG) )
+        rc = segmentPtrNextPage(pPtr, eDir); 
+      }while( rc==LSM_OK 
+           && pPtr->pPg 
+           && (pPtr->nCell==0 || (pPtr->flags & SEGMENT_BTREE_FLAG) ) 
       );
       if( rc!=LSM_OK ) return rc;
       iCell = bReverse ? (pPtr->nCell-1) : 0;
@@ -1228,8 +1228,8 @@ static int segmentPtrAdvance(
       pPtr->nKey = pLvl->nSplitKey;
     }
 
-  }while( pCsr
-       && pPtr->pPg
+  }while( pCsr 
+       && pPtr->pPg 
        && segmentPtrIgnoreSeparators(pCsr, pPtr)
        && rtIsSeparator(pPtr->eType)
   );
@@ -1238,9 +1238,9 @@ static int segmentPtrAdvance(
 }
 
 static void segmentPtrEndPage(
-  FileSystem *pFS,
-  SegmentPtr *pPtr,
-  int bLast,
+  FileSystem *pFS, 
+  SegmentPtr *pPtr, 
+  int bLast, 
   int *pRc
 ){
   if( *pRc==LSM_OK ){
@@ -1271,7 +1271,7 @@ static int segmentPtrEnd(MultiCursor *pCsr, SegmentPtr *pPtr, int bLast){
   int bIgnore;
 
   segmentPtrEndPage(pFS, pPtr, bLast, &rc);
-  while( rc==LSM_OK && pPtr->pPg
+  while( rc==LSM_OK && pPtr->pPg 
       && (pPtr->nCell==0 || (pPtr->flags & SEGMENT_BTREE_FLAG))
   ){
     rc = segmentPtrNextPage(pPtr, (bLast ? -1 : 1));
@@ -1287,7 +1287,7 @@ static int segmentPtrEnd(MultiCursor *pCsr, SegmentPtr *pPtr, int bLast){
       if( res<0 ) segmentPtrReset(pPtr, LSM_SEGMENTPTR_FREE_THRESHOLD);
     }
   }
-
+  
   bIgnore = segmentPtrIgnoreSeparators(pCsr, pPtr);
   if( rc==LSM_OK && pPtr->pPg && bIgnore && rtIsSeparator(pPtr->eType) ){
     rc = segmentPtrAdvance(pCsr, pPtr, bLast);
@@ -1295,7 +1295,7 @@ static int segmentPtrEnd(MultiCursor *pCsr, SegmentPtr *pPtr, int bLast){
 
 #if 0
   if( bLast && rc==LSM_OK && pPtr->pPg
-   && pPtr->pSeg==&pLvl->lhs
+   && pPtr->pSeg==&pLvl->lhs 
    && pLvl->nRight && (pPtr->eType & LSM_START_DELETE)
   ){
     pPtr->iCell++;
@@ -1337,8 +1337,8 @@ static char *keyToString(lsm_env *pEnv, void *pKey, int nKey){
 ** fails and this function does not return.
 */
 static int assertKeyLocation(
-  MultiCursor *pCsr,
-  SegmentPtr *pPtr,
+  MultiCursor *pCsr, 
+  SegmentPtr *pPtr, 
   void *pKey, int nKey
 ){
   lsm_env *pEnv = lsmFsEnv(pCsr->pDb->pFS);
@@ -1377,7 +1377,7 @@ static int assertKeyLocation(
           if( res==0 ) res = pCsr->pDb->xCmp(pKey, nKey, pPgKey, nPgKey);
           if( (eDir==1 && res>0) || (eDir==-1 && res<0) ){
             /* Taking this branch means something has gone wrong. */
-            char *zMsg = lsmMallocPrintf(pEnv, "Key \"%s\" is not on page %d",
+            char *zMsg = lsmMallocPrintf(pEnv, "Key \"%s\" is not on page %d", 
                 keyToString(pEnv, pKey, nKey), lsmFsPageNumber(pPtr->pPg)
             );
             fprintf(stderr, "%s\n", zMsg);
@@ -1432,7 +1432,7 @@ static int segmentPtrSearchOversized(
   ** upper level to the next page in the segment that contains at least
   ** one key. So compare the largest key on the current page with the
   ** key being sought (pKey/nKey). If (pKey/nKey) is larger, advance
-  ** to the next page in the segment that contains at least one key.
+  ** to the next page in the segment that contains at least one key. 
   */
   while( rc==LSM_OK && (pPtr->flags & PGFTR_SKIP_NEXT_FLAG) ){
     u8 *pLastKey;
@@ -1447,7 +1447,7 @@ static int segmentPtrSearchOversized(
     );
 
     /* If the loaded key is >= than (pKey/nKey), break out of the loop.
-    ** If (pKey/nKey) is present in this array, it must be on the current
+    ** If (pKey/nKey) is present in this array, it must be on the current 
     ** page.  */
     res = sortedKeyCompare(
         xCmp, iLastTopic, pLastKey, nLastKey, iTopic, pKey, nKey
@@ -1542,9 +1542,9 @@ static int sortedRhsFirst(MultiCursor *pCsr, Level *pLvl, SegmentPtr *pPtr){
 
 
 /*
-** This function is called as part of a SEEK_GE op on a multi-cursor if the
-** FC pointer read from segment *pPtr comes from an entry with the
-** LSM_START_DELETE flag set. In this case the pointer value cannot be
+** This function is called as part of a SEEK_GE op on a multi-cursor if the 
+** FC pointer read from segment *pPtr comes from an entry with the 
+** LSM_START_DELETE flag set. In this case the pointer value cannot be 
 ** trusted. Instead, the pointer that should be followed is that associated
 ** with the next entry in *pPtr that does not have LSM_START_DELETE set.
 **
@@ -1553,9 +1553,9 @@ static int sortedRhsFirst(MultiCursor *pCsr, Level *pLvl, SegmentPtr *pPtr){
 **
 **
 ** TODO: This is a stop-gap solution:
-**
-**   At the moment, this function is called from within segmentPtrSeek(),
-**   as part of the initial lsmMCursorSeek() call. However, consider a
+** 
+**   At the moment, this function is called from within segmentPtrSeek(), 
+**   as part of the initial lsmMCursorSeek() call. However, consider a 
 **   database where the following has occurred:
 **
 **      1. A range delete removes keys 1..9999 using a range delete.
@@ -1563,8 +1563,8 @@ static int sortedRhsFirst(MultiCursor *pCsr, Level *pLvl, SegmentPtr *pPtr){
 **      3. The levels containing the ops in 1. and 2. above are merged. Call
 **         this level N. Level N contains FC pointers to level N+1.
 **
-**   Then, if the user attempts to query for (key>=2 LIMIT 10), the
-**   lsmMCursorSeek() call will iterate through 9998 entries searching for a
+**   Then, if the user attempts to query for (key>=2 LIMIT 10), the 
+**   lsmMCursorSeek() call will iterate through 9998 entries searching for a 
 **   pointer down to the level N+1 that is never actually used. It would be
 **   much better if the multi-cursor could do this lazily - only seek to the
 **   level (N+1) page after the user has moved the cursor on level N passed
@@ -1583,7 +1583,7 @@ static int segmentPtrFwdPointer(
   LsmPgno iOut = 0;
 
   if( pPtr->pSeg==&pLvl->lhs || pPtr->pSeg==&pLvl->aRhs[pLvl->nRight-1] ){
-    if( pNext==0
+    if( pNext==0 
         || (pNext->nRight==0 && pNext->lhs.iRoot)
         || (pNext->nRight!=0 && pNext->aRhs[0].iRoot)
       ){
@@ -1645,16 +1645,16 @@ static int segmentPtrSeek(
 
   /* If the current page contains an oversized entry, then there are no
   ** pointers to one or more of the subsequent pages in the sorted run.
-  ** The following call ensures that the segment-ptr points to the correct
+  ** The following call ensures that the segment-ptr points to the correct 
   ** page in this case.  */
   rc = segmentPtrSearchOversized(pCsr, pPtr, iTopic, pKey, nKey);
   iPtrOut = pPtr->iPtr;
 
   /* Assert that this page is the right page of this segment for the key
   ** that we are searching for. Do this by loading page (iPg-1) and testing
-  ** that pKey/nKey is greater than all keys on that page, and then by
+  ** that pKey/nKey is greater than all keys on that page, and then by 
   ** loading (iPg+1) and testing that pKey/nKey is smaller than all
-  ** the keys it houses.
+  ** the keys it houses.  
   **
   ** TODO: With range-deletes in the tree, the test described above may fail.
   */
@@ -1662,8 +1662,8 @@ static int segmentPtrSeek(
   assert( assertKeyLocation(pCsr, pPtr, pKey, nKey) );
 #endif
 
-  assert( pPtr->nCell>0
-       || pPtr->pSeg->nSize==1
+  assert( pPtr->nCell>0 
+       || pPtr->pSeg->nSize==1 
        || lsmFsDbPageIsLast(pPtr->pSeg, pPtr->pPg)
   );
   if( pPtr->nCell==0 ){
@@ -1733,8 +1733,8 @@ static int segmentPtrSeek(
             break;
           case LSM_SEEK_GE: {
             /* Figure out if we need to 'skip' the pointer forward or not */
-            if( (res<=0 && (pPtr->eType & LSM_START_DELETE))
-             || (res>0  && (pPtr->eType & LSM_END_DELETE))
+            if( (res<=0 && (pPtr->eType & LSM_START_DELETE)) 
+             || (res>0  && (pPtr->eType & LSM_END_DELETE)) 
             ){
               rc = segmentPtrFwdPointer(pCsr, pPtr, &iPtrOut);
             }
@@ -1750,7 +1750,7 @@ static int segmentPtrSeek(
     /* If the cursor seek has found a separator key, and this cursor is
     ** supposed to ignore separators keys, advance to the next entry.  */
     if( rc==LSM_OK && pPtr->pPg
-     && segmentPtrIgnoreSeparators(pCsr, pPtr)
+     && segmentPtrIgnoreSeparators(pCsr, pPtr) 
      && rtIsSeparator(pPtr->eType)
     ){
       assert( eSeek!=LSM_SEEK_EQ );
@@ -1847,7 +1847,7 @@ static int seekInBtree(
 }
 
 static int seekInSegment(
-  MultiCursor *pCsr,
+  MultiCursor *pCsr, 
   SegmentPtr *pPtr,
   int iTopic,
   void *pKey, int nKey,
@@ -1886,7 +1886,7 @@ static int seekInSegment(
 **   This parameter is only significant if parameter eSeek is set to
 **   LSM_SEEK_EQ. In this case, it is set to true before returning if
 **   the seek operation is finished. This can happen in two ways:
-**
+**   
 **     a) A key matching (pKey/nKey) is found, or
 **     b) A point-delete or range-delete deleting the key is found.
 **
@@ -1913,13 +1913,13 @@ static int seekInLevel(
   ** merge), figure out if the search key is larger or smaller than the
   ** levels split-key.  */
   if( nRhs ){
-    res = sortedKeyCompare(pCsr->pDb->xCmp, iTopic, pKey, nKey,
+    res = sortedKeyCompare(pCsr->pDb->xCmp, iTopic, pKey, nKey, 
         pLvl->iSplitTopic, pLvl->pSplitKey, pLvl->nSplitKey
     );
   }
 
   /* If (res<0), then key pKey/nKey is smaller than the split-key (or this
-  ** is not a composite level and there is no split-key). Search the
+  ** is not a composite level and there is no split-key). Search the 
   ** left-hand-side of the level in this case.  */
   if( res<0 ){
     int i;
@@ -1936,7 +1936,7 @@ static int seekInLevel(
       segmentPtrReset(&aPtr[i], LSM_SEGMENTPTR_FREE_THRESHOLD);
     }
   }
-
+  
   if( res>=0 ){
     int bHit = 0;                 /* True if at least one rhs is not EOF */
     int iPtr = (int)*piPgno;
@@ -1953,8 +1953,8 @@ static int seekInLevel(
       /* If the segment-pointer has settled on a key that is smaller than
       ** the splitkey, invalidate the segment-pointer.  */
       if( pPtr->pPg ){
-        res = sortedKeyCompare(pCsr->pDb->xCmp,
-            rtTopic(pPtr->eType), pPtr->pKey, pPtr->nKey,
+        res = sortedKeyCompare(pCsr->pDb->xCmp, 
+            rtTopic(pPtr->eType), pPtr->pKey, pPtr->nKey, 
             pLvl->iSplitTopic, pLvl->pSplitKey, pLvl->nSplitKey
         );
         if( res<0 ){
@@ -1985,7 +1985,7 @@ static int seekInLevel(
 }
 
 static void multiCursorGetKey(
-  MultiCursor *pCsr,
+  MultiCursor *pCsr, 
   int iKey,
   int *peType,                    /* OUT: Key type (SORTED_WRITE etc.) */
   void **ppKey,                   /* OUT: Pointer to buffer containing key */
@@ -2083,7 +2083,7 @@ static int sortedDbKeyCompare(
   int res;
 
   /* Compare the keys, including the system flag. */
-  res = sortedKeyCompare(xCmp,
+  res = sortedKeyCompare(xCmp, 
     rtTopic(iLhsFlags), pLhsKey, nLhsKey,
     rtTopic(iRhsFlags), pRhsKey, nRhsKey
   );
@@ -2172,7 +2172,7 @@ static void multiCursorDoCompare(MultiCursor *pCsr, int iOut, int bReverse){
 **     key in their respective data.
 */
 static int segmentCursorAdvance(
-  MultiCursor *pCsr,
+  MultiCursor *pCsr, 
   int iPtr,
   int bReverse
 ){
@@ -2286,7 +2286,7 @@ void lsmMCursorClose(MultiCursor *pCsr, int bCache){
     lsm_db *pDb = pCsr->pDb;
     MultiCursor **pp;             /* Iterator variable */
 
-    /* The cursor may or may not be currently part of the linked list
+    /* The cursor may or may not be currently part of the linked list 
     ** starting at lsm_db.pCsr. If it is, extract it.  */
     for(pp=&pDb->pCsr; *pp; pp=&((*pp)->pNext)){
       if( *pp==pCsr ){
@@ -2339,9 +2339,9 @@ static int multiCursorAddTree(MultiCursor *pCsr, Snapshot *pSnap, int eTree){
   lsm_db *db = pCsr->pDb;
 
   /* Add a tree cursor on the 'old' tree, if it exists. */
-  if( eTree!=TREE_NONE
-   && lsmTreeHasOld(db)
-   && db->treehdr.iOldLog!=pSnap->iLogOff
+  if( eTree!=TREE_NONE 
+   && lsmTreeHasOld(db) 
+   && db->treehdr.iOldLog!=pSnap->iLogOff 
   ){
     rc = lsmTreeCursorNew(db, 1, &pCsr->apTreeCsr[1]);
   }
@@ -2469,7 +2469,7 @@ static void multiCursorIgnoreDelete(MultiCursor *pCsr){
 
 /*
 ** If the free-block list is not empty, then have this cursor visit a key
-** with (a) the system bit set, and (b) the key "FREELIST" and (c) a value
+** with (a) the system bit set, and (b) the key "FREELIST" and (c) a value 
 ** blob containing the serialized free-block list.
 */
 static int multiCursorVisitFreelist(MultiCursor *pCsr){
@@ -2529,9 +2529,9 @@ int lsmMCursorNew(
 }
 
 static int multiCursorGetVal(
-  MultiCursor *pCsr,
-  int iVal,
-  void **ppVal,
+  MultiCursor *pCsr, 
+  int iVal, 
+  void **ppVal, 
   int *pnVal
 ){
   int rc = LSM_OK;
@@ -2554,7 +2554,7 @@ static int multiCursorGetVal(
 
     case CURSOR_DATA_SYSTEM: {
       Snapshot *pWorker = pCsr->pDb->pWorker;
-      if( pWorker
+      if( pWorker 
        && (pCsr->iFree % 2)==0
        && pCsr->iFree < (pWorker->freelist.nEntry*2)
       ){
@@ -2612,7 +2612,7 @@ int lsmSortedWalkFreelist(
     rc = multiCursorAddAll(pCsr, pSnap);
     pCsr->flags |= CURSOR_IGNORE_DELETE;
   }
-
+  
   if( rc==LSM_OK ){
     if( bReverse==0 ){
       rc = lsmMCursorLast(pCsr);
@@ -2663,12 +2663,12 @@ int lsmSortedLoadFreelist(
     rc = multiCursorAddAll(pCsr, pDb->pWorker);
     pCsr->flags |= CURSOR_IGNORE_DELETE;
   }
-
+  
   if( rc==LSM_OK ){
     rc = lsmMCursorLast(pCsr);
-    if( rc==LSM_OK
+    if( rc==LSM_OK 
      && rtIsWrite(pCsr->eType) && rtIsSystem(pCsr->eType)
-     && pCsr->key.nData==8
+     && pCsr->key.nData==8 
      && 0==memcmp(pCsr->key.pData, "FREELIST", 8)
     ){
       void *pVal; int nVal;         /* Value read from database */
@@ -2731,7 +2731,7 @@ static void assertCursorTree(MultiCursor *pCsr){
       multiCursorDoCompare(pCsr, i, bRev);
     }
 
-    assert( nSave==pCsr->nTree
+    assert( nSave==pCsr->nTree 
         && 0==memcmp(aSave, pCsr->aTree, sizeof(int)*nSave)
     );
 
@@ -2750,7 +2750,7 @@ static int mcursorLocationOk(MultiCursor *pCsr, int bDeleteOk){
   int iKey;
   int i;
   int rdmask;
-
+  
   assert( pCsr->flags & (CURSOR_NEXT_OK|CURSOR_PREV_OK) );
   assertCursorTree(pCsr);
 
@@ -2772,7 +2772,7 @@ static int mcursorLocationOk(MultiCursor *pCsr, int bDeleteOk){
 #ifndef NDEBUG
   /* This block fires assert() statements to check one of the assumptions
   ** in the comment below - that if the lhs sub-cursor of a level undergoing
-  ** a merge is valid, then all the rhs sub-cursors must be at EOF.
+  ** a merge is valid, then all the rhs sub-cursors must be at EOF. 
   **
   ** Also assert that all rhs sub-cursors are either at EOF or point to
   ** a key that is not less than the level split-key.  */
@@ -2784,7 +2784,7 @@ static int mcursorLocationOk(MultiCursor *pCsr, int bDeleteOk){
         int j;
         for(j=0; j<pLvl->nRight; j++) assert( pPtr[j+1].pPg==0 );
       }else{
-        int res = sortedKeyCompare(pCsr->pDb->xCmp,
+        int res = sortedKeyCompare(pCsr->pDb->xCmp, 
             rtTopic(pPtr->eType), pPtr->pKey, pPtr->nKey,
             pLvl->iSplitTopic, pLvl->pSplitKey, pLvl->nSplitKey
         );
@@ -2794,10 +2794,10 @@ static int mcursorLocationOk(MultiCursor *pCsr, int bDeleteOk){
   }
 #endif
 
-  /* Now check if this key has already been deleted by a range-delete. If
+  /* Now check if this key has already been deleted by a range-delete. If 
   ** so, skip past it.
   **
-  ** Assume, for the moment, that the tree contains no levels currently
+  ** Assume, for the moment, that the tree contains no levels currently 
   ** undergoing incremental merge, and that this cursor is iterating forwards
   ** through the database keys. The cursor currently points to a key in
   ** level L. This key has already been deleted if any of the sub-cursors
@@ -2810,25 +2810,25 @@ static int mcursorLocationOk(MultiCursor *pCsr, int bDeleteOk){
   **
   ** Why it works with levels undergoing a merge too:
   **
-  ** When a cursor iterates forwards, the sub-cursors for the rhs of a
+  ** When a cursor iterates forwards, the sub-cursors for the rhs of a 
   ** level are only activated once the lhs reaches EOF. So when iterating
   ** forwards, the keys visited are the same as if the level was completely
   ** merged.
   **
-  ** If the cursor is iterating backwards, then the lhs sub-cursor is not
+  ** If the cursor is iterating backwards, then the lhs sub-cursor is not 
   ** initialized until the last of the rhs sub-cursors has reached EOF.
   ** Additionally, if the START_DELETE flag is set on the last entry (in
   ** reverse order - so the entry with the smallest key) of a rhs sub-cursor,
   ** then a pseudo-key equal to the levels split-key with the END_DELETE
   ** flag set is visited by the sub-cursor.
-  */
+  */ 
   iKey = pCsr->aTree[1];
   for(i=0; i<iKey; i++){
     int csrflags;
     multiCursorGetKey(pCsr, i, &csrflags, 0, 0);
     if( (rdmask & csrflags) ){
       const int SD_ED = (LSM_START_DELETE|LSM_END_DELETE);
-      if( (csrflags & SD_ED)==SD_ED
+      if( (csrflags & SD_ED)==SD_ED 
        || (pCsr->flags & CURSOR_IGNORE_DELETE)==0
       ){
         void *pKey; int nKey;
@@ -2928,7 +2928,7 @@ static int multiCursorEnd(MultiCursor *pCsr, int bLast){
   if( rc==LSM_OK ){
     rc = multiCursorSetupTree(pCsr, bLast);
   }
-
+  
   return rc;
 }
 
@@ -2949,7 +2949,7 @@ int mcursorRestore(lsm_db *pDb, MultiCursor *pCsr){
   int rc;
   rc = multiCursorInit(pCsr, pDb->pClient);
   if( rc==LSM_OK && pCsr->key.pData ){
-    rc = lsmMCursorSeek(pCsr,
+    rc = lsmMCursorSeek(pCsr, 
          rtTopic(pCsr->eType), pCsr->key.pData, pCsr->key.nData, +1
     );
   }
@@ -3000,8 +3000,8 @@ void lsmMCursorReset(MultiCursor *pCsr){
 
 static int treeCursorSeek(
   MultiCursor *pCsr,
-  TreeCursor *pTreeCsr,
-  void *pKey, int nKey,
+  TreeCursor *pTreeCsr, 
+  void *pKey, int nKey, 
   int eSeek,
   int *pbStop
 ){
@@ -3051,9 +3051,9 @@ static int treeCursorSeek(
 ** Seek the cursor.
 */
 int lsmMCursorSeek(
-  MultiCursor *pCsr,
-  int iTopic,
-  void *pKey, int nKey,
+  MultiCursor *pCsr, 
+  int iTopic, 
+  void *pKey, int nKey, 
   int eSeek
 ){
   int eESeek = eSeek;             /* Effective eSeek parameter */
@@ -3126,7 +3126,7 @@ int lsmMCursorValid(MultiCursor *pCsr){
     if( iKey==CURSOR_DATA_TREE0 || iKey==CURSOR_DATA_TREE1 ){
       res = lsmTreeCursorValid(pCsr->apTreeCsr[iKey-CURSOR_DATA_TREE0]);
     }else{
-      void *pKey;
+      void *pKey; 
       multiCursorGetKey(pCsr, iKey, 0, &pKey, 0);
       res = pKey!=0;
     }
@@ -3135,7 +3135,7 @@ int lsmMCursorValid(MultiCursor *pCsr){
 }
 
 static int mcursorAdvanceOk(
-  MultiCursor *pCsr,
+  MultiCursor *pCsr, 
   int bReverse,
   int *pRc
 ){
@@ -3146,14 +3146,14 @@ static int mcursorAdvanceOk(
   if( *pRc ) return 1;
 
   /* Check the current key value. If it is not greater than (if bReverse==0)
-  ** or less than (if bReverse!=0) the key currently cached in pCsr->key,
-  ** then the cursor has not yet been successfully advanced.
+  ** or less than (if bReverse!=0) the key currently cached in pCsr->key, 
+  ** then the cursor has not yet been successfully advanced.  
   */
   multiCursorGetKey(pCsr, pCsr->aTree[1], &eNewType, &pNew, &nNew);
   if( pNew ){
     int typemask = (pCsr->flags & CURSOR_IGNORE_DELETE) ? ~(0) : LSM_SYSTEMKEY;
     int res = sortedDbKeyCompare(pCsr,
-      eNewType & typemask, pNew, nNew,
+      eNewType & typemask, pNew, nNew, 
       pCsr->eType & typemask, pCsr->key.pData, pCsr->key.nData
     );
 
@@ -3165,8 +3165,8 @@ static int mcursorAdvanceOk(
     assert( pCsr->eType==eNewType );
 
     /* If this cursor is configured to skip deleted keys, and the current
-    ** cursor points to a SORTED_DELETE entry, then the cursor has not been
-    ** successfully advanced.
+    ** cursor points to a SORTED_DELETE entry, then the cursor has not been 
+    ** successfully advanced.  
     **
     ** Similarly, if the cursor is configured to skip system keys and the
     ** current cursor points to a system key, it has not yet been advanced.
@@ -3219,7 +3219,7 @@ static int multiCursorAdvance(MultiCursor *pCsr, int bReverse){
           assert( pCsr->pBtCsr );
           *pCsr->pPrevMergePtr = pCsr->pBtCsr->iPtr;
         }else if( pCsr->pBtCsr==0 && pCsr->nPtr>0
-               && iKey==(CURSOR_DATA_SEGMENT+pCsr->nPtr-1)
+               && iKey==(CURSOR_DATA_SEGMENT+pCsr->nPtr-1) 
         ){
           SegmentPtr *pPtr = &pCsr->aPtr[iKey-CURSOR_DATA_SEGMENT];
           *pCsr->pPrevMergePtr = pPtr->iPtr+pPtr->iPgPtr;
@@ -3293,7 +3293,7 @@ int lsmMCursorKey(MultiCursor *pCsr, void **ppKey, int *pnKey){
       }else{
         *ppKey = pCsr->key.pData;
       }
-      *pnKey = nKey;
+      *pnKey = nKey; 
     }
   }
   return LSM_OK;
@@ -3351,7 +3351,7 @@ int lsmMCursorType(MultiCursor *pCsr, int *peType){
 }
 
 /*
-** Buffer aData[], size nData, is assumed to contain a valid b-tree
+** Buffer aData[], size nData, is assumed to contain a valid b-tree 
 ** hierarchy page image. Return the offset in aData[] of the next free
 ** byte in the data area (where a new cell may be written if there is
 ** space).
@@ -3365,8 +3365,8 @@ static int mergeWorkerPageOffset(u8 *aData, int nData){
   nRec = lsmGetU16(&aData[SEGMENT_NRECORD_OFFSET(nData)]);
   iOff = lsmGetU16(&aData[SEGMENT_CELLPTR_OFFSET(nData, nRec-1)]);
   eType = aData[iOff++];
-  assert( eType==0
-       || eType==(LSM_SYSTEMKEY|LSM_SEPARATOR)
+  assert( eType==0 
+       || eType==(LSM_SYSTEMKEY|LSM_SEPARATOR) 
        || eType==(LSM_SEPARATOR)
   );
 
@@ -3434,8 +3434,8 @@ static int mergeWorkerMoveHierarchy(
       if( n1>=n2 ){
         /* If n1 (size of the new page) is equal to or greater than n2 (the
         ** size of the old page), then copy the data into the new page. If
-        ** n1==n2, this could be done with a single memcpy(). However,
-        ** since sometimes n1>n2, the page content and footer must be copied
+        ** n1==n2, this could be done with a single memcpy(). However, 
+        ** since sometimes n1>n2, the page content and footer must be copied 
         ** separately. */
         int nEntry = pageGetNRec(a2, n2);
         int iEof1 = SEGMENT_EOF(n1, nEntry);
@@ -3471,7 +3471,7 @@ static int mergeWorkerLoadHierarchy(MergeWorker *pMW){
   int rc = LSM_OK;
   Segment *pSeg;
   Hierarchy *p;
-
+ 
   pSeg = &pMW->pLevel->lhs;
   p = &pMW->hier;
 
@@ -3534,7 +3534,7 @@ static int mergeWorkerLoadHierarchy(MergeWorker *pMW){
 }
 
 /*
-** B-tree pages use almost the same format as regular pages. The
+** B-tree pages use almost the same format as regular pages. The 
 ** differences are:
 **
 **   1. The record format is (usually, see below) as follows:
@@ -3544,10 +3544,10 @@ static int mergeWorkerLoadHierarchy(MergeWorker *pMW){
 **         + Number of bytes in key (varint),
 **         + LsmBlob containing key data.
 **
-**   2. All pointer values are stored as absolute values (not offsets
+**   2. All pointer values are stored as absolute values (not offsets 
 **      relative to the footer pointer value).
 **
-**   3. Each pointer that is part of a record points to a page that
+**   3. Each pointer that is part of a record points to a page that 
 **      contains keys smaller than the records key (note: not "equal to or
 **      smaller than - smaller than").
 **
@@ -3556,9 +3556,9 @@ static int mergeWorkerLoadHierarchy(MergeWorker *pMW){
 **      b-tree page.
 **
 ** The reason for having the page footer pointer point to the right-child
-** (instead of the left) is that doing things this way makes the
-** mergeWorkerMoveHierarchy() operation less complicated (since the pointers
-** that need to be updated are all stored as fixed-size integers within the
+** (instead of the left) is that doing things this way makes the 
+** mergeWorkerMoveHierarchy() operation less complicated (since the pointers 
+** that need to be updated are all stored as fixed-size integers within the 
 ** page footer, not varints in page records).
 **
 ** Records may not span b-tree pages. If this function is called to add a
@@ -3566,7 +3566,7 @@ static int mergeWorkerLoadHierarchy(MergeWorker *pMW){
 ** array page that contains the main record is added to the b-tree instead.
 ** In this case the record format is:
 **
-**         + 0x00 byte (1 byte)
+**         + 0x00 byte (1 byte) 
 **         + Absolute pointer value (varint),
 **         + Absolute page number of page containing key (varint).
 **
@@ -3695,7 +3695,7 @@ static int mergeWorkerBtreeIndirect(MergeWorker *pMW){
 }
 
 /*
-** Append the database key (iTopic/pKey/nKey) to the b-tree under
+** Append the database key (iTopic/pKey/nKey) to the b-tree under 
 ** construction. This key has not yet been written to a segment page.
 ** The pointer that will accompany the new key in the b-tree - that
 ** points to the completed segment page that contains keys smaller than
@@ -3799,7 +3799,7 @@ static int keyszToSkip(FileSystem *pFS, int nKey){
 
 /*
 ** Release the reference to the current output page of merge-worker *pMW
-** (reference pMW->pPage). Set the page number values in aSave[] as
+** (reference pMW->pPage). Set the page number values in aSave[] as 
 ** required (see comments above struct MergeWorker for details).
 */
 static int mergeWorkerPersistAndRelease(MergeWorker *pMW){
@@ -3863,7 +3863,7 @@ static int mergeWorkerNextPage(
 }
 
 /*
-** Write a blob of data into an output segment being populated by a
+** Write a blob of data into an output segment being populated by a 
 ** merge-worker object. If argument bSep is true, write into the separators
 ** array. Otherwise, the main array.
 **
@@ -3888,7 +3888,7 @@ static int mergeWorkerData(
     int iOff;                     /* Offset in aData[] to write to */
 
     assert( lsmFsPageWritable(pMW->pPage) );
-
+   
     aData = fsPageData(pMW->pPage, &nData);
     nRec = pageGetNRec(aData, nData);
     iOff = pMerge->iOutputOff;
@@ -3967,7 +3967,7 @@ static int mergeWorkerWrite(
   int flags = 0;                  /* If != 0, flags value for page footer */
   int bFirst = 0;                 /* True for first key of output run */
 
-  pMerge = pMW->pLevel->pMerge;
+  pMerge = pMW->pLevel->pMerge;    
   pSeg = &pMW->pLevel->lhs;
 
   if( pSeg->iFirst==0 && pMW->pPage==0 ){
@@ -3981,11 +3981,11 @@ static int mergeWorkerWrite(
     iFPtr = (int)pageGetPtr(aData, nData);
     iRPtr = iPtr - iFPtr;
   }
-
+     
   /* Figure out how much space is required by the new record. The space
   ** required is divided into two sections: the header and the body. The
-  ** header consists of the intial varint fields. The body are the blobs
-  ** of data that correspond to the key and value data. The entire header
+  ** header consists of the intial varint fields. The body are the blobs 
+  ** of data that correspond to the key and value data. The entire header 
   ** must be stored on the page. The body may overflow onto the next and
   ** subsequent pages.
   **
@@ -4000,7 +4000,7 @@ static int mergeWorkerWrite(
     nHdr = 1 + lsmVarintLen32(iRPtr) + lsmVarintLen32(nKey);
     if( rtIsWrite(eType) ) nHdr += lsmVarintLen32(nVal);
 
-    /* If the entire header will not fit on page pPg, or if page pPg is
+    /* If the entire header will not fit on page pPg, or if page pPg is 
     ** marked read-only, advance to the next page of the output run. */
     iOff = pMerge->iOutputOff;
     if( iOff<0 || pPg==0 || iOff+nHdr > SEGMENT_EOF(nData, nRec+1) ){
@@ -4018,7 +4018,7 @@ static int mergeWorkerWrite(
     }
   }
 
-  /* If this record header will be the first on the page, and the page is
+  /* If this record header will be the first on the page, and the page is 
   ** not the very first in the entire run, add a copy of the key to the
   ** b-tree hierarchy.
   */
@@ -4077,7 +4077,7 @@ static void mergeWorkerShutdown(MergeWorker *pMW, int *pRc){
   MultiCursor *pCsr = pMW->pCsr;
 
   /* Unless the merge has finished, save the cursor position in the
-  ** Merge.aInput[] array. See function mergeWorkerInit() for the
+  ** Merge.aInput[] array. See function mergeWorkerInit() for the 
   ** code to restore a cursor position based on aInput[].  */
   if( rc==LSM_OK && pCsr ){
     Merge *pMerge = pMW->pLevel->pMerge;
@@ -4123,7 +4123,7 @@ static void mergeWorkerShutdown(MergeWorker *pMW, int *pRc){
       int iEof = SEGMENT_EOF(nData, pageGetNRec(aData, nData));
       memset(&aData[iOff], 0, iEof - iOff);
     }
-
+    
     pMerge->iOutputOff = -1;
   }
 
@@ -4150,7 +4150,7 @@ static void mergeWorkerShutdown(MergeWorker *pMW, int *pRc){
 ** database entry flags for the current entry. The entry about to be written
 ** to the output.
 **
-** Note that this function only has to work for cursors configured to
+** Note that this function only has to work for cursors configured to 
 ** iterate forwards (not backwards).
 */
 static void mergeRangeDeletes(MultiCursor *pCsr, int *piVal, int *piFlags){
@@ -4175,7 +4175,7 @@ static void mergeRangeDeletes(MultiCursor *pCsr, int *piVal, int *piFlags){
         multiCursorGetKey(pCsr, i, &eType, &pKey, &nKey);
 
         if( pKey ){
-          res = sortedKeyCompare(pCsr->pDb->xCmp,
+          res = sortedKeyCompare(pCsr->pDb->xCmp, 
               rtTopic(pCsr->eType), pCsr->key.pData, pCsr->key.nData,
               rtTopic(eType), pKey, nKey
           );
@@ -4206,8 +4206,8 @@ static void mergeRangeDeletes(MultiCursor *pCsr, int *piVal, int *piFlags){
     }
 
     assert( (f & LSM_INSERT)==0 || (f & LSM_POINT_DELETE)==0 );
-    if( (f & LSM_START_DELETE)
-     && (f & LSM_END_DELETE)
+    if( (f & LSM_START_DELETE) 
+     && (f & LSM_END_DELETE) 
      && (f & LSM_POINT_DELETE )
     ){
       f = 0;
@@ -4234,9 +4234,9 @@ static int mergeWorkerStep(MergeWorker *pMW){
 
   /* Figure out if the output record may have a different pointer value
   ** than the previous. This is the case if the current key is identical to
-  ** a key that appears in the lowest level run being merged. If so, set
-  ** iPtr to the absolute pointer value. If not, leave iPtr set to zero,
-  ** indicating that the output pointer value should be a copy of the pointer
+  ** a key that appears in the lowest level run being merged. If so, set 
+  ** iPtr to the absolute pointer value. If not, leave iPtr set to zero, 
+  ** indicating that the output pointer value should be a copy of the pointer 
   ** value written with the previous key.  */
   iPtr = (pCsr->pPrevMergePtr ? *pCsr->pPrevMergePtr : 0);
   if( pCsr->pBtCsr ){
@@ -4483,7 +4483,7 @@ static int sortedMergeSetup(
   /* Allocate the new Level object */
   pNew = (Level *)lsmMallocZeroRc(pDb->pEnv, sizeof(Level), &rc);
   if( pNew ){
-    pNew->aRhs = (Segment *)lsmMallocZeroRc(pDb->pEnv,
+    pNew->aRhs = (Segment *)lsmMallocZeroRc(pDb->pEnv, 
                                         nMerge * sizeof(Segment), &rc);
   }
 
@@ -4516,7 +4516,7 @@ static int sortedMergeSetup(
     lsmDbSnapshotSetLevel(pDb->pWorker, pTopLevel);
 
     /* Determine whether or not the next separators will be linked in */
-    if( pNext && pNext->pMerge==0 && pNext->lhs.iRoot && pNext
+    if( pNext && pNext->pMerge==0 && pNext->lhs.iRoot && pNext 
      && (bFreeOnly==0 || (pNext->flags & LEVEL_FREELIST_ONLY))
     ){
       bUseNext = 1;
@@ -4591,7 +4591,7 @@ static int mergeWorkerInit(
   if( rc==LSM_OK ){
     pCsr->pPrevMergePtr = &pMerge->iCurrentPtr;
     if( pLevel->lhs.iFirst==0 ){
-      /* The output array is still empty. So position the cursor at the very
+      /* The output array is still empty. So position the cursor at the very 
       ** start of the input.  */
       rc = multiCursorEnd(pCsr, 0);
     }else{
@@ -4646,9 +4646,9 @@ static int sortedBtreeGobble(
     assert( pSeg->iRoot>0 );
     aPg = lsmMallocZeroRc(pDb->pEnv, sizeof(LsmPgno)*32, &rc);
     if( rc==LSM_OK ){
-      rc = seekInBtree(pCsr, pSeg,
+      rc = seekInBtree(pCsr, pSeg, 
           rtTopic(pCsr->eType), pCsr->key.pData, pCsr->key.nData, aPg, 0
-      );
+      ); 
     }
 
     if( rc==LSM_OK ){
@@ -4687,7 +4687,7 @@ static int sortedSelectLevel(lsm_db *pDb, int nMerge, Level **ppOut){
   assert( nMerge>=1 );
   nBest = LSM_MAX(1, nMerge-1);
 
-  /* Find the longest contiguous run of levels not currently undergoing a
+  /* Find the longest contiguous run of levels not currently undergoing a 
   ** merge with the same age in the structure. Or the level being merged
   ** with the largest number of right-hand segments. Work on it. */
   for(pLevel=pTopLevel; pLevel; pLevel=pLevel->pNext){
@@ -4779,8 +4779,8 @@ static int moveBlockCb(void *pCtx, int iBlk, i64 iSnapshot){
 }
 
 /*
-** This function is called to further compact a database for which all
-** of the content has already been merged into a single segment. If
+** This function is called to further compact a database for which all 
+** of the content has already been merged into a single segment. If 
 ** possible, it moves the contents of a single block from the end of the
 ** file to a free-block that lies closer to the start of the file (allowing
 ** the file to be eventually truncated).
@@ -4803,7 +4803,7 @@ static int sortedMoveBlock(lsm_db *pDb, int *pnWrite){
   ** without moving any database content.  */
   if( p->redirect.n>=LSM_MAX_BLOCK_REDIRECTS ) return LSM_OK;
 
-  /* Find the last block of content in the database file. Do this by
+  /* Find the last block of content in the database file. Do this by 
   ** traversing the free-list in reverse (descending block number) order.
   ** The first block not on the free list is the one that will be moved.
   ** Since the db consists of a single segment, there is no ambiguity as
@@ -4836,7 +4836,7 @@ static int sortedMoveBlock(lsm_db *pDb, int *pnWrite){
 
       if( i==p->redirect.n ){
         /* Block iFrom was not already redirected. Add a new array entry. */
-        memmove(&p->redirect.a[1], &p->redirect.a[0],
+        memmove(&p->redirect.a[1], &p->redirect.a[0], 
             sizeof(struct RedirectEntry) * p->redirect.n
             );
         p->redirect.a[0].iFrom = iFrom;
@@ -4867,7 +4867,7 @@ static int sortedMoveBlock(lsm_db *pDb, int *pnWrite){
 /*
 */
 static int mergeInsertFreelistSegments(
-  lsm_db *pDb,
+  lsm_db *pDb, 
   int nFree,
   MergeWorker *pMW
 ){
@@ -4969,9 +4969,9 @@ static int sortedWork(
       pDb->bIncrMerge = 1;
       rc = mergeWorkerInit(pDb, pLevel, &mergeworker);
       assert( mergeworker.nWork==0 );
-
-      while( rc==LSM_OK
-          && 0==mergeWorkerDone(&mergeworker)
+      
+      while( rc==LSM_OK 
+          && 0==mergeWorkerDone(&mergeworker) 
           && (mergeworker.nWork<nRemaining || pDb->bUseFreelist)
       ){
         int eType = rtTopic(mergeworker.pCsr->eType);
@@ -4992,8 +4992,8 @@ static int sortedWork(
           /* Now check if all levels containing data newer than this one
           ** are single-segment free-list only levels. If so, they will be
           ** merged in now.  */
-          for(pLvl=pDb->pWorker->pLevel;
-              pLvl!=mergeworker.pLevel && (pLvl->flags & LEVEL_FREELIST_ONLY);
+          for(pLvl=pDb->pWorker->pLevel; 
+              pLvl!=mergeworker.pLevel && (pLvl->flags & LEVEL_FREELIST_ONLY); 
               pLvl=pLvl->pNext
           ){
             assert( pLvl->nRight==0 );
@@ -5018,7 +5018,7 @@ static int sortedWork(
       if( rc==LSM_OK ){
         /* Check if the merge operation is completely finished. If not,
         ** gobble up (declare eligible for recycling) any pages from rhs
-        ** segments for which the content has been completely merged into
+        ** segments for which the content has been completely merged into 
         ** the lhs of the level.  */
         if( mergeWorkerDone(&mergeworker)==0 ){
           int i;
@@ -5054,11 +5054,11 @@ static int sortedWork(
           }
 
           if( bEmpty ){
-            /* If the new level is completely empty, remove it from the
+            /* If the new level is completely empty, remove it from the 
             ** database snapshot. This can only happen if all input keys were
             ** annihilated. Since keys are only annihilated if the new level
             ** is the last in the linked list (contains the most ancient of
-            ** database content), this guarantees that pLevel->pNext==0.  */
+            ** database content), this guarantees that pLevel->pNext==0.  */ 
             Level *pTop;          /* Top level of worker snapshot */
             Level **pp;           /* Read/write iterator for Level.pNext list */
 
@@ -5140,9 +5140,9 @@ static int sortedTreeHasOld(lsm_db *pDb, int *pRc){
 
   assert( pDb->pWorker );
   if( *pRc==LSM_OK ){
-    if( rc==LSM_OK
+    if( rc==LSM_OK 
         && pDb->treehdr.iOldShmid
-        && pDb->treehdr.iOldLog!=pDb->pWorker->iLogOff
+        && pDb->treehdr.iOldLog!=pDb->pWorker->iLogOff 
       ){
       bRet = 1;
     }else{
@@ -5172,7 +5172,7 @@ int lsmSaveWorker(lsm_db *pDb, int bFlush){
 }
 
 static int doLsmSingleWork(
-  lsm_db *pDb,
+  lsm_db *pDb, 
   int bShutdown,
   int nMerge,                     /* Minimum segments to merge together */
   int nPage,                      /* Number of pages to write to disk */
@@ -5222,7 +5222,7 @@ static int doLsmSingleWork(
   if( sortedTreeHasOld(pDb, &rc) ){
     /* sortedDbIsFull() returns non-zero if either (a) there are too many
     ** levels in total in the db, or (b) there are too many levels with the
-    ** the same age in the db. Either way, call sortedWork() to merge
+    ** the same age in the db. Either way, call sortedWork() to merge 
     ** existing segments together until this condition is cleared.  */
     if( sortedDbIsFull(pDb) ){
       int nPg = 0;
@@ -5254,7 +5254,7 @@ static int doLsmSingleWork(
     if( nPg ) bDirty = 1;
   }
 
-  /* If the in-memory part of the free-list is too large, write a new
+  /* If the in-memory part of the free-list is too large, write a new 
   ** top-level containing just the in-memory free-list entries to disk. */
   if( rc==LSM_OK && pDb->pWorker->freelist.nEntry > pDb->nMaxFreelist ){
     while( rc==LSM_OK && lsmDatabaseFull(pDb) ){
@@ -5272,9 +5272,9 @@ static int doLsmSingleWork(
     *pnWrite = (nMax - nRem);
     *pbCkpt = (bCkpt && nRem<=0);
     if( nMerge==1 && pDb->nAutockpt>0 && *pnWrite>0
-     && pWorker->pLevel
-     && pWorker->pLevel->nRight==0
-     && pWorker->pLevel->pNext==0
+     && pWorker->pLevel 
+     && pWorker->pLevel->nRight==0 
+     && pWorker->pLevel->pNext==0 
     ){
       *pbCkpt = 1;
     }
@@ -5347,7 +5347,7 @@ int lsm_work(lsm_db *pDb, int nMerge, int nKB, int *pnWrite){
   }
 
   rc = doLsmWork(pDb, nMerge, nPage, &nWrite);
-
+  
   if( pnWrite ){
     /* Convert back from pages to KB */
     *pnWrite = (int)(((i64)nWrite * 1024 + nPgsz - 1) / nPgsz);
@@ -5417,7 +5417,7 @@ int lsmSortedAutoWork(
 
     nRemaining = nUnit * nDepth;
 #ifdef LSM_LOG_WORK
-    lsmLogMessage(pDb, rc, "lsmSortedAutoWork(): %d*%d = %d pages",
+    lsmLogMessage(pDb, rc, "lsmSortedAutoWork(): %d*%d = %d pages", 
         nUnit, nDepth, nRemaining);
 #endif
     assert( nRemaining>=0 );
@@ -5502,8 +5502,8 @@ static char *segToString(lsm_env *pEnv, Segment *pSeg, int nMin){
 
 static int fileToString(
   lsm_db *pDb,                    /* For xMalloc() */
-  char *aBuf,
-  int nBuf,
+  char *aBuf, 
+  int nBuf, 
   int nMin,
   Segment *pSeg
 ){
@@ -5708,7 +5708,7 @@ static int infoPageDump(
     }
   }
 
-  /* iPg is a real page number (not subject to redirection). So it is safe
+  /* iPg is a real page number (not subject to redirection). So it is safe 
   ** to pass a NULL in place of the segment pointer as the second argument
   ** to lsmFsDbPageGet() here.  */
   if( rc==LSM_OK ){
@@ -5760,14 +5760,14 @@ static int infoPageDump(
       iAbsPtr = iPgPtr + ((flags2 & SEGMENT_BTREE_FLAG) ? 0 : iPtr);
 
       lsmFlagsToString(eType, zFlags);
-      lsmStringAppendf(&str, "%s %d (%s) ",
+      lsmStringAppendf(&str, "%s %d (%s) ", 
           zFlags, iAbsPtr, (rtTopic(eType) ? "sys" : "usr")
       );
-      infoAppendBlob(&str, bHex, aKey, nKey);
+      infoAppendBlob(&str, bHex, aKey, nKey); 
       if( nVal>0 && bValues ){
         lsmStringAppendf(&str, "%*s", nKeyWidth - (nKey*(1+bHex)), "");
         lsmStringAppendf(&str, " ");
-        infoAppendBlob(&str, bHex, aVal, nVal);
+        infoAppendBlob(&str, bHex, aVal, nVal); 
       }
       if( rtTopic(eType) ){
         int iBlk = (int)~lsmGetU32(aKey);
@@ -5782,7 +5782,7 @@ static int infoPageDump(
     }
 
     if( bData ){
-      lsmStringAppendf(&str, "\n-------------------"
+      lsmStringAppendf(&str, "\n-------------------" 
           "-------------------------------------------------------------\n");
       lsmStringAppendf(&str, "Page %d\n",
           iPg, (iPg-1)*nData, iPg*nData - 1);
@@ -5888,7 +5888,7 @@ void lsmSortedDumpStructure(
       char zRight[1024];
       int i = 0;
 
-      Segment *aLeft[24];
+      Segment *aLeft[24];  
       Segment *aRight[24];
 
       int nLeft = 0;
@@ -5915,11 +5915,11 @@ void lsmSortedDumpStructure(
         zLeft[0] = '\0';
         zRight[0] = '\0';
 
-        if( i<nLeft ){
-          fileToString(pDb, zLeft, sizeof(zLeft), 24, aLeft[i]);
+        if( i<nLeft ){ 
+          fileToString(pDb, zLeft, sizeof(zLeft), 24, aLeft[i]); 
         }
-        if( i<nRight ){
-          fileToString(pDb, zRight, sizeof(zRight), 24, aRight[i]);
+        if( i<nRight ){ 
+          fileToString(pDb, zRight, sizeof(zRight), 24, aRight[i]); 
         }
 
         if( i==0 ){
@@ -5934,7 +5934,7 @@ void lsmSortedDumpStructure(
           iPad = 10;
         }
 
-        lsmLogMessage(pDb, LSM_OK, "% 25s % *s% -35s %s",
+        lsmLogMessage(pDb, LSM_OK, "% 25s % *s% -35s %s", 
             zLevel, iPad, "", zLeft, zRight
         );
       }
@@ -6038,13 +6038,13 @@ static void assertRunInOrder(lsm_db *pDb, Segment *pSeg){
 
 #ifdef LSM_DEBUG_EXPENSIVE
 /*
-** This function is only included in the build if LSM_DEBUG_EXPENSIVE is
-** defined. Its only purpose is to evaluate various assert() statements to
+** This function is only included in the build if LSM_DEBUG_EXPENSIVE is 
+** defined. Its only purpose is to evaluate various assert() statements to 
 ** verify that the database is well formed in certain respects.
 **
-** More specifically, it checks that the array pOne contains the required
-** pointers to pTwo. Array pTwo must be a main array. pOne may be either a
-** separators array or another main array. If pOne does not contain the
+** More specifically, it checks that the array pOne contains the required 
+** pointers to pTwo. Array pTwo must be a main array. pOne may be either a 
+** separators array or another main array. If pOne does not contain the 
 ** correct set of pointers, an assert() statement fails.
 */
 static int assertPointersOk(
@@ -6077,7 +6077,7 @@ static int assertPointersOk(
   if( rc==LSM_OK && ptr1.nCell>0 ){
     rc = segmentPtrLoadCell(&ptr1, 0);
   }
-
+      
   while( rc==LSM_OK && ptr2.pPg ){
     LsmPgno iThis;
 
@@ -6128,8 +6128,8 @@ static int assertPointersOk(
 }
 
 /*
-** This function is only included in the build if LSM_DEBUG_EXPENSIVE is
-** defined. Its only purpose is to evaluate various assert() statements to
+** This function is only included in the build if LSM_DEBUG_EXPENSIVE is 
+** defined. Its only purpose is to evaluate various assert() statements to 
 ** verify that the database is well formed in certain respects.
 **
 ** More specifically, it checks that the b-tree embedded in array pRun
@@ -6166,7 +6166,7 @@ static int assertBtreeOk(
       if( pPg==0 ) break;
       aData = fsPageData(pPg, &nData);
       flags = pageGetFlags(aData, nData);
-      if( rc==LSM_OK
+      if( rc==LSM_OK 
        && 0==((SEGMENT_BTREE_FLAG|PGFTR_SKIP_THIS_FLAG) & flags)
        && 0!=pageGetNRec(aData, nData)
       ){

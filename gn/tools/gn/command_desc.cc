@@ -229,20 +229,26 @@ void DepsHandler(const std::string& name,
 }
 
 // Outputs need special processing when output patterns are present.
-void ProcessOutputs(base::DictionaryValue* target) {
+void ProcessOutputs(base::DictionaryValue* target, bool files_only) {
   base::ListValue* patterns = nullptr;
   base::ListValue* outputs = nullptr;
   target->GetList("output_patterns", &patterns);
   target->GetList(variables::kOutputs, &outputs);
 
+  int indent = 0;
   if (outputs || patterns) {
-    OutputString("\noutputs\n");
-    int indent = 1;
+    if (!files_only) {
+      OutputString("\noutputs\n");
+      indent = 1;
+    }
     if (patterns) {
-      OutputString("  Output patterns\n");
-      indent = 2;
+      if (!files_only) {
+        OutputString("  Output patterns\n");
+        indent = 2;
+      }
       PrintValue(patterns, indent);
-      OutputString("\n  Resolved output file list\n");
+      if (!files_only)
+        OutputString("\n  Resolved output file list\n");
     }
     if (outputs)
       PrintValue(outputs, indent);
@@ -281,6 +287,8 @@ std::map<std::string, DescHandlerFunc> GetHandlers() {
           {variables::kCflagsObjC, DefaultHandler},
           {variables::kCflagsObjCC, DefaultHandler},
           {variables::kDefines, DefaultHandler},
+          {variables::kFrameworkDirs, DefaultHandler},
+          {variables::kFrameworks, DefaultHandler},
           {variables::kIncludeDirs, DefaultHandler},
           {variables::kLdflags, DefaultHandler},
           {variables::kPrecompiledHeader, DefaultHandler},
@@ -323,6 +331,10 @@ bool PrintTarget(const Target* target,
   }
   // Print single value
   if (!what.empty() && dict->size() == 1 && single_target) {
+    if (what == variables::kOutputs) {
+      ProcessOutputs(dict.get(), true);
+      return true;
+    }
     base::DictionaryValue::Iterator iter(*dict);
     auto pair = handler_map.find(what);
     if (pair != handler_map.end())
@@ -352,7 +364,7 @@ bool PrintTarget(const Target* target,
   HandleProperty(variables::kScript, handler_map, v, dict);
   HandleProperty(variables::kArgs, handler_map, v, dict);
   HandleProperty(variables::kDepfile, handler_map, v, dict);
-  ProcessOutputs(dict.get());
+  ProcessOutputs(dict.get(), false);
   HandleProperty("bundle_data", handler_map, v, dict);
   HandleProperty(variables::kArflags, handler_map, v, dict);
   HandleProperty(variables::kAsmflags, handler_map, v, dict);
@@ -362,6 +374,8 @@ bool PrintTarget(const Target* target,
   HandleProperty(variables::kCflagsObjC, handler_map, v, dict);
   HandleProperty(variables::kCflagsObjCC, handler_map, v, dict);
   HandleProperty(variables::kDefines, handler_map, v, dict);
+  HandleProperty(variables::kFrameworkDirs, handler_map, v, dict);
+  HandleProperty(variables::kFrameworks, handler_map, v, dict);
   HandleProperty(variables::kIncludeDirs, handler_map, v, dict);
   HandleProperty(variables::kLdflags, handler_map, v, dict);
   HandleProperty(variables::kPrecompiledHeader, handler_map, v, dict);
@@ -424,6 +438,8 @@ bool PrintConfig(const Config* config,
   HandleProperty(variables::kCflagsObjC, handler_map, v, dict);
   HandleProperty(variables::kCflagsObjCC, handler_map, v, dict);
   HandleProperty(variables::kDefines, handler_map, v, dict);
+  HandleProperty(variables::kFrameworkDirs, handler_map, v, dict);
+  HandleProperty(variables::kFrameworks, handler_map, v, dict);
   HandleProperty(variables::kIncludeDirs, handler_map, v, dict);
   HandleProperty(variables::kInputs, handler_map, v, dict);
   HandleProperty(variables::kLdflags, handler_map, v, dict);
@@ -474,6 +490,8 @@ Possibilities for <what to show>
   defines [--blame]
   depfile
   deps [--all] [--tree] (see below)
+  framework_dirs
+  frameworks
   include_dirs [--blame]
   inputs
   ldflags [--blame]
@@ -513,9 +531,9 @@ Target flags
 
   --blame
       Used with any value specified on a config, this will name the config that
-      causes that target to get the flag. This doesn't currently work for libs
-      and lib_dirs because those are inherited and are more complicated to
-      figure out the blame (patches welcome).
+      causes that target to get the flag. This doesn't currently work for libs,
+      lib_dirs, frameworks and framework_dirs because those are inherited and
+      are more complicated to figure out the blame (patches welcome).
 
 Configs
 

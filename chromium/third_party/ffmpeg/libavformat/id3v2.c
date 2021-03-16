@@ -36,6 +36,7 @@
 #include "libavutil/bprint.h"
 #include "libavutil/dict.h"
 #include "libavutil/intreadwrite.h"
+#include "libavcodec/png.h"
 #include "avio_internal.h"
 #include "internal.h"
 #include "id3v1.h"
@@ -360,8 +361,8 @@ static void read_uslt(AVFormatContext *s, AVIOContext *pb, int taglen,
 {
     uint8_t lang[4];
     uint8_t *descriptor = NULL; // 'Content descriptor'
-    uint8_t *text = NULL;
-    char *key = NULL;
+    uint8_t *text;
+    char *key;
     int encoding;
     int ok = 0;
 
@@ -386,18 +387,19 @@ static void read_uslt(AVFormatContext *s, AVIOContext *pb, int taglen,
     key = av_asprintf("lyrics-%s%s%s", descriptor[0] ? (char *)descriptor : "",
                                        descriptor[0] ? "-" : "",
                                        lang);
-    if (!key)
+    if (!key) {
+        av_free(text);
         goto error;
+    }
 
-    av_dict_set(metadata, key, text, 0);
+    av_dict_set(metadata, key, text,
+                AV_DICT_DONT_STRDUP_KEY | AV_DICT_DONT_STRDUP_VAL);
 
     ok = 1;
 error:
     if (!ok)
         av_log(s, AV_LOG_ERROR, "Error reading lyrics, skipped\n");
     av_free(descriptor);
-    av_free(text);
-    av_free(key);
 }
 
 /**
@@ -1158,7 +1160,7 @@ int ff_id3v2_parse_apic(AVFormatContext *s, ID3v2ExtraMeta **extra_meta)
         st->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
         st->codecpar->codec_id   = apic->id;
 
-        if (AV_RB64(apic->buf->data) == 0x89504e470d0a1a0a)
+        if (AV_RB64(apic->buf->data) == PNGSIG)
             st->codecpar->codec_id = AV_CODEC_ID_PNG;
 
         if (apic->description[0])
@@ -1262,8 +1264,6 @@ int ff_id3v2_parse_priv_dict(AVDictionary **metadata, ID3v2ExtraMeta **extra_met
             }
 
             if ((ret = av_dict_set(metadata, key, escaped, dict_flags)) < 0) {
-                av_free(key);
-                av_free(escaped);
                 return ret;
             }
         }

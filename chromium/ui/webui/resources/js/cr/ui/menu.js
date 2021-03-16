@@ -28,7 +28,7 @@ cr.define('cr.ui', function() {
     /**
      * Initializes the menu element.
      */
-    decorate: function() {
+    decorate() {
       this.addEventListener('mouseover', this.handleMouseOver_);
       this.addEventListener('mouseout', this.handleMouseOut_);
       this.addEventListener('mouseup', this.handleMouseUp_, true);
@@ -47,9 +47,9 @@ cr.define('cr.ui', function() {
     /**
      * Adds menu item at the end of the list.
      * @param {Object} item Menu item properties.
-     * @return {cr.ui.MenuItem} The created menu item.
+     * @return {!cr.ui.MenuItem} The created menu item.
      */
-    addMenuItem: function(item) {
+    addMenuItem(item) {
       const menuItem = this.ownerDocument.createElement('cr-menu-item');
       this.appendChild(menuItem);
 
@@ -69,7 +69,7 @@ cr.define('cr.ui', function() {
     /**
      * Adds separator at the end of the list.
      */
-    addSeparator: function() {
+    addSeparator() {
       const separator = this.ownerDocument.createElement('hr');
       cr.ui.decorate(separator, MenuItem);
       this.appendChild(separator);
@@ -78,7 +78,7 @@ cr.define('cr.ui', function() {
     /**
      * Clears menu.
      */
-    clear: function() {
+    clear() {
       this.selectedItem = null;
       this.textContent = '';
     },
@@ -90,8 +90,8 @@ cr.define('cr.ui', function() {
      * @return {cr.ui.MenuItem} The found menu item or null.
      * @private
      */
-    findMenuItem_: function(node) {
-      while (node && node.parentNode != this && !(node instanceof MenuItem)) {
+    findMenuItem_(node) {
+      while (node && node.parentNode !== this && !(node instanceof MenuItem)) {
         node = node.parentNode;
       }
       return node ? assertInstanceof(node, MenuItem) : null;
@@ -102,7 +102,7 @@ cr.define('cr.ui', function() {
      * @param {Event} e The mouseover event.
      * @private
      */
-    handleMouseOver_: function(e) {
+    handleMouseOver_(e) {
       const overItem = this.findMenuItem_(/** @type {Element} */ (e.target));
       this.selectedItem = overItem;
     },
@@ -112,7 +112,7 @@ cr.define('cr.ui', function() {
      * @param {Event} e The mouseout event.
      * @private
      */
-    handleMouseOut_: function(e) {
+    handleMouseOut_(e) {
       this.selectedItem = null;
     },
 
@@ -123,7 +123,7 @@ cr.define('cr.ui', function() {
      * @param {Event} e A mouseup event on the menu (in capturing phase).
      * @private
      */
-    handleMouseUp_: function(e) {
+    handleMouseUp_(e) {
       assert(this.contains(/** @type {Element} */ (e.target)));
 
       if (!this.trustEvent_(e) || Date.now() - this.shown_.time > 200) {
@@ -146,7 +146,7 @@ cr.define('cr.ui', function() {
      * @private
      * @suppress {checkTypes}
      */
-    trustEvent_: function(e) {
+    trustEvent_(e) {
       return e.isTrusted || e.isTrustedForTesting;
     },
 
@@ -170,10 +170,24 @@ cr.define('cr.ui', function() {
      * Focuses the selected item. If selectedIndex is invalid, set it to 0
      * first.
      */
-    focusSelectedItem: function() {
-      if (this.selectedIndex < 0 ||
-          this.selectedIndex > this.menuItems.length) {
-        this.selectedIndex = 0;
+    focusSelectedItem() {
+      const items = this.menuItems;
+      if (this.selectedIndex < 0 || this.selectedIndex > items.length) {
+        // Find first visible item to focus by default.
+        for (let idx = 0; idx < items.length; idx++) {
+          const item = items[idx];
+          if (item.hasAttribute('hidden') || item.isSeparator()) {
+            continue;
+          }
+          // If the item is disabled we accept it, but try to find the next
+          // enabled item, but keeping the first disabled item.
+          if (!item.disabled) {
+            this.selectedIndex = idx;
+            break;
+          } else if (this.selectedIndex === -1) {
+            this.selectedIndex = idx;
+          }
+        }
       }
 
       if (this.selectedItem) {
@@ -195,23 +209,23 @@ cr.define('cr.ui', function() {
      * @return {boolean}
      * @private
      */
-    isItemVisible_: function(menuItem) {
+    isItemVisible_(menuItem) {
       if (menuItem.hidden) {
         return false;
       }
-      if (!!menuItem.offsetParent) {
+      if (menuItem.offsetParent) {
         return true;
       }
       // A "position: fixed" element won't have an offsetParent, so we have to
       // do the full style computation.
-      return window.getComputedStyle(menuItem).display != 'none';
+      return window.getComputedStyle(menuItem).display !== 'none';
     },
 
     /**
      * Returns whether the menu has any visible items.
      * @return {boolean} True if the menu has visible item. Otherwise, false.
      */
-    hasVisibleItems: function() {
+    hasVisibleItems() {
       // Inspect items in reverse order to determine if the separator above each
       // set of items is required.
       for (const menuItem of this.menuItems) {
@@ -228,7 +242,7 @@ cr.define('cr.ui', function() {
      * @param {Event} e The keydown event object.
      * @return {boolean} Whether the event was handled be the menu.
      */
-    handleKeyDown: function(e) {
+    handleKeyDown(e) {
       let item = this.selectedItem;
 
       const self = this;
@@ -240,7 +254,7 @@ cr.define('cr.ui', function() {
           return;
         }
         let i = self.selectedIndex;
-        if (i == -1 && m == -1) {
+        if (i === -1 && m === -1) {
           // Edge case when needed to go the last item first.
           i = 0;
         }
@@ -255,7 +269,7 @@ cr.define('cr.ui', function() {
 
           // Check not to enter into infinite loop if all items are hidden or
           // disabled.
-          if (i == startPosition) {
+          if (i === startPosition) {
             break;
           }
 
@@ -285,7 +299,7 @@ cr.define('cr.ui', function() {
             // Store |contextElement| since it'll be removed when handling the
             // 'activate' event.
             const contextElement = this.contextElement;
-            const activationEvent = cr.doc.createEvent('Event');
+            const activationEvent = document.createEvent('Event');
             activationEvent.initEvent('activate', true, true);
             activationEvent.originalEvent = e;
             if (item.dispatchEvent(activationEvent)) {
@@ -300,13 +314,13 @@ cr.define('cr.ui', function() {
       return false;
     },
 
-    hide: function() {
+    hide() {
       this.hidden = true;
       delete this.shown_;
     },
 
     /** @param {{x: number, y: number}=} opt_mouseDownPos */
-    show: function(opt_mouseDownPos) {
+    show(opt_mouseDownPos) {
       this.shown_ = {mouseDownPos: opt_mouseDownPos, time: Date.now()};
       this.hidden = false;
     },
@@ -315,7 +329,7 @@ cr.define('cr.ui', function() {
      * Updates menu items command according to context.
      * @param {Node=} node Node for which to actuate commands state.
      */
-    updateCommands: function(node) {
+    updateCommands(node) {
       const menuItems = this.menuItems;
 
       for (const menuItem of menuItems) {

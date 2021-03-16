@@ -18,6 +18,7 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/free_deleter.h"
+#include "base/sanitizer_buildflags.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -46,9 +47,9 @@ NOINLINE Type HideValueFromCompiler(volatile Type value) {
 }
 
 // TCmalloc, currently supported only by Linux/CrOS, supports malloc limits.
-// - NO_TCMALLOC (should be defined if compiled with use_allocator!="tcmalloc")
+// - USE_TCMALLOC (should be set if compiled with use_allocator=="tcmalloc")
 // - ADDRESS_SANITIZER it has its own memory allocator
-#if defined(OS_LINUX) && !defined(NO_TCMALLOC) && !defined(ADDRESS_SANITIZER)
+#if defined(OS_LINUX) && BUILDFLAG(USE_TCMALLOC) && !defined(ADDRESS_SANITIZER)
 #define MALLOC_OVERFLOW_TEST(function) function
 #else
 #define MALLOC_OVERFLOW_TEST(function) DISABLED_##function
@@ -72,17 +73,19 @@ void OverflowTestsSoftExpectTrue(bool overflow_detected) {
   }
 }
 
-#if defined(OS_IOS) || defined(OS_FUCHSIA) || defined(ADDRESS_SANITIZER) || \
-    defined(THREAD_SANITIZER) || defined(MEMORY_SANITIZER)
+#if defined(OS_IOS) || defined(OS_FUCHSIA) || defined(OS_MACOSX) || \
+    defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) ||      \
+    defined(MEMORY_SANITIZER) || BUILDFLAG(IS_HWASAN)
 #define MAYBE_NewOverflow DISABLED_NewOverflow
 #else
 #define MAYBE_NewOverflow NewOverflow
 #endif
-// Test array[TooBig][X] and array[X][TooBig] allocations for int overflows.
-// IOS doesn't honor nothrow, so disable the test there.
-// TODO(https://crbug.com/828229): Fuchsia SDK exports an incorrect new[] that
-// gets picked up in Debug/component builds, breaking this test.
-// Disabled under XSan because asan aborts when new returns nullptr,
+// Test array[TooBig][X] and array[X][TooBig] allocations for int
+// overflows.  IOS doesn't honor nothrow, so disable the test there.
+// TODO(https://crbug.com/828229): Fuchsia SDK exports an incorrect
+// new[] that gets picked up in Debug/component builds, breaking this
+// test.  Disabled on Mac for the same reason.  Disabled under XSan
+// because asan aborts when new returns nullptr,
 // https://bugs.chromium.org/p/chromium/issues/detail?id=690271#c15
 TEST(SecurityTest, MAYBE_NewOverflow) {
   const size_t kArraySize = 4096;

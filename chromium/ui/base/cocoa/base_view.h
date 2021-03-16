@@ -8,7 +8,6 @@
 #import <Cocoa/Cocoa.h>
 
 #include "base/mac/scoped_nsobject.h"
-#include "base/mac/sdk_forward_declarations.h"
 #import "ui/base/cocoa/tracking_area.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/gfx/geometry/rect.h"
@@ -26,11 +25,17 @@ UI_BASE_EXPORT
   };
 
  @private
-  ui::ScopedCrTrackingArea trackingArea_;
-  BOOL dragging_;
-  base::scoped_nsobject<NSEvent> pendingExitEvent_;
-  NSInteger pressureEventStage_;
+  ui::ScopedCrTrackingArea _trackingArea;
+  BOOL _dragging;
+  base::scoped_nsobject<NSEvent> _pendingExitEvent;
+  NSInteger _pressureEventStage;
 }
+
+// Process an NSLeftMouseUp event on this view that wasn't dispatched already
+// to BaseView (e.g. if captured via an event monitor). This may generate a
+// synthetic NSMouseExited if the mouse exited the view area during a drag and
+// should be invoked after a call to -mouseEvent: for the mouse up.
+- (void)handleLeftMouseUp:(NSEvent*)theEvent;
 
 // Override these methods (mouseEvent, keyEvent, forceTouchEvent) in a
 // subclass.

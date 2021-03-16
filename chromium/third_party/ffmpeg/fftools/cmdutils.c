@@ -119,7 +119,7 @@ static void log_callback_report(void *ptr, int level, const char *fmt, va_list v
 
 void init_dynload(void)
 {
-#ifdef _WIN32
+#if HAVE_SETDLLDIRECTORY && defined(_WIN32)
     /* Calling SetDllDirectory with the empty string (but not NULL) removes the
      * current working directory from the DLL search path as a security pre-caution. */
     SetDllDirectory("");
@@ -182,7 +182,7 @@ void show_help_options(const OptionDef *options, const char *msg, int req_flags,
 
     first = 1;
     for (po = options; po->name; po++) {
-        char buf[64];
+        char buf[128];
 
         if (((po->flags & req_flags) != req_flags) ||
             (alt_flags && !(po->flags & alt_flags)) ||
@@ -848,8 +848,8 @@ do {                                                                           \
     }
 
     if (octx->cur_group.nb_opts || codec_opts || format_opts || resample_opts)
-        av_log(NULL, AV_LOG_WARNING, "Trailing options were found on the "
-               "commandline.\n");
+        av_log(NULL, AV_LOG_WARNING, "Trailing option(s) found in the "
+               "command: may be ignored.\n");
 
     av_log(NULL, AV_LOG_DEBUG, "Finished splitting the commandline.\n");
 
@@ -980,6 +980,7 @@ static int init_report(const char *env)
     char *filename_template = NULL;
     char *key, *val;
     int ret, count = 0;
+    int prog_loglevel, envlevel = 0;
     time_t now;
     struct tm *tm;
     AVBPrint filename;
@@ -1011,6 +1012,7 @@ static int init_report(const char *env)
                 av_log(NULL, AV_LOG_FATAL, "Invalid report file level\n");
                 exit_program(1);
             }
+            envlevel = 1;
         } else {
             av_log(NULL, AV_LOG_ERROR, "Unknown key '%s' in FFREPORT\n", key);
         }
@@ -1027,6 +1029,10 @@ static int init_report(const char *env)
         return AVERROR(ENOMEM);
     }
 
+    prog_loglevel = av_log_get_level();
+    if (!envlevel)
+        report_file_level = FFMAX(report_file_level, prog_loglevel);
+
     report_file = fopen(filename.str, "w");
     if (!report_file) {
         int ret = AVERROR(errno);
@@ -1037,16 +1043,17 @@ static int init_report(const char *env)
     av_log_set_callback(log_callback_report);
     av_log(NULL, AV_LOG_INFO,
            "%s started on %04d-%02d-%02d at %02d:%02d:%02d\n"
-           "Report written to \"%s\"\n",
+           "Report written to \"%s\"\n"
+           "Log level: %d\n",
            program_name,
            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
            tm->tm_hour, tm->tm_min, tm->tm_sec,
-           filename.str);
+           filename.str, report_file_level);
     av_bprint_finalize(&filename, NULL);
     return 0;
 }
 
-int opt_report(const char *opt)
+int opt_report(void *optctx, const char *opt, const char *arg)
 {
     return init_report(NULL);
 }
@@ -1863,6 +1870,24 @@ static void show_help_demuxer(const char *name)
         show_help_children(fmt->priv_class, AV_OPT_FLAG_DECODING_PARAM);
 }
 
+static void show_help_protocol(const char *name)
+{
+    const AVClass *proto_class;
+
+    if (!name) {
+        av_log(NULL, AV_LOG_ERROR, "No protocol name specified.\n");
+        return;
+    }
+
+    proto_class = avio_protocol_get_class(name);
+    if (!proto_class) {
+        av_log(NULL, AV_LOG_ERROR, "Unknown protocol '%s'.\n", name);
+        return;
+    }
+
+    show_help_children(proto_class, AV_OPT_FLAG_DECODING_PARAM | AV_OPT_FLAG_ENCODING_PARAM);
+}
+
 static void show_help_muxer(const char *name)
 {
     const AVCodecDescriptor *desc;
@@ -1993,6 +2018,8 @@ int show_help(void *optctx, const char *opt, const char *arg)
         show_help_demuxer(par);
     } else if (!strcmp(topic, "muxer")) {
         show_help_muxer(par);
+    } else if (!strcmp(topic, "protocol")) {
+        show_help_protocol(par);
 #if CONFIG_AVFILTER
     } else if (!strcmp(topic, "filter")) {
         show_help_filter(par);
@@ -2032,7 +2059,7 @@ FILE *get_preset_file(char *filename, size_t filename_size,
         av_strlcpy(filename, preset_name, filename_size);
         f = fopen(filename, "r");
     } else {
-#ifdef _WIN32
+#if HAVE_GETMODULEHANDLE && defined(_WIN32)
         char datadir[MAX_PATH], *ls;
         base[2] = NULL;
 

@@ -10,8 +10,8 @@
 
 #include "util/util.h"
 #include "util/logging.h"
-#include "util/pod_array.h"
 #include "util/utf.h"
+#include "re2/pod_array.h"
 #include "re2/regexp.h"
 #include "re2/walker-inl.h"
 
@@ -21,8 +21,7 @@ namespace re2 {
 // string representation of the simplified form.  Returns true on success.
 // Returns false and sets *error (if error != NULL) on error.
 bool Regexp::SimplifyRegexp(const StringPiece& src, ParseFlags flags,
-                            string* dst,
-                            RegexpStatus* status) {
+                            std::string* dst, RegexpStatus* status) {
   Regexp* re = Parse(src, flags, status);
   if (re == NULL)
     return false;
@@ -213,9 +212,10 @@ Regexp* CoalesceWalker::Copy(Regexp* re) {
 }
 
 Regexp* CoalesceWalker::ShortVisit(Regexp* re, Regexp* parent_arg) {
-  // This should never be called, since we use Walk and not
-  // WalkExponential.
+  // Should never be called: we use Walk(), not WalkExponential().
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   LOG(DFATAL) << "CoalesceWalker::ShortVisit called";
+#endif
   return re->Incref();
 }
 
@@ -438,9 +438,10 @@ Regexp* SimplifyWalker::Copy(Regexp* re) {
 }
 
 Regexp* SimplifyWalker::ShortVisit(Regexp* re, Regexp* parent_arg) {
-  // This should never be called, since we use Walk and not
-  // WalkExponential.
+  // Should never be called: we use Walk(), not WalkExponential().
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
   LOG(DFATAL) << "SimplifyWalker::ShortVisit called";
+#endif
   return re->Incref();
 }
 

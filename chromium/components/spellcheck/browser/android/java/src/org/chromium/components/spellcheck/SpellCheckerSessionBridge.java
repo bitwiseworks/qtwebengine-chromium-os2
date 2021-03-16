@@ -15,10 +15,10 @@ import android.view.textservice.TextServicesManager;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.annotations.NativeMethods;
 import org.chromium.base.metrics.RecordHistogram;
 
 import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
 
 /**
  * JNI interface for native SpellCheckerSessionBridge to use Android's spellchecker.
@@ -137,12 +137,12 @@ public class SpellCheckerSessionBridge implements SpellCheckerSessionListener {
                 }
             }
         }
-        nativeProcessSpellCheckResults(mNativeSpellCheckerSessionBridge,
+        SpellCheckerSessionBridgeJni.get().processSpellCheckResults(
+                mNativeSpellCheckerSessionBridge, SpellCheckerSessionBridge.this,
                 convertListToArray(offsets), convertListToArray(lengths),
                 suggestions.toArray(new String[suggestions.size()][]));
 
-        RecordHistogram.recordTimesHistogram("SpellCheck.Android.Latency",
-                mStopMs - mStartMs, TimeUnit.MILLISECONDS);
+        RecordHistogram.recordTimesHistogram("SpellCheck.Android.Latency", mStopMs - mStartMs);
     }
 
     /**
@@ -161,6 +161,10 @@ public class SpellCheckerSessionBridge implements SpellCheckerSessionListener {
     @Override
     public void onGetSuggestions(SuggestionsInfo[] results) {}
 
-    private native void nativeProcessSpellCheckResults(long nativeSpellCheckerSessionBridge,
-            int[] offsets, int[] lengths, String[][] suggestions);
+    @NativeMethods
+    interface Natives {
+        void processSpellCheckResults(long nativeSpellCheckerSessionBridge,
+                SpellCheckerSessionBridge caller, int[] offsets, int[] lengths,
+                String[][] suggestions);
+    }
 }

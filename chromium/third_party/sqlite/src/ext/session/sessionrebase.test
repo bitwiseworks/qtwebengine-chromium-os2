@@ -13,7 +13,7 @@
 
 if {![info exists testdir]} {
   set testdir [file join [file dirname [info script]] .. .. test]
-}
+} 
 source [file join [file dirname [info script]] session_common.tcl]
 source $testdir/tester.tcl
 ifcapable !session {finish_test; return}
@@ -41,7 +41,7 @@ proc xConflict {args} {
 #     the indirect flag is set and all non-PK fields left undefined.
 #
 proc do_apply_v2_test {tn sql modsql conflict_handler res} {
-
+  
   execsql BEGIN
   sqlite3session S db main
   S attach *
@@ -121,7 +121,7 @@ proc do_rebase_test {tn sql1 sql2 conflict_handler {testsql ""} {testres ""}} {
     #if {$tn=="2.1.4"} { puts [changeset_to_list $rebase] ; breakpoint }
     #puts [changeset_to_list [lindex $rebase 0]] ; breakpoint
     #puts [llength $rebase]
-
+  
     sqlite3rebaser_create R
     foreach r $rebase {
 #puts [changeset_to_list $r]
@@ -130,18 +130,18 @@ proc do_rebase_test {tn sql1 sql2 conflict_handler {testsql ""} {testres ""}} {
     set c1r [R rebase $c1]
     R delete
     #if {$tn=="2.1.4"} { puts [changeset_to_list $c1r] }
-
+  
     sqlite3changeset_apply_v2 db2 $c1r xConflictAbort
-
+  
     if {[string range $tn end end]!="*"} {
       uplevel [list do_test $tn.$i.1 [list compare_db db db2] {}]
     }
     db2 close
-
+  
     if {$testsql!=""} {
       uplevel [list do_execsql_test $tn.$i.2 $testsql $testres]
     }
-
+  
     db eval ROLLBACK
   }
 }

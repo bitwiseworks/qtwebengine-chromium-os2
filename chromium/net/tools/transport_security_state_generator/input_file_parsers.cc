@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/json/json_reader.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -101,8 +102,7 @@ bool MatchCertificateName(base::StringPiece name, base::StringPiece pin_name) {
   for (size_t i = 0; i < words.size(); ++i) {
     const base::StringPiece& word = words[i];
     if (word == "Class" && (i + 1) < words.size()) {
-      std::string class_name = word.as_string();
-      words[i + 1].AppendToString(&class_name);
+      std::string class_name = base::StrCat({word, words[i + 1]});
 
       size_t pos = pin_name.find(class_name);
       if (pos == std::string::npos) {
@@ -310,7 +310,7 @@ bool ParseJSON(base::StringPiece json,
       "test",        "public-suffix", "google",      "custom",
       "bulk-legacy", "bulk-18-weeks", "bulk-1-year", "public-suffix-requested"};
 
-  std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadDeprecated(json);
   base::DictionaryValue* dict_value = nullptr;
   if (!value.get() || !value->GetAsDictionary(&dict_value)) {
     LOG(ERROR) << "Could not parse the input JSON file";

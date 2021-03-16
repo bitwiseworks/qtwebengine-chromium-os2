@@ -170,7 +170,7 @@ static int csv_getc(CsvReader *p){
   return ((unsigned char*)p->zIn)[p->iIn++];
 }
 
-/* Increase the size of p->z and append character c to the end.
+/* Increase the size of p->z and append character c to the end. 
 ** Return 0 on success and non-zero if there is an OOM error */
 static CSV_NOINLINE int csv_resize_and_append(CsvReader *p, char c){
   char *zNew;
@@ -288,9 +288,9 @@ static char *csv_read_one_field(CsvReader *p){
 
 /* Forward references to the various virtual table methods implemented
 ** in this file. */
-static int csvtabCreate(sqlite3*, void*, int, const char*const*,
+static int csvtabCreate(sqlite3*, void*, int, const char*const*, 
                            sqlite3_vtab**,char**);
-static int csvtabConnect(sqlite3*, void*, int, const char*const*,
+static int csvtabConnect(sqlite3*, void*, int, const char*const*, 
                            sqlite3_vtab**,char**);
 static int csvtabBestIndex(sqlite3_vtab*,sqlite3_index_info*);
 static int csvtabDisconnect(sqlite3_vtab*);
@@ -475,7 +475,7 @@ static int csv_boolean_parameter(
 **    columns=N                  Assume the CSV file contains N columns.
 **
 ** Only available if compiled with SQLITE_TEST:
-**
+**    
 **    testflags=N                Bitmask of test flags.  Optional
 **
 ** If schema= is omitted, then the columns are named "c0", "c1", "c2",
@@ -502,7 +502,7 @@ static int csvtabConnect(
   CsvReader sRdr;            /* A CSV file reader used to store an error
                              ** message and/or to count the number of columns */
   static const char *azParam[] = {
-     "filename", "data", "schema",
+     "filename", "data", "schema", 
   };
   char *azPValue[3];         /* Parameter values */
 # define CSV_FILENAME (azPValue[0])
@@ -632,6 +632,15 @@ static int csvtabConnect(
   for(i=0; i<sizeof(azPValue)/sizeof(azPValue[0]); i++){
     sqlite3_free(azPValue[i]);
   }
+  /* Rationale for DIRECTONLY:
+  ** An attacker who controls a database schema could use this vtab
+  ** to exfiltrate sensitive data from other files in the filesystem.
+  ** And, recommended practice is to put all CSV virtual tables in the
+  ** TEMP namespace, so they should still be usable from within TEMP
+  ** views, so there shouldn't be a serious loss of functionality by
+  ** prohibiting the use of this vtab from persistent triggers and views.
+  */
+  sqlite3_vtab_config(db, SQLITE_VTAB_DIRECTONLY);
   return SQLITE_OK;
 
 csvtab_connect_oom:
@@ -795,7 +804,7 @@ static int csvtabEof(sqlite3_vtab_cursor *cur){
 ** the beginning.
 */
 static int csvtabFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -845,7 +854,7 @@ static int csvtabBestIndex(
       unsigned char op;
       if( pIdxInfo->aConstraint[i].usable==0 ) continue;
       op = pIdxInfo->aConstraint[i].op;
-      if( op==SQLITE_INDEX_CONSTRAINT_EQ
+      if( op==SQLITE_INDEX_CONSTRAINT_EQ 
        || op==SQLITE_INDEX_CONSTRAINT_LIKE
        || op==SQLITE_INDEX_CONSTRAINT_GLOB
       ){
@@ -922,17 +931,17 @@ static sqlite3_module CsvModuleFauxWrite = {
 #ifdef _WIN32
 __declspec(dllexport)
 #endif
-/*
+/* 
 ** This routine is called when the extension is loaded.  The new
 ** CSV virtual table module is registered with the calling database
 ** connection.
 */
 int sqlite3_csv_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
-#ifndef SQLITE_OMIT_VIRTUALTABLE
+#ifndef SQLITE_OMIT_VIRTUALTABLE	
   int rc;
   SQLITE_EXTENSION_INIT2(pApi);
   rc = sqlite3_create_module(db, "csv", &CsvModule, 0);

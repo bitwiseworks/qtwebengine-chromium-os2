@@ -26,6 +26,7 @@ source_set("spotlight") {
     "//components/favicon_base",
     "//components/history/core/browser",
     "//components/suggestions",
+    "//ios/chrome/app",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser",
     "//ios/chrome/browser/bookmarks",
@@ -52,9 +53,7 @@ source_set("spotlight") {
 source_set("unit_tests") {
   configs += [ "//build/config/compiler:enable_arc" ]
   testonly = true
-  sources = [
-    "spotlight_manager_unittest.mm",
-  ]
+  sources = [ "spotlight_manager_unittest.mm" ]
   deps = [
     ":spotlight",
     "//base",

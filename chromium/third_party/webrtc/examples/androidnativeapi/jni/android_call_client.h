@@ -17,8 +17,8 @@
 #include <string>
 
 #include "api/peer_connection_interface.h"
+#include "api/scoped_refptr.h"
 #include "rtc_base/critical_section.h"
-#include "rtc_base/scoped_ref_ptr.h"
 #include "rtc_base/thread_checker.h"
 #include "sdk/android/native_api/jni/scoped_java_ref.h"
 #include "sdk/android/native_api/video/video_source.h"
@@ -31,16 +31,13 @@ class AndroidCallClient {
   ~AndroidCallClient();
 
   void Call(JNIEnv* env,
-            const webrtc::JavaRef<jobject>& cls,
             const webrtc::JavaRef<jobject>& local_sink,
             const webrtc::JavaRef<jobject>& remote_sink);
-  void Hangup(JNIEnv* env, const webrtc::JavaRef<jobject>& cls);
+  void Hangup(JNIEnv* env);
   // A helper method for Java code to delete this object. Calls delete this.
-  void Delete(JNIEnv* env, const webrtc::JavaRef<jobject>& cls);
+  void Delete(JNIEnv* env);
 
-  webrtc::ScopedJavaLocalRef<jobject> GetJavaVideoCapturerObserver(
-      JNIEnv* env,
-      const webrtc::JavaRef<jobject>& cls);
+  webrtc::ScopedJavaLocalRef<jobject> GetJavaVideoCapturerObserver(JNIEnv* env);
 
  private:
   class PCObserver;

@@ -8,22 +8,14 @@
 #include <stdint.h>
 
 #include <memory>
-#include <vector>
 
-#include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/metrics/bucket_ranges.h"
-#include "base/time/time.h"
+#include "base/memory/weak_ptr.h"
 #include "net/base/net_export.h"
-#include "net/base/network_change_notifier.h"
 #include "net/base/rand_callback.h"
 #include "net/dns/dns_config.h"
 #include "net/dns/dns_socket_pool.h"
-
-namespace base {
-class BucketRanges;
-}
 
 namespace net {
 
@@ -32,29 +24,33 @@ class NetLog;
 struct NetLogSource;
 class StreamSocket;
 
-// Session parameters and state shared between DNS transactions.
-// Ref-counted so that DnsClient::Request can keep working in absence of
-// DnsClient. A DnsSession must be recreated when DnsConfig changes.
-class NET_EXPORT_PRIVATE DnsSession
-    : public base::RefCounted<DnsSession>,
-      public NetworkChangeNotifier::ConnectionTypeObserver {
+// Session parameters and state shared between DnsTransactions for a specific
+// instance/version of a DnsConfig. Also may be used as a key handle for
+// per-session state stored elsewhere, e.g. in ResolveContext. A new DnsSession
+// should be created for each new DnsConfig for DnsTransactions to be based on
+// that new configuration.
+//
+// Ref-counted so that DnsTransactions can keep working in absence of
+// DnsClient or continue operating on the same session after DnsClient has moved
+// to a new DnsConfig/DnsSession.
+class NET_EXPORT_PRIVATE DnsSession : public base::RefCounted<DnsSession> {
  public:
-  typedef base::Callback<int()> RandCallback;
+  typedef base::RepeatingCallback<int()> RandCallback;
 
   class NET_EXPORT_PRIVATE SocketLease {
    public:
     SocketLease(scoped_refptr<DnsSession> session,
-                unsigned server_index,
+                size_t server_index,
                 std::unique_ptr<DatagramClientSocket> socket);
     ~SocketLease();
 
-    unsigned server_index() const { return server_index_; }
+    size_t server_index() const { return server_index_; }
 
     DatagramClientSocket* socket() { return socket_.get(); }
 
    private:
     scoped_refptr<DnsSession> session_;
-    unsigned server_index_;
+    size_t server_index_;
     std::unique_ptr<DatagramClientSocket> socket_;
 
     DISALLOW_COPY_AND_ASSIGN(SocketLease);
@@ -71,82 +67,41 @@ class NET_EXPORT_PRIVATE DnsSession
   // Return the next random query ID.
   uint16_t NextQueryId() const;
 
-  // Return the index of the first configured server to use on first attempt.
-  unsigned NextFirstServerIndex();
-
-  // Start with |server_index| and find the index of the next known
-  // good non-dns-over-https server to use on this attempt. Returns
-  // |server_index| if this server has no recorded failures, or if
-  // there are no other servers that have not failed or have failed
-  // longer time ago.
-  unsigned NextGoodServerIndex(unsigned server_index);
-
-  // Same as above, but for DNS over HTTPS servers and ignoring
-  // non-dns-over-https servers
-  unsigned NextGoodDnsOverHttpsServerIndex(unsigned server_index);
-
-  // Record that server failed to respond (due to SRV_FAIL or timeout).
-  void RecordServerFailure(unsigned server_index);
-
-  // Record that server responded successfully.
-  void RecordServerSuccess(unsigned server_index);
-
-  // Record how long it took to receive a response from the server.
-  void RecordRTT(unsigned server_index, base::TimeDelta rtt);
-
-  // Return the timeout for the next query. |attempt| counts from 0 and is used
-  // for exponential backoff.
-  base::TimeDelta NextTimeout(unsigned server_index, int attempt);
-
   // Allocate a socket, already connected to the server address.
   // When the SocketLease is destroyed, the socket will be freed.
-  std::unique_ptr<SocketLease> AllocateSocket(unsigned server_index,
+  std::unique_ptr<SocketLease> AllocateSocket(size_t server_index,
                                               const NetLogSource& source);
 
   // Creates a StreamSocket from the factory for a transaction over TCP. These
   // sockets are not pooled.
-  std::unique_ptr<StreamSocket> CreateTCPSocket(unsigned server_index,
+  std::unique_ptr<StreamSocket> CreateTCPSocket(size_t server_index,
                                                 const NetLogSource& source);
+
+  base::WeakPtr<DnsSession> GetWeakPtr() {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+  base::WeakPtr<const DnsSession> GetWeakPtr() const {
+    return weak_ptr_factory_.GetWeakPtr();
+  }
+
+  void InvalidateWeakPtrsForTesting();
 
  private:
   friend class base::RefCounted<DnsSession>;
-  ~DnsSession() override;
 
-  void UpdateTimeouts(NetworkChangeNotifier::ConnectionType type);
-  void InitializeServerStats();
+  ~DnsSession();
 
   // Release a socket.
-  void FreeSocket(unsigned server_index,
+  void FreeSocket(size_t server_index,
                   std::unique_ptr<DatagramClientSocket> socket);
-
-  // NetworkChangeNotifier::ConnectionTypeObserver:
-  void OnConnectionTypeChanged(
-      NetworkChangeNotifier::ConnectionType type) override;
 
   const DnsConfig config_;
   std::unique_ptr<DnsSocketPool> socket_pool_;
   RandCallback rand_callback_;
   NetLog* net_log_;
 
-  // Current index into |config_.nameservers| to begin resolution with.
-  int server_index_;
-
-  base::TimeDelta initial_timeout_;
-  base::TimeDelta max_timeout_;
-
-  struct ServerStats;
-
-  // Track runtime statistics of each DNS server. This combines both
-  // dns-over-https servers and non-dns-over-https servers.
-  // non-dns-over-https servers come first and dns-over-https servers
-  // started at the index of nameservers.size().
-  std::vector<std::unique_ptr<ServerStats>> server_stats_;
-
-  // Buckets shared for all |ServerStats::rtt_histogram|.
-  struct RttBuckets : public base::BucketRanges {
-    RttBuckets();
-  };
-  static base::LazyInstance<RttBuckets>::Leaky rtt_buckets_;
+  mutable base::WeakPtrFactory<DnsSession> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(DnsSession);
 };

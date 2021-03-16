@@ -14,6 +14,10 @@
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/size.h"
 
+namespace gfx {
+class NativePixmap;
+}  // namespace gfx
+
 namespace media {
 
 class VaapiWrapper;
@@ -23,11 +27,12 @@ class VaapiWrapper;
 class VaapiPictureNativePixmapEgl : public VaapiPictureNativePixmap {
  public:
   VaapiPictureNativePixmapEgl(
-      const scoped_refptr<VaapiWrapper>& vaapi_wrapper,
+      scoped_refptr<VaapiWrapper> vaapi_wrapper,
       const MakeGLContextCurrentCallback& make_context_current_cb,
       const BindGLImageCallback& bind_image_cb_,
       int32_t picture_buffer_id,
       const gfx::Size& size,
+      const gfx::Size& visible_size,
       uint32_t texture_id,
       uint32_t client_texture_id,
       uint32_t texture_target);
@@ -38,10 +43,10 @@ class VaapiPictureNativePixmapEgl : public VaapiPictureNativePixmap {
   bool Allocate(gfx::BufferFormat format) override;
   bool ImportGpuMemoryBufferHandle(
       gfx::BufferFormat format,
-      const gfx::GpuMemoryBufferHandle& gpu_memory_buffer_handle) override;
+      gfx::GpuMemoryBufferHandle gpu_memory_buffer_handle) override;
 
  private:
-  bool Initialize();
+  bool Initialize(scoped_refptr<gfx::NativePixmap> pixmap);
 
   DISALLOW_COPY_AND_ASSIGN(VaapiPictureNativePixmapEgl);
 };

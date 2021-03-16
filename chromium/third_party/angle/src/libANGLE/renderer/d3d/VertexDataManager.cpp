@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2012 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -102,7 +102,7 @@ bool DirectStoragePossible(const gl::Context *context,
     // TODO(jmadill): add VertexFormatCaps
     BufferFactoryD3D *factory = bufferD3D->getFactory();
 
-    angle::FormatID vertexFormatID = gl::GetVertexFormatID(attrib);
+    angle::FormatID vertexFormatID = attrib.format->id;
 
     // CPU-converted vertex data must be converted (naturally).
     if ((factory->getVertexConversionType(vertexFormatID) & VERTEX_CONVERT_CPU) != 0)
@@ -110,7 +110,7 @@ bool DirectStoragePossible(const gl::Context *context,
         return false;
     }
 
-    if (attrib.type != gl::VertexAttribType::Float)
+    if (attrib.format->vertexAttribType != gl::VertexAttribType::Float)
     {
         unsigned int elementSize = 0;
         angle::Result error =
@@ -203,11 +203,11 @@ VertexStorageType ClassifyAttributeStorage(const gl::Context *context,
 VertexDataManager::CurrentValueState::CurrentValueState(BufferFactoryD3D *factory)
     : buffer(new StreamingVertexBufferInterface(factory)), offset(0)
 {
-    data.FloatValues[0] = std::numeric_limits<float>::quiet_NaN();
-    data.FloatValues[1] = std::numeric_limits<float>::quiet_NaN();
-    data.FloatValues[2] = std::numeric_limits<float>::quiet_NaN();
-    data.FloatValues[3] = std::numeric_limits<float>::quiet_NaN();
-    data.Type           = gl::VertexAttribType::Float;
+    data.Values.FloatValues[0] = std::numeric_limits<float>::quiet_NaN();
+    data.Values.FloatValues[1] = std::numeric_limits<float>::quiet_NaN();
+    data.Values.FloatValues[2] = std::numeric_limits<float>::quiet_NaN();
+    data.Values.FloatValues[3] = std::numeric_limits<float>::quiet_NaN();
+    data.Type                  = gl::VertexAttribType::Float;
 }
 
 VertexDataManager::CurrentValueState::CurrentValueState(CurrentValueState &&other)
@@ -248,20 +248,20 @@ angle::Result VertexDataManager::prepareVertexData(
     std::vector<TranslatedAttribute> *translatedAttribs,
     GLsizei instances)
 {
-    const gl::State &state             = context->getState();
-    const gl::VertexArray *vertexArray = state.getVertexArray();
-    const auto &vertexAttributes       = vertexArray->getVertexAttributes();
-    const auto &vertexBindings         = vertexArray->getVertexBindings();
+    const gl::State &state                  = context->getState();
+    const gl::ProgramExecutable *executable = state.getProgramExecutable();
+    const gl::VertexArray *vertexArray      = state.getVertexArray();
+    const auto &vertexAttributes            = vertexArray->getVertexAttributes();
+    const auto &vertexBindings              = vertexArray->getVertexBindings();
 
     mDynamicAttribsMaskCache.reset();
-    const gl::Program *program = state.getProgram();
 
     translatedAttribs->clear();
 
     for (size_t attribIndex = 0; attribIndex < vertexAttributes.size(); ++attribIndex)
     {
         // Skip attrib locations the program doesn't use.
-        if (!program->isAttribLocationActive(attribIndex))
+        if (!executable->isAttribLocationActive(attribIndex))
             continue;
 
         const auto &attrib  = vertexAttributes[attribIndex];
@@ -361,7 +361,11 @@ angle::Result VertexDataManager::StoreStaticAttrib(const gl::Context *context,
     const int offset          = static_cast<int>(ComputeVertexAttributeOffset(attrib, binding));
 
     ANGLE_TRY(bufferD3D->getData(context, &sourceData));
-    sourceData += offset;
+
+    if (sourceData)
+    {
+        sourceData += offset;
+    }
 
     unsigned int streamOffset = 0;
 
@@ -379,8 +383,11 @@ angle::Result VertexDataManager::StoreStaticAttrib(const gl::Context *context,
             ElementsInBuffer(attrib, binding, static_cast<unsigned int>(bufferD3D->getSize()));
         int startIndex = offset / static_cast<int>(ComputeVertexAttributeStride(attrib, binding));
 
-        ANGLE_TRY(staticBuffer->storeStaticAttribute(context, attrib, binding, -startIndex,
-                                                     totalCount, 0, sourceData));
+        if (totalCount > 0)
+        {
+            ANGLE_TRY(staticBuffer->storeStaticAttribute(context, attrib, binding, -startIndex,
+                                                         totalCount, 0, sourceData));
+        }
     }
 
     unsigned int firstElementOffset =
@@ -588,7 +595,8 @@ angle::Result VertexDataManager::storeCurrentValue(
 
         ANGLE_TRY(buffer.reserveVertexSpace(context, attrib, binding, 1, 0));
 
-        const uint8_t *sourceData = reinterpret_cast<const uint8_t *>(currentValue.FloatValues);
+        const uint8_t *sourceData =
+            reinterpret_cast<const uint8_t *>(currentValue.Values.FloatValues);
         unsigned int streamOffset;
         ANGLE_TRY(buffer.storeDynamicAttribute(context, attrib, binding, currentValue.Type, 0, 1, 0,
                                                &streamOffset, sourceData));

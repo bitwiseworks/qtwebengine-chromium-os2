@@ -9,8 +9,11 @@
 #include <wayland-server-protocol-core.h>
 
 #include "base/strings/utf_string_conversions.h"
+#include "components/exo/display.h"
 #include "components/exo/text_input.h"
+#include "components/exo/wayland/serial_tracker.h"
 #include "components/exo/wayland/server_util.h"
+#include "ui/events/event.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
 #if defined(OS_CHROMEOS)
@@ -25,27 +28,17 @@ namespace {
 ////////////////////////////////////////////////////////////////////////////////
 // text_input_v1 interface:
 
-size_t OffsetFromUTF8Offset(const base::StringPiece& text, uint32_t offset) {
-  return base::UTF8ToUTF16(text.substr(0, offset)).size();
-}
-
-size_t OffsetFromUTF16Offset(const base::StringPiece16& text, uint32_t offset) {
-  return base::UTF16ToUTF8(text.substr(0, offset)).size();
-}
-
 class WaylandTextInputDelegate : public TextInput::Delegate {
  public:
-  WaylandTextInputDelegate(wl_resource* text_input) : text_input_(text_input) {}
+  WaylandTextInputDelegate(wl_resource* text_input,
+                           SerialTracker* serial_tracker)
+      : text_input_(text_input), serial_tracker_(serial_tracker) {}
   ~WaylandTextInputDelegate() override = default;
 
   void set_surface(wl_resource* surface) { surface_ = surface; }
 
  private:
   wl_client* client() { return wl_resource_get_client(text_input_); }
-
-  uint32_t next_serial() {
-    return wl_display_next_serial(wl_client_get_display(client()));
-  }
 
   // TextInput::Delegate:
   void Activated() override {
@@ -94,33 +87,35 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     zwp_text_input_v1_send_preedit_cursor(text_input_, pos);
 
     const std::string utf8 = base::UTF16ToUTF8(composition.text);
-    zwp_text_input_v1_send_preedit_string(text_input_, next_serial(),
-                                          utf8.c_str(), utf8.c_str());
+    zwp_text_input_v1_send_preedit_string(
+        text_input_,
+        serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
+        utf8.c_str(), utf8.c_str());
 
     wl_client_flush(client());
   }
 
   void Commit(const base::string16& text) override {
-    zwp_text_input_v1_send_commit_string(text_input_, next_serial(),
-                                         base::UTF16ToUTF8(text).c_str());
+    zwp_text_input_v1_send_commit_string(
+        text_input_,
+        serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
+        base::UTF16ToUTF8(text).c_str());
     wl_client_flush(client());
   }
 
   void SetCursor(const gfx::Range& selection) override {
-    // TODO(mukai): compute the utf8 offset for |selection| and call
-    // zwp_text_input_v1_send_cursor_position.
-    NOTIMPLEMENTED();
+    zwp_text_input_v1_send_cursor_position(text_input_, selection.end(),
+                                           selection.start());
   }
 
   void DeleteSurroundingText(const gfx::Range& range) override {
-    // TODO(mukai): compute the utf8 offset for |range| and call
-    // zwp_text_input_send_delete_surrounding_text.
-    NOTIMPLEMENTED();
+    zwp_text_input_v1_send_delete_surrounding_text(text_input_, range.start(),
+                                                   range.length());
   }
 
   void SendKey(const ui::KeyEvent& event) override {
     uint32_t code = ui::KeycodeConverter::DomCodeToNativeKeycode(event.code());
-    bool pressed = event.flags() | ui::ET_KEY_PRESSED;
+    bool pressed = (event.type() == ui::ET_KEY_PRESSED);
     // TODO(mukai): consolidate the definition of this modifiers_mask with other
     // similar ones in components/exo/keyboard.cc or arc_ime_service.cc.
     constexpr uint32_t modifiers_mask =
@@ -129,12 +124,14 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
     // 1-bit shifts to adjust the bitpattern for the modifiers; see also
     // WaylandTextInputDelegate::SendModifiers().
     uint32_t modifiers = (event.flags() & modifiers_mask) >> 1;
-    zwp_text_input_v1_send_keysym(text_input_,
-                                  TimeTicksToMilliseconds(event.time_stamp()),
-                                  next_serial(), code,
-                                  pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
-                                          : WL_KEYBOARD_KEY_STATE_RELEASED,
-                                  modifiers);
+
+    zwp_text_input_v1_send_keysym(
+        text_input_, TimeTicksToMilliseconds(event.time_stamp()),
+        serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
+        code,
+        pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
+                : WL_KEYBOARD_KEY_STATE_RELEASED,
+        modifiers);
     wl_client_flush(client());
   }
 
@@ -150,12 +147,18 @@ class WaylandTextInputDelegate : public TextInput::Delegate {
       case base::i18n::UNKNOWN_DIRECTION:
         LOG(ERROR) << "Unrecognized direction: " << direction;
     }
-    zwp_text_input_v1_send_text_direction(text_input_, next_serial(),
-                                          wayland_direction);
+
+    zwp_text_input_v1_send_text_direction(
+        text_input_,
+        serial_tracker_->GetNextSerial(SerialTracker::EventType::OTHER_EVENT),
+        wayland_direction);
   }
 
   wl_resource* text_input_;
   wl_resource* surface_ = nullptr;
+
+  // Owned by Server, which always outlives this delegate.
+  SerialTracker* const serial_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandTextInputDelegate);
 };
@@ -216,7 +219,8 @@ void text_input_set_surrounding_text(wl_client* client,
                                      uint32_t anchor) {
   TextInput* text_input = GetUserDataAs<TextInput>(resource);
   text_input->SetSurroundingText(base::UTF8ToUTF16(text),
-                                 OffsetFromUTF8Offset(text, cursor));
+                                 OffsetFromUTF8Offset(text, cursor),
+                                 OffsetFromUTF8Offset(text, anchor));
 }
 
 void text_input_set_content_type(wl_client* client,
@@ -342,13 +346,15 @@ const struct zwp_text_input_v1_interface text_input_v1_implementation = {
 void text_input_manager_create_text_input(wl_client* client,
                                           wl_resource* resource,
                                           uint32_t id) {
+  auto* data = GetUserDataAs<WaylandTextInputManager>(resource);
+
   wl_resource* text_input_resource =
       wl_resource_create(client, &zwp_text_input_v1_interface, 1, id);
 
   SetImplementation(
       text_input_resource, &text_input_v1_implementation,
-      std::make_unique<TextInput>(
-          std::make_unique<WaylandTextInputDelegate>(text_input_resource)));
+      std::make_unique<TextInput>(std::make_unique<WaylandTextInputDelegate>(
+          text_input_resource, data->serial_tracker)));
 }
 
 const struct zwp_text_input_manager_v1_interface

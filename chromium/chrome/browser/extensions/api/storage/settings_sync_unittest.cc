@@ -15,6 +15,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/storage/settings_sync_util.h"
+#include "chrome/browser/extensions/api/storage/sync_storage_backend.h"
 #include "chrome/browser/extensions/api/storage/sync_value_store_cache.h"
 #include "chrome/browser/extensions/api/storage/syncable_settings_storage.h"
 #include "chrome/test/base/testing_profile.h"
@@ -22,7 +23,7 @@
 #include "components/sync/model/sync_change_processor_wrapper_for_test.h"
 #include "components/sync/model/sync_error_factory.h"
 #include "components/sync/model/sync_error_factory_mock.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api/storage/backend_task_runner.h"
 #include "extensions/browser/api/storage/settings_test_util.h"
@@ -40,8 +41,6 @@ using base::DictionaryValue;
 using base::ListValue;
 using base::Value;
 namespace extensions {
-
-namespace util = settings_test_util;
 
 namespace {
 
@@ -186,6 +185,8 @@ class ExtensionSettingsSyncTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     profile_.reset(new TestingProfile(temp_dir_.GetPath()));
+    content::RunAllTasksUntilIdle();
+
     storage_factory_->Reset();
     frontend_ =
         StorageFrontend::CreateForTesting(storage_factory_, profile_.get());
@@ -198,6 +199,12 @@ class ExtensionSettingsSyncTest : public testing::Test {
 
     EventRouterFactory::GetInstance()->SetTestingFactory(
         profile_.get(), base::BindRepeating(&BuildEventRouter));
+
+    // Hold a pointer to SyncValueStoreCache in the main thread, such that
+    // GetSyncableService() can be called from the backend sequence.
+    sync_cache_ = static_cast<SyncValueStoreCache*>(
+        frontend_->GetValueStoreCache(settings_namespace::SYNC));
+    ASSERT_NE(sync_cache_, nullptr);
   }
 
   void TearDown() override {
@@ -213,22 +220,26 @@ class ExtensionSettingsSyncTest : public testing::Test {
   ValueStore* AddExtensionAndGetStorage(
       const std::string& id, Manifest::Type type) {
     scoped_refptr<const Extension> extension =
-        util::AddExtensionWithId(profile_.get(), id, type);
-    return util::GetStorage(extension, frontend_.get());
+        settings_test_util::AddExtensionWithId(profile_.get(), id, type);
+    return settings_test_util::GetStorage(extension, frontend_.get());
   }
 
   // Gets the syncer::SyncableService for the given sync type.
-  syncer::SyncableService* GetSyncableService(syncer::ModelType model_type) {
-    SyncValueStoreCache* sync_cache = static_cast<SyncValueStoreCache*>(
-        frontend_->GetValueStoreCache(settings_namespace::SYNC));
-    return sync_cache->GetSyncableService(model_type);
+  SyncStorageBackend* GetSyncableService(syncer::ModelType model_type) {
+    // SyncValueStoreCache::GetSyncableService internally enforces |model_type|
+    // to be APP_SETTINGS or EXTENSION_SETTINGS, and the dynamic type of the
+    // returned service is always SyncStorageBackend, so it can be downcast.
+    DCHECK(model_type == syncer::APP_SETTINGS ||
+           model_type == syncer::EXTENSION_SETTINGS);
+    return static_cast<SyncStorageBackend*>(
+        sync_cache_->GetSyncableService(model_type));
   }
 
   // Gets all the sync data from the SyncableService for a sync type as a map
   // from extension id to its sync data.
   SettingSyncDataMultimap GetAllSyncData(syncer::ModelType model_type) {
     syncer::SyncDataList as_list =
-        GetSyncableService(model_type)->GetAllSyncData(model_type);
+        GetSyncableService(model_type)->GetAllSyncDataForTesting(model_type);
     SettingSyncDataMultimap as_map;
     for (auto it = as_list.begin(); it != as_list.end(); ++it) {
       std::unique_ptr<SettingSyncData> sync_data(new SettingSyncData(*it));
@@ -263,7 +274,7 @@ class ExtensionSettingsSyncTest : public testing::Test {
   }
 
   // Needed so that the DCHECKs for running on FILE or UI threads pass.
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   base::ScopedTempDir temp_dir_;
   std::unique_ptr<TestingProfile> profile_;
@@ -272,6 +283,7 @@ class ExtensionSettingsSyncTest : public testing::Test {
   std::unique_ptr<MockSyncChangeProcessor> sync_processor_;
   std::unique_ptr<syncer::SyncChangeProcessorWrapperForTest>
       sync_processor_wrapper_;
+  SyncValueStoreCache* sync_cache_;
 };
 
 // Get a semblance of coverage for both EXTENSION_SETTINGS and APP_SETTINGS
@@ -1014,7 +1026,7 @@ TEST_F(ExtensionSettingsSyncTest, FailingGetAllSyncDataDoesntStopSync) {
     GetExisting("bad")->set_status_code(ValueStore::CORRUPTION);
     {
       syncer::SyncDataList all_sync_data =
-          GetSyncableService(model_type)->GetAllSyncData(model_type);
+          GetSyncableService(model_type)->GetAllSyncDataForTesting(model_type);
       EXPECT_EQ(1u, all_sync_data.size());
       EXPECT_EQ("good/foo", syncer::SyncDataLocal(all_sync_data[0]).GetTag());
     }
@@ -1322,11 +1334,7 @@ TEST_F(ExtensionSettingsSyncTest,
   Manifest::Type type = Manifest::TYPE_LEGACY_PACKAGED_APP;
 
   // This value should be larger than the limit in sync_storage_backend.cc.
-  std::string string_10k;
-  for (size_t i = 0; i < 10000; ++i) {
-    string_10k.append("a");
-  }
-  base::Value large_value(string_10k);
+  base::Value large_value(std::string(10000, 'a'));
 
   PostOnBackendSequenceAndWait(FROM_HERE, [&, this]() {
     GetSyncableService(model_type)
@@ -1425,9 +1433,9 @@ namespace {
 static void UnlimitedSyncStorageTestCallback(ValueStore* sync_storage) {
   // Sync storage should still run out after ~100K; the unlimitedStorage
   // permission can't apply to sync.
-  std::unique_ptr<base::Value> kilobyte = util::CreateKilobyte();
+  std::unique_ptr<base::Value> kilobyte = settings_test_util::CreateKilobyte();
   for (int i = 0; i < 100; ++i) {
-    sync_storage->Set(ValueStore::DEFAULTS, base::IntToString(i), *kilobyte);
+    sync_storage->Set(ValueStore::DEFAULTS, base::NumberToString(i), *kilobyte);
   }
 
   EXPECT_FALSE(sync_storage->Set(ValueStore::DEFAULTS, "WillError", *kilobyte)
@@ -1437,9 +1445,10 @@ static void UnlimitedSyncStorageTestCallback(ValueStore* sync_storage) {
 
 static void UnlimitedLocalStorageTestCallback(ValueStore* local_storage) {
   // Local storage should never run out.
-  std::unique_ptr<base::Value> megabyte = util::CreateMegabyte();
+  std::unique_ptr<base::Value> megabyte = settings_test_util::CreateMegabyte();
   for (int i = 0; i < 7; ++i) {
-    local_storage->Set(ValueStore::DEFAULTS, base::IntToString(i), *megabyte);
+    local_storage->Set(ValueStore::DEFAULTS, base::NumberToString(i),
+                       *megabyte);
   }
 
   EXPECT_TRUE(local_storage->Set(ValueStore::DEFAULTS, "WontError", *megabyte)
@@ -1462,7 +1471,7 @@ TEST_F(ExtensionSettingsSyncTest, MAYBE_UnlimitedStorageForLocalButNotSync) {
   std::set<std::string> permissions;
   permissions.insert("unlimitedStorage");
   scoped_refptr<const Extension> extension =
-      util::AddExtensionWithIdAndPermissions(
+      settings_test_util::AddExtensionWithIdAndPermissions(
           profile_.get(), id, Manifest::TYPE_EXTENSION, permissions);
 
   frontend_->RunWithStorage(extension,

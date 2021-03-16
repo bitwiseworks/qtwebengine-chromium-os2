@@ -31,11 +31,9 @@ def TempFile():
     os.unlink(temp.name)
 
 
-def GetTIRLabelFromHistogram(hist):
+def GetGroupingLabelFromHistogram(hist):
   tags = hist.diagnostics.get(reserved_infos.STORY_TAGS.name) or []
-
   tags_to_use = [t.split(':') for t in tags if ':' in t]
-
   return '_'.join(v for _, v in sorted(tags_to_use))
 
 
@@ -49,10 +47,10 @@ def ComputeTestPath(hist):
   is_summary = list(
       hist.diagnostics.get(reserved_infos.SUMMARY_KEYS.name, []))
 
-  tir_label = GetTIRLabelFromHistogram(hist)
-  if tir_label and (
+  grouping_label = GetGroupingLabelFromHistogram(hist)
+  if grouping_label and (
       not is_summary or reserved_infos.STORY_TAGS.name in is_summary):
-    path += '/' + tir_label
+    path += '/' + grouping_label
 
   is_ref = hist.diagnostics.get(reserved_infos.IS_REFERENCE_BUILD.name)
   if is_ref and len(is_ref) == 1:
@@ -70,9 +68,13 @@ def ComputeTestPath(hist):
   return path
 
 
+def Dumps(obj):
+  return json.dumps(obj, separators=(',', ':')).encode('utf-8')
+
+
 def _MergeHistogramSetByPath(hs):
   with TempFile() as temp:
-    temp.write(json.dumps(hs.AsDicts()).encode('utf-8'))
+    temp.write(Dumps(hs.AsDicts()))
     temp.close()
 
     return merge_histograms.MergeHistograms(temp.name, (
@@ -103,11 +105,53 @@ def _MergeAndReplaceSharedDiagnostics(diagnostic_name, hs):
       h.diagnostics[diagnostic_name] = merged
 
 
-def AddReservedDiagnostics(histogram_dicts, names_to_values):
+def Batch(histograms, max_bytes, strict=False):
+  all_json = Dumps(histograms.AsDicts())
+  if max_bytes == 0:
+    return [all_json]
+
+  avg_hist_size = len(all_json) / len(histograms)
+  del all_json
+  avg_batch_size = max(1, int(round(max_bytes / avg_hist_size)))
+
+  # Return an array of HistogramSet json strings, each not larger than
+  # max_bytes. Take |avg_batch_size| histograms, then add or remove one at a
+  # time until the batch_json size is just under max_bytes.
+
+  histograms = list(histograms)
+
+  def DumpsFirst(n):
+    hs = histogram_set.HistogramSet(histograms[:n])
+    if n > 1:
+      hs.DeduplicateDiagnostics()
+    return Dumps(hs.AsDicts())
+
+  batches = []
+  while histograms:
+    batch_size = avg_batch_size
+    batch_json = DumpsFirst(batch_size)
+    while len(batch_json) < max_bytes and batch_size < len(histograms):
+      batch_size += 1
+      batch_json = DumpsFirst(batch_size)
+    while len(batch_json) > max_bytes and batch_size > 1:
+      batch_size -= 1
+      batch_json = DumpsFirst(batch_size)
+    if strict and len(batch_json) > max_bytes and batch_size == 1:
+      raise ValueError('Found a single Histogram larger than max_bytes')
+    histograms = histograms[batch_size:]
+    batches.append(batch_json)
+
+  return batches
+
+
+def AddReservedDiagnostics(histogram_dicts, names_to_values, max_bytes=0):
   # We need to generate summary statistics for anything that had a story, so
   # filter out every histogram with no stories, then merge. If you keep the
   # histograms with no story, you end up with duplicates.
   hs_with_stories = _LoadHistogramSet(histogram_dicts)
+  if len(hs_with_stories) == 0:
+    return []
+
   hs_with_stories.FilterHistograms(
       lambda h: not h.diagnostics.get(reserved_infos.STORIES.name, []))
 
@@ -134,7 +178,7 @@ def AddReservedDiagnostics(histogram_dicts, names_to_values):
     # This call creates summary metrics across each tag set of stories.
     hs = histogram_set.HistogramSet()
     hs.ImportDicts(hs_with_stories.AsDicts())
-    hs.FilterHistograms(lambda h: not GetTIRLabelFromHistogram(h))
+    hs.FilterHistograms(lambda h: not GetGroupingLabelFromHistogram(h))
 
     for h in hs:
       h.diagnostics[reserved_infos.SUMMARY_KEYS.name] = (
@@ -177,4 +221,7 @@ def AddReservedDiagnostics(histogram_dicts, names_to_values):
         name, generic_set.GenericSet([value]))
   histograms.RemoveOrphanedDiagnostics()
 
-  return json.dumps(histograms.AsDicts())
+  if len(histograms) == 0:
+    return []
+
+  return Batch(histograms, max_bytes)

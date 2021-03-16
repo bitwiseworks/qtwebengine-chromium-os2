@@ -25,11 +25,11 @@ public interface OfflineContentProvider {
         void onItemRemoved(ContentId id);
 
         /** See OfflineContentProvider::Observer::OnItemUpdated(...). */
-        void onItemUpdated(OfflineItem item);
+        void onItemUpdated(OfflineItem item, UpdateDelta updateDelta);
     }
 
     /** See OfflineContentProvider::OpenItem(...). */
-    void openItem(@LaunchLocation int location, ContentId id);
+    void openItem(OpenParams openParams, ContentId id);
 
     /** See OfflineContentProvider::RemoveItem(...). */
     void removeItem(ContentId id);
@@ -54,6 +54,9 @@ public interface OfflineContentProvider {
 
     /** See OfflineContentProvider::GetShareInfoForItem(...). */
     void getShareInfoForItem(ContentId id, ShareCallback callback);
+
+    /** See OfflineContentProvider::RenameItem(...). */
+    void renameItem(ContentId id, String name, Callback<Integer /*RenameResult*/> callback);
 
     /** See OfflineContentProvider::AddObserver(...). */
     void addObserver(Observer observer);

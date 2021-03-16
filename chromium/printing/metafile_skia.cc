@@ -36,6 +36,10 @@
 #include "base/file_descriptor_posix.h"
 #endif
 
+#if defined(OS_ANDROID)
+#include "base/files/file_util.h"
+#endif  // defined(OS_ANDROID)
+
 namespace {
 
 bool WriteAssetToBuffer(const SkStreamAsset* asset, void* buffer, size_t size) {
@@ -104,16 +108,15 @@ bool MetafileSkia::Init() {
 // TODO(halcanary): Create a Metafile class that only stores data.
 // Metafile::InitFromData is orthogonal to what the rest of
 // MetafileSkia does.
-bool MetafileSkia::InitFromData(const void* src_buffer,
-                                size_t src_buffer_size) {
+bool MetafileSkia::InitFromData(base::span<const uint8_t> data) {
   data_->data_stream = std::make_unique<SkMemoryStream>(
-      src_buffer, src_buffer_size, true /* copy_data? */);
+      data.data(), data.size(), /*copy_data=*/true);
   return true;
 }
 
 void MetafileSkia::StartPage(const gfx::Size& page_size,
                              const gfx::Rect& content_area,
-                             const float& scale_factor) {
+                             float scale_factor) {
   DCHECK_GT(page_size.width(), 0);
   DCHECK_GT(page_size.height(), 0);
   DCHECK_GT(scale_factor, 0.0f);
@@ -144,7 +147,7 @@ void MetafileSkia::StartPage(const gfx::Size& page_size,
 cc::PaintCanvas* MetafileSkia::GetVectorCanvasForNewPage(
     const gfx::Size& page_size,
     const gfx::Rect& content_area,
-    const float& scale_factor) {
+    float scale_factor) {
   StartPage(page_size, content_area, scale_factor);
   return data_->recorder.getRecordingCanvas();
 }
@@ -178,7 +181,7 @@ bool MetafileSkia::FinishDocument() {
   cc::PlaybackParams::CustomDataRasterCallback custom_callback;
   switch (data_->type) {
     case SkiaDocumentType::PDF:
-      doc = MakePdfDocument(printing::GetAgent(), &stream);
+      doc = MakePdfDocument(printing::GetAgent(), accessibility_tree_, &stream);
       break;
     case SkiaDocumentType::MSKP:
       SkSerialProcs procs = SerializationProcs(&data_->subframe_content_info);
@@ -276,7 +279,7 @@ http://codereview.chromium.org/7200040/diff/1/webkit/plugins/ppapi/ppapi_plugin_
 */
 bool MetafileSkia::RenderPage(unsigned int page_number,
                               CGContextRef context,
-                              const CGRect rect,
+                              const CGRect& rect,
                               const MacRenderPageParams& params) const {
   DCHECK_GT(GetDataSize(), 0U);
   if (data_->pdf_cg.GetDataSize() == 0) {
@@ -285,12 +288,35 @@ bool MetafileSkia::RenderPage(unsigned int page_number,
     size_t length = data_->data_stream->getLength();
     std::vector<uint8_t> buffer(length);
     (void)WriteAssetToBuffer(data_->data_stream.get(), &buffer[0], length);
-    data_->pdf_cg.InitFromData(&buffer[0], length);
+    data_->pdf_cg.InitFromData(buffer);
   }
   return data_->pdf_cg.RenderPage(page_number, context, rect, params);
 }
 #endif
 
+#if defined(OS_ANDROID)
+bool MetafileSkia::SaveToFileDescriptor(int fd) const {
+  if (GetDataSize() == 0u)
+    return false;
+
+  std::unique_ptr<SkStreamAsset> asset(data_->data_stream->duplicate());
+
+  static constexpr size_t kMaximumBufferSize = 1024 * 1024;
+  std::vector<uint8_t> buffer(std::min(kMaximumBufferSize, asset->getLength()));
+  do {
+    size_t read_size = asset->read(&buffer[0], buffer.size());
+    if (read_size == 0u)
+      break;
+    DCHECK_GE(buffer.size(), read_size);
+    if (!base::WriteFileDescriptor(
+            fd, reinterpret_cast<const char*>(buffer.data()), read_size)) {
+      return false;
+    }
+  } while (!asset->isAtEnd());
+
+  return true;
+}
+#else
 bool MetafileSkia::SaveTo(base::File* file) const {
   if (GetDataSize() == 0U)
     return false;
@@ -299,20 +325,21 @@ bool MetafileSkia::SaveTo(base::File* file) const {
   std::unique_ptr<SkStreamAsset> asset(data_->data_stream->duplicate());
 
   static constexpr size_t kMaximumBufferSize = 1024 * 1024;
-  std::vector<char> buffer(std::min(kMaximumBufferSize, asset->getLength()));
+  std::vector<uint8_t> buffer(std::min(kMaximumBufferSize, asset->getLength()));
   do {
     size_t read_size = asset->read(&buffer[0], buffer.size());
     if (read_size == 0)
       break;
     DCHECK_GE(buffer.size(), read_size);
-    if (!file->WriteAtCurrentPos(&buffer[0],
-                                 base::checked_cast<int>(read_size))) {
+    if (!file->WriteAtCurrentPosAndCheck(
+            base::make_span(&buffer[0], read_size))) {
       return false;
     }
   } while (!asset->isAtEnd());
 
   return true;
 }
+#endif  // defined(OS_ANDROID)
 
 std::unique_ptr<MetafileSkia> MetafileSkia::GetMetafileForCurrentPage(
     SkiaDocumentType type) {
@@ -343,7 +370,7 @@ uint32_t MetafileSkia::CreateContentForRemoteFrame(const gfx::Rect& rect,
 
   // Store the map between content id and the proxy id.
   uint32_t content_id = pic->uniqueID();
-  DCHECK(!base::ContainsKey(data_->subframe_content_info, content_id));
+  DCHECK(!base::Contains(data_->subframe_content_info, content_id));
   data_->subframe_content_info[content_id] = render_proxy_id;
 
   // Store the picture content.
@@ -378,7 +405,7 @@ SkStreamAsset* MetafileSkia::GetPdfData() const {
 void MetafileSkia::CustomDataToSkPictureCallback(SkCanvas* canvas,
                                                  uint32_t content_id) {
   // Check whether this is the one we need to handle.
-  if (!base::ContainsKey(data_->subframe_content_info, content_id))
+  if (!base::Contains(data_->subframe_content_info, content_id))
     return;
 
   auto it = data_->subframe_pics.find(content_id);

@@ -6,6 +6,10 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <memory>
+#include <vector>
+
 #include "cc/paint/paint_flags.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -46,18 +50,14 @@ const char TableHeader::kViewClassName[] = "TableHeader";
 // static
 const int TableHeader::kHorizontalPadding = 7;
 // static
-const int TableHeader::kSortIndicatorWidth = kSortIndicatorSize +
-    TableHeader::kHorizontalPadding * 2;
+const int TableHeader::kSortIndicatorWidth =
+    kSortIndicatorSize + TableHeader::kHorizontalPadding * 2;
 
-typedef std::vector<TableView::VisibleColumn> Columns;
+using Columns = std::vector<TableView::VisibleColumn>;
 
 TableHeader::TableHeader(TableView* table) : table_(table) {}
 
-TableHeader::~TableHeader() {}
-
-void TableHeader::Layout() {
-  SetBounds(x(), y(), table_->width(), GetPreferredSize().height());
-}
+TableHeader::~TableHeader() = default;
 
 void TableHeader::OnPaint(gfx::Canvas* canvas) {
   ui::NativeTheme* theme = GetNativeTheme();
@@ -74,39 +74,39 @@ void TableHeader::OnPaint(gfx::Canvas* canvas) {
                         gfx::PointF(width(), height() - 1), border_color);
 
   const Columns& columns = table_->visible_columns();
-  const int sorted_column_id = table_->sort_descriptors().empty() ? -1 :
-      table_->sort_descriptors()[0].column_id;
-  for (size_t i = 0; i < columns.size(); ++i) {
-    if (columns[i].width >= 2) {
-      const int separator_x = GetMirroredXInView(
-          columns[i].x + columns[i].width - 1);
+  const int sorted_column_id = table_->sort_descriptors().empty()
+                                   ? -1
+                                   : table_->sort_descriptors()[0].column_id;
+  for (const auto& column : columns) {
+    if (column.width >= 2) {
+      const int separator_x = GetMirroredXInView(column.x + column.width - 1);
       canvas->DrawSharpLine(
           gfx::PointF(separator_x, kSeparatorPadding),
           gfx::PointF(separator_x, height() - kSeparatorPadding),
           separator_color);
     }
 
-    const int x = columns[i].x + kHorizontalPadding;
-    int width = columns[i].width - kHorizontalPadding - kHorizontalPadding;
+    const int x = column.x + kHorizontalPadding;
+    int width = column.width - kHorizontalPadding - kHorizontalPadding;
     if (width <= 0)
       continue;
 
     const int title_width =
-        gfx::GetStringWidth(columns[i].column.title, font_list_);
+        gfx::GetStringWidth(column.column.title, font_list_);
     const bool paint_sort_indicator =
-        (columns[i].column.id == sorted_column_id &&
+        (column.column.id == sorted_column_id &&
          title_width + kSortIndicatorWidth <= width);
 
     if (paint_sort_indicator &&
-        columns[i].column.alignment == ui::TableColumn::RIGHT) {
+        column.column.alignment == ui::TableColumn::RIGHT) {
       width -= kSortIndicatorWidth;
     }
 
     canvas->DrawStringRectWithFlags(
-        columns[i].column.title, font_list_, text_color,
+        column.column.title, font_list_, text_color,
         gfx::Rect(GetMirroredXWithWidthInView(x, width), kVerticalPadding,
                   width, height() - kVerticalPadding * 2),
-        TableColumnAlignmentToCanvasAlignment(columns[i].column.alignment));
+        TableColumnAlignmentToCanvasAlignment(column.column.alignment));
 
     if (paint_sort_indicator) {
       cc::PaintFlags flags;
@@ -115,7 +115,7 @@ void TableHeader::OnPaint(gfx::Canvas* canvas) {
       flags.setAntiAlias(true);
 
       int indicator_x = 0;
-      ui::TableColumn::Alignment alignment = columns[i].column.alignment;
+      ui::TableColumn::Alignment alignment = column.column.alignment;
       if (base::i18n::IsRTL()) {
         if (alignment == ui::TableColumn::LEFT)
           alignment = ui::TableColumn::RIGHT;
@@ -140,9 +140,8 @@ void TableHeader::OnPaint(gfx::Canvas* canvas) {
       int indicator_y = height() / 2 - kSortIndicatorSize / 2;
       SkPath indicator_path;
       if (table_->sort_descriptors()[0].ascending) {
-        indicator_path.moveTo(
-            SkIntToScalar(indicator_x),
-            SkIntToScalar(indicator_y + kSortIndicatorSize));
+        indicator_path.moveTo(SkIntToScalar(indicator_x),
+                              SkIntToScalar(indicator_y + kSortIndicatorSize));
         indicator_path.lineTo(
             SkIntToScalar(indicator_x + kSortIndicatorSize * scale),
             SkIntToScalar(indicator_y + kSortIndicatorSize));
@@ -173,9 +172,26 @@ gfx::Size TableHeader::CalculatePreferredSize() const {
   return gfx::Size(1, kVerticalPadding * 2 + font_list_.GetHeight());
 }
 
+bool TableHeader::GetNeedsNotificationWhenVisibleBoundsChange() const {
+  return true;
+}
+
+void TableHeader::OnVisibleBoundsChanged() {
+  // Ensure the TableView updates its virtual children's bounds, because that
+  // includes the bounds representing this TableHeader.
+  table_->UpdateVirtualAccessibilityChildrenBounds();
+}
+
+void TableHeader::AddedToWidget() {
+  // Ensure the TableView updates its virtual children's bounds, because that
+  // includes the bounds representing this TableHeader.
+  table_->UpdateVirtualAccessibilityChildrenBounds();
+}
+
 gfx::NativeCursor TableHeader::GetCursor(const ui::MouseEvent& event) {
-  return GetResizeColumn(GetMirroredXInView(event.x())) != -1 ?
-      GetNativeColumnResizeCursor() : View::GetCursor(event);
+  return GetResizeColumn(GetMirroredXInView(event.x())) != -1
+             ? GetNativeColumnResizeCursor()
+             : View::GetCursor(event);
 }
 
 bool TableHeader::OnMousePressed(const ui::MouseEvent& event) {
@@ -194,7 +210,7 @@ bool TableHeader::OnMouseDragged(const ui::MouseEvent& event) {
 }
 
 void TableHeader::OnMouseReleased(const ui::MouseEvent& event) {
-  const bool was_resizing = resize_details_ != NULL;
+  const bool was_resizing = resize_details_ != nullptr;
   resize_details_.reset();
   if (!was_resizing && event.IsOnlyLeftMouseButton())
     ToggleSortOrder(event);
@@ -229,9 +245,10 @@ void TableHeader::OnGestureEvent(ui::GestureEvent* event) {
   event->SetHandled();
 }
 
-void TableHeader::OnNativeThemeChanged(const ui::NativeTheme* theme) {
-  SetBackground(CreateSolidBackground(
-      theme->GetSystemColor(ui::NativeTheme::kColorId_TableHeaderBackground)));
+void TableHeader::OnThemeChanged() {
+  View::OnThemeChanged();
+  SetBackground(CreateSolidBackground(GetNativeTheme()->GetSystemColor(
+      ui::NativeTheme::kColorId_TableHeaderBackground)));
 }
 
 void TableHeader::ResizeColumnViaKeyboard(
@@ -245,10 +262,10 @@ void TableHeader::ResizeColumnViaKeyboard(
 
   int new_width = column.width;
   switch (direction) {
-    case TableView::ADVANCE_INCREMENT:
+    case TableView::AdvanceDirection::kIncrement:
       new_width += kResizeKeyboardAmount;
       break;
-    case TableView::ADVANCE_DECREMENT:
+    case TableView::AdvanceDirection::kDecrement:
       new_width -= kResizeKeyboardAmount;
       break;
   }
@@ -265,7 +282,7 @@ bool TableHeader::StartResize(const ui::LocatedEvent& event) {
   if (index == -1)
     return false;
 
-  resize_details_.reset(new ColumnResizeDetails);
+  resize_details_ = std::make_unique<ColumnResizeDetails>();
   resize_details_->column_index = index;
   resize_details_->initial_x = event.root_location().x();
   resize_details_->initial_width = table_->GetVisibleColumn(index).width;
@@ -277,8 +294,8 @@ void TableHeader::ContinueResize(const ui::LocatedEvent& event) {
     return;
 
   const int scale = base::i18n::IsRTL() ? -1 : 1;
-  const int delta = scale *
-      (event.root_location().x() - resize_details_->initial_x);
+  const int delta =
+      scale * (event.root_location().x() - resize_details_->initial_x);
   const TableView::VisibleColumn& column =
       table_->GetVisibleColumn(resize_details_->column_index);
   const int needed_for_title =
@@ -315,8 +332,8 @@ int TableHeader::GetResizeColumn(int x) const {
     return index - 1;
   }
   const int max_x = column.x + column.width;
-  return (x >= max_x - kResizePadding && x <= max_x + kResizePadding) ?
-      index : -1;
+  return (x >= max_x - kResizePadding && x <= max_x + kResizePadding) ? index
+                                                                      : -1;
 }
 
 }  // namespace views

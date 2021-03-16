@@ -49,10 +49,11 @@ Node* FindNonEmptyAnchorNode(const FloatPoint& absolute_point,
   if (node_size.Width() * node_size.Height() > max_node_area) {
     IntSize point_offset = view_rect.Size();
     point_offset.Scale(kViewportAnchorRelativeEpsilon);
-    HitTestLocation location(point + point_offset);
+    HitTestLocation alternative_location(point + point_offset);
     node = event_handler
-               .HitTestResultAtLocation(location, HitTestRequest::kReadOnly |
-                                                      HitTestRequest::kActive)
+               .HitTestResultAtLocation(
+                   alternative_location,
+                   HitTestRequest::kReadOnly | HitTestRequest::kActive)
                .InnerNode();
   }
 
@@ -103,6 +104,7 @@ RotationViewportAnchor::RotationViewportAnchor(
     PageScaleConstraintsSet& page_scale_constraints_set)
     : root_frame_view_(&root_frame_view),
       visual_viewport_(&visual_viewport),
+      anchor_node_(nullptr),
       anchor_in_inner_view_coords_(anchor_in_inner_view_coords),
       page_scale_constraints_set_(&page_scale_constraints_set) {
   SetAnchor();
@@ -126,8 +128,8 @@ void RotationViewportAnchor::SetAnchor() {
   visual_viewport_in_document_ =
       FloatPoint(root_frame_viewport->VisibleContentRect().Location());
 
-  anchor_node_.Clear();
-  anchor_node_bounds_ = LayoutRect();
+  anchor_node_ = nullptr;
+  anchor_node_bounds_ = PhysicalRect();
   anchor_in_node_coords_ = FloatSize();
   normalized_visual_viewport_offset_ = FloatSize();
 
@@ -168,9 +170,9 @@ void RotationViewportAnchor::SetAnchor() {
 
   anchor_node_ = node;
   anchor_node_bounds_ = root_frame_view_->FrameToDocument(
-      LayoutRect(node->GetLayoutObject()->AbsoluteBoundingBoxRect()));
+      PhysicalRect(node->GetLayoutObject()->AbsoluteBoundingBoxRect()));
   anchor_in_node_coords_ =
-      anchor_point_in_document - FloatPoint(anchor_node_bounds_.Location());
+      anchor_point_in_document - FloatPoint(anchor_node_bounds_.offset);
   anchor_in_node_coords_.Scale(1.f / anchor_node_bounds_.Width(),
                                1.f / anchor_node_bounds_.Height());
 }
@@ -193,7 +195,8 @@ void RotationViewportAnchor::RestoreToAnchor() {
                  visual_viewport_origin);
 
   LayoutViewport().SetScrollOffset(
-      ToScrollOffset(FloatPoint(main_frame_origin)), kProgrammaticScroll);
+      ToScrollOffset(FloatPoint(main_frame_origin)),
+      mojom::blink::ScrollType::kProgrammatic);
 
   // Set scale before location, since location can be clamped on setting scale.
   visual_viewport_->SetScale(new_page_scale_factor);
@@ -241,24 +244,24 @@ FloatPoint RotationViewportAnchor::GetInnerOrigin(
       !anchor_node_->GetLayoutObject())
     return visual_viewport_in_document_;
 
-  const LayoutRect current_node_bounds = root_frame_view_->FrameToDocument(
-      LayoutRect(anchor_node_->GetLayoutObject()->AbsoluteBoundingBoxRect()));
+  const PhysicalRect current_node_bounds = root_frame_view_->FrameToDocument(
+      PhysicalRect(anchor_node_->GetLayoutObject()->AbsoluteBoundingBoxRect()));
   if (anchor_node_bounds_ == current_node_bounds)
     return visual_viewport_in_document_;
 
   RootFrameViewport* root_frame_viewport =
       root_frame_view_->GetRootFrameViewport();
-  const LayoutRect current_node_bounds_in_layout_viewport =
+  const PhysicalRect current_node_bounds_in_layout_viewport =
       root_frame_viewport->RootContentsToLayoutViewportContents(
-          *root_frame_view_.Get(), current_node_bounds);
+          *root_frame_view_, current_node_bounds);
 
   // Compute the new anchor point relative to the node position
   FloatSize anchor_offset_from_node(
-      current_node_bounds_in_layout_viewport.Size());
+      current_node_bounds_in_layout_viewport.size);
   anchor_offset_from_node.Scale(anchor_in_node_coords_.Width(),
                                 anchor_in_node_coords_.Height());
   FloatPoint anchor_point =
-      FloatPoint(current_node_bounds_in_layout_viewport.Location()) +
+      FloatPoint(current_node_bounds_in_layout_viewport.offset) +
       anchor_offset_from_node;
 
   // Compute the new origin point relative to the new anchor point

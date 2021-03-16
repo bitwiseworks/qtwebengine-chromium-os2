@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/task_runner_util.h"
 #include "components/subresource_filter/content/browser/ruleset_service.h"
 #include "components/subresource_filter/content/common/subresource_filter_messages.h"
@@ -46,9 +47,9 @@ void CloseFile(base::File) {}
 void CloseFileOnFileThread(base::File* file) {
   if (!file->IsValid())
     return;
-  base::PostTaskWithTraits(FROM_HERE,
-                           {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
-                           base::BindOnce(&CloseFile, std::move(*file)));
+  base::ThreadPool::PostTask(
+      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
+      base::BindOnce(&CloseFile, std::move(*file)));
 }
 
 }  // namespace
@@ -59,7 +60,7 @@ RulesetPublisherImpl::RulesetPublisherImpl(
     : ruleset_service_(ruleset_service),
       ruleset_dealer_(std::make_unique<VerifiedRulesetDealer::Handle>(
           std::move(blocking_task_runner))) {
-  best_effort_task_runner_ = base::CreateSingleThreadTaskRunnerWithTraits(
+  best_effort_task_runner_ = base::CreateSingleThreadTaskRunner(
       {content::BrowserThread::UI, base::TaskPriority::BEST_EFFORT});
   DCHECK(best_effort_task_runner_->BelongsToCurrentThread());
   // Must rely on notifications as RenderProcessHostObserver::RenderProcessReady

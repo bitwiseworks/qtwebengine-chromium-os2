@@ -12,16 +12,24 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
+#include "components/download/public/common/download_danger_type.h"
 #include "components/download/public/common/download_interrupt_reasons.h"
+#include "components/safe_browsing/buildflags.h"
 #include "net/http/http_content_disposition.h"
 #include "net/http/http_util.h"
+
+// TODO(crbug/1056278): Launch this on Fuchsia. We should also consider serving
+// an empty FileTypePolicies to platforms without Safe Browsing to remove the
+// BUILDFLAGs and nogncheck here.
+#if (BUILDFLAG(FULL_SAFE_BROWSING) || BUILDFLAG(SAFE_BROWSING_DB_REMOTE)) && \
+    !defined(OS_FUCHSIA)
+#include "components/safe_browsing/core/file_type_policies.h"  // nogncheck
+#endif
 
 namespace download {
 
 namespace {
-
-// The maximium value for download deletion retention time histogram.
-const int kMaxDeletionRetentionHours = 720;
 
 // All possible error codes from the network module. Note that the error codes
 // are all positive (since histograms expect positive sample values).
@@ -63,367 +71,11 @@ enum ContentDispositionCountTypes {
   CONTENT_DISPOSITION_LAST_ENTRY
 };
 
-void RecordContentDispositionCount(ContentDispositionCountTypes type,
-                                   bool record) {
-  if (!record)
-    return;
-  UMA_HISTOGRAM_ENUMERATION("Download.ContentDisposition", type,
-                            CONTENT_DISPOSITION_LAST_ENTRY);
-}
-
-void RecordContentDispositionCountFlag(
-    ContentDispositionCountTypes type,
-    int flags_to_test,
-    net::HttpContentDisposition::ParseResultFlags flag) {
-  RecordContentDispositionCount(type, (flags_to_test & flag) == flag);
-}
-
-// Do not insert, delete, or reorder; this is being histogrammed. Append only.
-// All of the download_file_types.asciipb entries should be in this list.
-// TODO(asanka): Replace this enum with calls to FileTypePolicies and move the
-// UMA metrics for dangerous/malicious downloads to //chrome/browser/download.
-constexpr const base::FilePath::CharType* kDangerousFileTypes[] = {
-    FILE_PATH_LITERAL(".ad"),
-    FILE_PATH_LITERAL(".ade"),
-    FILE_PATH_LITERAL(".adp"),
-    FILE_PATH_LITERAL(".ah"),
-    FILE_PATH_LITERAL(".apk"),
-    FILE_PATH_LITERAL(".app"),
-    FILE_PATH_LITERAL(".application"),
-    FILE_PATH_LITERAL(".asp"),
-    FILE_PATH_LITERAL(".asx"),
-    FILE_PATH_LITERAL(".bas"),
-    FILE_PATH_LITERAL(".bash"),
-    FILE_PATH_LITERAL(".bat"),
-    FILE_PATH_LITERAL(".cfg"),
-    FILE_PATH_LITERAL(".chi"),
-    FILE_PATH_LITERAL(".chm"),
-    FILE_PATH_LITERAL(".class"),
-    FILE_PATH_LITERAL(".cmd"),
-    FILE_PATH_LITERAL(".com"),
-    FILE_PATH_LITERAL(".command"),
-    FILE_PATH_LITERAL(".crt"),
-    FILE_PATH_LITERAL(".crx"),
-    FILE_PATH_LITERAL(".csh"),
-    FILE_PATH_LITERAL(".deb"),
-    FILE_PATH_LITERAL(".dex"),
-    FILE_PATH_LITERAL(".dll"),
-    FILE_PATH_LITERAL(".drv"),
-    FILE_PATH_LITERAL(".exe"),
-    FILE_PATH_LITERAL(".fxp"),
-    FILE_PATH_LITERAL(".grp"),
-    FILE_PATH_LITERAL(".hlp"),
-    FILE_PATH_LITERAL(".hta"),
-    FILE_PATH_LITERAL(".htm"),
-    FILE_PATH_LITERAL(".html"),
-    FILE_PATH_LITERAL(".htt"),
-    FILE_PATH_LITERAL(".inf"),
-    FILE_PATH_LITERAL(".ini"),
-    FILE_PATH_LITERAL(".ins"),
-    FILE_PATH_LITERAL(".isp"),
-    FILE_PATH_LITERAL(".jar"),
-    FILE_PATH_LITERAL(".jnlp"),
-    FILE_PATH_LITERAL(".user.js"),
-    FILE_PATH_LITERAL(".js"),
-    FILE_PATH_LITERAL(".jse"),
-    FILE_PATH_LITERAL(".ksh"),
-    FILE_PATH_LITERAL(".lnk"),
-    FILE_PATH_LITERAL(".local"),
-    FILE_PATH_LITERAL(".mad"),
-    FILE_PATH_LITERAL(".maf"),
-    FILE_PATH_LITERAL(".mag"),
-    FILE_PATH_LITERAL(".mam"),
-    FILE_PATH_LITERAL(".manifest"),
-    FILE_PATH_LITERAL(".maq"),
-    FILE_PATH_LITERAL(".mar"),
-    FILE_PATH_LITERAL(".mas"),
-    FILE_PATH_LITERAL(".mat"),
-    FILE_PATH_LITERAL(".mau"),
-    FILE_PATH_LITERAL(".mav"),
-    FILE_PATH_LITERAL(".maw"),
-    FILE_PATH_LITERAL(".mda"),
-    FILE_PATH_LITERAL(".mdb"),
-    FILE_PATH_LITERAL(".mde"),
-    FILE_PATH_LITERAL(".mdt"),
-    FILE_PATH_LITERAL(".mdw"),
-    FILE_PATH_LITERAL(".mdz"),
-    FILE_PATH_LITERAL(".mht"),
-    FILE_PATH_LITERAL(".mhtml"),
-    FILE_PATH_LITERAL(".mmc"),
-    FILE_PATH_LITERAL(".mof"),
-    FILE_PATH_LITERAL(".msc"),
-    FILE_PATH_LITERAL(".msh"),
-    FILE_PATH_LITERAL(".mshxml"),
-    FILE_PATH_LITERAL(".msi"),
-    FILE_PATH_LITERAL(".msp"),
-    FILE_PATH_LITERAL(".mst"),
-    FILE_PATH_LITERAL(".ocx"),
-    FILE_PATH_LITERAL(".ops"),
-    FILE_PATH_LITERAL(".pcd"),
-    FILE_PATH_LITERAL(".pif"),
-    FILE_PATH_LITERAL(".pkg"),
-    FILE_PATH_LITERAL(".pl"),
-    FILE_PATH_LITERAL(".plg"),
-    FILE_PATH_LITERAL(".prf"),
-    FILE_PATH_LITERAL(".prg"),
-    FILE_PATH_LITERAL(".pst"),
-    FILE_PATH_LITERAL(".py"),
-    FILE_PATH_LITERAL(".pyc"),
-    FILE_PATH_LITERAL(".pyw"),
-    FILE_PATH_LITERAL(".rb"),
-    FILE_PATH_LITERAL(".reg"),
-    FILE_PATH_LITERAL(".rpm"),
-    FILE_PATH_LITERAL(".scf"),
-    FILE_PATH_LITERAL(".scr"),
-    FILE_PATH_LITERAL(".sct"),
-    FILE_PATH_LITERAL(".sh"),
-    FILE_PATH_LITERAL(".shar"),
-    FILE_PATH_LITERAL(".shb"),
-    FILE_PATH_LITERAL(".shs"),
-    FILE_PATH_LITERAL(".shtm"),
-    FILE_PATH_LITERAL(".shtml"),
-    FILE_PATH_LITERAL(".spl"),
-    FILE_PATH_LITERAL(".svg"),
-    FILE_PATH_LITERAL(".swf"),
-    FILE_PATH_LITERAL(".sys"),
-    FILE_PATH_LITERAL(".tcsh"),
-    FILE_PATH_LITERAL(".url"),
-    FILE_PATH_LITERAL(".vb"),
-    FILE_PATH_LITERAL(".vbe"),
-    FILE_PATH_LITERAL(".vbs"),
-    FILE_PATH_LITERAL(".vsd"),
-    FILE_PATH_LITERAL(".vsmacros"),
-    FILE_PATH_LITERAL(".vss"),
-    FILE_PATH_LITERAL(".vst"),
-    FILE_PATH_LITERAL(".vsw"),
-    FILE_PATH_LITERAL(".ws"),
-    FILE_PATH_LITERAL(".wsc"),
-    FILE_PATH_LITERAL(".wsf"),
-    FILE_PATH_LITERAL(".wsh"),
-    FILE_PATH_LITERAL(".xbap"),
-    FILE_PATH_LITERAL(".xht"),
-    FILE_PATH_LITERAL(".xhtm"),
-    FILE_PATH_LITERAL(".xhtml"),
-    FILE_PATH_LITERAL(".xml"),
-    FILE_PATH_LITERAL(".xsl"),
-    FILE_PATH_LITERAL(".xslt"),
-    FILE_PATH_LITERAL(".website"),
-    FILE_PATH_LITERAL(".msh1"),
-    FILE_PATH_LITERAL(".msh2"),
-    FILE_PATH_LITERAL(".msh1xml"),
-    FILE_PATH_LITERAL(".msh2xml"),
-    FILE_PATH_LITERAL(".ps1"),
-    FILE_PATH_LITERAL(".ps1xml"),
-    FILE_PATH_LITERAL(".ps2"),
-    FILE_PATH_LITERAL(".ps2xml"),
-    FILE_PATH_LITERAL(".psc1"),
-    FILE_PATH_LITERAL(".psc2"),
-    FILE_PATH_LITERAL(".xnk"),
-    FILE_PATH_LITERAL(".appref-ms"),
-    FILE_PATH_LITERAL(".gadget"),
-    FILE_PATH_LITERAL(".efi"),
-    FILE_PATH_LITERAL(".fon"),
-    FILE_PATH_LITERAL(".partial"),
-    FILE_PATH_LITERAL(".svg"),
-    FILE_PATH_LITERAL(".xml"),
-    FILE_PATH_LITERAL(".xrm_ms"),
-    FILE_PATH_LITERAL(".xsl"),
-    FILE_PATH_LITERAL(".action"),
-    FILE_PATH_LITERAL(".bin"),
-    FILE_PATH_LITERAL(".inx"),
-    FILE_PATH_LITERAL(".ipa"),
-    FILE_PATH_LITERAL(".isu"),
-    FILE_PATH_LITERAL(".job"),
-    FILE_PATH_LITERAL(".out"),
-    FILE_PATH_LITERAL(".pad"),
-    FILE_PATH_LITERAL(".paf"),
-    FILE_PATH_LITERAL(".rgs"),
-    FILE_PATH_LITERAL(".u3p"),
-    FILE_PATH_LITERAL(".vbscript"),
-    FILE_PATH_LITERAL(".workflow"),
-    FILE_PATH_LITERAL(".001"),
-    FILE_PATH_LITERAL(".7z"),
-    FILE_PATH_LITERAL(".ace"),
-    FILE_PATH_LITERAL(".arc"),
-    FILE_PATH_LITERAL(".arj"),
-    FILE_PATH_LITERAL(".b64"),
-    FILE_PATH_LITERAL(".balz"),
-    FILE_PATH_LITERAL(".bhx"),
-    FILE_PATH_LITERAL(".bz"),
-    FILE_PATH_LITERAL(".bz2"),
-    FILE_PATH_LITERAL(".bzip2"),
-    FILE_PATH_LITERAL(".cab"),
-    FILE_PATH_LITERAL(".cpio"),
-    FILE_PATH_LITERAL(".fat"),
-    FILE_PATH_LITERAL(".gz"),
-    FILE_PATH_LITERAL(".gzip"),
-    FILE_PATH_LITERAL(".hfs"),
-    FILE_PATH_LITERAL(".hqx"),
-    FILE_PATH_LITERAL(".iso"),
-    FILE_PATH_LITERAL(".lha"),
-    FILE_PATH_LITERAL(".lpaq1"),
-    FILE_PATH_LITERAL(".lpaq5"),
-    FILE_PATH_LITERAL(".lpaq8"),
-    FILE_PATH_LITERAL(".lzh"),
-    FILE_PATH_LITERAL(".lzma"),
-    FILE_PATH_LITERAL(".mim"),
-    FILE_PATH_LITERAL(".ntfs"),
-    FILE_PATH_LITERAL(".paq8f"),
-    FILE_PATH_LITERAL(".paq8jd"),
-    FILE_PATH_LITERAL(".paq8l"),
-    FILE_PATH_LITERAL(".paq8o"),
-    FILE_PATH_LITERAL(".pea"),
-    FILE_PATH_LITERAL(".quad"),
-    FILE_PATH_LITERAL(".r00"),
-    FILE_PATH_LITERAL(".r01"),
-    FILE_PATH_LITERAL(".r02"),
-    FILE_PATH_LITERAL(".r03"),
-    FILE_PATH_LITERAL(".r04"),
-    FILE_PATH_LITERAL(".r05"),
-    FILE_PATH_LITERAL(".r06"),
-    FILE_PATH_LITERAL(".r07"),
-    FILE_PATH_LITERAL(".r08"),
-    FILE_PATH_LITERAL(".r09"),
-    FILE_PATH_LITERAL(".r10"),
-    FILE_PATH_LITERAL(".r11"),
-    FILE_PATH_LITERAL(".r12"),
-    FILE_PATH_LITERAL(".r13"),
-    FILE_PATH_LITERAL(".r14"),
-    FILE_PATH_LITERAL(".r15"),
-    FILE_PATH_LITERAL(".r16"),
-    FILE_PATH_LITERAL(".r17"),
-    FILE_PATH_LITERAL(".r18"),
-    FILE_PATH_LITERAL(".r19"),
-    FILE_PATH_LITERAL(".r20"),
-    FILE_PATH_LITERAL(".r21"),
-    FILE_PATH_LITERAL(".r22"),
-    FILE_PATH_LITERAL(".r23"),
-    FILE_PATH_LITERAL(".r24"),
-    FILE_PATH_LITERAL(".r25"),
-    FILE_PATH_LITERAL(".r26"),
-    FILE_PATH_LITERAL(".r27"),
-    FILE_PATH_LITERAL(".r28"),
-    FILE_PATH_LITERAL(".r29"),
-    FILE_PATH_LITERAL(".rar"),
-    FILE_PATH_LITERAL(".squashfs"),
-    FILE_PATH_LITERAL(".swm"),
-    FILE_PATH_LITERAL(".tar"),
-    FILE_PATH_LITERAL(".taz"),
-    FILE_PATH_LITERAL(".tbz"),
-    FILE_PATH_LITERAL(".tbz2"),
-    FILE_PATH_LITERAL(".tgz"),
-    FILE_PATH_LITERAL(".tpz"),
-    FILE_PATH_LITERAL(".txz"),
-    FILE_PATH_LITERAL(".tz"),
-    FILE_PATH_LITERAL(".udf"),
-    FILE_PATH_LITERAL(".uu"),
-    FILE_PATH_LITERAL(".uue"),
-    FILE_PATH_LITERAL(".vhd"),
-    FILE_PATH_LITERAL(".vmdk"),
-    FILE_PATH_LITERAL(".wim"),
-    FILE_PATH_LITERAL(".wrc"),
-    FILE_PATH_LITERAL(".xar"),
-    FILE_PATH_LITERAL(".xxe"),
-    FILE_PATH_LITERAL(".xz"),
-    FILE_PATH_LITERAL(".z"),
-    FILE_PATH_LITERAL(".zip"),
-    FILE_PATH_LITERAL(".zipx"),
-    FILE_PATH_LITERAL(".zpaq"),
-    FILE_PATH_LITERAL(".cdr"),
-    FILE_PATH_LITERAL(".dart"),
-    FILE_PATH_LITERAL(".dc42"),
-    FILE_PATH_LITERAL(".diskcopy42"),
-    FILE_PATH_LITERAL(".dmg"),
-    FILE_PATH_LITERAL(".dmgpart"),
-    FILE_PATH_LITERAL(".dvdr"),
-    FILE_PATH_LITERAL(".img"),
-    FILE_PATH_LITERAL(".imgpart"),
-    FILE_PATH_LITERAL(".ndif"),
-    FILE_PATH_LITERAL(".smi"),
-    FILE_PATH_LITERAL(".sparsebundle"),
-    FILE_PATH_LITERAL(".sparseimage"),
-    FILE_PATH_LITERAL(".toast"),
-    FILE_PATH_LITERAL(".udif"),
-    FILE_PATH_LITERAL(".run"),  // 262
-    FILE_PATH_LITERAL(".mpkg"),
-    FILE_PATH_LITERAL(".as"),  // 264
-    FILE_PATH_LITERAL(".cpgz"),
-    FILE_PATH_LITERAL(".pax"),  // 266
-    FILE_PATH_LITERAL(".xip"),
-    FILE_PATH_LITERAL(".docx"),  // 268
-    FILE_PATH_LITERAL(".docm"),
-    FILE_PATH_LITERAL(".dott"),  // 270
-    FILE_PATH_LITERAL(".dotm"),
-    FILE_PATH_LITERAL(".docb"),  // 272
-    FILE_PATH_LITERAL(".xlsx"),
-    FILE_PATH_LITERAL(".xlsm"),  // 274
-    FILE_PATH_LITERAL(".xltx"),
-    FILE_PATH_LITERAL(".xltm"),  // 276
-    FILE_PATH_LITERAL(".pptx"),
-    FILE_PATH_LITERAL(".pptm"),  // 278
-    FILE_PATH_LITERAL(".potx"),
-    FILE_PATH_LITERAL(".ppam"),  // 280
-    FILE_PATH_LITERAL(".ppsx"),
-    FILE_PATH_LITERAL(".sldx"),  // 282
-    FILE_PATH_LITERAL(".sldm"),
-    FILE_PATH_LITERAL(".htm"),  // 284
-    FILE_PATH_LITERAL(".html"),
-    FILE_PATH_LITERAL(".xht"),  // 286
-    FILE_PATH_LITERAL(".xhtm"),
-    FILE_PATH_LITERAL(".xhtml"),  // 288
-    FILE_PATH_LITERAL(".vdx"),
-    FILE_PATH_LITERAL(".vsx"),  // 290
-    FILE_PATH_LITERAL(".vtx"),
-    FILE_PATH_LITERAL(".vsdx"),  // 292
-    FILE_PATH_LITERAL(".vssx"),
-    FILE_PATH_LITERAL(".vstx"),  // 294
-    FILE_PATH_LITERAL(".vsdm"),
-    FILE_PATH_LITERAL(".vssm"),  // 296
-    FILE_PATH_LITERAL(".vstm"),
-    FILE_PATH_LITERAL(".btapp"),  // 298
-    FILE_PATH_LITERAL(".btskin"),
-    FILE_PATH_LITERAL(".btinstall"),  // 300
-    FILE_PATH_LITERAL(".btkey"),
-    FILE_PATH_LITERAL(".btsearch"),  // 302
-    FILE_PATH_LITERAL(".dhtml"),
-    FILE_PATH_LITERAL(".dhtm"),  // 304
-    FILE_PATH_LITERAL(".dht"),
-    FILE_PATH_LITERAL(".shtml"),  // 306
-    FILE_PATH_LITERAL(".shtm"),
-    FILE_PATH_LITERAL(".sht"),  // 308
-    FILE_PATH_LITERAL(".slk"),  // 309
-    FILE_PATH_LITERAL(".applescript"),
-    FILE_PATH_LITERAL(".scpt"),  // 311
-    FILE_PATH_LITERAL(".scptd"),
-    FILE_PATH_LITERAL(".seplugin"),  // 313
-    FILE_PATH_LITERAL(".osas"),
-    FILE_PATH_LITERAL(".osax"),  // 315
-    FILE_PATH_LITERAL(".settingcontent-ms"),
-    FILE_PATH_LITERAL(".oxt"),  // 317
-    FILE_PATH_LITERAL(".pyd"),
-    FILE_PATH_LITERAL(".pyo"),      // 319
-    FILE_PATH_LITERAL(".desktop"),  // 320
-    FILE_PATH_LITERAL(".cpi"),      // 321
-    // NOTE! When you add a type here, please add the UMA value as a comment.
-    // These must all match DownloadItem.DangerousFileType in
-    // enums.xml. From 263 onward, they should also match
-    // SBClientDownloadExtensions.
-};
-
 // The maximum size in KB for the file size metric, file size larger than this
 // will be kept in overflow bucket.
 const int64_t kMaxFileSizeKb = 4 * 1024 * 1024; /* 4GB. */
 
 const int64_t kHighBandwidthBytesPerSecond = 30 * 1024 * 1024;
-
-// Maps extensions to their matching UMA histogram int value.
-int GetDangerousFileType(const base::FilePath& file_path) {
-  for (size_t i = 0; i < base::size(kDangerousFileTypes); ++i) {
-    if (file_path.MatchesExtension(kDangerousFileTypes[i]))
-      return i + 1;
-  }
-  return 0;  // Unknown extension.
-}
 
 // Helper method to calculate the bandwidth given the data length and time.
 int64_t CalculateBandwidthBytesPerSecond(size_t length,
@@ -500,7 +152,9 @@ void RecordDownloadCountWithSource(DownloadCountTypes type,
 
 void RecordDownloadCompleted(int64_t download_len,
                              bool is_parallelizable,
-                             DownloadSource download_source) {
+                             DownloadSource download_source,
+                             bool has_resumed,
+                             bool has_strong_validators) {
   RecordDownloadCountWithSource(COMPLETED_COUNT, download_source);
   int64_t max = 1024 * 1024 * 1024;  // One Terabyte.
   download_len /= 1024;              // In Kilobytes
@@ -510,27 +164,10 @@ void RecordDownloadCompleted(int64_t download_len,
     UMA_HISTOGRAM_CUSTOM_COUNTS("Download.DownloadSize.Parallelizable",
                                 download_len, 1, max, 256);
   }
-}
 
-void RecordDownloadDeletion(base::Time completion_time,
-                            const std::string& mime_type) {
-  if (completion_time == base::Time())
-    return;
-
-  // Records how long the user keeps media files on disk.
-  base::TimeDelta retention_time = base::Time::Now() - completion_time;
-  int retention_hours = retention_time.InHours();
-
-  DownloadContent type = DownloadContentFromMimeType(mime_type, false);
-  if (type == DownloadContent::VIDEO) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS("Download.DeleteRetentionTime.Video",
-                                retention_hours, 1, kMaxDeletionRetentionHours,
-                                50);
-  }
-  if (type == DownloadContent::AUDIO) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS("Download.DeleteRetentionTime.Audio",
-                                retention_hours, 1, kMaxDeletionRetentionHours,
-                                50);
+  if (has_resumed) {
+    base::UmaHistogramBoolean("Download.ResumptionComplete.HasStrongValidators",
+                              has_strong_validators);
   }
 }
 
@@ -569,9 +206,6 @@ void RecordDownloadInterrupted(DownloadInterruptReason reason,
   int64_t delta_bytes = total - received;
   bool unknown_size = total <= 0;
   int64_t received_kb = received / 1024;
-  int64_t total_kb = total / 1024;
-  UMA_HISTOGRAM_CUSTOM_COUNTS("Download.InterruptedReceivedSizeK", received_kb,
-                              1, kMaxKb, kBuckets);
   if (is_parallel_download_enabled) {
     UMA_HISTOGRAM_CUSTOM_COUNTS(
         "Download.InterruptedReceivedSizeK.ParallelDownload", received_kb, 1,
@@ -579,84 +213,49 @@ void RecordDownloadInterrupted(DownloadInterruptReason reason,
   }
 
   if (!unknown_size) {
-    UMA_HISTOGRAM_CUSTOM_COUNTS("Download.InterruptedTotalSizeK", total_kb, 1,
-                                kMaxKb, kBuckets);
-    if (is_parallel_download_enabled) {
-      UMA_HISTOGRAM_CUSTOM_COUNTS(
-          "Download.InterruptedTotalSizeK.ParallelDownload", total_kb, 1,
-          kMaxKb, kBuckets);
-    }
     if (delta_bytes == 0) {
       RecordDownloadCountWithSource(INTERRUPTED_AT_END_COUNT, download_source);
-      UMA_HISTOGRAM_CUSTOM_ENUMERATION("Download.InterruptedAtEndReason",
-                                       reason, samples);
-
       if (is_parallelizable) {
         RecordParallelizableDownloadCount(INTERRUPTED_AT_END_COUNT,
                                           is_parallel_download_enabled);
-        UMA_HISTOGRAM_CUSTOM_ENUMERATION(
-            "Download.InterruptedAtEndReason.ParallelDownload", reason,
-            samples);
-      }
-    } else if (delta_bytes > 0) {
-      UMA_HISTOGRAM_CUSTOM_COUNTS("Download.InterruptedOverrunBytes",
-                                  delta_bytes, 1, kMaxKb, kBuckets);
-      if (is_parallel_download_enabled) {
-        UMA_HISTOGRAM_CUSTOM_COUNTS(
-            "Download.InterruptedOverrunBytes.ParallelDownload", delta_bytes, 1,
-            kMaxKb, kBuckets);
-      }
-    } else {
-      UMA_HISTOGRAM_CUSTOM_COUNTS("Download.InterruptedUnderrunBytes",
-                                  -delta_bytes, 1, kMaxKb, kBuckets);
-      if (is_parallel_download_enabled) {
-        UMA_HISTOGRAM_CUSTOM_COUNTS(
-            "Download.InterruptedUnderrunBytes.ParallelDownload", -delta_bytes,
-            1, kMaxKb, kBuckets);
       }
     }
   }
 }
 
-void RecordMaliciousDownloadClassified(DownloadDangerType danger_type) {
-  UMA_HISTOGRAM_ENUMERATION("Download.MaliciousDownloadClassified", danger_type,
-                            DOWNLOAD_DANGER_TYPE_MAX);
+void RecordDownloadResumption(DownloadInterruptReason reason,
+                              bool user_resume) {
+  std::vector<base::HistogramBase::Sample> samples =
+      base::CustomHistogram::ArrayToCustomEnumRanges(kAllInterruptReasonCodes);
+  UMA_HISTOGRAM_CUSTOM_ENUMERATION("Download.Resume.LastReason", reason,
+                                   samples);
+  base::UmaHistogramBoolean("Download.Resume.UserResume", user_resume);
+}
+
+void RecordAutoResumeCountLimitReached(DownloadInterruptReason reason) {
+  base::UmaHistogramBoolean("Download.Resume.AutoResumeLimitReached", true);
+
+  std::vector<base::HistogramBase::Sample> samples =
+      base::CustomHistogram::ArrayToCustomEnumRanges(kAllInterruptReasonCodes);
+  UMA_HISTOGRAM_CUSTOM_ENUMERATION(
+      "Download.Resume.AutoResumeLimitReached.LastReason", reason, samples);
 }
 
 void RecordDangerousDownloadAccept(DownloadDangerType danger_type,
                                    const base::FilePath& file_path) {
-  UMA_HISTOGRAM_ENUMERATION("Download.DangerousDownloadValidated", danger_type,
-                            DOWNLOAD_DANGER_TYPE_MAX);
+  UMA_HISTOGRAM_ENUMERATION("Download.UserValidatedDangerousDownload",
+                            danger_type, DOWNLOAD_DANGER_TYPE_MAX);
+#if (BUILDFLAG(FULL_SAFE_BROWSING) || BUILDFLAG(SAFE_BROWSING_DB_REMOTE)) && \
+    !defined(OS_FUCHSIA)
+  // This can only be recorded for certain platforms, since the enum used for
+  // file types is provided by safe_browsing::FileTypePolicies.
   if (danger_type == DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE) {
     base::UmaHistogramSparse(
-        "Download.DangerousFile.DangerousDownloadValidated",
-        GetDangerousFileType(file_path));
+        "Download.DangerousFile.DownloadValidatedByType",
+        safe_browsing::FileTypePolicies::GetInstance()->UmaValueForFile(
+            file_path));
   }
-}
-
-void RecordDangerousDownloadDiscard(DownloadDiscardReason reason,
-                                    DownloadDangerType danger_type,
-                                    const base::FilePath& file_path) {
-  switch (reason) {
-    case DOWNLOAD_DISCARD_DUE_TO_USER_ACTION:
-      UMA_HISTOGRAM_ENUMERATION("Download.UserDiscard", danger_type,
-                                DOWNLOAD_DANGER_TYPE_MAX);
-      if (danger_type == DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE) {
-        base::UmaHistogramSparse("Download.DangerousFile.UserDiscard",
-                                 GetDangerousFileType(file_path));
-      }
-      break;
-    case DOWNLOAD_DISCARD_DUE_TO_SHUTDOWN:
-      UMA_HISTOGRAM_ENUMERATION("Download.Discard", danger_type,
-                                DOWNLOAD_DANGER_TYPE_MAX);
-      if (danger_type == DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE) {
-        base::UmaHistogramSparse("Download.DangerousFile.Discard",
-                                 GetDangerousFileType(file_path));
-      }
-      break;
-    default:
-      NOTREACHED();
-  }
+#endif
 }
 
 namespace {
@@ -855,6 +454,54 @@ void RecordDownloadVideoType(const std::string& mime_type_string) {
                             DOWNLOAD_VIDEO_MAX);
 }
 
+// These histograms summarize download mime-types. The same data is recorded in
+// a few places, as they exist to sanity-check and understand other metrics.
+const char* const kDownloadMetricsVerificationNameItemSecure =
+    "Download.InsecureBlocking.Verification.Item.Secure";
+const char* const kDownloadMetricsVerificationNameItemInsecure =
+    "Download.InsecureBlocking.Verification.Item.Insecure";
+const char* const kDownloadMetricsVerificationNameItemOther =
+    "Download.InsecureBlocking.Verification.Item.Other";
+const char* const kDownloadMetricsVerificationNameManagerSecure =
+    "Download.InsecureBlocking.Verification.Manager.Secure";
+const char* const kDownloadMetricsVerificationNameManagerInsecure =
+    "Download.InsecureBlocking.Verification.Manager.Insecure";
+const char* const kDownloadMetricsVerificationNameManagerOther =
+    "Download.InsecureBlocking.Verification.Manager.Other";
+
+const char* GetDownloadValidationMetricName(
+    const DownloadMetricsCallsite& callsite,
+    const DownloadConnectionSecurity& state) {
+  DCHECK(callsite == DownloadMetricsCallsite::kDownloadItem ||
+         callsite == DownloadMetricsCallsite::kMixContentDownloadBlocking);
+
+  switch (state) {
+    case DOWNLOAD_SECURE:
+    case DOWNLOAD_TARGET_BLOB:
+    case DOWNLOAD_TARGET_DATA:
+    case DOWNLOAD_TARGET_FILE:
+      if (callsite == DownloadMetricsCallsite::kDownloadItem)
+        return kDownloadMetricsVerificationNameItemSecure;
+      return kDownloadMetricsVerificationNameManagerSecure;
+    case DOWNLOAD_TARGET_INSECURE:
+    case DOWNLOAD_REDIRECT_INSECURE:
+    case DOWNLOAD_REDIRECT_TARGET_INSECURE:
+      if (callsite == DownloadMetricsCallsite::kDownloadItem)
+        return kDownloadMetricsVerificationNameItemInsecure;
+      return kDownloadMetricsVerificationNameManagerInsecure;
+    case DOWNLOAD_TARGET_OTHER:
+    case DOWNLOAD_TARGET_FILESYSTEM:
+    case DOWNLOAD_TARGET_FTP:
+      if (callsite == DownloadMetricsCallsite::kDownloadItem)
+        return kDownloadMetricsVerificationNameItemOther;
+      return kDownloadMetricsVerificationNameManagerOther;
+    case DOWNLOAD_CONNECTION_SECURITY_MAX:
+      NOTREACHED();
+  }
+  NOTREACHED();
+  return nullptr;
+}
+
 }  // namespace
 
 DownloadContent DownloadContentFromMimeType(const std::string& mime_type_string,
@@ -912,50 +559,6 @@ void RecordDownloadMimeTypeForNormalProfile(
       DownloadContent::MAX);
 }
 
-void RecordDownloadContentDisposition(
-    const std::string& content_disposition_string) {
-  if (content_disposition_string.empty())
-    return;
-  net::HttpContentDisposition content_disposition(content_disposition_string,
-                                                  std::string());
-  int result = content_disposition.parse_result_flags();
-
-  bool is_valid = !content_disposition.filename().empty();
-  RecordContentDispositionCount(CONTENT_DISPOSITION_HEADER_PRESENT, true);
-  RecordContentDispositionCount(CONTENT_DISPOSITION_IS_VALID, is_valid);
-  if (!is_valid)
-    return;
-
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_DISPOSITION_TYPE, result,
-      net::HttpContentDisposition::HAS_DISPOSITION_TYPE);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_UNKNOWN_TYPE, result,
-      net::HttpContentDisposition::HAS_UNKNOWN_DISPOSITION_TYPE);
-  RecordContentDispositionCountFlag(CONTENT_DISPOSITION_HAS_FILENAME, result,
-                                    net::HttpContentDisposition::HAS_FILENAME);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_EXT_FILENAME, result,
-      net::HttpContentDisposition::HAS_EXT_FILENAME);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_NON_ASCII_STRINGS, result,
-      net::HttpContentDisposition::HAS_NON_ASCII_STRINGS);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_PERCENT_ENCODED_STRINGS, result,
-      net::HttpContentDisposition::HAS_PERCENT_ENCODED_STRINGS);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_RFC2047_ENCODED_STRINGS, result,
-      net::HttpContentDisposition::HAS_RFC2047_ENCODED_STRINGS);
-  RecordContentDispositionCountFlag(
-      CONTENT_DISPOSITION_HAS_SINGLE_QUOTED_FILENAME, result,
-      net::HttpContentDisposition::HAS_SINGLE_QUOTED_FILENAME);
-}
-
-void RecordOpen(const base::Time& end) {
-  if (!end.is_null())
-    UMA_HISTOGRAM_LONG_TIMES("Download.OpenTime", (base::Time::Now() - end));
-}
-
 void RecordOpensOutstanding(int size) {
   UMA_HISTOGRAM_CUSTOM_COUNTS("Download.OpensOutstanding", size, 1 /*min*/,
                               (1 << 10) /*max*/, 64 /*num_buckets*/);
@@ -981,13 +584,21 @@ void RecordParallelDownloadRequestCount(int request_count) {
                               request_count, 1, 10, 11);
 }
 
-void RecordParallelDownloadAddStreamSuccess(bool success) {
-  UMA_HISTOGRAM_BOOLEAN("Download.ParallelDownloadAddStreamSuccess", success);
+void RecordParallelDownloadAddStreamSuccess(bool success,
+                                            bool support_range_request) {
+  if (support_range_request) {
+    base::UmaHistogramBoolean("Download.ParallelDownloadAddStreamSuccess",
+                              success);
+  } else {
+    base::UmaHistogramBoolean(
+        "Download.ParallelDownloadAddStreamSuccess.NoAcceptRangesHeader",
+        success);
+  }
 }
 
-void RecordParallelizableContentLength(int64_t content_length) {
-  UMA_HISTOGRAM_CUSTOM_COUNTS("Download.ContentLength.Parallelizable",
-                              content_length / 1024, 1, kMaxFileSizeKb, 50);
+void RecordParallelRequestCreationFailure(DownloadInterruptReason reason) {
+  base::UmaHistogramSparse("Download.ParallelDownload.CreationFailureReason",
+                           reason);
 }
 
 void RecordParallelizableDownloadStats(
@@ -1044,10 +655,6 @@ void RecordParallelizableDownloadStats(
     UMA_HISTOGRAM_CUSTOM_COUNTS(
         "Download.EstimatedTimeSavedWithParallelDownload",
         time_saved.InMilliseconds(), 0, kMillisecondsPerHour, 50);
-  } else {
-    UMA_HISTOGRAM_CUSTOM_COUNTS(
-        "Download.EstimatedTimeWastedWithParallelDownload",
-        -time_saved.InMilliseconds(), 0, kMillisecondsPerHour, 50);
   }
 }
 
@@ -1119,12 +726,12 @@ DownloadConnectionSecurity CheckDownloadConnectionSecurity(
   return state;
 }
 
-void RecordDownloadConnectionSecurity(const GURL& download_url,
-                                      const std::vector<GURL>& url_chain) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Download.TargetConnectionSecurity",
-      CheckDownloadConnectionSecurity(download_url, url_chain),
-      DOWNLOAD_CONNECTION_SECURITY_MAX);
+void RecordDownloadValidationMetrics(DownloadMetricsCallsite callsite,
+                                     DownloadConnectionSecurity state,
+                                     DownloadContent file_type) {
+  base::UmaHistogramEnumeration(
+      GetDownloadValidationMetricName(callsite, state), file_type,
+      DownloadContent::MAX);
 }
 
 void RecordDownloadContentTypeSecurity(
@@ -1164,15 +771,70 @@ void RecordDownloadSourcePageTransitionType(
       ui::PAGE_TRANSITION_LAST_CORE + 1);
 }
 
-void RecordDownloadHttpResponseCode(int response_code) {
-  UMA_HISTOGRAM_CUSTOM_ENUMERATION(
-      "Download.HttpResponseCode",
-      net::HttpUtil::MapStatusCodeForHistogram(response_code),
-      net::HttpUtil::GetStatusCodesForHistogram());
+void RecordDownloadHttpResponseCode(int response_code,
+                                    bool is_background_mode) {
+  int status_code = net::HttpUtil::MapStatusCodeForHistogram(response_code);
+  std::vector<int> status_codes = net::HttpUtil::GetStatusCodesForHistogram();
+  UMA_HISTOGRAM_CUSTOM_ENUMERATION("Download.HttpResponseCode", status_code,
+                                   status_codes);
+  if (is_background_mode) {
+    UMA_HISTOGRAM_CUSTOM_ENUMERATION(
+        "Download.HttpResponseCode.BackgroundDownload", status_code,
+        status_codes);
+  }
 }
 
 void RecordInProgressDBCount(InProgressDBCountTypes type) {
   UMA_HISTOGRAM_ENUMERATION("Download.InProgressDB.Counts", type);
 }
 
+void RecordDuplicateInProgressDownloadIdCount(int count) {
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Download.DuplicateInProgressDownloadIdCount",
+                              count, 1, 10, 11);
+}
+
+void RecordResumptionRestartReason(DownloadInterruptReason reason) {
+  base::UmaHistogramSparse("Download.ResumptionRestart.Reason", reason);
+}
+
+void RecordResumptionRestartCount(ResumptionRestartCountTypes type) {
+  base::UmaHistogramEnumeration("Download.ResumptionRestart.Counts", type);
+}
+
+void RecordDownloadResumed(bool has_strong_validators) {
+  base::UmaHistogramBoolean("Download.ResumptionStart.HasStrongValidators",
+                            has_strong_validators);
+}
+
+void RecordDownloadConnectionInfo(
+    net::HttpResponseInfo::ConnectionInfo connection_info) {
+  base::UmaHistogramEnumeration(
+      "Download.ConnectionInfo", connection_info,
+      net::HttpResponseInfo::ConnectionInfo::NUM_OF_CONNECTION_INFOS);
+}
+
+void RecordDownloadManagerCreationTimeSinceStartup(
+    base::TimeDelta elapsed_time) {
+  base::UmaHistogramLongTimes("Download.DownloadManager.CreationDelay",
+                              elapsed_time);
+}
+
+void RecordDownloadManagerMemoryUsage(size_t bytes_used) {
+  base::UmaHistogramMemoryKB("Download.DownloadManager.MemoryUsage",
+                             bytes_used / 1000);
+}
+
+#if defined(OS_ANDROID)
+void RecordBackgroundTargetDeterminationResult(
+    BackgroudTargetDeterminationResultTypes type) {
+  base::UmaHistogramEnumeration(
+      "MobileDownload.Background.TargetDeterminationResult", type);
+}
+#endif  // defined(OS_ANDROID)
+
+#if defined(OS_WIN)
+void RecordWinFileMoveError(int os_error) {
+  base::UmaHistogramSparse("Download.WinFileMoveError", os_error);
+}
+#endif  // defined(OS_WIN)
 }  // namespace download

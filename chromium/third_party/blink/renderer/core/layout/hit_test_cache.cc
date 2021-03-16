@@ -5,7 +5,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_cache.h"
 
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 
 namespace blink {
 
@@ -40,7 +40,7 @@ bool HitTestCache::LookupCachedResult(const HitTestLocation& location,
   return result;
 }
 
-void HitTestCacheEntry::Trace(blink::Visitor* visitor) {
+void HitTestCacheEntry::Trace(Visitor* visitor) {
   visitor->Trace(result);
 }
 
@@ -85,7 +85,7 @@ void HitTestCache::Clear() {
   items_.clear();
 }
 
-void HitTestCache::Trace(blink::Visitor* visitor) {
+void HitTestCache::Trace(Visitor* visitor) {
   visitor->Trace(items_);
 }
 

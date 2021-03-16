@@ -13,8 +13,8 @@
 #include "ppapi/host/resource_message_handler.h"
 
 namespace base {
+class SequencedTaskRunner;
 class SingleThreadTaskRunner;
-class TaskRunner;
 }
 
 namespace IPC {
@@ -52,7 +52,7 @@ struct PPAPI_HOST_EXPORT ResourceMessageFilterDeleteTraits {
 //   scoped_refptr<base::TaskRunner> OverrideTaskRunnerForMessage(
 //       const IPC::Message& message) override {
 //     if (message.type() == MyMessage::ID) {
-//       return base::CreateSingleThreadTaskRunnerWithTraits(
+//       return base::CreateSingleThreadTaskRunner(
 //           {BrowserThread::UI});
 //     }
 //     return NULL;
@@ -114,7 +114,7 @@ class PPAPI_HOST_EXPORT ResourceMessageFilter
 
   // If you want the message to be handled on another thread, return a non-null
   // task runner which will target tasks accordingly.
-  virtual scoped_refptr<base::TaskRunner> OverrideTaskRunnerForMessage(
+  virtual scoped_refptr<base::SequencedTaskRunner> OverrideTaskRunnerForMessage(
       const IPC::Message& message);
 
  private:

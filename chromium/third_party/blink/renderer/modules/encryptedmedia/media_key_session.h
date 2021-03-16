@@ -31,17 +31,22 @@
 #include "third_party/blink/public/platform/web_encrypted_media_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_property.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/typed_arrays/dom_array_piece.h"
 #include "third_party/blink/renderer/modules/encryptedmedia/media_key_status_map.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/timer.h"
 
+namespace media {
+enum class EmeInitDataType;
+}
+
 namespace blink {
 
 class DOMException;
 class EventQueue;
+class ExceptionState;
 class MediaKeys;
 
 // References are held by JS only. However, even if all JS references are
@@ -64,17 +69,13 @@ class MediaKeys;
 class MediaKeySession final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<MediaKeySession>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       private WebContentDecryptionModuleSession::Client {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(MediaKeySession);
   USING_PRE_FINALIZER(MediaKeySession, Dispose);
 
  public:
-  static MediaKeySession* Create(ScriptState*,
-                                 MediaKeys*,
-                                 WebEncryptedMediaSessionType);
-
   MediaKeySession(ScriptState*, MediaKeys*, WebEncryptedMediaSessionType);
   ~MediaKeySession() override;
 
@@ -82,16 +83,19 @@ class MediaKeySession final
   double expiration() const { return expiration_; }
   ScriptPromise closed(ScriptState*);
   MediaKeyStatusMap* keyStatuses();
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(keystatuseschange, kKeystatuseschange);
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(message, kMessage);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(keystatuseschange, kKeystatuseschange)
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(message, kMessage)
 
   ScriptPromise generateRequest(ScriptState*,
                                 const String& init_data_type,
-                                const DOMArrayPiece& init_data);
-  ScriptPromise load(ScriptState*, const String& session_id);
-  ScriptPromise update(ScriptState*, const DOMArrayPiece& response);
-  ScriptPromise close(ScriptState*);
-  ScriptPromise remove(ScriptState*);
+                                const DOMArrayPiece& init_data,
+                                ExceptionState&);
+  ScriptPromise load(ScriptState*, const String& session_id, ExceptionState&);
+  ScriptPromise update(ScriptState*,
+                       const DOMArrayPiece& response,
+                       ExceptionState&);
+  ScriptPromise close(ScriptState*, ExceptionState&);
+  ScriptPromise remove(ScriptState*, ExceptionState&);
 
   // EventTarget
   const AtomicString& InterfaceName() const override;
@@ -100,10 +104,10 @@ class MediaKeySession final
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   class PendingAction;
@@ -116,7 +120,7 @@ class MediaKeySession final
 
   // The following perform the asynchronous part of the command referenced.
   void GenerateRequestTask(ContentDecryptionModuleResult*,
-                           WebEncryptedMediaInitDataType,
+                           media::EmeInitDataType,
                            DOMArrayBuffer* init_data_buffer);
   void FinishGenerateRequest();
   void LoadTask(ContentDecryptionModuleResult*, const String& session_id);
@@ -153,9 +157,7 @@ class MediaKeySession final
   bool is_closing_or_closed_;
 
   // Keep track of the closed promise.
-  typedef ScriptPromiseProperty<Member<MediaKeySession>,
-                                ToV8UndefinedGenerator,
-                                Member<DOMException>>
+  typedef ScriptPromiseProperty<ToV8UndefinedGenerator, Member<DOMException>>
       ClosedPromise;
   Member<ClosedPromise> closed_promise_;
 

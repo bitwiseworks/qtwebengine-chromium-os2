@@ -23,9 +23,8 @@ class ImportArchivesTask : public Task {
                      PrefetchImporter* prefetch_importer);
   ~ImportArchivesTask() override;
 
-  void Run() override;
-
  private:
+  void Run() override;
   void OnArchivesRetrieved(
       std::unique_ptr<std::vector<PrefetchArchiveInfo>> archive);
 
@@ -33,7 +32,7 @@ class ImportArchivesTask : public Task {
   PrefetchImporter* prefetch_importer_;  // Outlives this class.
   PrefetchArchiveInfo archive_;
 
-  base::WeakPtrFactory<ImportArchivesTask> weak_ptr_factory_;
+  base::WeakPtrFactory<ImportArchivesTask> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ImportArchivesTask);
 };

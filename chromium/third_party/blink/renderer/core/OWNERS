@@ -9,6 +9,7 @@ alexis.menard@intel.com
 bokan@chromium.org
 cbiesinger@chromium.org
 chrishtr@chromium.org
+clamy@chromium.org
 dcheng@chromium.org
 # dtapuska reviews input-related changes
 dtapuska@chromium.org
@@ -43,12 +44,13 @@ kenneth.r.christiansen@intel.com
 kinuko@chromium.org
 kojii@chromium.org
 kouhei@chromium.org
+masonfreed@chromium.org
 mkwst@chromium.org
 mstensho@chromium.org
 # nainar reviews changes in core/css,core/style
 # and related code in core/dom and core/layout.
 nainar@chromium.org
-ojan@chromium.org
+nhiroki@chromium.org
 # pdr reviews many svg and text autosizing patches.
 pdr@chromium.org
 pfeldman@chromium.org

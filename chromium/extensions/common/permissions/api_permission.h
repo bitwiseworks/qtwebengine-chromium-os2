@@ -98,12 +98,12 @@ class APIPermission {
     kDownloadsShelf = 54,
     kDeleted_EasyUnlockPrivate = 55,
     kEchoPrivate = 56,
-    kEmbeddedExtensionOptions = 57,
+    kDeleted_EmbeddedExtensionOptions = 57,
     kEnterprisePlatformKeys = 58,
     kEnterprisePlatformKeysPrivate = 59,
     kDeleted_ExperienceSamplingPrivate = 60,
     kExperimental = 61,
-    kExtensionView = 62,
+    kDeleted_ExtensionView = 62,  // crbug.com/982858
     kExternallyConnectableAllUrls = 63,
     kFeedbackPrivate = 64,
     kFileBrowserHandler = 65,
@@ -157,7 +157,7 @@ class APIPermission {
     kPlatformKeys = 113,
     kDeleted_Plugin = 114,
     kPower = 115,
-    kPreferencesPrivate = 116,
+    kDeleted_PreferencesPrivate = 116,
     kDeleted_PrincipalsPrivate = 117,
     kPrinterProvider = 118,
     kPrivacy = 119,
@@ -226,7 +226,7 @@ class APIPermission {
     kMediaGalleriesAllGalleriesDelete = 182,
     kMediaGalleriesAllGalleriesRead = 183,
     kNetworkState = 184,
-    kOverrideBookmarksUI = 185,
+    kDeleted_OverrideBookmarksUI = 185,
     kShouldWarnAllHosts = 186,
     kSocketAnyHost = 187,
     kSocketDomainHosts = 188,
@@ -258,8 +258,18 @@ class APIPermission {
     kSystemPowerSource = 214,
     kArcAppsPrivate = 215,
     kEnterpriseHardwarePlatform = 216,
+    kLoginScreenUi = 217,
+    kDeclarativeNetRequestFeedback = 218,
+    kTransientBackground = 219,
+    kLogin = 220,
+    kLoginScreenStorage = 221,
+    kLoginState = 222,
+    kPrintingMetrics = 223,
+    kPrinting = 224,
+    kCrashReportPrivate = 225,
+    kAutofillAssistantPrivate = 226,
     // Last entry: Add new entries above and ensure to update the
-    // "ExtensionPermission3" enum in tools/metrics/histograms/histograms.xml
+    // "ExtensionPermission3" enum in tools/metrics/histograms/enums.xml
     // (by running update_extension_permission.py).
     kEnumBoundary,
   };
@@ -378,6 +388,21 @@ class APIPermissionInfo {
     // Indicates that the permission may be granted to web contents by
     // extensions using the content_capabilities manifest feature.
     kFlagSupportsContentCapabilities = 1 << 5,
+
+    // Indicates whether the permission should trigger one of the powerful
+    // permissions messages in chrome://management. Reach out to the privacy
+    // team when you add a new permission to check whether you should set this
+    // flag or not.
+    kFlagRequiresManagementUIWarning = 1 << 6,
+
+    // Indicates that the permission shouldn't trigger the full warning on
+    // the login screen of the managed-guest session. See
+    // prefs::kManagedSessionUseFullLoginWarning. Most permissions are
+    // considered powerful enough to warrant the full warning,
+    // so the default for permissions (by not including this flag) is to trigger
+    // it. Reach out to the privacy team when you add a new permission to check
+    // whether you should set this flag or not.
+    kFlagDoesNotRequireManagedSessionFullLoginWarning = 1 << 7
   };
 
   using APIPermissionConstructor =
@@ -431,6 +456,18 @@ class APIPermissionInfo {
     return (flags_ & kFlagSupportsContentCapabilities) != 0;
   }
 
+  // Returns true if this permission should trigger a warning on the management
+  // page.
+  bool requires_management_ui_warning() const {
+    return (flags_ & kFlagRequiresManagementUIWarning) != 0;
+  }
+
+  // Returns true if this permission should trigger the full warning on the
+  // login screen of the managed guest session.
+  bool requires_managed_session_full_login_warning() const {
+    return (flags_ & kFlagDoesNotRequireManagedSessionFullLoginWarning) == 0;
+  }
+
  private:
   // Instances should only be constructed from within a PermissionsInfo.
   friend class PermissionsInfo;
@@ -440,8 +477,8 @@ class APIPermissionInfo {
 
   explicit APIPermissionInfo(const InitInfo& info);
 
-  const APIPermission::ID id_;
   const char* const name_;
+  const APIPermission::ID id_;
   const int flags_;
   const APIPermissionConstructor api_permission_constructor_;
 };

@@ -31,7 +31,7 @@
 #include "third_party/blink/renderer/platform/geometry/int_rect.h"
 #include "third_party/blink/renderer/platform/geometry/layout_point.h"
 #include "third_party/blink/renderer/platform/graphics/squashing_disallowed_reasons.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -43,7 +43,6 @@ class CompositingLayerAssigner {
 
  public:
   explicit CompositingLayerAssigner(PaintLayerCompositor*);
-  ~CompositingLayerAssigner();
 
   void Assign(PaintLayer* update_root,
               Vector<PaintLayer*>& layers_needing_paint_invalidation);

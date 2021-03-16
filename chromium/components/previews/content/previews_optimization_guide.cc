@@ -1,272 +1,220 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "components/previews/content/previews_optimization_guide.h"
 
-#include "base/base64.h"
-#include "base/bind.h"
-#include "base/command_line.h"
-#include "base/files/file_path.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/task/post_task.h"
-#include "base/task_runner_util.h"
-#include "components/optimization_guide/hints_component_info.h"
-#include "components/optimization_guide/optimization_guide_service.h"
+#include <utility>
+
+#include "components/optimization_guide/hints_processing_util.h"
+#include "components/optimization_guide/optimization_guide_decider.h"
 #include "components/optimization_guide/proto/hints.pb.h"
-#include "components/previews/content/hint_cache_leveldb_store.h"
-#include "components/previews/content/previews_hints.h"
-#include "components/previews/content/previews_hints_util.h"
+#include "components/optimization_guide/proto/models.pb.h"
 #include "components/previews/content/previews_user_data.h"
-#include "components/previews/core/previews_constants.h"
+#include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_switches.h"
-#include "url/gurl.h"
+#include "content/public/browser/navigation_handle.h"
 
 namespace previews {
 
 namespace {
 
-// The component version used with a manual config. This ensures that any hint
-// component received from the OptimizationGuideService on a subsequent startup
-// will have a newer version than it.
-constexpr char kManualConfigComponentVersion[] = "0.0.0";
-
-// Hints are purged during startup if the explicit purge switch exists or if
-// a proto override is being used--in which case the hints need to come from the
-// override instead.
-bool ShouldPurgeHintCacheStoreOnStartup() {
-  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  return cmd_line->HasSwitch(switches::kHintsProtoOverride) ||
-         cmd_line->HasSwitch(switches::kPurgeHintCacheStore);
+// Returns false if the optimization guide decision is false. If unknown, it
+// depends on the preview type whether the preview should be applied. Currently,
+// only DeferAllScript may be applied in the unknown case.
+bool ShouldApplyPreviewWithDecision(
+    PreviewsType type,
+    optimization_guide::OptimizationGuideDecision decision) {
+  switch (decision) {
+    case optimization_guide::OptimizationGuideDecision::kFalse:
+      return false;
+    case optimization_guide::OptimizationGuideDecision::kTrue:
+      return true;
+    case optimization_guide::OptimizationGuideDecision::kUnknown:
+      return type == PreviewsType::DEFER_ALL_SCRIPT
+                 ? params::ApplyDeferWhenOptimizationGuideDecisionUnknown()
+                 : false;
+  }
 }
 
-// Available hint components are only processed if a proto override isn't being
-// used; otherwise, the hints from the proto override are used instead.
-bool IsHintComponentProcessingDisabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kHintsProtoOverride);
+// The default max size of the cache holding resource loading hints by URL.
+size_t kDefaultMaxResourceLoadingHintsCacheSize = 10;
+
+// Returns base::nullopt if |previews_type| can't be converted.
+base::Optional<optimization_guide::proto::OptimizationType>
+ConvertPreviewsTypeToOptimizationType(PreviewsType previews_type) {
+  switch (previews_type) {
+    case PreviewsType::NONE:
+      return optimization_guide::proto::OPTIMIZATION_NONE;
+    case PreviewsType::NOSCRIPT:
+      return optimization_guide::proto::NOSCRIPT;
+    case PreviewsType::UNSPECIFIED:
+      return optimization_guide::proto::TYPE_UNSPECIFIED;
+    case PreviewsType::RESOURCE_LOADING_HINTS:
+      return optimization_guide::proto::RESOURCE_LOADING;
+    case PreviewsType::LITE_PAGE_REDIRECT:
+      return optimization_guide::proto::LITE_PAGE_REDIRECT;
+    case PreviewsType::DEFER_ALL_SCRIPT:
+      return optimization_guide::proto::DEFER_ALL_SCRIPT;
+    default:
+      return base::nullopt;
+  }
 }
 
-// Attempts to parse a base64 encoded Optimization Guide Configuration proto
-// from the command line. If no proto is given or if it is encoded incorrectly,
-// nullptr is returned.
-std::unique_ptr<optimization_guide::proto::Configuration>
-ParseHintsProtoFromCommandLine() {
-  base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (!cmd_line->HasSwitch(switches::kHintsProtoOverride))
-    return nullptr;
+// Returns the optimization types to register with the Optimization Guide
+// Decider based on which Previews are enabled for the session.
+base::flat_set<optimization_guide::proto::OptimizationType>
+GetOptimizationTypesToRegister() {
+  base::flat_set<optimization_guide::proto::OptimizationType>
+      optimization_types;
 
-  std::string b64_pb =
-      cmd_line->GetSwitchValueASCII(switches::kHintsProtoOverride);
+  if (params::IsNoScriptPreviewsEnabled())
+    optimization_types.insert(optimization_guide::proto::NOSCRIPT);
+  if (params::IsResourceLoadingHintsEnabled())
+    optimization_types.insert(optimization_guide::proto::RESOURCE_LOADING);
+  if (params::IsLitePageServerPreviewsEnabled())
+    optimization_types.insert(optimization_guide::proto::LITE_PAGE_REDIRECT);
+  if (params::IsDeferAllScriptPreviewsEnabled())
+    optimization_types.insert(optimization_guide::proto::DEFER_ALL_SCRIPT);
 
-  std::string binary_pb;
-  if (!base::Base64Decode(b64_pb, &binary_pb)) {
-    LOG(ERROR) << "Invalid base64 encoding of the Hints Proto Override";
-    return nullptr;
+  return optimization_types;
+}
+
+// Parses |resource_loading_hints| and returns a vector of resource patterns
+// that can be blocked.
+std::vector<std::string> GetResourcePatternsToBlock(
+    const google::protobuf::RepeatedPtrField<
+        optimization_guide::proto::ResourceLoadingHint>&
+        resource_loading_hints) {
+  std::vector<std::string> resource_patterns_to_block;
+  for (const auto& resource_loading_hint : resource_loading_hints) {
+    if (!resource_loading_hint.resource_pattern().empty() &&
+        resource_loading_hint.loading_optimization_type() ==
+            optimization_guide::proto::LOADING_BLOCK_RESOURCE) {
+      resource_patterns_to_block.push_back(
+          resource_loading_hint.resource_pattern());
+    }
   }
-
-  std::unique_ptr<optimization_guide::proto::Configuration>
-      proto_configuration =
-          std::make_unique<optimization_guide::proto::Configuration>();
-  if (!proto_configuration->ParseFromString(binary_pb)) {
-    LOG(ERROR) << "Invalid proto provided to the Hints Proto Override";
-    return nullptr;
-  }
-
-  return proto_configuration;
+  return resource_patterns_to_block;
 }
 
 }  // namespace
 
 PreviewsOptimizationGuide::PreviewsOptimizationGuide(
-    optimization_guide::OptimizationGuideService* optimization_guide_service,
-    const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner,
-    const base::FilePath& profile_path)
-    : optimization_guide_service_(optimization_guide_service),
-      ui_task_runner_(ui_task_runner),
-      background_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
-      hint_cache_(std::make_unique<HintCache>(
-          std::make_unique<HintCacheLevelDBStore>(profile_path,
-                                                  background_task_runner_))),
-      ui_weak_ptr_factory_(this) {
-  DCHECK(optimization_guide_service_);
-  hint_cache_->Initialize(
-      ShouldPurgeHintCacheStoreOnStartup(),
-      base::BindOnce(&PreviewsOptimizationGuide::OnHintCacheInitialized,
-                     ui_weak_ptr_factory_.GetWeakPtr()));
+    optimization_guide::OptimizationGuideDecider* optimization_guide_decider)
+    : optimization_guide_decider_(optimization_guide_decider),
+      resource_loading_hints_cache_(kDefaultMaxResourceLoadingHintsCacheSize),
+      registered_optimization_types_(GetOptimizationTypesToRegister()) {
+  DCHECK(optimization_guide_decider_);
+
+  optimization_guide_decider_->RegisterOptimizationTypesAndTargets(
+      std::vector<optimization_guide::proto::OptimizationType>(
+          registered_optimization_types_.begin(),
+          registered_optimization_types_.end()),
+      {optimization_guide::proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD});
 }
 
-PreviewsOptimizationGuide::~PreviewsOptimizationGuide() {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-  optimization_guide_service_->RemoveObserver(this);
+PreviewsOptimizationGuide::~PreviewsOptimizationGuide() = default;
+
+bool PreviewsOptimizationGuide::ShouldShowPreview(
+    content::NavigationHandle* navigation_handle) {
+  // See if we should override the optimization guide and always show a preview.
+  if (params::OverrideShouldShowPreviewCheck())
+    return true;
+
+  optimization_guide::OptimizationGuideDecision decision =
+      optimization_guide_decider_->ShouldTargetNavigation(
+          navigation_handle,
+          optimization_guide::proto::OPTIMIZATION_TARGET_PAINFUL_PAGE_LOAD);
+  return decision == optimization_guide::OptimizationGuideDecision::kTrue;
 }
 
-bool PreviewsOptimizationGuide::IsWhitelisted(
+bool PreviewsOptimizationGuide::CanApplyPreview(
     PreviewsUserData* previews_data,
-    const GURL& url,
-    PreviewsType type,
-    net::EffectiveConnectionType* out_ect_threshold) const {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-  if (!hints_) {
-    return false;
+    content::NavigationHandle* navigation_handle,
+    PreviewsType type) {
+  // See if we need to bypass the lite page redirect blacklist.
+  if (type == PreviewsType::LITE_PAGE_REDIRECT &&
+      params::LitePageRedirectPreviewIgnoresOptimizationGuideFilter()) {
+    return true;
   }
 
-  *out_ect_threshold = params::GetECTThresholdForPreview(type);
-  int inflation_percent = 0;
-  if (!hints_->IsWhitelisted(url, type, &inflation_percent,
-                             out_ect_threshold)) {
+  base::Optional<optimization_guide::proto::OptimizationType>
+      optimization_type = ConvertPreviewsTypeToOptimizationType(type);
+  if (!optimization_type.has_value())
     return false;
-  }
 
-  if (inflation_percent != 0 && previews_data) {
-    previews_data->set_data_savings_inflation_percent(inflation_percent);
+  // See if we can apply the optimization. Note that
+  // |optimization_guide_decider_| also ensures that the current browser
+  // conditions match a painful page load as a prerequisite for returning true.
+  optimization_guide::OptimizationMetadata optimization_metadata;
+  optimization_guide::OptimizationGuideDecision decision =
+      optimization_guide_decider_->CanApplyOptimization(
+          navigation_handle, *optimization_type, &optimization_metadata);
+
+  if (!ShouldApplyPreviewWithDecision(type, decision))
+    return false;
+
+  // Previews metadata is mostly best effort and not actually required for all
+  // previews, so just return early if it's not populated.
+  if (!optimization_metadata.previews_metadata())
+    return true;
+
+  // If we have metadata, populate information from metadata.
+  const optimization_guide::proto::PreviewsMetadata previews_metadata =
+      optimization_metadata.previews_metadata().value();
+  if (previews_data && previews_metadata.has_inflation_percent()) {
+    previews_data->set_data_savings_inflation_percent(
+        previews_metadata.inflation_percent());
+  }
+  if (previews_metadata.resource_loading_hints_size() > 0) {
+    resource_loading_hints_cache_.Put(
+        navigation_handle->GetURL(),
+        GetResourcePatternsToBlock(previews_metadata.resource_loading_hints()));
   }
 
   return true;
 }
 
-bool PreviewsOptimizationGuide::IsBlacklisted(const GURL& url,
-                                              PreviewsType type) const {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
+bool PreviewsOptimizationGuide::AreCommitTimePreviewsAvailable(
+    content::NavigationHandle* navigation_handle) {
+  // We use this method as a way of enforcing some sort of preview ordering.
+  // Thus, we check if we can potentially apply any of the client-side previews,
+  // and if any of them potentially can be applied, then we return true.
+  const std::vector<optimization_guide::proto::OptimizationType>
+      optimization_types_to_check = {
+          optimization_guide::proto::DEFER_ALL_SCRIPT,
+          optimization_guide::proto::RESOURCE_LOADING,
+          optimization_guide::proto::NOSCRIPT};
 
-  if (type == PreviewsType::LITE_PAGE_REDIRECT) {
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kIgnoreLitePageRedirectOptimizationBlacklist)) {
-      return false;
+  bool might_have_hint = false;
+  for (const auto optimization_type : optimization_types_to_check) {
+    // Don't check for the hint if the optimization type is not enabled.
+    if (registered_optimization_types_.find(optimization_type) ==
+        registered_optimization_types_.end()) {
+      continue;
     }
 
-    if (!hints_)
-      return true;
-
-    return hints_->IsBlacklisted(url, PreviewsType::LITE_PAGE_REDIRECT);
+    if (optimization_guide_decider_->CanApplyOptimization(
+            navigation_handle, optimization_type,
+            /*optimization_metadata=*/nullptr) !=
+        optimization_guide::OptimizationGuideDecision::kFalse) {
+      might_have_hint = true;
+      break;
+    }
   }
-
-  // This function is only used by lite page redirect.
-  NOTREACHED();
-  return false;
-}
-
-void PreviewsOptimizationGuide::OnLoadedHint(
-    base::OnceClosure callback,
-    const GURL& document_url,
-    const optimization_guide::proto::Hint* loaded_hint) const {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-
-  // Record that the hint finished loading. This is used as a signal during
-  // tests.
-  LOCAL_HISTOGRAM_BOOLEAN(
-      kPreviewsOptimizationGuideOnLoadedHintResultHistogramString, loaded_hint);
-
-  // Run the callback now that the hint is loaded. This is used as a signal by
-  // tests.
-  std::move(callback).Run();
-}
-
-bool PreviewsOptimizationGuide::MaybeLoadOptimizationHints(
-    const GURL& url,
-    base::OnceClosure callback) {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-
-  if (!hints_) {
-    return false;
-  }
-
-  return hints_->MaybeLoadOptimizationHints(
-      url, base::BindOnce(&PreviewsOptimizationGuide::OnLoadedHint,
-                          ui_weak_ptr_factory_.GetWeakPtr(),
-                          std::move(callback), url));
+  return might_have_hint;
 }
 
 bool PreviewsOptimizationGuide::GetResourceLoadingHints(
     const GURL& url,
-    std::vector<std::string>* out_resource_patterns_to_block) const {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-
-  if (!hints_)
+    std::vector<std::string>* out_resource_patterns_to_block) {
+  auto rlh_it = resource_loading_hints_cache_.Get(url);
+  if (rlh_it == resource_loading_hints_cache_.end())
     return false;
 
-  return hints_->GetResourceLoadingHints(url, out_resource_patterns_to_block);
-}
-
-void PreviewsOptimizationGuide::LogHintCacheMatch(
-    const GURL& url,
-    bool is_committed,
-    net::EffectiveConnectionType ect) const {
-  if (!hints_) {
-    return;
-  }
-
-  hints_->LogHintCacheMatch(url, is_committed, ect);
-}
-
-void PreviewsOptimizationGuide::OnHintCacheInitialized() {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-  // Check if there is a valid hint proto given on the command line first. We
-  // don't normally expect one, but if one is provided then use that and do not
-  // register as an observer as the opt_guide service.
-  std::unique_ptr<optimization_guide::proto::Configuration> manual_config =
-      ParseHintsProtoFromCommandLine();
-  if (manual_config) {
-    // Allow |UpdateHints| to block startup so that the first navigation gets
-    // the hints when a command line hint proto is provided.
-    UpdateHints(PreviewsHints::CreateFromHintsConfiguration(
-        std::move(manual_config),
-        hint_cache_->MaybeCreateComponentUpdateData(
-            base::Version(kManualConfigComponentVersion))));
-  }
-  // Register as an observer regardless of hint proto override usage. This is
-  // needed as a signal during testing.
-  optimization_guide_service_->AddObserver(this);
-}
-
-void PreviewsOptimizationGuide::OnHintsComponentAvailable(
-    const optimization_guide::HintsComponentInfo& info) {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-
-  // Check for if hint component is disabled. This check is needed because the
-  // optimization guide still registers with the service as an observer for
-  // components as a signal during testing.
-  if (IsHintComponentProcessingDisabled()) {
-    return;
-  }
-
-  // Create PreviewsHints from the newly available component on a background
-  // thread, providing a ComponentUpdateData from the hint cache, so that each
-  // hint within the component can be moved into it. In the case where the
-  // component's version is not newer than the hint cache store's component
-  // version, ComponentUpdateData will be a nullptr and hint processing will be
-  // skipped. After PreviewsHints::Create() returns the newly created
-  // PreviewsHints, it is initialized in UpdateHints() on the UI thread.
-  base::PostTaskAndReplyWithResult(
-      background_task_runner_.get(), FROM_HERE,
-      base::BindOnce(&PreviewsHints::CreateFromHintsComponent, info,
-                     hint_cache_->MaybeCreateComponentUpdateData(info.version)),
-      base::BindOnce(&PreviewsOptimizationGuide::UpdateHints,
-                     ui_weak_ptr_factory_.GetWeakPtr()));
-}
-
-void PreviewsOptimizationGuide::UpdateHints(
-    std::unique_ptr<PreviewsHints> hints) {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-  hints_ = std::move(hints);
-  if (hints_) {
-    hints_->Initialize(
-        hint_cache_.get(),
-        base::BindOnce(&PreviewsOptimizationGuide::OnHintsUpdated,
-                       ui_weak_ptr_factory_.GetWeakPtr()));
-  } else {
-    OnHintsUpdated();
-  }
-}
-
-void PreviewsOptimizationGuide::OnHintsUpdated() {
-  DCHECK(ui_task_runner_->BelongsToCurrentThread());
-  // Record the result of updating the hints. This is used as a signal for the
-  // hints being fully processed in testing.
-  LOCAL_HISTOGRAM_BOOLEAN(
-      kPreviewsOptimizationGuideUpdateHintsResultHistogramString,
-      hints_ != NULL);
+  *out_resource_patterns_to_block = rlh_it->second;
+  return true;
 }
 
 }  // namespace previews

@@ -64,6 +64,15 @@ HashStream &operator<<(HashStream &stream, const ProgramBindings &bindings)
     return stream;
 }
 
+HashStream &operator<<(HashStream &stream, const ProgramAliasedBindings &bindings)
+{
+    for (const auto &binding : bindings)
+    {
+        stream << binding.first << binding.second.location;
+    }
+    return stream;
+}
+
 HashStream &operator<<(HashStream &stream, const std::vector<std::string> &strings)
 {
     for (const auto &str : strings)
@@ -107,7 +116,6 @@ void MemoryProgramCache::ComputeHash(const Context *context,
 
     // Hash pre-link program properties.
     hashStream << program->getAttributeBindings() << program->getUniformLocationBindings()
-               << program->getFragmentInputBindings()
                << program->getState().getTransformFeedbackVaryingNames()
                << program->getState().getTransformFeedbackBufferMode()
                << program->getState().getOutputLocations()
@@ -133,9 +141,9 @@ angle::Result MemoryProgramCache::getProgram(const Context *context,
     egl::BlobCache::Value binaryProgram;
     if (get(context, *hashOut, &binaryProgram))
     {
-        InfoLog infoLog;
         angle::Result result =
-            program->deserialize(context, binaryProgram.data(), binaryProgram.size(), infoLog);
+            program->loadBinary(context, GL_PROGRAM_BINARY_ANGLE, binaryProgram.data(),
+                                static_cast<int>(binaryProgram.size()));
         ANGLE_HISTOGRAM_BOOLEAN("GPU.ANGLE.ProgramCache.LoadBinarySuccess",
                                 result == angle::Result::Continue);
         ANGLE_TRY(result);
@@ -146,7 +154,7 @@ angle::Result MemoryProgramCache::getProgram(const Context *context,
         // Cache load failed, evict.
         if (mIssuedWarnings++ < kWarningLimit)
         {
-            WARN() << "Failed to load binary from cache: " << infoLog.str();
+            WARN() << "Failed to load binary from cache.";
 
             if (mIssuedWarnings == kWarningLimit)
             {
@@ -178,18 +186,18 @@ void MemoryProgramCache::remove(const egl::BlobCache::Key &programHash)
     mBlobCache.remove(programHash);
 }
 
-void MemoryProgramCache::putProgram(const egl::BlobCache::Key &programHash,
-                                    const Context *context,
-                                    const Program *program)
+angle::Result MemoryProgramCache::putProgram(const egl::BlobCache::Key &programHash,
+                                             const Context *context,
+                                             const Program *program)
 {
     // If caching is effectively disabled, don't bother serializing the program.
     if (!mBlobCache.isCachingEnabled())
     {
-        return;
+        return angle::Result::Incomplete;
     }
 
     angle::MemoryBuffer serializedProgram;
-    program->serialize(context, &serializedProgram);
+    ANGLE_TRY(program->serialize(context, &serializedProgram));
 
     ANGLE_HISTOGRAM_COUNTS("GPU.ANGLE.ProgramCache.ProgramBinarySizeBytes",
                            static_cast<int>(serializedProgram.size()));
@@ -201,26 +209,32 @@ void MemoryProgramCache::putProgram(const egl::BlobCache::Key &programHash,
                            serializedProgram.data());
 
     mBlobCache.put(programHash, std::move(serializedProgram));
+    return angle::Result::Continue;
 }
 
-void MemoryProgramCache::updateProgram(const Context *context, const Program *program)
+angle::Result MemoryProgramCache::updateProgram(const Context *context, const Program *program)
 {
     egl::BlobCache::Key programHash;
     ComputeHash(context, program, &programHash);
-    putProgram(programHash, context, program);
+    return putProgram(programHash, context, program);
 }
 
-void MemoryProgramCache::putBinary(const egl::BlobCache::Key &programHash,
+bool MemoryProgramCache::putBinary(const egl::BlobCache::Key &programHash,
                                    const uint8_t *binary,
                                    size_t length)
 {
     // Copy the binary.
     angle::MemoryBuffer newEntry;
-    newEntry.resize(length);
+    if (!newEntry.resize(length))
+    {
+        return false;
+    }
     memcpy(newEntry.data(), binary, length);
 
     // Store the binary.
     mBlobCache.populate(programHash, std::move(newEntry));
+
+    return true;
 }
 
 void MemoryProgramCache::clear()

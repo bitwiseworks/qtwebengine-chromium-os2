@@ -5,8 +5,6 @@
 #ifndef WebURLLoaderMockFactoryImpl_h
 #define WebURLLoaderMockFactoryImpl_h
 
-#include <map>
-
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -19,6 +17,10 @@
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl_hash.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
+
+namespace network {
+struct ResourceRequest;
+}  // namespace network
 
 namespace blink {
 
@@ -37,8 +39,7 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   ~WebURLLoaderMockFactoryImpl() override;
 
   // WebURLLoaderMockFactory:
-  std::unique_ptr<WebURLLoader> CreateURLLoader(
-      std::unique_ptr<WebURLLoader> default_loader) override;
+  std::unique_ptr<WebURLLoader> CreateURLLoader() override;
   void RegisterURL(const WebURL& url,
                    const WebURLResponse& response,
                    const WebString& file_path = WebString()) override;
@@ -55,17 +56,18 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   void SetLoaderDelegate(WebURLLoaderTestDelegate* delegate) override {
     delegate_ = delegate;
   }
+  void FillNavigationParamsResponse(WebNavigationParams*) override;
 
   // Returns true if |url| was registered for being mocked.
   bool IsMockedURL(const WebURL& url);
 
   // Called by the loader to load a resource.
-  void LoadSynchronously(const WebURLRequest& request,
+  void LoadSynchronously(std::unique_ptr<network::ResourceRequest> request,
                          WebURLResponse* response,
                          base::Optional<WebURLError>* error,
                          WebData* data,
                          int64_t* encoded_data_length);
-  void LoadAsynchronouly(const WebURLRequest& request,
+  void LoadAsynchronouly(std::unique_ptr<network::ResourceRequest> request,
                          WebURLLoaderMock* loader);
 
   // Removes the loader from the list of pending loaders.
@@ -103,7 +105,8 @@ class WebURLLoaderMockFactoryImpl : public WebURLLoaderMockFactory {
   WebURLLoaderTestDelegate* delegate_ = nullptr;
 
   // The loaders that have not being served data yet.
-  using LoaderToRequestMap = HashMap<WebURLLoaderMock*, WebURLRequest>;
+  using LoaderToRequestMap =
+      HashMap<WebURLLoaderMock*, std::unique_ptr<network::ResourceRequest>>;
   LoaderToRequestMap pending_loaders_;
 
   // All values must be valid, but we use Optional because HashMap requires

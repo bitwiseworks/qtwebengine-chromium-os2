@@ -30,7 +30,8 @@ TEST(RedirectInfoTest, MethodForRedirect) {
   };
 
   const GURL kOriginalUrl = GURL("https://foo.test/original");
-  const GURL kOriginalSiteForCookies = GURL("https://foo.test/");
+  const SiteForCookies kOriginalSiteForCookies =
+      SiteForCookies::FromUrl(GURL("https://foo.test/"));
   const url::Origin kOriginalTopFrameOrigin = url::Origin::Create(kOriginalUrl);
   const URLRequest::FirstPartyURLPolicy kOriginalFirstPartyUrlPolicy =
       net::URLRequest::NEVER_CHANGE_FIRST_PARTY_URL;
@@ -48,10 +49,10 @@ TEST(RedirectInfoTest, MethodForRedirect) {
 
     RedirectInfo redirect_info = RedirectInfo::ComputeRedirectInfo(
         test.original_method, kOriginalUrl, kOriginalSiteForCookies,
-        kOriginalTopFrameOrigin, kOriginalFirstPartyUrlPolicy,
-        kOriginalReferrerPolicy, kOriginalReferrer, test.http_status_code,
-        kNewLocation, base::nullopt /* referrer_policy_header */,
-        kInsecureSchemeWasUpgraded, kCopyFragment);
+        kOriginalFirstPartyUrlPolicy, kOriginalReferrerPolicy,
+        kOriginalReferrer, test.http_status_code, kNewLocation,
+        base::nullopt /* referrer_policy_header */, kInsecureSchemeWasUpgraded,
+        kCopyFragment);
 
     EXPECT_EQ(test.expected_new_method, redirect_info.new_method);
     EXPECT_EQ(test.http_status_code, redirect_info.status_code);
@@ -81,8 +82,9 @@ TEST(RedirectInfoTest, CopyFragment) {
        "http://foo.test/redirected#2"},
   };
 
-  const std::string KOriginalMethod = "GET";
-  const GURL kOriginalSiteForCookies = GURL("https://foo.test/");
+  const std::string kOriginalMethod = "GET";
+  const SiteForCookies kOriginalSiteForCookies =
+      SiteForCookies::FromUrl(GURL("https://foo.test/"));
   const URLRequest::FirstPartyURLPolicy kOriginalFirstPartyUrlPolicy =
       net::URLRequest::NEVER_CHANGE_FIRST_PARTY_URL;
   const URLRequest::ReferrerPolicy kOriginalReferrerPolicy =
@@ -98,16 +100,13 @@ TEST(RedirectInfoTest, CopyFragment) {
                  << " new_location: " << test.new_location);
 
     RedirectInfo redirect_info = RedirectInfo::ComputeRedirectInfo(
-        KOriginalMethod, GURL(test.original_url), kOriginalSiteForCookies,
-        url::Origin::Create(GURL(test.original_url)),
+        kOriginalMethod, GURL(test.original_url), kOriginalSiteForCookies,
         kOriginalFirstPartyUrlPolicy, kOriginalReferrerPolicy,
         kOriginalReferrer, kHttpStatusCode, GURL(test.new_location),
         base::nullopt /* referrer_policy_header */, kInsecureSchemeWasUpgraded,
         test.copy_fragment);
 
     EXPECT_EQ(GURL(test.expected_new_url), redirect_info.new_url);
-    EXPECT_EQ(url::Origin::Create(GURL(test.original_url)),
-              redirect_info.new_top_frame_origin);
   }
 }
 
@@ -122,9 +121,10 @@ TEST(RedirectInfoTest, FirstPartyURLPolicy) {
        "https://foo.test/redirected"},
   };
 
-  const std::string KOriginalMethod = "GET";
+  const std::string kOriginalMethod = "GET";
   const GURL kOriginalUrl = GURL("https://foo.test/");
-  const GURL kOriginalSiteForCookies = GURL("https://foo.test/");
+  const SiteForCookies kOriginalSiteForCookies =
+      SiteForCookies::FromUrl(GURL("https://foo.test/"));
   const URLRequest::ReferrerPolicy kOriginalReferrerPolicy =
       net::URLRequest::NEVER_CLEAR_REFERRER;
   const std::string kOriginalReferrer = "";
@@ -139,20 +139,14 @@ TEST(RedirectInfoTest, FirstPartyURLPolicy) {
                  << static_cast<int>(test.original_first_party_url_policy));
 
     RedirectInfo redirect_info = RedirectInfo::ComputeRedirectInfo(
-        KOriginalMethod, kOriginalUrl, kOriginalSiteForCookies,
-        url::Origin::Create(kOriginalUrl), test.original_first_party_url_policy,
-        kOriginalReferrerPolicy, kOriginalReferrer, kHttpStatusCode,
-        kNewLocation, base::nullopt /* referrer_policy_header */,
-        kInsecureSchemeWasUpgraded, kCopyFragment);
+        kOriginalMethod, kOriginalUrl, kOriginalSiteForCookies,
+        test.original_first_party_url_policy, kOriginalReferrerPolicy,
+        kOriginalReferrer, kHttpStatusCode, kNewLocation,
+        base::nullopt /* referrer_policy_header */, kInsecureSchemeWasUpgraded,
+        kCopyFragment);
 
-    EXPECT_EQ(GURL(test.expected_new_site_for_cookies),
-              redirect_info.new_site_for_cookies);
-    url::Origin expected_top_frame_origin =
-        test.original_first_party_url_policy ==
-                URLRequest::UPDATE_FIRST_PARTY_URL_ON_REDIRECT
-            ? url::Origin::Create(GURL(test.expected_new_site_for_cookies))
-            : url::Origin::Create(kOriginalUrl);
-    EXPECT_EQ(expected_top_frame_origin, redirect_info.new_top_frame_origin);
+    EXPECT_TRUE(redirect_info.new_site_for_cookies.IsEquivalent(
+        SiteForCookies::FromUrl(GURL(test.expected_new_site_for_cookies))));
   }
 }
 
@@ -429,8 +423,9 @@ TEST(RedirectInfoTest, ReferrerPolicy) {
        "http://foo.test/one" /* expected new referrer */},
   };
 
-  const std::string KOriginalMethod = "GET";
-  const GURL kOriginalSiteForCookies = GURL("https://foo.test/");
+  const std::string kOriginalMethod = "GET";
+  const SiteForCookies kOriginalSiteForCookies =
+      SiteForCookies::FromUrl(GURL("https://foo.test/"));
   const URLRequest::FirstPartyURLPolicy kOriginalFirstPartyUrlPolicy =
       net::URLRequest::NEVER_CHANGE_FIRST_PARTY_URL;
   const bool kInsecureSchemeWasUpgraded = false;
@@ -446,9 +441,8 @@ TEST(RedirectInfoTest, ReferrerPolicy) {
 
     std::string response_header_text =
         "HTTP/1.1 302 Redirect\n" + std::string(test.response_headers);
-    std::string raw_headers = HttpUtil::AssembleRawHeaders(
-        response_header_text.c_str(),
-        static_cast<int>(response_header_text.length()));
+    std::string raw_headers =
+        HttpUtil::AssembleRawHeaders(response_header_text);
     auto response_headers =
         base::MakeRefCounted<HttpResponseHeaders>(raw_headers);
     EXPECT_EQ(302, response_headers->response_code());
@@ -459,10 +453,9 @@ TEST(RedirectInfoTest, ReferrerPolicy) {
     const GURL new_location = original_url.Resolve(location_string);
 
     RedirectInfo redirect_info = RedirectInfo::ComputeRedirectInfo(
-        KOriginalMethod, original_url, kOriginalSiteForCookies,
-        url::Origin::Create(original_url), kOriginalFirstPartyUrlPolicy,
-        test.original_referrer_policy, test.original_referrer,
-        response_headers->response_code(), new_location,
+        kOriginalMethod, original_url, kOriginalSiteForCookies,
+        kOriginalFirstPartyUrlPolicy, test.original_referrer_policy,
+        test.original_referrer, response_headers->response_code(), new_location,
         RedirectUtil::GetReferrerPolicyHeader(response_headers.get()),
         kInsecureSchemeWasUpgraded, kCopyFragment);
 

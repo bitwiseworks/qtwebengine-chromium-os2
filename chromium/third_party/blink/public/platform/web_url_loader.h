@@ -33,9 +33,18 @@
 
 #include <stdint.h>
 #include "base/optional.h"
+#include "base/time/time.h"
 #include "third_party/blink/public/platform/web_blob_info.h"
 #include "third_party/blink/public/platform/web_common.h"
 #include "third_party/blink/public/platform/web_url_request.h"
+
+namespace base {
+class SingleThreadTaskRunner;
+}
+
+namespace network {
+struct ResourceRequest;
+}
 
 namespace blink {
 
@@ -56,7 +65,13 @@ class WebURLLoader {
   // will instead be redirected to a blob, which is passed out in
   // |downloaded_blob|.
   virtual void LoadSynchronously(
-      const WebURLRequest&,
+      std::unique_ptr<network::ResourceRequest> request,
+      scoped_refptr<WebURLRequest::ExtraData> request_extra_data,
+      int requestor_id,
+      bool download_to_network_cache_only,
+      bool pass_response_pipe_to_client,
+      bool no_mime_sniffing,
+      base::TimeDelta timeout_interval,
       WebURLLoaderClient*,
       WebURLResponse&,
       base::Optional<WebURLError>&,
@@ -68,12 +83,13 @@ class WebURLLoader {
   // Load the request asynchronously, sending notifications to the given
   // client.  The client will receive no further notifications if the
   // loader is disposed before it completes its work.
-  virtual void LoadAsynchronously(const WebURLRequest&,
-                                  WebURLLoaderClient*) = 0;
-
-  // Cancels an asynchronous load.  This will appear as a load error to
-  // the client.
-  virtual void Cancel() = 0;
+  virtual void LoadAsynchronously(
+      std::unique_ptr<network::ResourceRequest> request,
+      scoped_refptr<WebURLRequest::ExtraData> request_extra_data,
+      int requestor_id,
+      bool download_to_network_cache_only,
+      bool no_mime_sniffing,
+      WebURLLoaderClient*) = 0;
 
   // Suspends/resumes an asynchronous load.
   virtual void SetDefersLoading(bool) = 0;
@@ -83,6 +99,9 @@ class WebURLLoader {
   // priority, but may increase when the resource is needed for rendering.
   virtual void DidChangePriority(WebURLRequest::Priority new_priority,
                                  int intra_priority_value) = 0;
+
+  // Returns the task runner for this request.
+  virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() = 0;
 };
 
 }  // namespace blink

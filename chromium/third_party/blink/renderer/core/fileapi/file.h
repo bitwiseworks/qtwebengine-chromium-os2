@@ -27,10 +27,13 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FILEAPI_FILE_H_
 
 #include "base/memory/scoped_refptr.h"
+#include "base/optional.h"
+#include "base/time/time.h"
 #include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view_or_blob_or_usv_string.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/fileapi/blob.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -39,6 +42,7 @@ class ExceptionState;
 class ExecutionContext;
 class FilePropertyBag;
 class FileMetadata;
+class FormControlState;
 class KURL;
 
 class CORE_EXPORT File final : public Blob {
@@ -62,20 +66,7 @@ class CORE_EXPORT File final : public Blob {
       ExecutionContext*,
       const HeapVector<ArrayBufferOrArrayBufferViewOrBlobOrUSVString>&,
       const String& file_name,
-      const FilePropertyBag*,
-      ExceptionState&);
-
-  static File* Create(const String& path,
-                      ContentTypeLookupPolicy policy = kWellKnownContentTypes) {
-    return MakeGarbageCollected<File>(path, policy, File::kIsUserVisible);
-  }
-
-  static File* Create(const String& name,
-                      double modification_time,
-                      scoped_refptr<BlobDataHandle> blob_data_handle) {
-    return MakeGarbageCollected<File>(name, modification_time,
-                                      std::move(blob_data_handle));
-  }
+      const FilePropertyBag*);
 
   // For deserialization.
   static File* CreateFromSerialization(
@@ -85,22 +76,28 @@ class CORE_EXPORT File final : public Blob {
       UserVisibility user_visibility,
       bool has_snapshot_data,
       uint64_t size,
-      double last_modified,
+      const base::Optional<base::Time>& last_modified,
       scoped_refptr<BlobDataHandle> blob_data_handle) {
     return MakeGarbageCollected<File>(
         path, name, relative_path, user_visibility, has_snapshot_data, size,
         last_modified, std::move(blob_data_handle));
   }
   static File* CreateFromIndexedSerialization(
-      const String& path,
       const String& name,
       uint64_t size,
-      double last_modified,
+      const base::Optional<base::Time>& last_modified,
       scoped_refptr<BlobDataHandle> blob_data_handle) {
-    return MakeGarbageCollected<File>(path, name, String(), kIsNotUserVisible,
-                                      true, size, last_modified,
-                                      std::move(blob_data_handle));
+    return MakeGarbageCollected<File>(
+        String(), name, String(), kIsNotUserVisible, true, size, last_modified,
+        std::move(blob_data_handle));
   }
+
+  // For session restore feature.
+  // See also AppendToControlState().
+  static File* CreateFromControlState(const FormControlState& state,
+                                      wtf_size_t& index);
+  static String PathFromControlState(const FormControlState& state,
+                                     wtf_size_t& index);
 
   static File* CreateWithRelativePath(const String& path,
                                       const String& relative_path);
@@ -123,7 +120,9 @@ class CORE_EXPORT File final : public Blob {
     return MakeGarbageCollected<File>(url, metadata, user_visibility);
   }
 
-  File(const String& path, ContentTypeLookupPolicy, UserVisibility);
+  File(const String& path,
+       ContentTypeLookupPolicy = kWellKnownContentTypes,
+       UserVisibility = File::kIsUserVisible);
   File(const String& path,
        const String& name,
        ContentTypeLookupPolicy,
@@ -134,10 +133,10 @@ class CORE_EXPORT File final : public Blob {
        UserVisibility,
        bool has_snapshot_data,
        uint64_t size,
-       double last_modified,
+       const base::Optional<base::Time>& last_modified,
        scoped_refptr<BlobDataHandle>);
   File(const String& name,
-       double modification_time,
+       const base::Optional<base::Time>& modification_time,
        scoped_refptr<BlobDataHandle>);
   File(const String& name, const FileMetadata&, UserVisibility);
   File(const KURL& file_system_url, const FileMetadata&, UserVisibility);
@@ -174,9 +173,9 @@ class CORE_EXPORT File final : public Blob {
 
   File* Clone(const String& name = String()) const;
 
-  unsigned long long size() const override;
-  Blob* slice(long long start,
-              long long end,
+  uint64_t size() const override;
+  Blob* slice(int64_t start,
+              int64_t end,
               const String& content_type,
               ExceptionState&) const override;
 
@@ -195,11 +194,23 @@ class CORE_EXPORT File final : public Blob {
 
   // Getter for the lastModified IDL attribute,
   // http://dev.w3.org/2006/webapi/FileAPI/#file-attrs
-  long long lastModified() const;
+  int64_t lastModified() const;
 
   // Getter for the lastModifiedDate IDL attribute,
   // http://www.w3.org/TR/FileAPI/#dfn-lastModifiedDate
-  double lastModifiedDate() const;
+  ScriptValue lastModifiedDate(ScriptState* script_state) const;
+
+  // Returns File's last modified time.
+  // If the modification time isn't known, the current time is returned.
+  base::Time LastModifiedTime() const;
+
+  // Similar to |LastModifiedTime()|, except this returns base::nullopt rather
+  // than the current time if the modified time is unknown.
+  // This is used by SerializedScriptValue to serialize the last modified time
+  // of a File object.
+  // This method calls CaptureSnapshotIfNeeded, and thus can involve synchronous
+  // IPC and file operations.
+  base::Optional<base::Time> LastModifiedTimeForSerialization() const;
 
   UserVisibility GetUserVisibility() const { return user_visibility_; }
 
@@ -207,25 +218,21 @@ class CORE_EXPORT File final : public Blob {
   // selection.
   const String& webkitRelativePath() const { return relative_path_; }
 
-  // Note that this involves synchronous file operation. Think twice before
-  // calling this function.
-  void CaptureSnapshot(long long& snapshot_size,
-                       double& snapshot_modification_time_ms) const;
-
   // Returns true if this has a valid snapshot metadata
-  // (i.e. m_snapshotSize >= 0).
-  bool HasValidSnapshotMetadata() const { return snapshot_size_ >= 0; }
+  // (i.e. snapshot_size_.has_value()).
+  bool HasValidSnapshotMetadata() const { return snapshot_size_.has_value(); }
 
   // Returns true if the sources (file path, file system URL, or blob handler)
   // of the file objects are same or not.
   bool HasSameSource(const File& other) const;
 
- private:
-  void InvalidateSnapshotMetadata() { snapshot_size_ = -1; }
+  // Return false if this File instance is not serializable to FormControlState.
+  bool AppendToControlState(FormControlState& state);
 
-  // Returns File's last modified time (in MS since Epoch.)
-  // If the modification time isn't known, the current time is returned.
-  double LastModifiedMS() const;
+ private:
+  // Note that this involves synchronous file operation. Think twice before
+  // calling this function.
+  void CaptureSnapshotIfNeeded() const;
 
 #if DCHECK_IS_ON()
   // Instances backed by a file must have an empty file system URL.
@@ -243,17 +250,20 @@ class CORE_EXPORT File final : public Blob {
 
   KURL file_system_url_;
 
-  // If m_snapshotSize is negative (initialized to -1 by default), the snapshot
-  // metadata is invalid and we retrieve the latest metadata synchronously in
-  // size(), lastModifiedTime() and slice().
+  // If snapshot_size_ has no value, the snapshot metadata is invalid and
+  // we retrieve the latest metadata synchronously in size(),
+  // LastModifiedTime() and slice().
   // Otherwise, the snapshot metadata are used directly in those methods.
-  long long snapshot_size_;
-  const double snapshot_modification_time_ms_;
+  mutable base::Optional<uint64_t> snapshot_size_;
+  mutable base::Optional<base::Time> snapshot_modification_time_;
 
   String relative_path_;
 };
 
-DEFINE_TYPE_CASTS(File, Blob, blob, blob->IsFile(), blob.IsFile());
+template <>
+struct DowncastTraits<File> {
+  static bool AllowFrom(const Blob& blob) { return blob.IsFile(); }
+};
 
 }  // namespace blink
 

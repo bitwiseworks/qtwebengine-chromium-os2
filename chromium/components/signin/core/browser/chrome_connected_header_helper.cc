@@ -6,10 +6,12 @@
 
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "components/google/core/common/google_util.h"
 #include "components/signin/core/browser/cookie_settings_util.h"
 #include "google_apis/gaia/gaia_auth_util.h"
@@ -20,6 +22,8 @@ namespace signin {
 
 namespace {
 
+const char kConsistencyEnabledByDefaultAttrName[] =
+    "consistency_enabled_by_default";
 const char kContinueUrlAttrName[] = "continue_url";
 const char kEmailAttrName[] = "email";
 const char kEnableAccountConsistencyAttrName[] = "enable_account_consistency";
@@ -37,8 +41,6 @@ GAIAServiceType GetGAIAServiceTypeFromHeader(const std::string& header_value) {
     return GAIA_SERVICE_TYPE_INCOGNITO;
   else if (header_value == "ADDSESSION")
     return GAIA_SERVICE_TYPE_ADDSESSION;
-  else if (header_value == "REAUTH")
-    return GAIA_SERVICE_TYPE_REAUTH;
   else if (header_value == "SIGNUP")
     return GAIA_SERVICE_TYPE_SIGNUP;
   else if (header_value == "DEFAULT")
@@ -51,12 +53,12 @@ GAIAServiceType GetGAIAServiceTypeFromHeader(const std::string& header_value) {
 
 ChromeConnectedHeaderHelper::ChromeConnectedHeaderHelper(
     AccountConsistencyMethod account_consistency)
-    : SigninHeaderHelper("Mirror"), account_consistency_(account_consistency) {}
+    : account_consistency_(account_consistency) {}
 
 // static
 std::string ChromeConnectedHeaderHelper::BuildRequestCookieIfPossible(
     const GURL& url,
-    const std::string& account_id,
+    const std::string& gaia_id,
     AccountConsistencyMethod account_consistency,
     const content_settings::CookieSettings* cookie_settings,
     int profile_mode_mask) {
@@ -64,7 +66,7 @@ std::string ChromeConnectedHeaderHelper::BuildRequestCookieIfPossible(
   if (!chrome_connected_helper.ShouldBuildRequestHeader(url, cookie_settings))
     return "";
   return chrome_connected_helper.BuildRequestHeader(
-      false /* is_header_request */, url, account_id, profile_mode_mask);
+      false /* is_header_request */, url, gaia_id, profile_mode_mask);
 }
 
 // static
@@ -165,34 +167,36 @@ bool ChromeConnectedHeaderHelper::IsUrlEligibleForRequestHeader(
 std::string ChromeConnectedHeaderHelper::BuildRequestHeader(
     bool is_header_request,
     const GURL& url,
-    const std::string& account_id,
+    const std::string& gaia_id,
     int profile_mode_mask) {
-// If we are not on Chrome OS, an empty |account_id| corresponds to the user not
-// signed in to Chrome. Do NOT enforce account consistency otherwise users will
-// not be able to use Google services at all. Therefore, send an empty header.
+// If we are on mobile or desktop, an empty |account_id| corresponds to the user
+// not signed into Sync. Do not enforce account consistency, unless Mice is
+// enabled on Android.
 // On Chrome OS, an empty |account_id| corresponds to Public Sessions, Guest
 // Sessions and Active Directory logins. Guest Sessions have already been
 // filtered upstream and we want to enforce account consistency in Public
 // Sessions and Active Directory logins.
 #if !defined(OS_CHROMEOS)
-  if (account_id.empty())
+  if (gaia_id.empty())
     return std::string();
-#endif
+#endif  // !defined(OS_CHROMEOS)
 
   std::vector<std::string> parts;
-  if (!account_id.empty() &&
+  if (!gaia_id.empty() &&
       IsUrlEligibleToIncludeGaiaId(url, is_header_request)) {
     // Only set the Gaia ID on domains that actually require it.
     parts.push_back(
-        base::StringPrintf("%s=%s", kGaiaIdAttrName, account_id.c_str()));
+        base::StringPrintf("%s=%s", kGaiaIdAttrName, gaia_id.c_str()));
   }
   parts.push_back(
       base::StringPrintf("%s=%s", kProfileModeAttrName,
-                         base::IntToString(profile_mode_mask).c_str()));
+                         base::NumberToString(profile_mode_mask).c_str()));
   bool is_mirror_enabled =
       account_consistency_ == AccountConsistencyMethod::kMirror;
   parts.push_back(base::StringPrintf("%s=%s", kEnableAccountConsistencyAttrName,
                                      is_mirror_enabled ? "true" : "false"));
+  parts.push_back(base::StringPrintf(
+      "%s=%s", kConsistencyEnabledByDefaultAttrName, "false"));
 
   return base::JoinString(parts, is_header_request ? "," : ":");
 }

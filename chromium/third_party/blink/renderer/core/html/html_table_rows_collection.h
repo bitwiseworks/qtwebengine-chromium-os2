@@ -39,12 +39,11 @@ class HTMLTableRowElement;
 
 class HTMLTableRowsCollection final : public HTMLCollection {
  public:
-  static HTMLTableRowsCollection* Create(ContainerNode&, CollectionType);
-
   explicit HTMLTableRowsCollection(ContainerNode&);
+  HTMLTableRowsCollection(ContainerNode&, CollectionType);
 
   HTMLTableRowElement* Item(unsigned offset) const {
-    return ToHTMLTableRowElement(HTMLCollection::item(offset));
+    return To<HTMLTableRowElement>(HTMLCollection::item(offset));
   }
 
   static HTMLTableRowElement* RowAfter(HTMLTableElement&, HTMLTableRowElement*);
@@ -53,12 +52,6 @@ class HTMLTableRowsCollection final : public HTMLCollection {
  private:
   Element* VirtualItemAfter(Element*) const override;
 };
-
-DEFINE_TYPE_CASTS(HTMLTableRowsCollection,
-                  LiveNodeListBase,
-                  collection,
-                  collection->GetType() == kTableRows,
-                  collection.GetType() == kTableRows);
 
 }  // namespace blink
 

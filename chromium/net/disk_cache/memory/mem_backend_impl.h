@@ -72,7 +72,7 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   void OnEntryDoomed(MemEntryImpl* entry);
 
   // Adjust the current size of this backend by |delta|. This is used to
-  // determine if eviction is neccessary and when eviction is finished.
+  // determine if eviction is necessary and when eviction is finished.
   void ModifyStorageSize(int32_t delta);
 
   // Returns true if the cache's size is greater than the maximum allowed
@@ -84,20 +84,16 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   void SetPostCleanupCallback(base::OnceClosure cb);
 
   // Backend interface.
-  net::CacheType GetCacheType() const override;
   int32_t GetEntryCount() const override;
-  net::Error OpenOrCreateEntry(const std::string& key,
-                               net::RequestPriority request_priority,
-                               EntryWithOpened* entry_struct,
-                               CompletionOnceCallback callback) override;
-  net::Error OpenEntry(const std::string& key,
-                       net::RequestPriority request_priority,
-                       Entry** entry,
-                       CompletionOnceCallback callback) override;
-  net::Error CreateEntry(const std::string& key,
-                         net::RequestPriority request_priority,
-                         Entry** entry,
-                         CompletionOnceCallback callback) override;
+  EntryResult OpenOrCreateEntry(const std::string& key,
+                                net::RequestPriority request_priority,
+                                EntryResultCallback callback) override;
+  EntryResult OpenEntry(const std::string& key,
+                        net::RequestPriority request_priority,
+                        EntryResultCallback callback) override;
+  EntryResult CreateEntry(const std::string& key,
+                          net::RequestPriority request_priority,
+                          EntryResultCallback callback) override;
   net::Error DoomEntry(const std::string& key,
                        net::RequestPriority priority,
                        CompletionOnceCallback callback) override;
@@ -150,7 +146,7 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
 
   base::MemoryPressureListener memory_pressure_listener_;
 
-  base::WeakPtrFactory<MemBackendImpl> weak_factory_;
+  base::WeakPtrFactory<MemBackendImpl> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(MemBackendImpl);
 };

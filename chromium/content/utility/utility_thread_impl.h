@@ -12,18 +12,10 @@
 #include "build/build_config.h"
 #include "content/child/child_thread_impl.h"
 #include "content/public/utility/utility_thread.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/service_manager/public/mojom/service_factory.mojom.h"
 #include "third_party/blink/public/platform/platform.h"
 
 namespace content {
 class UtilityServiceFactory;
-
-#if defined(COMPILER_MSVC)
-// See explanation for other RenderViewHostImpl which is the same issue.
-#pragma warning(push)
-#pragma warning(disable: 4250)
-#endif
 
 // This class represents the background thread where the utility task runs.
 class UtilityThreadImpl : public UtilityThread,
@@ -48,28 +40,18 @@ class UtilityThreadImpl : public UtilityThread,
 
   // ChildThreadImpl:
   bool OnControlMessageReceived(const IPC::Message& msg) override;
-
-  // Binds requests to our |service factory_|.
-  void BindServiceFactoryRequest(
-      service_manager::mojom::ServiceFactoryRequest request);
+  void RunService(
+      const std::string& service_name,
+      mojo::PendingReceiver<service_manager::mojom::Service> receiver) override;
 
   // blink::Platform implementation if needed.
   std::unique_ptr<blink::Platform> blink_platform_impl_;
 
-  // service_manager::mojom::ServiceFactory for service_manager::Service
-  // hosting.
+  // Helper to handle incoming RunService calls.
   std::unique_ptr<UtilityServiceFactory> service_factory_;
-
-  // Bindings to the service_manager::mojom::ServiceFactory impl.
-  mojo::BindingSet<service_manager::mojom::ServiceFactory>
-      service_factory_bindings_;
 
   DISALLOW_COPY_AND_ASSIGN(UtilityThreadImpl);
 };
-
-#if defined(COMPILER_MSVC)
-#pragma warning(pop)
-#endif
 
 }  // namespace content
 

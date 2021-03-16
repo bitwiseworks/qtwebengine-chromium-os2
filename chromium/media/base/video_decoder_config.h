@@ -17,7 +17,7 @@
 #include "media/base/media_export.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_color_space.h"
-#include "media/base/video_rotation.h"
+#include "media/base/video_transformation.h"
 #include "media/base/video_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -35,19 +35,20 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // appropriate values before using.
   VideoDecoderConfig();
 
+  enum class AlphaMode { kHasAlpha, kIsOpaque };
+
   // Constructs an initialized object. It is acceptable to pass in NULL for
   // |extra_data|, otherwise the memory is copied.
   VideoDecoderConfig(VideoCodec codec,
                      VideoCodecProfile profile,
-                     VideoPixelFormat format,
+                     AlphaMode alpha_mode,
                      const VideoColorSpace& color_space,
-                     VideoRotation rotation,
+                     VideoTransformation transformation,
                      const gfx::Size& coded_size,
                      const gfx::Rect& visible_rect,
                      const gfx::Size& natural_size,
                      const std::vector<uint8_t>& extra_data,
-                     const EncryptionScheme& encryption_scheme);
-
+                     EncryptionScheme encryption_scheme);
   VideoDecoderConfig(const VideoDecoderConfig& other);
 
   ~VideoDecoderConfig();
@@ -55,14 +56,14 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // Resets the internal state of this object.
   void Initialize(VideoCodec codec,
                   VideoCodecProfile profile,
-                  VideoPixelFormat format,
+                  AlphaMode alpha_mode,
                   const VideoColorSpace& color_space,
-                  VideoRotation rotation,
+                  VideoTransformation transformation,
                   const gfx::Size& coded_size,
                   const gfx::Rect& visible_rect,
                   const gfx::Size& natural_size,
                   const std::vector<uint8_t>& extra_data,
-                  const EncryptionScheme& encryption_scheme);
+                  EncryptionScheme encryption_scheme);
 
   // Returns true if this object has appropriate configuration values, false
   // otherwise.
@@ -77,16 +78,9 @@ class MEDIA_EXPORT VideoDecoderConfig {
 
   std::string GetHumanReadableCodecName() const;
 
-  static std::string GetHumanReadableProfile(VideoCodecProfile profile);
-
-  // Video codec and profile.
   VideoCodec codec() const { return codec_; }
   VideoCodecProfile profile() const { return profile_; }
-
-  // Encoded video pixel format. Lossy codecs rarely have actual pixel formats,
-  // this should usually be interpreted as a subsampling specification. (The
-  // decoder determines the actual pixel format.)
-  VideoPixelFormat format() const { return format_; }
+  AlphaMode alpha_mode() const { return alpha_mode_; }
 
   // Difference between encoded and display orientation.
   //
@@ -94,7 +88,7 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // scaling to natural_size().
   //
   // TODO(sandersd): Which direction is orientation measured in?
-  VideoRotation video_rotation() const { return rotation_; }
+  VideoTransformation video_transformation() const { return transformation_; }
 
   // Deprecated. TODO(wolenetz): Remove. See https://crbug.com/665539.
   // Width and height of video frame immediately post-decode. Not all pixels
@@ -113,9 +107,24 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // The shape of encoded pixels. Given visible_rect() and a pixel aspect ratio,
   // it is possible to compute natural_size() (see video_util.h).
   //
+  // SUBTLE: "pixel aspect ratio" != "display aspect ratio". *Pixel* aspect
+  // ratio describes the shape of a *pixel* as the ratio of its width to its
+  // height (ex: anamorphic video may have rectangular pixels). *Display* aspect
+  // ratio is natural_width / natural_height.
+  //
+  // CONTRACT: Dynamic changes to *pixel* aspect ratio are not supported unless
+  // done with explicit signal (new init-segment in MSE). Streams may still
+  // change their frame sizes dynamically, including their *display* aspect
+  // ratio. But, at this time (2019) changes to pixel aspect ratio are not
+  // surfaced by all platform decoders (ex: MediaCodec), so non-support is
+  // chosen for cross platform consistency. Hence, natural size should always be
+  // computed by scaling visbilte_size by the *pixel* aspect ratio from the
+  // container metadata. See GetNaturalSize() in video_util.h.
+  //
   // TODO(crbug.com/837337): This should be explicitly set (replacing
-  // |natural_size|). It should also be possible to determine whether it was set
-  // at all, since in-stream information may override it if it was not.
+  // |natural_size|). Alternatively, this could be replaced by
+  // GetNaturalSize(visible_rect), with pixel aspect ratio being an internal
+  // detail of the config.
   double GetPixelAspectRatio() const;
 
   // Optional video decoder initialization data, such as H.264 AVCC.
@@ -129,31 +138,46 @@ class MEDIA_EXPORT VideoDecoderConfig {
   // Whether the video stream is potentially encrypted.
   // Note that in a potentially encrypted video stream, individual buffers
   // can be encrypted or not encrypted.
-  bool is_encrypted() const { return encryption_scheme_.is_encrypted(); }
-
-  // Encryption scheme used for encrypted buffers.
-  const EncryptionScheme& encryption_scheme() const {
-    return encryption_scheme_;
+  bool is_encrypted() const {
+    return encryption_scheme_ != EncryptionScheme::kUnencrypted;
   }
 
+  // Encryption scheme used for encrypted buffers.
+  EncryptionScheme encryption_scheme() const { return encryption_scheme_; }
+
   // Color space of the image data.
-  const VideoColorSpace& color_space_info() const;
+  void set_color_space_info(const VideoColorSpace& color_space) {
+    color_space_info_ = color_space;
+  }
+  const VideoColorSpace& color_space_info() const { return color_space_info_; }
 
   // Dynamic range of the image data.
-  void set_hdr_metadata(const HDRMetadata& hdr_metadata);
-  const base::Optional<HDRMetadata>& hdr_metadata() const;
+  void set_hdr_metadata(const HDRMetadata& hdr_metadata) {
+    hdr_metadata_ = hdr_metadata;
+  }
+  const base::Optional<HDRMetadata>& hdr_metadata() const {
+    return hdr_metadata_;
+  }
+
+  // Codec level.
+  void set_level(VideoCodecLevel level) { level_ = level; }
+  VideoCodecLevel level() const { return level_; }
 
   // Sets the config to be encrypted or not encrypted manually. This can be
   // useful for decryptors that decrypts an encrypted stream to a clear stream.
   void SetIsEncrypted(bool is_encrypted);
 
  private:
-  VideoCodec codec_;
-  VideoCodecProfile profile_;
+  VideoCodec codec_ = kUnknownVideoCodec;
+  VideoCodecProfile profile_ = VIDEO_CODEC_PROFILE_UNKNOWN;
 
-  VideoPixelFormat format_;
+  // Optional video codec level. kNoVideoCodecLevel means the field is not
+  // available.
+  VideoCodecLevel level_ = kNoVideoCodecLevel;
 
-  VideoRotation rotation_;
+  AlphaMode alpha_mode_ = AlphaMode::kIsOpaque;
+
+  VideoTransformation transformation_ = kNoTransformation;
 
   // Deprecated. TODO(wolenetz): Remove. See https://crbug.com/665539.
   gfx::Size coded_size_;
@@ -163,7 +187,7 @@ class MEDIA_EXPORT VideoDecoderConfig {
 
   std::vector<uint8_t> extra_data_;
 
-  EncryptionScheme encryption_scheme_;
+  EncryptionScheme encryption_scheme_ = EncryptionScheme::kUnencrypted;
 
   VideoColorSpace color_space_info_;
   base::Optional<HDRMetadata> hdr_metadata_;

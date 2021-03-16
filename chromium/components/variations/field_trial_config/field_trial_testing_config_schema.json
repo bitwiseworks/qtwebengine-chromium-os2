@@ -4,7 +4,7 @@
 
 {
   "type_name": "FieldTrialTestingConfig",
-  "headers": ["components/variations/proto/study.pb.h"],
+  "headers": ["base/optional.h", "components/variations/proto/study.pb.h"],
   "schema": [{
     "field": "studies",
     "type": "array",
@@ -25,6 +25,18 @@
                 "field": "platforms",
                 "type": "array",
                 "contents": {"type": "enum", "ctype": "Study::Platform"}
+              },
+              {
+                "field": "form_factors",
+                "type": "array",
+                "contents": {"type": "enum", "ctype": "Study::FormFactor"}
+              },
+              {
+                "field": "is_low_end_device",
+                "type": "class",
+                "ctype": "base::Optional<bool>",
+                "default": "base::nullopt",
+                "optional": "True"
               },
               {
                 "field": "params",
@@ -51,6 +63,18 @@
               {
                 "field": "forcing_flag",
                 "type": "string"
+              },
+              {
+                "field": "override_ui_string",
+                "type": "array",
+                "contents": {
+                  "type_name": "OverrideUIString",
+                  "type": "struct",
+                  "fields": [
+                    {"field": "name_hash", "type": "int"},
+                    {"field": "value", "type": "string"}
+                  ]
+                }
               }
             ]
           }

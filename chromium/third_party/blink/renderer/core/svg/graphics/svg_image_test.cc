@@ -12,23 +12,33 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/html/html_image_element.h"
-#include "third_party/blink/renderer/core/layout/jank_tracker.h"
+#include "third_party/blink/renderer/core/layout/layout_shift_tracker.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/svg/animation/smil_time_container.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image_chrome_client.h"
+#include "third_party/blink/renderer/core/svg/svg_svg_element.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
 #include "third_party/blink/renderer/platform/geometry/float_rect.h"
+#include "third_party/blink/renderer/platform/graphics/dark_mode_generic_classifier.h"
+#include "third_party/blink/renderer/platform/graphics/dark_mode_image_classifier.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_flags.h"
-#include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/timer.h"
+#include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/utils/SkNullCanvas.h"
 
 namespace blink {
-class SVGImageTest : public testing::Test {
+namespace {
+
+const float kEpsilon = 0.00001;
+
+}  // namespace
+
+class SVGImageTest : public testing::Test, private ScopedMockOverlayScrollbars {
  public:
   SVGImage& GetImage() { return *image_; }
 
@@ -36,6 +46,18 @@ class SVGImageTest : public testing::Test {
     observer_ = MakeGarbageCollected<PauseControlImageObserver>(should_pause);
     image_ = SVGImage::Create(observer_);
     image_->SetData(SharedBuffer::Create(data, strlen(data)), true);
+    test::RunPendingTasks();
+  }
+
+  void LoadUsingFileName(const String& file_name) {
+    String file_path = test::BlinkWebTestsDir() + file_name;
+    scoped_refptr<SharedBuffer> image_data = test::ReadFromFile(file_path);
+    EXPECT_TRUE(image_data.get() && image_data.get()->size());
+
+    observer_ = MakeGarbageCollected<PauseControlImageObserver>(true);
+    image_ = SVGImage::Create(observer_);
+    image_->SetData(image_data, true);
+    test::RunPendingTasks();
   }
 
   void PumpFrame() {
@@ -45,13 +67,37 @@ class SVGImageTest : public testing::Test {
     PaintFlags flags;
     FloatRect dummy_rect(0, 0, 100, 100);
     image->Draw(&canvas, flags, dummy_rect, dummy_rect,
-                kDoNotRespectImageOrientation,
-                Image::kDoNotClampImageToSourceRect, Image::kSyncDecode);
+                kRespectImageOrientation, Image::kDoNotClampImageToSourceRect,
+                Image::kSyncDecode);
+  }
+
+  // Loads the image from |file_name|, computes features into |features|,
+  // and returns the classification result.
+  bool GetFeaturesAndClassification(
+      const String& file_name,
+      DarkModeImageClassifier::Features* features) {
+    CHECK(features);
+    SCOPED_TRACE(file_name);
+    LoadUsingFileName(file_name);
+    DarkModeImageClassifier dark_mode_image_classifier;
+    dark_mode_image_classifier.SetImageType(
+        DarkModeImageClassifier::ImageType::kSvg);
+    auto features_or_null = dark_mode_image_classifier.GetFeatures(
+        image_.get(), FloatRect(0, 0, image_->width(), image_->height()));
+    CHECK(features_or_null.has_value());
+    (*features) = features_or_null.value();
+    DarkModeClassification result =
+        dark_mode_generic_classifier_.ClassifyWithFeatures(*features);
+    return result == DarkModeClassification::kApplyFilter;
+  }
+
+  DarkModeGenericClassifier* classifier() {
+    return &dark_mode_generic_classifier_;
   }
 
  private:
   class PauseControlImageObserver
-      : public GarbageCollectedFinalized<PauseControlImageObserver>,
+      : public GarbageCollected<PauseControlImageObserver>,
         public ImageObserver {
     USING_GARBAGE_COLLECTED_MIXIN(PauseControlImageObserver);
 
@@ -67,15 +113,14 @@ class SVGImageTest : public testing::Test {
 
     void AsyncLoadCompleted(const blink::Image*) override {}
 
-    void Trace(blink::Visitor* visitor) override {
-      ImageObserver::Trace(visitor);
-    }
+    void Trace(Visitor* visitor) override { ImageObserver::Trace(visitor); }
 
    private:
     bool should_pause_;
   };
   Persistent<PauseControlImageObserver> observer_;
   scoped_refptr<SVGImage> image_;
+  DarkModeGenericClassifier dark_mode_generic_classifier_;
 };
 
 const char kAnimatedDocument[] =
@@ -114,7 +159,7 @@ TEST_F(SVGImageTest, TimelineSuspendAndResume) {
   // Fire the timer/trigger a frame update. Since the observer always returns
   // true for shouldPauseAnimation, this will result in the timeline being
   // suspended.
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(1) +
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(1) +
                         timer->NextFireInterval());
   EXPECT_TRUE(chrome_client.IsSuspended());
   EXPECT_FALSE(timer->IsActive());
@@ -148,7 +193,7 @@ TEST_F(SVGImageTest, ResetAnimation) {
 
   // Fire the timer/trigger a frame update. The timeline will remain
   // suspended and no frame will be scheduled.
-  test::RunDelayedTasks(TimeDelta::FromMillisecondsD(1) +
+  test::RunDelayedTasks(base::TimeDelta::FromMillisecondsD(1) +
                         timer->NextFireInterval());
   EXPECT_TRUE(chrome_client.IsSuspended());
   EXPECT_FALSE(timer->IsActive());
@@ -164,7 +209,7 @@ TEST_F(SVGImageTest, SupportsSubsequenceCaching) {
   Load(kAnimatedDocument, kShouldPause);
   PumpFrame();
   LocalFrame* local_frame =
-      ToLocalFrame(GetImage().GetPageForTesting()->MainFrame());
+      To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
   EXPECT_TRUE(local_frame->GetDocument()->IsSVGDocument());
   LayoutObject* svg_root = local_frame->View()->GetLayoutView()->FirstChild();
   EXPECT_TRUE(svg_root->IsSVGRoot());
@@ -172,14 +217,14 @@ TEST_F(SVGImageTest, SupportsSubsequenceCaching) {
       ToLayoutBoxModelObject(svg_root)->Layer()->SupportsSubsequenceCaching());
 }
 
-TEST_F(SVGImageTest, JankTrackerDisabled) {
+TEST_F(SVGImageTest, LayoutShiftTrackerDisabled) {
   const bool kDontPause = false;
   Load("<svg xmlns='http://www.w3.org/2000/svg'></svg>", kDontPause);
   LocalFrame* local_frame =
-      ToLocalFrame(GetImage().GetPageForTesting()->MainFrame());
+      To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
   EXPECT_TRUE(local_frame->GetDocument()->IsSVGDocument());
-  auto& jank_tracker = local_frame->View()->GetJankTracker();
-  EXPECT_FALSE(jank_tracker.IsActive());
+  auto& layout_shift_tracker = local_frame->View()->GetLayoutShiftTracker();
+  EXPECT_FALSE(layout_shift_tracker.IsActive());
 }
 
 TEST_F(SVGImageTest, SetSizeOnVisualViewport) {
@@ -191,13 +236,101 @@ TEST_F(SVGImageTest, SetSizeOnVisualViewport) {
       kDontPause);
   PumpFrame();
   LocalFrame* local_frame =
-      ToLocalFrame(GetImage().GetPageForTesting()->MainFrame());
+      To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
   ASSERT_FALSE(local_frame->View()->Size().IsEmpty());
   EXPECT_EQ(local_frame->View()->Size(),
             GetImage().GetPageForTesting()->GetVisualViewport().Size());
 }
 
-class SVGImageSimTest : public SimTest {};
+TEST_F(SVGImageTest, IsSizeAvailable) {
+  const bool kShouldPause = false;
+  Load("<svg xmlns='http://www.w3.org/2000/svg'></svg>", kShouldPause);
+  EXPECT_TRUE(GetImage().IsSizeAvailable());
+
+  Load("<notsvg></notsvg>", kShouldPause);
+  EXPECT_FALSE(GetImage().IsSizeAvailable());
+
+  Load("<notsvg xmlns='http://www.w3.org/2000/svg'></notsvg>", kShouldPause);
+  EXPECT_FALSE(GetImage().IsSizeAvailable());
+}
+
+TEST_F(SVGImageTest, DisablesSMILEvents) {
+  const bool kShouldPause = true;
+  Load(kAnimatedDocument, kShouldPause);
+  LocalFrame* local_frame =
+      To<LocalFrame>(GetImage().GetPageForTesting()->MainFrame());
+  EXPECT_TRUE(local_frame->GetDocument()->IsSVGDocument());
+  SMILTimeContainer* time_container =
+      To<SVGSVGElement>(local_frame->GetDocument()->documentElement())
+          ->TimeContainer();
+  EXPECT_TRUE(time_container->EventsDisabled());
+}
+
+TEST_F(SVGImageTest, DarkModeClassification) {
+  DarkModeImageClassifier::Features features;
+
+  // Test Case 1:
+  // Grayscale
+  // Color Buckets Ratio: Low
+  // Decision Tree: Apply
+  // Neural Network: NA
+  EXPECT_TRUE(GetFeaturesAndClassification("/svg/animations/path-animation.svg",
+                                           &features));
+  EXPECT_EQ(classifier()->ClassifyUsingDecisionTreeForTesting(features),
+            DarkModeClassification::kApplyFilter);
+  EXPECT_FALSE(features.is_colorful);
+  EXPECT_TRUE(features.is_svg);
+  EXPECT_NEAR(0.0625f, features.color_buckets_ratio, kEpsilon);
+  EXPECT_NEAR(0.968889f, features.transparency_ratio, kEpsilon);
+  EXPECT_NEAR(0.02f, features.background_ratio, kEpsilon);
+
+  // Test Case 2:
+  // Color
+  // Color Buckets Ratio: Low
+  // Decision Tree: Apply
+  // Neural Network: NA.
+  EXPECT_TRUE(GetFeaturesAndClassification(
+      "/svg/stroke/zero-length-path-linecap-rendering.svg", &features));
+  EXPECT_EQ(classifier()->ClassifyUsingDecisionTreeForTesting(features),
+            DarkModeClassification::kApplyFilter);
+  EXPECT_TRUE(features.is_colorful);
+  EXPECT_TRUE(features.is_svg);
+  EXPECT_NEAR(0.00170898f, features.color_buckets_ratio, kEpsilon);
+  EXPECT_NEAR(0.0f, features.transparency_ratio, kEpsilon);
+  EXPECT_NEAR(0.0f, features.background_ratio, kEpsilon);
+
+  // Test Case 3:
+  // Color
+  // Color Buckets Ratio: Low
+  // Decision Tree: Apply
+  // Neural Network: NA.
+  EXPECT_TRUE(GetFeaturesAndClassification(
+      "/svg/foreignObject/fixed-position.svg", &features));
+  EXPECT_EQ(classifier()->ClassifyUsingDecisionTreeForTesting(features),
+            DarkModeClassification::kApplyFilter);
+  EXPECT_TRUE(features.is_colorful);
+  EXPECT_TRUE(features.is_svg);
+  EXPECT_NEAR(0.000244141f, features.color_buckets_ratio, kEpsilon);
+  EXPECT_NEAR(0.777778f, features.transparency_ratio, kEpsilon);
+  EXPECT_NEAR(0.0f, features.background_ratio, kEpsilon);
+
+  // Test Case 4:
+  // Grayscale
+  // Color Buckets Ratio: Low
+  // Decision Tree: Apply
+  // Neural Network: NA.
+  EXPECT_TRUE(GetFeaturesAndClassification("/svg/clip-path/clip-in-mask.svg",
+                                           &features));
+  EXPECT_EQ(classifier()->ClassifyUsingDecisionTreeForTesting(features),
+            DarkModeClassification::kApplyFilter);
+  EXPECT_FALSE(features.is_colorful);
+  EXPECT_TRUE(features.is_svg);
+  EXPECT_NEAR(0.0625f, features.color_buckets_ratio, kEpsilon);
+  EXPECT_NEAR(0.888889f, features.transparency_ratio, kEpsilon);
+  EXPECT_NEAR(0.11f, features.background_ratio, kEpsilon);
+}
+
+class SVGImageSimTest : public SimTest, private ScopedMockOverlayScrollbars {};
 
 TEST_F(SVGImageSimTest, PageVisibilityHiddenToVisible) {
   SimRequest main_resource("https://example.com/", "text/html");
@@ -211,22 +344,22 @@ TEST_F(SVGImageSimTest, PageVisibilityHiddenToVisible) {
   test::RunPendingTasks();
 
   Element* element = GetDocument().getElementById("image");
-  ASSERT_TRUE(IsHTMLImageElement(element));
+  ASSERT_TRUE(IsA<HTMLImageElement>(element));
 
   ImageResourceContent* image_content =
-      ToHTMLImageElement(*element).CachedImage();
+      To<HTMLImageElement>(*element).CachedImage();
   ASSERT_TRUE(image_content);
   ASSERT_TRUE(image_content->IsLoaded());
   ASSERT_TRUE(image_content->HasImage());
   Image* image = image_content->GetImage();
-  ASSERT_TRUE(image->IsSVGImage());
+  ASSERT_TRUE(IsA<SVGImage>(image));
   SVGImageChromeClient& svg_image_chrome_client =
-      ToSVGImage(*image).ChromeClientForTesting();
+      To<SVGImage>(*image).ChromeClientForTesting();
   TimerBase* timer = svg_image_chrome_client.GetTimerForTesting();
 
   // Wait for the next animation frame to be triggered, and then trigger a new
   // frame. The image animation timeline should be running.
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(1) +
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(1) +
                         timer->NextFireInterval());
   Compositor().BeginFrame();
 
@@ -235,16 +368,18 @@ TEST_F(SVGImageSimTest, PageVisibilityHiddenToVisible) {
   // Set page visibility to 'hidden', and then wait for the animation timer to
   // fire. This should suspend the image animation. (Suspend the image's
   // animation timeline.)
-  WebView().SetIsHidden(/*is_hidden=*/true, /*initial_state=*/false);
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(1) +
+  WebView().SetVisibilityState(PageVisibilityState::kHidden,
+                               /*initial_state=*/false);
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(1) +
                         timer->NextFireInterval());
 
   EXPECT_TRUE(svg_image_chrome_client.IsSuspended());
 
   // Set page visibility to 'visible' - this should schedule a new animation
   // frame and resume the image animation.
-  WebView().SetIsHidden(/*is_hidden=*/false, /*initial_state=*/false);
-  test::RunDelayedTasks(TimeDelta::FromMilliseconds(1) +
+  WebView().SetVisibilityState(PageVisibilityState::kVisible,
+                               /*initial_state=*/false);
+  test::RunDelayedTasks(base::TimeDelta::FromMilliseconds(1) +
                         timer->NextFireInterval());
   Compositor().BeginFrame();
 

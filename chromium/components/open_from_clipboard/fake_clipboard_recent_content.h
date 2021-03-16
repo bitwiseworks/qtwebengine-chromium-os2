@@ -21,9 +21,11 @@ class FakeClipboardRecentContent : public ClipboardRecentContent {
   // ClipboardRecentContent implementation.
   base::Optional<GURL> GetRecentURLFromClipboard() override;
   base::Optional<base::string16> GetRecentTextFromClipboard() override;
-  base::Optional<gfx::Image> GetRecentImageFromClipboard() override;
+  void GetRecentImageFromClipboard(GetRecentImageCallback callback) override;
+  bool HasRecentImageFromClipboard() override;
   base::TimeDelta GetClipboardContentAge() const override;
   void SuppressClipboardContent() override;
+  void ClearClipboardContent() override;
 
   // Sets the URL and clipboard content age. This clears the text and image.
   void SetClipboardURL(const GURL& url, base::TimeDelta content_age);

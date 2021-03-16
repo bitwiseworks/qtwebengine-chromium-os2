@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/paint/scoped_paint_state.h"
 
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
+#include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/paint/box_model_object_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 
@@ -12,15 +13,14 @@ namespace blink {
 
 void ScopedPaintState::AdjustForPaintOffsetTranslation(
     const LayoutObject& object,
-    const TransformPaintPropertyNode* paint_offset_translation) {
+    const TransformPaintPropertyNode& paint_offset_translation) {
   if (input_paint_info_.context.InDrawingRecorder()) {
     // If we are recording drawings, we should issue the translation as a raw
     // paint operation instead of paint chunk properties. One case is that we
     // are painting table row background behind a cell having paint offset
     // translation.
     input_paint_info_.context.Save();
-    FloatSize translation =
-        paint_offset_translation->Matrix().To2DTranslation();
+    FloatSize translation = paint_offset_translation.Translation2D();
     input_paint_info_.context.Translate(translation.Width(),
                                         translation.Height());
     paint_offset_translation_as_drawing_ = true;
@@ -67,7 +67,7 @@ void ScopedBoxContentsPaintState::AdjustForBoxContents(const LayoutBox& box) {
   // for the reason of adding ScrollOrigin(). contents_paint_offset will
   // be used only for the scrolling contents that are not painted through
   // descendant objects' Paint() method, e.g. inline boxes.
-  paint_offset_ += box.ScrollOrigin();
+  paint_offset_ += PhysicalOffset(box.ScrollOrigin());
 
   // If a LayoutView is using infinite cull rect, we are painting with viewport
   // clip disabled, so don't cull the scrolling contents. This is just for
@@ -75,11 +75,11 @@ void ScopedBoxContentsPaintState::AdjustForBoxContents(const LayoutBox& box) {
   // with a smaller cull rect, and the scrolling document contents are under the
   // layer of document element which will use infinite cull rect calculated in
   // PaintLayerPainter::AdjustForPaintProperties().
-  if (box.IsLayoutView() && input_paint_info_.GetCullRect().IsInfinite())
+  if (IsA<LayoutView>(box) && input_paint_info_.GetCullRect().IsInfinite())
     return;
 
   adjusted_paint_info_.emplace(input_paint_info_);
-  adjusted_paint_info_->TransformCullRect(scroll_translation);
+  adjusted_paint_info_->TransformCullRect(*scroll_translation);
 }
 
 }  // namespace blink

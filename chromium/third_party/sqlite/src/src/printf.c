@@ -1,6 +1,6 @@
 /*
 ** The "printf" code that follows dates from the 1980's.  It is in
-** the public domain.
+** the public domain. 
 **
 **************************************************************************
 **
@@ -99,6 +99,12 @@ static const et_info fmtinfo[] = {
   {  'r', 10, 1, etORDINAL,    0,  0 },
 };
 
+/* Floating point constants used for rounding */
+static const double arRound[] = {
+  5.0e-01, 5.0e-02, 5.0e-03, 5.0e-04, 5.0e-05,
+  5.0e-06, 5.0e-07, 5.0e-08, 5.0e-09, 5.0e-10,
+};
+
 /*
 ** If SQLITE_OMIT_FLOATING_POINT is defined, then none of the floating point
 ** conversions will work.
@@ -136,7 +142,8 @@ static char et_getdigit(LONGDOUBLE_TYPE *val, int *cnt){
 static void setStrAccumError(StrAccum *p, u8 eError){
   assert( eError==SQLITE_NOMEM || eError==SQLITE_TOOBIG );
   p->accError = eError;
-  p->nAlloc = 0;
+  if( p->mxAlloc ) sqlite3_str_reset(p);
+  if( eError==SQLITE_TOOBIG ) sqlite3ErrorToParser(p->db, eError);
 }
 
 /*
@@ -166,6 +173,7 @@ static char *getTextArg(PrintfArguments *p){
 */
 static char *printfTempBuf(sqlite3_str *pAccum, sqlite3_int64 n){
   char *z;
+  if( pAccum->accError ) return 0;
   if( n>pAccum->nAlloc && n>pAccum->mxAlloc ){
     setStrAccumError(pAccum, SQLITE_TOOBIG);
     return 0;
@@ -227,7 +235,7 @@ void sqlite3_str_vappendf(
   PrintfArguments *pArgList = 0; /* Arguments for SQLITE_PRINTF_SQLFUNC */
   char buf[etBUFSIZE];       /* Conversion buffer */
 
-  /* pAccum never starts out with an empty buffer that was obtained from
+  /* pAccum never starts out with an empty buffer that was obtained from 
   ** malloc().  This precondition is required by the mprintf("%z...")
   ** optimization. */
   assert( pAccum->nChar>0 || (pAccum->printfFlags&SQLITE_PRINTF_MALLOCED)==0 );
@@ -392,7 +400,7 @@ void sqlite3_str_vappendf(
                      sizeof(char*)==sizeof(long int) ? 1 : 0;
         /* Fall through into the next case */
       case etORDINAL:
-      case etRADIX:
+      case etRADIX:      
         cThousand = 0;
         /* Fall through into the next case */
       case etDECIMAL:
@@ -515,8 +523,18 @@ void sqlite3_str_vappendf(
         }
         if( xtype==etGENERIC && precision>0 ) precision--;
         testcase( precision>0xfff );
-        for(idx=precision&0xfff, rounder=0.5; idx>0; idx--, rounder*=0.1){}
-        if( xtype==etFLOAT ) realvalue += rounder;
+        idx = precision & 0xfff;
+        rounder = arRound[idx%10];
+        while( idx>=10 ){ rounder *= 1.0e-10; idx -= 10; }
+        if( xtype==etFLOAT ){
+          double rx = (double)realvalue;
+          sqlite3_uint64 u;
+          int ex;
+          memcpy(&u, &rx, sizeof(u));
+          ex = -1023 + (int)((u>>52)&0x7ff);
+          if( precision+(ex/3) < 15 ) rounder += realvalue*3e-16;
+          realvalue += rounder;
+        }
         /* Normalize realvalue to within 10.0 > realvalue >= 1.0 */
         exp = 0;
         if( sqlite3IsNaN((double)realvalue) ){
@@ -885,9 +903,8 @@ static int sqlite3StrAccumEnlarge(StrAccum *p, int N){
     return 0;
   }
   if( p->mxAlloc==0 ){
-    N = p->nAlloc - p->nChar - 1;
     setStrAccumError(p, SQLITE_TOOBIG);
-    return N;
+    return p->nAlloc - p->nChar - 1;
   }else{
     char *zOld = isMalloced(p) ? p->zText : 0;
     i64 szNew = p->nChar;
@@ -959,7 +976,7 @@ void sqlite3_str_append(sqlite3_str *p, const char *z, int N){
   assert( z!=0 || N==0 );
   assert( p->zText!=0 || p->nChar==0 || p->accError );
   assert( N>=0 );
-  assert( p->accError==0 || p->nAlloc==0 );
+  assert( p->accError==0 || p->nAlloc==0 || p->mxAlloc==0 );
   if( p->nChar+N >= p->nAlloc ){
     enlargeAndAppend(p,z,N);
   }else if( N ){
@@ -1136,7 +1153,7 @@ char *sqlite3_vmprintf(const char *zFormat, va_list ap){
   char zBase[SQLITE_PRINT_BUF_SIZE];
   StrAccum acc;
 
-#ifdef SQLITE_ENABLE_API_ARMOR
+#ifdef SQLITE_ENABLE_API_ARMOR  
   if( zFormat==0 ){
     (void)SQLITE_MISUSE_BKPT;
     return 0;

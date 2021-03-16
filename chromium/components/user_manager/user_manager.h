@@ -22,6 +22,10 @@ namespace user_manager {
 class ScopedUserManager;
 class RemoveUserDelegate;
 
+// A list pref of the the regular users known on this device, arranged in LRU
+// order, stored in local state.
+USER_MANAGER_EXPORT extern const char kRegularUsersPref[];
+
 // Interface for UserManagerBase - that provides base implementation for
 // Chrome OS user management. Typical features:
 // * Get list of all know users (who have logged into this Chrome OS device)
@@ -62,7 +66,7 @@ class USER_MANAGER_EXPORT UserManager {
   class UserSessionStateObserver {
    public:
     // Called when active user has changed.
-    virtual void ActiveUserChanged(const User* active_user);
+    virtual void ActiveUserChanged(User* active_user);
 
     // Called when another user got added to the existing session.
     virtual void UserAddedToSession(const User* added_user);
@@ -174,14 +178,6 @@ class USER_MANAGER_EXPORT UserManager {
   // Invoked by session manager to inform session start.
   virtual void OnSessionStarted() = 0;
 
-  // Invoked once profile initialization has been completed. This allows various
-  // subsystems (for example, policy framework) to skip an expensive online
-  // initialization process, and also allows the signin screen to force an
-  // online signin if it knows that profile initialization has not yet
-  // completed. |user| is the User associated with the profile that has
-  // completed initialization.
-  virtual void OnProfileInitialized(User* user) = 0;
-
   // Removes the user from the device. Note, it will verify that the given user
   // isn't the owner, so calling this method for the owner will take no effect.
   // Note, |delegate| can be NULL.
@@ -245,12 +241,6 @@ class USER_MANAGER_EXPORT UserManager {
   virtual void SaveUserDisplayEmail(const AccountId& account_id,
                                     const std::string& display_email) = 0;
 
-  // Returns the display email for user |account_id| if it is known (was
-  // previously set by a |SaveUserDisplayEmail| call).
-  // Otherwise, returns |account_id| itself.
-  virtual std::string GetUserDisplayEmail(
-      const AccountId& account_id) const = 0;
-
   // Saves user's type for |user| into local state preferences.
   virtual void SaveUserType(const User* user) = 0;
 
@@ -294,8 +284,14 @@ class USER_MANAGER_EXPORT UserManager {
   // Returns true if we're logged in as a kiosk app.
   virtual bool IsLoggedInAsKioskApp() const = 0;
 
-  // Returns true if we're logged in as a ARC kiosk app.
+  // Returns true if we're logged in as an ARC kiosk app.
   virtual bool IsLoggedInAsArcKioskApp() const = 0;
+
+  // Returns true if we're logged in as a Web kiosk app.
+  virtual bool IsLoggedInAsWebKioskApp() const = 0;
+
+  // Returns true if we're logged in as chrome, ARC or Web kiosk app.
+  virtual bool IsLoggedInAsAnyKioskApp() const = 0;
 
   // Returns true if we're logged in as the stub user used for testing on Linux.
   virtual bool IsLoggedInAsStub() const = 0;
@@ -323,10 +319,6 @@ class USER_MANAGER_EXPORT UserManager {
       const User& user,
       const gfx::ImageSkia& profile_image) = 0;
   virtual void NotifyUsersSignInConstraintsChanged() = 0;
-
-  // Resets this profile to be regarded as if it has never been initialized
-  // before. Used on profile wipe.
-  virtual void ResetProfileEverInitialized(const AccountId& account_id) = 0;
 
   // Returns true if supervised users allowed.
   virtual bool AreSupervisedUsersAllowed() const = 0;
@@ -420,19 +412,6 @@ class USER_MANAGER_EXPORT UserManager {
   // Sets UserManager instance to the given |user_manager|.
   // Returns the previous value of the instance.
   static UserManager* SetForTesting(UserManager* user_manager);
-};
-
-// TODO(xiyuan): Move this along with UserSessionStateObserver
-class USER_MANAGER_EXPORT ScopedUserSessionStateObserver {
- public:
-  explicit ScopedUserSessionStateObserver(
-      UserManager::UserSessionStateObserver* observer);
-  ~ScopedUserSessionStateObserver();
-
- private:
-  UserManager::UserSessionStateObserver* const observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(ScopedUserSessionStateObserver);
 };
 
 }  // namespace user_manager

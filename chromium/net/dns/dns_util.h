@@ -6,12 +6,16 @@
 #define NET_DNS_DNS_UTIL_H_
 
 #include <string>
+#include <vector>
 
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
 #include "net/base/address_family.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
+#include "net/dns/dns_config.h"
+#include "net/dns/public/dns_over_https_server_config.h"
 #include "net/dns/public/dns_query_type.h"
 
 namespace net {
@@ -19,15 +23,30 @@ namespace net {
 class AddressList;
 
 // DNSDomainFromDot - convert a domain string to DNS format. From DJB's
-// public domain DNS library.
+// public domain DNS library. |dotted| may include only characters a-z, A-Z,
+// 0-9, -, and _.
 //
 //   dotted: a string in dotted form: "www.google.com"
 //   out: a result in DNS form: "\x03www\x06google\x03com\x00"
 NET_EXPORT bool DNSDomainFromDot(const base::StringPiece& dotted,
                                  std::string* out);
 
+// DNSDomainFromUnrestrictedDot - convert a domain string to DNS format. Adapted
+// from DJB's public domain DNS library. No validation of the characters in
+// |dotted| is performed.
+//
+//   dotted: a string in dotted form: "Foo Printer._tcp.local"
+//   out: a result in DNS form: "\x0bFoo Printer\x04_tcp\x05local\x00"
+NET_EXPORT bool DNSDomainFromUnrestrictedDot(const base::StringPiece& dotted,
+                                             std::string* out);
+
 // Checks that a hostname is valid. Simple wrapper around DNSDomainFromDot.
 NET_EXPORT_PRIVATE bool IsValidDNSDomain(const base::StringPiece& dotted);
+
+// Checks that a hostname is valid. Simple wrapper around
+// DNSDomainFromUnrestrictedDot.
+NET_EXPORT_PRIVATE bool IsValidUnrestrictedDNSDomain(
+    const base::StringPiece& dotted);
 
 // Returns true if the character is valid in a DNS hostname label, whether in
 // the first position or later in the label.
@@ -88,10 +107,40 @@ AddressListDeltaType FindAddressListDeltaType(const AddressList& a,
 NET_EXPORT std::string CreateNamePointer(uint16_t offset);
 
 // Convert a DnsQueryType enum to the wire format integer representation.
-uint16_t DnsQueryTypeToQtype(DnsQueryType dns_query_type);
+NET_EXPORT_PRIVATE uint16_t DnsQueryTypeToQtype(DnsQueryType dns_query_type);
 
 NET_EXPORT DnsQueryType
 AddressFamilyToDnsQueryType(AddressFamily address_family);
+
+// Uses the hardcoded upgrade mapping to discover DoH service(s) associated
+// with a DoT hostname. Providers listed in |excluded_providers| are not
+// eligible for upgrade.
+NET_EXPORT_PRIVATE std::vector<DnsOverHttpsServerConfig>
+GetDohUpgradeServersFromDotHostname(
+    const std::string& dot_server,
+    const std::vector<std::string>& excluded_providers);
+
+// Uses the hardcoded upgrade mapping to discover DoH service(s) associated
+// with a list of insecure DNS servers. Server ordering is preserved across
+// the mapping. Providers listed in |excluded_providers| are not
+// eligible for upgrade.
+NET_EXPORT_PRIVATE std::vector<DnsOverHttpsServerConfig>
+GetDohUpgradeServersFromNameservers(
+    const std::vector<IPEndPoint>& dns_servers,
+    const std::vector<std::string>& excluded_providers);
+
+// Returns the provider id to use in UMA histogram names. If there is no
+// provider id that matches |doh_server|, returns "Other".
+NET_EXPORT_PRIVATE std::string GetDohProviderIdForHistogramFromDohConfig(
+    const DnsOverHttpsServerConfig& doh_server);
+
+// Returns the provider id to use in UMA histogram names. If there is no
+// provider id that matches |nameserver|, returns "Other".
+NET_EXPORT_PRIVATE std::string GetDohProviderIdForHistogramFromNameserver(
+    const IPEndPoint& nameserver);
+
+NET_EXPORT_PRIVATE std::string SecureDnsModeToString(
+    const DnsConfig::SecureDnsMode secure_dns_mode);
 
 }  // namespace net
 

@@ -14,24 +14,20 @@
 namespace audio {
 
 scoped_refptr<media::AudioCapturerSource> CreateInputDevice(
-    std::unique_ptr<service_manager::Connector> connector,
+    mojo::PendingRemote<mojom::StreamFactory> stream_factory,
     const std::string& device_id,
-    media::mojom::AudioLogPtr log) {
+    mojo::PendingRemote<media::mojom::AudioLog> log) {
   std::unique_ptr<media::AudioInputIPC> ipc = std::make_unique<InputIPC>(
-      std::move(connector), device_id, std::move(log));
-
+      std::move(stream_factory), device_id, std::move(log));
   return base::MakeRefCounted<media::AudioInputDevice>(
       std::move(ipc), media::AudioInputDevice::Purpose::kUserInput);
 }
 
 scoped_refptr<media::AudioCapturerSource> CreateInputDevice(
-    std::unique_ptr<service_manager::Connector> connector,
+    mojo::PendingRemote<mojom::StreamFactory> stream_factory,
     const std::string& device_id) {
-  std::unique_ptr<media::AudioInputIPC> ipc =
-      std::make_unique<InputIPC>(std::move(connector), device_id, nullptr);
-
-  return base::MakeRefCounted<media::AudioInputDevice>(
-      std::move(ipc), media::AudioInputDevice::Purpose::kUserInput);
+  return CreateInputDevice(std::move(stream_factory), device_id,
+                           mojo::NullRemote());
 }
 
 }  // namespace audio

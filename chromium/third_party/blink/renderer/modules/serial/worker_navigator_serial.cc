@@ -33,12 +33,12 @@ Serial* WorkerNavigatorSerial::serial(ScriptState* script_state) {
     // TODO(https://crbug.com/839117): Remove this check once the Exposed
     // attribute is fixed to only expose this property in dedicated workers.
     if (execution_context->IsDedicatedWorkerGlobalScope())
-      serial_ = Serial::Create(*execution_context);
+      serial_ = MakeGarbageCollected<Serial>(*execution_context);
   }
   return serial_;
 }
 
-void WorkerNavigatorSerial::Trace(blink::Visitor* visitor) {
+void WorkerNavigatorSerial::Trace(Visitor* visitor) {
   visitor->Trace(serial_);
   Supplement<WorkerNavigator>::Trace(visitor);
 }

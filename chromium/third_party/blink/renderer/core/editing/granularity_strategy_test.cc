@@ -11,13 +11,13 @@
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/local_caret_rect.h"
 #include "third_party/blink/renderer/core/editing/selection_template.h"
+#include "third_party/blink/renderer/core/editing/testing/editing_test_base.h"
 #include "third_party/blink/renderer/core/editing/visible_position.h"
 #include "third_party/blink/renderer/core/editing/visible_selection.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_span_element.h"
-#include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
@@ -25,7 +25,7 @@
 namespace blink {
 
 #define EXPECT_EQ_SELECTED_TEXT(text) \
-  EXPECT_EQ(text, WebString(Selection().SelectedText()).Utf8())
+  EXPECT_EQ(text, Selection().SelectedText().Utf8())
 
 IntPoint VisiblePositionToContentsPoint(const VisiblePosition& pos) {
   IntPoint result = AbsoluteSelectionBoundsOf(pos).MinXMaxYCorner();
@@ -37,7 +37,7 @@ IntPoint VisiblePositionToContentsPoint(const VisiblePosition& pos) {
 
 using TextNodeVector = HeapVector<Member<Text>>;
 
-class GranularityStrategyTest : public PageTestBase {
+class GranularityStrategyTest : public EditingTestBase {
  protected:
   void SetUp() override;
 
@@ -91,8 +91,7 @@ Text* GranularityStrategyTest::AppendTextNode(const String& data) {
 }
 
 void GranularityStrategyTest::SetInnerHTML(const char* html_content) {
-  GetDocument().documentElement()->SetInnerHTMLFromString(
-      String::FromUTF8(html_content));
+  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
   UpdateAllLifecyclePhasesForTest();
 }
 
@@ -220,7 +219,7 @@ void GranularityStrategyTest::SetupTextSpan(String str1,
   Text* text1 = GetDocument().createTextNode(str1);
   Text* text2 = GetDocument().createTextNode(str2);
   Text* text3 = GetDocument().createTextNode(str3);
-  Element* span = HTMLSpanElement::Create(GetDocument());
+  auto* span = MakeGarbageCollected<HTMLSpanElement>(GetDocument());
   Element* div = GetDocument().getElementById("mytext");
   div->AppendChild(text1);
   div->AppendChild(span);
@@ -477,7 +476,7 @@ TEST_F(GranularityStrategyTest, Character) {
   GetDummyPageHolder().GetFrame().GetSettings()->SetDefaultFontSize(12);
   // "Foo Bar Baz,"
   Text* text = AppendTextNode("Foo Bar Baz,");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 
   // "Foo B^a|>r Baz," (^ means base, | means extent, , < means start, and >
   // means end).
@@ -638,7 +637,7 @@ TEST_F(GranularityStrategyTest, DirectionSwitchSideWordGranularityThenShrink) {
   String str = "ab cd efghijkl mnopqr iiin, abc";
   Text* text = GetDocument().createTextNode(str);
   GetDocument().body()->AppendChild(text);
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   GetDummyPageHolder().GetFrame().GetSettings()->SetSelectionStrategy(
       SelectionStrategy::kDirection);
 
@@ -677,7 +676,7 @@ TEST_F(GranularityStrategyTest, DirectionSwitchStartOnBoundary) {
   String str = "ab cd efghijkl mnopqr iiin, abc";
   Text* text = GetDocument().createTextNode(str);
   GetDocument().body()->AppendChild(text);
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   GetDummyPageHolder().GetFrame().GetSettings()->SetSelectionStrategy(
       SelectionStrategy::kDirection);
 
@@ -699,15 +698,15 @@ TEST_F(GranularityStrategyTest, DirectionSwitchStartOnBoundary) {
 TEST_F(GranularityStrategyTest, UpdateExtentWithNullPositionForCharacter) {
   GetDummyPageHolder().GetFrame().GetSettings()->SetSelectionStrategy(
       SelectionStrategy::kCharacter);
-  GetDocument().body()->SetInnerHTMLFromString(
+  GetDocument().body()->setInnerHTML(
       "<div id=host></div><div id=sample>ab</div>");
   // Simulate VIDEO element which has a RANGE as slider of video time.
   Element* const host = GetDocument().getElementById("host");
   ShadowRoot& shadow_root =
       host->AttachShadowRootInternal(ShadowRootType::kOpen);
-  shadow_root.SetInnerHTMLFromString("<input type=range>");
+  shadow_root.setInnerHTML("<input type=range>");
   Element* const sample = GetDocument().getElementById("sample");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   const SelectionInDOMTree& selection_in_dom_tree =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 2))
@@ -737,15 +736,15 @@ TEST_F(GranularityStrategyTest, UpdateExtentWithNullPositionForCharacter) {
 
 // For http://crbug.com/704529
 TEST_F(GranularityStrategyTest, UpdateExtentWithNullPositionForDirectional) {
-  GetDocument().body()->SetInnerHTMLFromString(
+  GetDocument().body()->setInnerHTML(
       "<div id=host></div><div id=sample>ab</div>");
   // Simulate VIDEO element which has a RANGE as slider of video time.
   Element* const host = GetDocument().getElementById("host");
   ShadowRoot& shadow_root =
       host->AttachShadowRootInternal(ShadowRootType::kOpen);
-  shadow_root.SetInnerHTMLFromString("<input type=range>");
+  shadow_root.setInnerHTML("<input type=range>");
   Element* const sample = GetDocument().getElementById("sample");
-  GetDocument().UpdateStyleAndLayout();
+  GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
   const SelectionInDOMTree& selection_in_dom_tree =
       SelectionInDOMTree::Builder()
           .Collapse(Position(sample->firstChild(), 2))
@@ -772,6 +771,25 @@ TEST_F(GranularityStrategyTest, UpdateExtentWithNullPositionForDirectional) {
   Selection().MoveRangeSelectionExtent(IntPoint(0, 0));
 
   EXPECT_EQ(selection_in_dom_tree, Selection().GetSelectionInDOMTree());
+}
+
+// For http://crbug.com/974728
+TEST_F(GranularityStrategyTest, UpdateExtentWithNullNextWordBound) {
+  const SelectionInDOMTree selection = SetSelectionTextToBody(
+      "<style>body { margin: 0; padding: 0; font: 10px monospace; }</style>"
+      "<div contenteditable id=target></div>|def^");
+  Selection().SetSelection(selection, SetSelectionOptions());
+
+  // Move inside content editable
+  ASSERT_EQ(
+      Position(*GetDocument().getElementById("target"), 0),
+      CreateVisiblePosition(PositionForContentsPointRespectingEditingBoundary(
+                                IntPoint(0, 0), &GetFrame()))
+          .DeepEquivalent())
+      << "We extend selection inside content editable.";
+  Selection().MoveRangeSelectionExtent(IntPoint(0, 0));
+
+  EXPECT_EQ(selection, Selection().GetSelectionInDOMTree());
 }
 
 }  // namespace blink

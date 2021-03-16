@@ -4,10 +4,14 @@
 
 #include "services/audio/service.h"
 
+#include <memory>
 #include <utility>
 
+#include "base/bind.h"
+#include "base/deferred_sequenced_task_runner.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "base/single_thread_task_runner.h"
 #include "base/system/system_monitor.h"
 #include "base/time/default_tick_clock.h"
@@ -28,25 +32,26 @@
 namespace audio {
 
 namespace {
+
 // TODO(crbug.com/888478): Remove this after diagnosis.
 crash_reporter::CrashKeyString<64> g_service_state_for_crashing(
     "audio-service-state");
+
 }  // namespace
 
 Service::Service(std::unique_ptr<AudioManagerAccessor> audio_manager_accessor,
-                 base::Optional<base::TimeDelta> quit_timeout,
                  bool enable_remote_client_support,
-                 std::unique_ptr<service_manager::BinderRegistry> registry,
-                 service_manager::mojom::ServiceRequest request)
-    : service_binding_(this, std::move(request)),
-      keepalive_(&service_binding_, quit_timeout),
+                 mojo::PendingReceiver<mojom::AudioService> receiver)
+    : receiver_(this, std::move(receiver)),
       audio_manager_accessor_(std::move(audio_manager_accessor)),
-      enable_remote_client_support_(enable_remote_client_support),
-      registry_(std::move(registry)) {
+      enable_remote_client_support_(enable_remote_client_support) {
   magic_bytes_ = 0x600DC0DEu;
   g_service_state_for_crashing.Set("constructing");
   DCHECK(audio_manager_accessor_);
+
   if (enable_remote_client_support_) {
+    CHECK(!base::SystemMonitor::Get());
+    system_monitor_ = std::make_unique<base::SystemMonitor>();
     log_factory_manager_ = std::make_unique<LogFactoryManager>();
     audio_manager_accessor_->SetAudioLogFactory(
         log_factory_manager_->GetLogFactory());
@@ -55,6 +60,13 @@ Service::Service(std::unique_ptr<AudioManagerAccessor> audio_manager_accessor,
     // created. This is required for in-process device notifications.
     InitializeDeviceMonitor();
   }
+  TRACE_EVENT0("audio", "audio::Service::OnStart")
+
+  // This will pre-create AudioManager if AudioManagerAccessor owns it.
+  CHECK(audio_manager_accessor_->GetAudioManager());
+
+  metrics_ =
+      std::make_unique<ServiceMetrics>(base::DefaultTickClock::GetInstance());
   g_service_state_for_crashing.Set("constructed");
 }
 
@@ -81,123 +93,91 @@ Service::~Service() {
   magic_bytes_ = 0xDEADBEEFu;
 }
 
-void Service::OnStart() {
+// static
+base::DeferredSequencedTaskRunner* Service::GetInProcessTaskRunner() {
+  static const base::NoDestructor<
+      scoped_refptr<base::DeferredSequencedTaskRunner>>
+      instance(base::MakeRefCounted<base::DeferredSequencedTaskRunner>());
+  return instance->get();
+}
+
+// static
+void Service::SetSystemInfoBinderForTesting(SystemInfoBinder binder) {
+  GetSystemInfoBinderForTesting() = std::move(binder);
+}
+
+// static
+void Service::SetTestingApiBinderForTesting(TestingApiBinder binder) {
+  GetTestingApiBinder() = std::move(binder);
+}
+
+void Service::BindSystemInfo(
+    mojo::PendingReceiver<mojom::SystemInfo> receiver) {
   CHECK_EQ(magic_bytes_, 0x600DC0DEu);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  g_service_state_for_crashing.Set("starting");
-  TRACE_EVENT0("audio", "audio::Service::OnStart")
 
-  // This will pre-create AudioManager if AudioManagerAccessor owns it.
-  CHECK(audio_manager_accessor_->GetAudioManager());
-
-  metrics_ =
-      std::make_unique<ServiceMetrics>(base::DefaultTickClock::GetInstance());
-  registry_->AddInterface<mojom::SystemInfo>(base::BindRepeating(
-      &Service::BindSystemInfoRequest, base::Unretained(this)));
-  registry_->AddInterface<mojom::DebugRecording>(base::BindRepeating(
-      &Service::BindDebugRecordingRequest, base::Unretained(this)));
-  registry_->AddInterface<mojom::StreamFactory>(base::BindRepeating(
-      &Service::BindStreamFactoryRequest, base::Unretained(this)));
-  if (enable_remote_client_support_) {
-    registry_->AddInterface<mojom::DeviceNotifier>(base::BindRepeating(
-        &Service::BindDeviceNotifierRequest, base::Unretained(this)));
-    registry_->AddInterface<mojom::LogFactoryManager>(base::BindRepeating(
-        &Service::BindLogFactoryManagerRequest, base::Unretained(this)));
+  auto& binder_override = GetSystemInfoBinderForTesting();
+  if (binder_override) {
+    binder_override.Run(std::move(receiver));
+    return;
   }
-  g_service_state_for_crashing.Set("started");
-}
-
-void Service::OnBindInterface(
-    const service_manager::BindSourceInfo& source_info,
-    const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {
-  CHECK_EQ(magic_bytes_, 0x600DC0DEu);
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  g_service_state_for_crashing.Set("binding " + interface_name);
-  TRACE_EVENT1("audio", "audio::Service::OnBindInterface", "interface",
-               interface_name);
-
-  if (keepalive_.HasNoRefs())
-    metrics_->HasConnections();
-
-  registry_->BindInterface(interface_name, std::move(interface_pipe));
-  DCHECK(!keepalive_.HasNoRefs());
-
-  g_service_state_for_crashing.Set("bound " + interface_name);
-}
-
-void Service::OnDisconnected() {
-  CHECK_EQ(magic_bytes_, 0x600DC0DEu);
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  g_service_state_for_crashing.Set("connection lost");
-  Terminate();
-}
-
-void Service::BindSystemInfoRequest(mojom::SystemInfoRequest request) {
-  CHECK_EQ(magic_bytes_, 0x600DC0DEu);
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!system_info_) {
     system_info_ = std::make_unique<SystemInfo>(
         audio_manager_accessor_->GetAudioManager());
   }
-  system_info_->Bind(
-      std::move(request),
-      TracedServiceRef(keepalive_.CreateRef(), "audio::SystemInfo Binding"));
+  system_info_->Bind(std::move(receiver));
 }
 
-void Service::BindDebugRecordingRequest(mojom::DebugRecordingRequest request) {
+void Service::BindDebugRecording(
+    mojo::PendingReceiver<mojom::DebugRecording> receiver) {
   CHECK_EQ(magic_bytes_, 0x600DC0DEu);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  TracedServiceRef service_ref(keepalive_.CreateRef(),
-                               "audio::DebugRecording Binding");
 
-  // Accept only one bind request at a time. Old request is overwritten.
+  // Accept only one bind request at a time. Old receiver is overwritten.
   // |debug_recording_| must be reset first to disable debug recording, and then
   // create a new DebugRecording instance to enable debug recording.
   debug_recording_.reset();
   debug_recording_ = std::make_unique<DebugRecording>(
-      std::move(request), audio_manager_accessor_->GetAudioManager(),
-      std::move(service_ref));
+      std::move(receiver), audio_manager_accessor_->GetAudioManager());
 }
 
-void Service::BindStreamFactoryRequest(mojom::StreamFactoryRequest request) {
+void Service::BindStreamFactory(
+    mojo::PendingReceiver<mojom::StreamFactory> receiver) {
   CHECK_EQ(magic_bytes_, 0x600DC0DEu);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!stream_factory_)
     stream_factory_.emplace(audio_manager_accessor_->GetAudioManager());
-  stream_factory_->Bind(
-      std::move(request),
-      TracedServiceRef(keepalive_.CreateRef(), "audio::StreamFactory Binding"));
+  stream_factory_->Bind(std::move(receiver));
 }
 
-void Service::BindDeviceNotifierRequest(mojom::DeviceNotifierRequest request) {
+void Service::BindDeviceNotifier(
+    mojo::PendingReceiver<mojom::DeviceNotifier> receiver) {
   CHECK_EQ(magic_bytes_, 0x600DC0DEu);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(enable_remote_client_support_);
 
-  if (!system_monitor_) {
-    CHECK(!base::SystemMonitor::Get());
-    system_monitor_ = std::make_unique<base::SystemMonitor>();
-  }
   InitializeDeviceMonitor();
   if (!device_notifier_)
     device_notifier_ = std::make_unique<DeviceNotifier>();
-  device_notifier_->Bind(std::move(request),
-                         TracedServiceRef(keepalive_.CreateRef(),
-                                          "audio::DeviceNotifier Binding"));
+  device_notifier_->Bind(std::move(receiver));
 }
 
-void Service::BindLogFactoryManagerRequest(
-    mojom::LogFactoryManagerRequest request) {
+void Service::BindLogFactoryManager(
+    mojo::PendingReceiver<mojom::LogFactoryManager> receiver) {
   CHECK_EQ(magic_bytes_, 0x600DC0DEu);
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(log_factory_manager_);
   DCHECK(enable_remote_client_support_);
-  log_factory_manager_->Bind(
-      std::move(request), TracedServiceRef(keepalive_.CreateRef(),
-                                           "audio::LogFactoryManager Binding"));
+  log_factory_manager_->Bind(std::move(receiver));
+}
+
+void Service::BindTestingApi(
+    mojo::PendingReceiver<mojom::TestingApi> receiver) {
+  auto& binder = GetTestingApiBinder();
+  if (binder)
+    binder.Run(std::move(receiver));
 }
 
 void Service::InitializeDeviceMonitor() {
@@ -211,10 +191,8 @@ void Service::InitializeDeviceMonitor() {
 
   audio_device_listener_mac_ = std::make_unique<media::AudioDeviceListenerMac>(
       media::BindToCurrentLoop(base::BindRepeating([] {
-        if (base::SystemMonitor::Get()) {
-          base::SystemMonitor::Get()->ProcessDevicesChanged(
-              base::SystemMonitor::DEVTYPE_AUDIO);
-        }
+        if (auto* monitor = base::SystemMonitor::Get())
+          monitor->ProcessDevicesChanged(base::SystemMonitor::DEVTYPE_AUDIO);
       })),
       true /* monitor_default_input */, true /* monitor_addition_removal */,
       true /* monitor_sources */);

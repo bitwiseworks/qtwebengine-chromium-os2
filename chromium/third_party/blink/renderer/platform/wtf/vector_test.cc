@@ -27,6 +27,7 @@
 
 #include <memory>
 #include "base/optional.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -100,23 +101,50 @@ TEST(VectorTest, EraseAtIndex) {
 }
 
 TEST(VectorTest, Erase) {
-  Vector<int> int_vector({0, 1, 2, 3});
+  Vector<int> int_vector({0, 1, 2, 3, 4, 5});
 
-  EXPECT_EQ(4u, int_vector.size());
+  EXPECT_EQ(6u, int_vector.size());
   EXPECT_EQ(0, int_vector[0]);
   EXPECT_EQ(1, int_vector[1]);
   EXPECT_EQ(2, int_vector[2]);
   EXPECT_EQ(3, int_vector[3]);
+  EXPECT_EQ(4, int_vector[4]);
+  EXPECT_EQ(5, int_vector[5]);
 
   auto* first = int_vector.erase(int_vector.begin());
-  EXPECT_EQ(3u, int_vector.size());
+  EXPECT_EQ(5u, int_vector.size());
   EXPECT_EQ(1, *first);
   EXPECT_EQ(int_vector.begin(), first);
 
-  auto* last = std::lower_bound(int_vector.begin(), int_vector.end(), 3);
+  auto* last = std::lower_bound(int_vector.begin(), int_vector.end(), 5);
   auto* end = int_vector.erase(last);
-  EXPECT_EQ(2u, int_vector.size());
+  EXPECT_EQ(4u, int_vector.size());
   EXPECT_EQ(int_vector.end(), end);
+
+  auto* item2 = std::lower_bound(int_vector.begin(), int_vector.end(), 2);
+  auto* item4 = int_vector.erase(item2, item2 + 2);
+  EXPECT_EQ(2u, int_vector.size());
+  EXPECT_EQ(4, *item4);
+
+  last = std::lower_bound(int_vector.begin(), int_vector.end(), 4);
+  end = int_vector.erase(last, int_vector.end());
+  EXPECT_EQ(1u, int_vector.size());
+  EXPECT_EQ(int_vector.end(), end);
+}
+
+TEST(VectorTest, Resize) {
+  Vector<int> int_vector;
+  int_vector.resize(2);
+  EXPECT_EQ(2u, int_vector.size());
+  EXPECT_EQ(0, int_vector[0]);
+  EXPECT_EQ(0, int_vector[1]);
+
+  Vector<bool> bool_vector;
+  bool_vector.resize(3);
+  EXPECT_EQ(3u, bool_vector.size());
+  EXPECT_EQ(false, bool_vector[0]);
+  EXPECT_EQ(false, bool_vector[1]);
+  EXPECT_EQ(false, bool_vector[2]);
 }
 
 TEST(VectorTest, Iterator) {
@@ -660,6 +688,28 @@ TEST(VectorTest, UninitializedFill) {
   EXPECT_EQ(42, v[0]);
   EXPECT_EQ(42, v[1]);
   EXPECT_EQ(42, v[2]);
+}
+
+TEST(VectorTest, IteratorSingleInsertion) {
+  Vector<int> v;
+
+  v.InsertAt(v.begin(), 1);
+  EXPECT_EQ(1, v[0]);
+
+  for (int i : {9, 5, 2, 3, 3, 7, 7, 8, 2, 4, 6})
+    v.InsertAt(std::lower_bound(v.begin(), v.end(), i), i);
+
+  EXPECT_TRUE(std::is_sorted(v.begin(), v.end()));
+}
+
+TEST(VectorTest, IteratorMultipleInsertion) {
+  Vector<int> v = {0, 0, 0, 3, 3, 3};
+
+  Vector<int> q = {1, 1, 1, 1};
+  v.InsertAt(std::lower_bound(v.begin(), v.end(), q[0]), &q[0], q.size());
+
+  EXPECT_THAT(v, testing::ElementsAre(0, 0, 0, 1, 1, 1, 1, 3, 3, 3));
+  EXPECT_TRUE(std::is_sorted(v.begin(), v.end()));
 }
 
 static_assert(VectorTraits<int>::kCanCopyWithMemcpy,

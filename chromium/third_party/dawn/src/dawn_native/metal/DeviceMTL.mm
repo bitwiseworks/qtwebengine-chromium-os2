@@ -15,155 +15,86 @@
 #include "dawn_native/metal/DeviceMTL.h"
 
 #include "dawn_native/BackendConnection.h"
-#include "dawn_native/BindGroup.h"
 #include "dawn_native/BindGroupLayout.h"
-#include "dawn_native/RenderPassDescriptor.h"
+#include "dawn_native/DynamicUploader.h"
+#include "dawn_native/ErrorData.h"
+#include "dawn_native/metal/BindGroupLayoutMTL.h"
+#include "dawn_native/metal/BindGroupMTL.h"
 #include "dawn_native/metal/BufferMTL.h"
 #include "dawn_native/metal/CommandBufferMTL.h"
 #include "dawn_native/metal/ComputePipelineMTL.h"
-#include "dawn_native/metal/InputStateMTL.h"
 #include "dawn_native/metal/PipelineLayoutMTL.h"
 #include "dawn_native/metal/QueueMTL.h"
 #include "dawn_native/metal/RenderPipelineMTL.h"
-#include "dawn_native/metal/ResourceUploader.h"
 #include "dawn_native/metal/SamplerMTL.h"
 #include "dawn_native/metal/ShaderModuleMTL.h"
+#include "dawn_native/metal/StagingBufferMTL.h"
 #include "dawn_native/metal/SwapChainMTL.h"
 #include "dawn_native/metal/TextureMTL.h"
+#include "dawn_platform/DawnPlatform.h"
+#include "dawn_platform/tracing/TraceEvent.h"
 
-#include <IOKit/graphics/IOGraphicsLib.h>
-#include <unistd.h>
+#include <type_traits>
 
 namespace dawn_native { namespace metal {
 
-    namespace {
-        // Since CGDisplayIOServicePort was deprecated in macOS 10.9, we need create
-        // an alternative function for getting I/O service port from current display.
-        io_service_t GetDisplayIOServicePort() {
-            // The matching service port (or 0 if none can be found)
-            io_service_t servicePort = 0;
-
-            // Create matching dictionary for display service
-            CFMutableDictionaryRef matchingDict = IOServiceMatching("IODisplayConnect");
-            if (matchingDict == nullptr) {
-                return 0;
-            }
-
-            io_iterator_t iter;
-            // IOServiceGetMatchingServices look up the default master ports that match a
-            // matching dictionary, and will consume the reference on the matching dictionary,
-            // so we don't need to release the dictionary, but the iterator handle should
-            // be released when its iteration is finished.
-            if (IOServiceGetMatchingServices(kIOMasterPortDefault, matchingDict, &iter) !=
-                kIOReturnSuccess) {
-                return 0;
-            }
-
-            // Vendor number and product number of current main display
-            const uint32_t displayVendorNumber = CGDisplayVendorNumber(kCGDirectMainDisplay);
-            const uint32_t displayProductNumber = CGDisplayModelNumber(kCGDirectMainDisplay);
-
-            io_service_t serv;
-            while ((serv = IOIteratorNext(iter)) != IO_OBJECT_NULL) {
-                CFDictionaryRef displayInfo =
-                    IODisplayCreateInfoDictionary(serv, kIODisplayOnlyPreferredName);
-
-                CFNumberRef vendorIDRef, productIDRef;
-                Boolean success;
-                // The ownership of CF object follows the 'Get Rule', we don't need to
-                // release these values
-                success = CFDictionaryGetValueIfPresent(displayInfo, CFSTR(kDisplayVendorID),
-                                                        (const void**)&vendorIDRef);
-                success &= CFDictionaryGetValueIfPresent(displayInfo, CFSTR(kDisplayProductID),
-                                                         (const void**)&productIDRef);
-                if (success) {
-                    CFIndex vendorID = 0, productID = 0;
-                    CFNumberGetValue(vendorIDRef, kCFNumberSInt32Type, &vendorID);
-                    CFNumberGetValue(productIDRef, kCFNumberSInt32Type, &productID);
-
-                    if (vendorID == displayVendorNumber && productID == displayProductNumber) {
-                        // Check if vendor id and product id match with current display's
-                        // If it does, we find the desired service port
-                        servicePort = serv;
-                        CFRelease(displayInfo);
-                        break;
-                    }
-                }
-
-                CFRelease(displayInfo);
-                IOObjectRelease(serv);
-            }
-            IOObjectRelease(iter);
-            return servicePort;
-        }
-
-        // Get integer property from registry entry.
-        uint32_t GetEntryProperty(io_registry_entry_t entry, CFStringRef name) {
-            uint32_t value = 0;
-
-            // Recursively search registry entry and its parents for property name
-            // The data should release with CFRelease
-            CFDataRef data = static_cast<CFDataRef>(IORegistryEntrySearchCFProperty(
-                entry, kIOServicePlane, name, kCFAllocatorDefault,
-                kIORegistryIterateRecursively | kIORegistryIterateParents));
-
-            if (data != nullptr) {
-                const uint32_t* valuePtr =
-                    reinterpret_cast<const uint32_t*>(CFDataGetBytePtr(data));
-                if (valuePtr) {
-                    value = *valuePtr;
-                }
-
-                CFRelease(data);
-            }
-
-            return value;
-        }
-    }  // anonymous namespace
-
-    BackendConnection* Connect(InstanceBase* instance) {
-        return nullptr;
-    }
-
-    // Device
-
-    Device::Device()
-        : DeviceBase(nullptr),
-          mMtlDevice(MTLCreateSystemDefaultDevice()),
+    Device::Device(AdapterBase* adapter,
+                   id<MTLDevice> mtlDevice,
+                   const DeviceDescriptor* descriptor)
+        : DeviceBase(adapter, descriptor),
+          mMtlDevice([mtlDevice retain]),
           mMapTracker(new MapRequestTracker(this)),
-          mResourceUploader(new ResourceUploader(this)) {
+          mCompletedSerial(0) {
         [mMtlDevice retain];
         mCommandQueue = [mMtlDevice newCommandQueue];
-        CollectPCIInfo();
+
+        InitTogglesFromDriver();
+        if (descriptor != nil) {
+            ApplyToggleOverrides(descriptor);
+        }
     }
 
     Device::~Device() {
-        // Wait for all commands to be finished so we can free resources SubmitPendingCommandBuffer
-        // may not increment the pendingCommandSerial if there are no pending commands, so we can't
-        // store the pendingSerial before SubmitPendingCommandBuffer then wait for it to be passed.
-        // Instead we submit and wait for the serial before the next pendingCommandSerial.
-        SubmitPendingCommandBuffer();
-        while (mCompletedSerial != mLastSubmittedSerial) {
-            usleep(100);
+        BaseDestructor();
+    }
+
+    void Device::InitTogglesFromDriver() {
+        {
+            bool haveStoreAndMSAAResolve = false;
+#if defined(DAWN_PLATFORM_MACOS)
+            haveStoreAndMSAAResolve =
+                [mMtlDevice supportsFeatureSet:MTLFeatureSet_macOS_GPUFamily1_v2];
+#elif defined(DAWN_PLATFORM_IOS)
+            haveStoreAndMSAAResolve =
+                [mMtlDevice supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v2];
+#endif
+            // On tvOS, we would need MTLFeatureSet_tvOS_GPUFamily2_v1.
+            SetToggle(Toggle::EmulateStoreAndMSAAResolve, !haveStoreAndMSAAResolve);
+
+            bool haveSamplerCompare = true;
+#if defined(DAWN_PLATFORM_IOS)
+            haveSamplerCompare = [mMtlDevice supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v1];
+#endif
+            // TODO(crbug.com/dawn/342): Investigate emulation -- possibly expensive.
+            SetToggle(Toggle::MetalDisableSamplerCompare, !haveSamplerCompare);
+
+            bool haveBaseVertexBaseInstance = true;
+#if defined(DAWN_PLATFORM_IOS)
+            haveBaseVertexBaseInstance =
+                [mMtlDevice supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v1];
+#endif
+            // TODO(crbug.com/dawn/343): Investigate emulation.
+            SetToggle(Toggle::DisableBaseVertex, !haveBaseVertexBaseInstance);
+            SetToggle(Toggle::DisableBaseInstance, !haveBaseVertexBaseInstance);
         }
-        Tick();
 
-        [mPendingCommands release];
-        mPendingCommands = nil;
-
-        mMapTracker = nullptr;
-        mResourceUploader = nullptr;
-
-        [mMtlDevice release];
-        mMtlDevice = nil;
-
-        [mCommandQueue release];
-        mCommandQueue = nil;
+        // TODO(jiawei.shao@intel.com): tighten this workaround when the driver bug is fixed.
+        SetToggle(Toggle::AlwaysResolveIntoZeroLevelAndLayer, true);
     }
 
     ResultOrError<BindGroupBase*> Device::CreateBindGroupImpl(
         const BindGroupDescriptor* descriptor) {
-        return new BindGroup(this, descriptor);
+        return BindGroup::Create(this, descriptor);
     }
     ResultOrError<BindGroupLayoutBase*> Device::CreateBindGroupLayoutImpl(
         const BindGroupLayoutDescriptor* descriptor) {
@@ -172,40 +103,41 @@ namespace dawn_native { namespace metal {
     ResultOrError<BufferBase*> Device::CreateBufferImpl(const BufferDescriptor* descriptor) {
         return new Buffer(this, descriptor);
     }
-    CommandBufferBase* Device::CreateCommandBuffer(CommandBufferBuilder* builder) {
-        return new CommandBuffer(builder);
+    CommandBufferBase* Device::CreateCommandBuffer(CommandEncoder* encoder,
+                                                   const CommandBufferDescriptor* descriptor) {
+        return new CommandBuffer(encoder, descriptor);
     }
     ResultOrError<ComputePipelineBase*> Device::CreateComputePipelineImpl(
         const ComputePipelineDescriptor* descriptor) {
-        return new ComputePipeline(this, descriptor);
-    }
-    InputStateBase* Device::CreateInputState(InputStateBuilder* builder) {
-        return new InputState(builder);
+        return ComputePipeline::Create(this, descriptor);
     }
     ResultOrError<PipelineLayoutBase*> Device::CreatePipelineLayoutImpl(
         const PipelineLayoutDescriptor* descriptor) {
         return new PipelineLayout(this, descriptor);
-    }
-    RenderPassDescriptorBase* Device::CreateRenderPassDescriptor(
-        RenderPassDescriptorBuilder* builder) {
-        return new RenderPassDescriptor(builder);
     }
     ResultOrError<QueueBase*> Device::CreateQueueImpl() {
         return new Queue(this);
     }
     ResultOrError<RenderPipelineBase*> Device::CreateRenderPipelineImpl(
         const RenderPipelineDescriptor* descriptor) {
-        return new RenderPipeline(this, descriptor);
+        return RenderPipeline::Create(this, descriptor);
     }
     ResultOrError<SamplerBase*> Device::CreateSamplerImpl(const SamplerDescriptor* descriptor) {
-        return new Sampler(this, descriptor);
+        return Sampler::Create(this, descriptor);
     }
     ResultOrError<ShaderModuleBase*> Device::CreateShaderModuleImpl(
         const ShaderModuleDescriptor* descriptor) {
-        return new ShaderModule(this, descriptor);
+        return ShaderModule::Create(this, descriptor);
     }
-    SwapChainBase* Device::CreateSwapChain(SwapChainBuilder* builder) {
-        return new SwapChain(builder);
+    ResultOrError<SwapChainBase*> Device::CreateSwapChainImpl(
+        const SwapChainDescriptor* descriptor) {
+        return new OldSwapChain(this, descriptor);
+    }
+    ResultOrError<NewSwapChainBase*> Device::CreateSwapChainImpl(
+        Surface* surface,
+        NewSwapChainBase* previousSwapChain,
+        const SwapChainDescriptor* descriptor) {
+        return new SwapChain(this, surface, previousSwapChain, descriptor);
     }
     ResultOrError<TextureBase*> Device::CreateTextureImpl(const TextureDescriptor* descriptor) {
         return new Texture(this, descriptor);
@@ -217,7 +149,8 @@ namespace dawn_native { namespace metal {
     }
 
     Serial Device::GetCompletedCommandSerial() const {
-        return mCompletedSerial;
+        static_assert(std::is_same<Serial, uint64_t>::value, "");
+        return mCompletedSerial.load();
     }
 
     Serial Device::GetLastSubmittedCommandSerial() const {
@@ -228,73 +161,165 @@ namespace dawn_native { namespace metal {
         return mLastSubmittedSerial + 1;
     }
 
-    void Device::TickImpl() {
-        mResourceUploader->Tick(mCompletedSerial);
-        mMapTracker->Tick(mCompletedSerial);
+    MaybeError Device::TickImpl() {
+        Serial completedSerial = GetCompletedCommandSerial();
 
-        if (mPendingCommands != nil) {
+        mDynamicUploader->Deallocate(completedSerial);
+        mMapTracker->Tick(completedSerial);
+
+        if (mCommandContext.GetCommands() != nil) {
             SubmitPendingCommandBuffer();
-        } else if (mCompletedSerial == mLastSubmittedSerial) {
+        } else if (completedSerial == mLastSubmittedSerial) {
             // If there's no GPU work in flight we still need to artificially increment the serial
             // so that CPU operations waiting on GPU completion can know they don't have to wait.
             mCompletedSerial++;
             mLastSubmittedSerial++;
         }
-    }
 
-    const dawn_native::PCIInfo& Device::GetPCIInfo() const {
-        return mPCIInfo;
+        return {};
     }
 
     id<MTLDevice> Device::GetMTLDevice() {
         return mMtlDevice;
     }
 
-    id<MTLCommandBuffer> Device::GetPendingCommandBuffer() {
-        if (mPendingCommands == nil) {
-            mPendingCommands = [mCommandQueue commandBuffer];
-            [mPendingCommands retain];
+    id<MTLCommandQueue> Device::GetMTLQueue() {
+        return mCommandQueue;
+    }
+
+    CommandRecordingContext* Device::GetPendingCommandContext() {
+        if (mCommandContext.GetCommands() == nil) {
+            TRACE_EVENT0(GetPlatform(), General, "[MTLCommandQueue commandBuffer]");
+            // The MTLCommandBuffer will be autoreleased by default.
+            // The autorelease pool may drain before the command buffer is submitted. Retain so it
+            // stays alive.
+            mCommandContext = CommandRecordingContext([[mCommandQueue commandBuffer] retain]);
         }
-        return mPendingCommands;
+        return &mCommandContext;
     }
 
     void Device::SubmitPendingCommandBuffer() {
-        if (mPendingCommands == nil) {
+        if (mCommandContext.GetCommands() == nil) {
             return;
         }
 
-        // Ok, ObjC blocks are weird. My understanding is that local variables are captured by value
-        // so this-> works as expected. However it is unclear how members are captured, (are they
-        // captured using this-> or by value?) so we make a copy of the pendingCommandSerial on the
-        // stack.
         mLastSubmittedSerial++;
+
+        // Ensure the blit encoder is ended. It may have been opened to perform a lazy clear or
+        // buffer upload.
+        mCommandContext.EndBlit();
+
+        // Acquire the pending command buffer, which is retained. It must be released later.
+        id<MTLCommandBuffer> pendingCommands = mCommandContext.AcquireCommands();
+
+        // Replace mLastSubmittedCommands with the mutex held so we avoid races between the
+        // schedule handler and this code.
+        {
+            std::lock_guard<std::mutex> lock(mLastSubmittedCommandsMutex);
+            mLastSubmittedCommands = pendingCommands;
+        }
+
+        [pendingCommands addScheduledHandler:^(id<MTLCommandBuffer>) {
+            // This is DRF because we hold the mutex for mLastSubmittedCommands and pendingCommands
+            // is a local value (and not the member itself).
+            std::lock_guard<std::mutex> lock(mLastSubmittedCommandsMutex);
+            if (this->mLastSubmittedCommands == pendingCommands) {
+                this->mLastSubmittedCommands = nil;
+            }
+        }];
+
+        // Update the completed serial once the completed handler is fired. Make a local copy of
+        // mLastSubmittedSerial so it is captured by value.
         Serial pendingSerial = mLastSubmittedSerial;
-        [mPendingCommands addCompletedHandler:^(id<MTLCommandBuffer>) {
+        [pendingCommands addCompletedHandler:^(id<MTLCommandBuffer>) {
+            TRACE_EVENT_ASYNC_END0(GetPlatform(), GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
+                                   pendingSerial);
+            ASSERT(pendingSerial > mCompletedSerial.load());
             this->mCompletedSerial = pendingSerial;
         }];
 
-        [mPendingCommands commit];
-        [mPendingCommands release];
-        mPendingCommands = nil;
+        TRACE_EVENT_ASYNC_BEGIN0(GetPlatform(), GPUWork, "DeviceMTL::SubmitPendingCommandBuffer",
+                                 pendingSerial);
+        [pendingCommands commit];
+        [pendingCommands release];
     }
 
     MapRequestTracker* Device::GetMapTracker() const {
         return mMapTracker.get();
     }
 
-    ResourceUploader* Device::GetResourceUploader() const {
-        return mResourceUploader.get();
+    ResultOrError<std::unique_ptr<StagingBufferBase>> Device::CreateStagingBuffer(size_t size) {
+        std::unique_ptr<StagingBufferBase> stagingBuffer =
+            std::make_unique<StagingBuffer>(size, this);
+        DAWN_TRY(stagingBuffer->Initialize());
+        return std::move(stagingBuffer);
     }
 
-    void Device::CollectPCIInfo() {
-        io_registry_entry_t entry = GetDisplayIOServicePort();
-        if (entry != IO_OBJECT_NULL) {
-            mPCIInfo.vendorId = GetEntryProperty(entry, CFSTR("vendor-id"));
-            mPCIInfo.deviceId = GetEntryProperty(entry, CFSTR("device-id"));
-            IOObjectRelease(entry);
+    MaybeError Device::CopyFromStagingToBuffer(StagingBufferBase* source,
+                                               uint64_t sourceOffset,
+                                               BufferBase* destination,
+                                               uint64_t destinationOffset,
+                                               uint64_t size) {
+        id<MTLBuffer> uploadBuffer = ToBackend(source)->GetBufferHandle();
+        id<MTLBuffer> buffer = ToBackend(destination)->GetMTLBuffer();
+        [GetPendingCommandContext()->EnsureBlit() copyFromBuffer:uploadBuffer
+                                                    sourceOffset:sourceOffset
+                                                        toBuffer:buffer
+                                               destinationOffset:destinationOffset
+                                                            size:size];
+        return {};
+    }
+
+    TextureBase* Device::CreateTextureWrappingIOSurface(const ExternalImageDescriptor* descriptor,
+                                                        IOSurfaceRef ioSurface,
+                                                        uint32_t plane) {
+        const TextureDescriptor* textureDescriptor =
+            reinterpret_cast<const TextureDescriptor*>(descriptor->cTextureDescriptor);
+        if (ConsumedError(ValidateTextureDescriptor(this, textureDescriptor))) {
+            return nullptr;
+        }
+        if (ConsumedError(
+                ValidateIOSurfaceCanBeWrapped(this, textureDescriptor, ioSurface, plane))) {
+            return nullptr;
         }
 
-        mPCIInfo.name = std::string([mMtlDevice.name UTF8String]);
+        return new Texture(this, descriptor, ioSurface, plane);
+    }
+
+    void Device::WaitForCommandsToBeScheduled() {
+        SubmitPendingCommandBuffer();
+        [mLastSubmittedCommands waitUntilScheduled];
+    }
+
+    MaybeError Device::WaitForIdleForDestruction() {
+        [mCommandContext.AcquireCommands() release];
+
+        // Wait for all commands to be finished so we can free resources
+        while (GetCompletedCommandSerial() != mLastSubmittedSerial) {
+            usleep(100);
+        }
+
+        // Artificially increase the serials so work that was pending knows it can complete.
+        mCompletedSerial++;
+        mLastSubmittedSerial++;
+
+        DAWN_TRY(TickImpl());
+        return {};
+    }
+
+    void Device::Destroy() {
+        ASSERT(mLossStatus != LossStatus::AlreadyLost);
+
+        [mCommandContext.AcquireCommands() release];
+
+        mMapTracker = nullptr;
+        mDynamicUploader = nullptr;
+
+        [mCommandQueue release];
+        mCommandQueue = nil;
+
+        [mMtlDevice release];
+        mMtlDevice = nil;
     }
 
 }}  // namespace dawn_native::metal

@@ -9,6 +9,7 @@
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "services/network/public/cpp/http_request_headers_mojom_traits.h"
 #include "services/network/public/cpp/network_ipc_param_traits.h"
+#include "services/network/public/cpp/optional_trust_token_params.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/mojom/origin_mojom_traits.h"
@@ -47,37 +48,32 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
   network::ResourceRequest original;
   original.method = "POST";
   original.url = GURL("https://example.com/resources/dummy.xml");
-  original.site_for_cookies = GURL("https://example.com/index.html");
-  original.top_frame_origin = url::Origin::Create(original.url);
+  original.site_for_cookies =
+      net::SiteForCookies::FromUrl(GURL("https://example.com/index.html"));
   original.attach_same_site_cookies = true;
   original.update_first_party_url_on_redirect = false;
   original.request_initiator = url::Origin::Create(original.url);
+  original.isolated_world_origin =
+      url::Origin::Create(GURL("chrome-extension://blah"));
   original.referrer = GURL("https://referrer.com/");
   original.referrer_policy =
       net::URLRequest::ORIGIN_ONLY_ON_TRANSITION_CROSS_ORIGIN;
-  original.is_prerendering = false;
   original.headers.SetHeader("Accept", "text/xml");
-  original.requested_with_header = "dummy_requested_with_header";
-  original.client_data_header = "dummy_client_data_header";
+  original.cors_exempt_headers.SetHeader("X-Requested-With", "ForTesting");
   original.load_flags = 3;
-  original.allow_credentials = true;
-  original.plugin_child_id = 5;
   original.resource_type = 2;
   original.priority = net::IDLE;
-  original.appcache_host_id = 3;
   original.should_reset_appcache = true;
   original.is_external_request = false;
   original.cors_preflight_policy =
       mojom::CorsPreflightPolicy::kConsiderPreflight;
-  original.service_worker_provider_id = -1;
   original.originated_from_service_worker = false;
   original.skip_service_worker = false;
-  original.fetch_request_mode = mojom::FetchRequestMode::kNoCors;
-  original.fetch_credentials_mode = mojom::FetchCredentialsMode::kInclude;
-  original.fetch_redirect_mode = mojom::FetchRedirectMode::kFollow;
+  original.mode = mojom::RequestMode::kNoCors;
+  original.credentials_mode = mojom::CredentialsMode::kInclude;
+  original.redirect_mode = mojom::RedirectMode::kFollow;
   original.fetch_integrity = "dummy_fetch_integrity";
   original.fetch_request_context_type = 0;
-  original.fetch_frame_type = mojom::RequestContextFrameType::kAuxiliary;
   original.keepalive = true;
   original.has_user_gesture = false;
   original.enable_load_timing = true;
@@ -86,17 +82,31 @@ TEST(URLRequestMojomTraitsTest, Roundtrips_ResourceRequest) {
   original.render_frame_id = 5;
   original.is_main_frame = true;
   original.transition_type = 0;
-  original.allow_download = false;
   original.report_raw_headers = true;
   original.previews_state = 0;
-  original.initiated_in_secure_context = false;
   original.upgrade_if_insecure = true;
   original.is_revalidating = false;
   original.throttling_profile_id = base::UnguessableToken::Create();
-  original.custom_proxy_pre_cache_headers.SetHeader("pre_x", "x_value");
-  original.custom_proxy_post_cache_headers.SetHeader("post_y", "y_value");
-  original.custom_proxy_use_alternate_proxy_list = true;
   original.fetch_window_id = base::UnguessableToken::Create();
+
+  original.trusted_params = ResourceRequest::TrustedParams();
+  url::Origin origin = url::Origin::Create(original.url);
+  original.trusted_params->network_isolation_key =
+      net::NetworkIsolationKey(origin, origin);
+  original.trusted_params->update_network_isolation_key_on_redirect = network::
+      mojom::UpdateNetworkIsolationKeyOnRedirect::kUpdateTopFrameAndFrameOrigin;
+  original.trusted_params->disable_secure_dns = true;
+
+  original.trust_token_params = network::mojom::TrustTokenParams();
+  original.trust_token_params->issuer =
+      url::Origin::Create(GURL("https://issuer.com"));
+  original.trust_token_params->type =
+      mojom::TrustTokenOperationType::kRedemption;
+  original.trust_token_params->include_timestamp_header = true;
+  original.trust_token_params->sign_request_data =
+      mojom::TrustTokenSignRequestData::kInclude;
+  original.trust_token_params->additional_signed_headers.push_back(
+      "some_header");
 
   network::ResourceRequest copied;
   EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::URLRequest>(&original,

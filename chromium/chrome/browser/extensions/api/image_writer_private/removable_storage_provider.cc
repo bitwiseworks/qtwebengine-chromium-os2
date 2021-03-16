@@ -4,8 +4,10 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/extensions/api/image_writer_private/removable_storage_provider.h"
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -27,7 +29,7 @@ void RemovableStorageProvider::GetAllDevices(DeviceListReadyCallback callback) {
     return;
   }
   // We need to do some file i/o to get the device block size
-  base::PostTaskWithTraitsAndReplyWithResult(
+  base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},

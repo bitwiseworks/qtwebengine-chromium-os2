@@ -8,12 +8,13 @@
         "options": [
             {
                 "domain": "Page",
-                "include": [ "enable", "disable", "setAdBlockingEnabled" ],
-                "include_events": []
+                "include": [ "enable", "disable", "setAdBlockingEnabled", "getInstallabilityErrors", "getManifestIcons" ],
+                "include_events": [],
+                "async": ["getInstallabilityErrors", "getManifestIcons"]
             },
             {
                 "domain": "Browser",
-                "include": [ "getWindowForTarget", "getWindowBounds", "setWindowBounds", "close", "grantPermissions", "resetPermissions", "setDockTile" ],
+                "include": [ "getWindowForTarget", "getWindowBounds", "setWindowBounds", "close", "setDockTile" ],
                 "include_events": []
             },
             {
@@ -27,12 +28,21 @@
             },
             {
                 "domain": "WindowManager"
+            },
+            {
+                "domain": "Security",
+                "include": [ "enable", "disable" ],
+                "include_events": [ "visibleSecurityStateChanged" ]
             }
         ]
     },
     "lib": {
         "package": "chrome/browser/devtools/protocol",
         "output": "protocol",
-        "string_header": "chrome/browser/devtools/protocol_string.h"
+        "string_header": "chrome/browser/devtools/protocol/base_string_adapter.h"
+    },
+
+    "crdtp": {
+        "namespace": "crdtp"
     }
 }

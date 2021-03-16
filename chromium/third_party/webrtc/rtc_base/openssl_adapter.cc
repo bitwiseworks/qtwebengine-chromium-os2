@@ -11,53 +11,25 @@
 #include "rtc_base/openssl_adapter.h"
 
 #include <errno.h>
-
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/x509.h>
-#include "rtc_base/openssl.h"
-
 #include <string.h>
 #include <time.h>
+
+#include <memory>
 
 #include "absl/memory/memory.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/numerics/safe_conversions.h"
+#include "rtc_base/openssl.h"
 #include "rtc_base/openssl_certificate.h"
 #include "rtc_base/openssl_utility.h"
 #include "rtc_base/string_encode.h"
 #include "rtc_base/thread.h"
-
-#ifndef OPENSSL_IS_BORINGSSL
-
-// TODO(benwright): Use a nicer abstraction for mutex.
-
-#if defined(WEBRTC_WIN)
-#define MUTEX_TYPE HANDLE
-#define MUTEX_SETUP(x) (x) = CreateMutex(nullptr, FALSE, nullptr)
-#define MUTEX_CLEANUP(x) CloseHandle(x)
-#define MUTEX_LOCK(x) WaitForSingleObject((x), INFINITE)
-#define MUTEX_UNLOCK(x) ReleaseMutex(x)
-#define THREAD_ID GetCurrentThreadId()
-#elif defined(WEBRTC_POSIX)
-#define MUTEX_TYPE pthread_mutex_t
-#define MUTEX_SETUP(x) pthread_mutex_init(&(x), nullptr)
-#define MUTEX_CLEANUP(x) pthread_mutex_destroy(&(x))
-#define MUTEX_LOCK(x) pthread_mutex_lock(&(x))
-#define MUTEX_UNLOCK(x) pthread_mutex_unlock(&(x))
-#define THREAD_ID pthread_self()
-#else
-#error You must define mutex operations appropriate for your platform!
-#endif
-
-struct CRYPTO_dynlock_value {
-  MUTEX_TYPE mutex;
-};
-
-#endif  // #ifndef OPENSSL_IS_BORINGSSL
 
 //////////////////////////////////////////////////////////////////////
 // SocketBIO
@@ -255,6 +227,12 @@ void OpenSSLAdapter::SetIdentity(SSLIdentity* identity) {
   identity_.reset(static_cast<OpenSSLIdentity*>(identity));
 }
 
+void OpenSSLAdapter::SetIdentity(std::unique_ptr<SSLIdentity> identity) {
+  RTC_DCHECK(!identity_);
+  identity_ =
+      absl::WrapUnique(static_cast<OpenSSLIdentity*>(identity.release()));
+}
+
 void OpenSSLAdapter::SetRole(SSLRole role) {
   role_ = role;
 }
@@ -267,7 +245,7 @@ AsyncSocket* OpenSSLAdapter::Accept(SocketAddress* paddr) {
   }
 
   SSLAdapter* adapter = SSLAdapter::Create(socket);
-  adapter->SetIdentity(identity_->GetReference());
+  adapter->SetIdentity(identity_->Clone());
   adapter->SetRole(rtc::SSL_SERVER);
   adapter->SetIgnoreBadCert(ignore_bad_cert_);
   adapter->StartSSL("", false);
@@ -809,7 +787,7 @@ void OpenSSLAdapter::SSLInfoCallback(const SSL* s, int where, int ret) {
     str = "SSL_accept";
   }
   if (where & SSL_CB_LOOP) {
-    RTC_DLOG(LS_INFO) << str << ":" << SSL_state_string_long(s);
+    RTC_DLOG(LS_VERBOSE) << str << ":" << SSL_state_string_long(s);
   } else if (where & SSL_CB_ALERT) {
     str = (where & SSL_CB_READ) ? "read" : "write";
     RTC_DLOG(LS_INFO) << "SSL3 alert " << str << ":"
@@ -881,22 +859,15 @@ int OpenSSLAdapter::NewSSLSessionCallback(SSL* ssl, SSL_SESSION* session) {
 }
 
 SSL_CTX* OpenSSLAdapter::CreateContext(SSLMode mode, bool enable_cache) {
-  // Use (D)TLS 1.2.
-  // Note: BoringSSL supports a range of versions by setting max/min version
-  // (Default V1.0 to V1.2). However (D)TLSv1_2_client_method functions used
-  // below in OpenSSL only support V1.2.
-  SSL_CTX* ctx = nullptr;
-#ifdef OPENSSL_IS_BORINGSSL
-  ctx = SSL_CTX_new(mode == SSL_MODE_DTLS ? DTLS_method() : TLS_method());
-#else
-  ctx = SSL_CTX_new(mode == SSL_MODE_DTLS ? DTLSv1_2_client_method()
-                                          : TLSv1_2_client_method());
-#endif  // OPENSSL_IS_BORINGSSL
+  SSL_CTX* ctx =
+      SSL_CTX_new(mode == SSL_MODE_DTLS ? DTLS_method() : TLS_method());
   if (ctx == nullptr) {
     unsigned long error = ERR_get_error();  // NOLINT: type used by OpenSSL.
     RTC_LOG(LS_WARNING) << "SSL_CTX creation failed: " << '"'
-                        << ERR_reason_error_string(error) << "\" "
-                        << "(error=" << error << ')';
+                        << ERR_reason_error_string(error)
+                        << "\" "
+                           "(error="
+                        << error << ')';
     return nullptr;
   }
 
@@ -944,7 +915,7 @@ std::string TransformAlpnProtocols(
   for (const std::string& proto : alpn_protocols) {
     if (proto.size() == 0 || proto.size() > 0xFF) {
       RTC_LOG(LS_ERROR) << "OpenSSLAdapter::Error("
-                        << "TransformAlpnProtocols received proto with size "
+                           "TransformAlpnProtocols received proto with size "
                         << proto.size() << ")";
       return "";
     }
@@ -982,7 +953,7 @@ OpenSSLAdapter* OpenSSLAdapterFactory::CreateAdapter(AsyncSocket* socket) {
     }
     // The OpenSSLSessionCache will upref the ssl_ctx.
     ssl_session_cache_ =
-        absl::make_unique<OpenSSLSessionCache>(ssl_mode_, ssl_ctx);
+        std::make_unique<OpenSSLSessionCache>(ssl_mode_, ssl_ctx);
     SSL_CTX_free(ssl_ctx);
   }
   return new OpenSSLAdapter(socket, ssl_session_cache_.get(),

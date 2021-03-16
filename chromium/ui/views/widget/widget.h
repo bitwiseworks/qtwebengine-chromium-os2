@@ -5,21 +5,23 @@
 #ifndef UI_VIEWS_WIDGET_WIDGET_H_
 #define UI_VIEWS_WIDGET_WIDGET_H_
 
-#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/optional.h"
 #include "base/scoped_observer.h"
 #include "build/build_config.h"
+#include "ui/base/default_theme_provider.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/event_source.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/native_widget_types.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/native_theme/native_theme_observer.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/widget/native_widget_delegate.h"
@@ -33,16 +35,14 @@ class TimeDelta;
 namespace gfx {
 class Point;
 class Rect;
-}
+}  // namespace gfx
 
 namespace ui {
 class Accelerator;
 class Compositor;
-class DefaultThemeProvider;
 class GestureRecognizer;
 class InputMethod;
 class Layer;
-class NativeTheme;
 class OSExchangeData;
 class ThemeProvider;
 }  // namespace ui
@@ -61,7 +61,7 @@ class WidgetRemovalsObserver;
 namespace internal {
 class NativeWidgetPrivate;
 class RootView;
-}
+}  // namespace internal
 
 ////////////////////////////////////////////////////////////////////////////////
 // Widget class
@@ -96,10 +96,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   using Widgets = std::set<Widget*>;
   using ShapeRects = std::vector<gfx::Rect>;
 
-  enum FrameType {
-    FRAME_TYPE_DEFAULT,         // Use whatever the default would be.
-    FRAME_TYPE_FORCE_CUSTOM,    // Force the custom frame.
-    FRAME_TYPE_FORCE_NATIVE     // Force the native frame.
+  enum class FrameType {
+    kDefault,      // Use whatever the default would be.
+    kForceCustom,  // Force the custom frame.
+    kForceNative   // Force the native frame.
   };
 
   // Result from RunMoveLoop().
@@ -112,9 +112,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   };
 
   // Source that initiated the move loop.
-  enum MoveLoopSource {
-    MOVE_LOOP_SOURCE_MOUSE,
-    MOVE_LOOP_SOURCE_TOUCH,
+  enum class MoveLoopSource {
+    kMouse,
+    kTouch,
   };
 
   // Behavior when escape is pressed during a move loop.
@@ -153,32 +153,31 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   struct VIEWS_EXPORT InitParams {
     enum Type {
-      TYPE_WINDOW,      // A decorated Window, like a frame window.
-                        // Widgets of TYPE_WINDOW will have a NonClientView.
-      TYPE_WINDOW_FRAMELESS,
-                        // An undecorated Window.
-      TYPE_CONTROL,     // A control, like a button.
-      TYPE_POPUP,       // An undecorated Window, with transient properties.
-      TYPE_MENU,        // An undecorated Window, with transient properties
-                        // specialized to menus.
+      TYPE_WINDOW,  // A decorated Window, like a frame window.
+                    // Widgets of TYPE_WINDOW will have a NonClientView.
+      TYPE_WINDOW_FRAMELESS,  // An undecorated Window.
+      TYPE_CONTROL,           // A control, like a button.
+      TYPE_POPUP,  // An undecorated Window, with transient properties.
+      TYPE_MENU,   // An undecorated Window, with transient properties
+                   // specialized to menus.
       TYPE_TOOLTIP,
       TYPE_BUBBLE,
-      TYPE_DRAG,        // An undecorated Window, used during a drag-and-drop to
-                        // show the drag image.
+      TYPE_DRAG,  // An undecorated Window, used during a drag-and-drop to
+                  // show the drag image.
     };
 
-    enum WindowOpacity {
+    enum class WindowOpacity {
       // Infer fully opaque or not. For WinAura, top-level windows that are not
       // of TYPE_WINDOW are translucent so that they can be made to fade in.
       // For LinuxAura, only windows that are TYPE_DRAG are translucent.  In all
       // other cases, windows are fully opaque.
-      INFER_OPACITY,
+      kInferred,
       // Fully opaque.
-      OPAQUE_WINDOW,
+      kOpaque,
       // Possibly translucent/transparent.  Widgets that fade in or out using
       // SetOpacity() but do not make use of an alpha channel should use
-      // INFER_OPACITY.
-      TRANSLUCENT_WINDOW,
+      // kInferred.
+      kTranslucent,
     };
 
     enum Activatable {
@@ -199,81 +198,144 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
       WIDGET_OWNS_NATIVE_WIDGET
     };
 
-    enum ShadowType {
-      SHADOW_TYPE_DEFAULT,  // Use default shadow setting. It will be one of
-                            // the settings below depending on InitParams::type
-                            // and the native widget's type.
-      SHADOW_TYPE_NONE,     // Don't draw any shadow.
-      SHADOW_TYPE_DROP,     // Draw a drop shadow that emphasizes Z-order
-                            // relationship to other windows.
+    enum class ShadowType {
+      kDefault,  // Use default shadow setting. It will be one of
+                 // the settings below depending on InitParams::type
+                 // and the native widget's type.
+      kNone,     // Don't draw any shadow.
+      kDrop,     // Draw a drop shadow that emphasizes Z-order
+                 // relationship to other windows.
     };
 
+    // Default initialization with |type| set to TYPE_WINDOW.
     InitParams();
+
+    // Initialization for other |type| types.
     explicit InitParams(Type type);
-    InitParams(const InitParams& other);
+
+    InitParams(InitParams&& other);
     ~InitParams();
+
+    InitParams& operator=(InitParams&& rhs) = default;
 
     // Returns the activatablity based on |activatable|, but also handles the
     // case where |activatable| is |ACTIVATABLE_DEFAULT|.
     bool CanActivate() const;
 
-    Type type;
+    // Returns the z-order level, based on the overriding |z_order| but also
+    // taking into account special levels due to |type|.
+    ui::ZOrderLevel EffectiveZOrderLevel() const;
+
+    Type type = TYPE_WINDOW;
+
     // If null, a default implementation will be constructed. The default
     // implementation deletes itself when the Widget closes.
-    WidgetDelegate* delegate;
+    WidgetDelegate* delegate = nullptr;
+
     // Internal name. Propagated to the NativeWidget. Useful for debugging.
     std::string name;
-    bool child;
-    // If TRANSLUCENT_WINDOW, the widget may be fully or partially transparent.
-    // If OPAQUE_WINDOW, we can perform optimizations based on the widget being
-    // fully opaque.
-    // Default is based on ViewsDelegate::GetOpacityForInitParams().  Defaults
-    // to OPAQUE_WINDOW for non-window widgets.
-    // Translucent windows may not always be supported. Use
-    // IsTranslucentWindowOpacitySupported to determine whether they are.
-    WindowOpacity opacity;
-    bool accept_events;
-    Activatable activatable;
-    bool keep_on_top;
-    bool visible_on_all_workspaces;
+
+    // False if this widget behaves like a top-level widget, true otherwise. A
+    // top-level widget has its own focus and IME state, independent of any
+    // other widget. A widget for which child is true should have a parent; if
+    // it doesn't, it will not handle keyboard events or IME input at all.
+    // TODO(https://crbug.com/1057758): DCHECK(parent || !child)
+    bool child = false;
+
+    // If kTranslucent, the widget may be fully or partially transparent.
+    // If kOpaque, we can perform optimizations based on the widget being fully
+    // opaque. Default is based on ViewsDelegate::GetOpacityForInitParams().
+    // Defaults to kOpaque for non-window widgets. Translucent windows may not
+    // always be supported. Use IsTranslucentWindowOpacitySupported() to
+    // determine whether they are.
+    WindowOpacity opacity = WindowOpacity::kInferred;
+
+    bool accept_events = true;
+
+    Activatable activatable = ACTIVATABLE_DEFAULT;
+
+    // The class of window and its overall z-order.
+    base::Optional<ui::ZOrderLevel> z_order;
+
+    bool visible_on_all_workspaces = false;
+
     // See Widget class comment above.
-    Ownership ownership;
-    bool mirror_origin_in_rtl;
-    ShadowType shadow_type;
-    // A hint about the size of the shadow if the type is SHADOW_TYPE_DROP. May
+    Ownership ownership = NATIVE_WIDGET_OWNS_WIDGET;
+
+    bool mirror_origin_in_rtl = false;
+
+    ShadowType shadow_type = ShadowType::kDefault;
+
+    // A hint about the size of the shadow if the type is ShadowType::kDrop. May
     // be ignored on some platforms. No value indicates no preference.
     base::Optional<int> shadow_elevation;
+
     // The window corner radius. May be ignored on some platforms.
     base::Optional<int> corner_radius;
+
     // Specifies that the system default caption and icon should not be
     // rendered, and that the client area should be equivalent to the window
     // area. Only used on some platforms (Windows and Linux).
-    bool remove_standard_frame;
+    bool remove_standard_frame = false;
+
     // Only used by ShellWindow on Windows. Specifies that the default icon of
     // packaged app should be the system default icon.
-    bool use_system_default_icon;
+    bool use_system_default_icon = false;
+
     // Whether the widget should be maximized or minimized.
-    ui::WindowShowState show_state;
-    gfx::NativeView parent;
+    ui::WindowShowState show_state = ui::SHOW_STATE_DEFAULT;
+
+    // The native *view* (not native *window*) to which this widget should be
+    // parented. If this widget has a parent, then:
+    // * If that parent closes, this widget is closed too
+    // * If that parent is hidden, this widget is hidden too
+    // * This widget is stacked above the parent widget (always on Mac, usually
+    //   elsewhere)
+    // * This widget's initial bounds are constrained to the parent widget's
+    //   bounds, which prevents window restoration from placing windows
+    //   offscreen
+    // Note: on some platforms (Mac) this directly implies a parent-child
+    // relationship in the backing native windows, but on Aura platforms it does
+    // not necessarily.
+    //
+    // Windows with no parent window are permitted, although in Aura these
+    // windows instead need a "context". On Aura systems, if a widget has no
+    // parent set, its backing aura::Window is parented to the Aura root window.
+    //
+    // TODO(https://crbug.com/1057758): It makes no sense that this is a
+    // NativeView instead of a NativeWindow. On Aura, NativeView and
+    // NativeWindow are synonyms, and NativeWidgetAura immediately treats the
+    // provided NativeView as an aura::Window; on Mac, the NativeView is
+    // immediately converted to an NSWindow (ie a gfx::NativeWindow) and used
+    // that way throughout. This should simply be a NativeWindow - windows are
+    // parented to other windows, not to views, and it being a view confuses
+    // the concept with bubble anchoring a la BubbleDialogDelegateView.
+    gfx::NativeView parent = nullptr;
+
     // Specifies the initial bounds of the Widget. Default is empty, which means
     // the NativeWidget may specify a default size. If the parent is specified,
     // |bounds| is in the parent's coordinate system. If the parent is not
     // specified, it's in screen's global coordinate system.
     gfx::Rect bounds;
-    // The initial workspace of the Widget.  Default is "", which means the
+
+    // The initial workspace of the Widget. Default is "", which means the
     // current workspace.
     std::string workspace;
-    // When set, this value is used as the Widget's NativeWidget implementation.
-    // The Widget will not construct a default one. Default is NULL.
-    NativeWidget* native_widget;
+
+    // If set, this value is used as the Widget's NativeWidget implementation.
+    // The Widget will not construct a default one.
+    NativeWidget* native_widget = nullptr;
+
     // Aura-only. Provides a DesktopWindowTreeHost implementation to use instead
     // of the default one.
     // TODO(beng): Figure out if there's a better way to expose this, e.g. get
     // rid of NW subclasses and do this all via message handling.
-    DesktopWindowTreeHost* desktop_window_tree_host;
+    DesktopWindowTreeHost* desktop_window_tree_host = nullptr;
+
     // Only used by NativeWidgetAura. Specifies the type of layer for the
-    // aura::Window. Default is ui::LAYER_TEXTURED.
-    ui::LayerType layer_type;
+    // aura::Window.
+    ui::LayerType layer_type = ui::LAYER_TEXTURED;
+
     // Only used by Aura. Provides a context window whose RootWindow is
     // consulted during widget creation to determine where in the Window
     // hierarchy this widget should be placed. (This is separate from |parent|;
@@ -282,10 +344,12 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     // where it wants your window placed.) Nullptr is not allowed on Windows and
     // Linux. Nullptr is allowed on Chrome OS, which will place the window on
     // the default desktop for new windows.
-    gfx::NativeWindow context;
+    gfx::NativeWindow context = nullptr;
+
     // If true, forces the window to be shown in the taskbar, even for window
     // types that do not appear in the taskbar by default (popup and bubble).
-    bool force_show_in_taskbar;
+    bool force_show_in_taskbar = false;
+
     // Only used by X11, for root level windows. Specifies the res_name and
     // res_class fields, respectively, of the WM_CLASS window property. Controls
     // window grouping and desktop file matching in Linux window managers.
@@ -293,38 +357,50 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     std::string wm_class_name;
     std::string wm_class_class;
 
-    // If true then the widget uses software compositing. Defaults to false.
-    // Only used on Windows.
-    bool force_software_compositing;
+    // If true then the widget uses software compositing.
+    bool force_software_compositing = false;
 
-    // Used if widget is not activatable to do determine if mouse events should
-    // be sent to the widget.
+    // If set, mouse events will be sent to the widget even if inactive.
     bool wants_mouse_events_when_inactive = false;
 
-    // A map of properties applied to windows when running in mus.
-    std::map<std::string, std::vector<uint8_t>> mus_properties;
+    // Contains any properties with which the native widget should be
+    // initialized prior to adding it to the window hierarchy. All the
+    // properties in |init_properties_container| will be moved to the native
+    // widget.
+    ui::PropertyHandler init_properties_container;
+  };
+
+  // Represents a lock held on the widget's ShouldPaintAsActive() state. As
+  // long as at least one lock is held, the widget will paint as active.
+  // Multiple locks can exist for the same widget, and a lock can outlive its
+  // associated widget. See Widget::LockPaintAsActive().
+  class PaintAsActiveLock {
+   public:
+    virtual ~PaintAsActiveLock();
+
+   protected:
+    PaintAsActiveLock();
+
+    DISALLOW_COPY_AND_ASSIGN(PaintAsActiveLock);
   };
 
   Widget();
+  explicit Widget(InitParams params);
   ~Widget() override;
 
   // Creates a decorated window Widget with the specified properties. The
   // returned Widget is owned by its NativeWidget; see Widget class comment for
   // details.
   static Widget* CreateWindowWithParent(WidgetDelegate* delegate,
-                                        gfx::NativeView parent);
-  static Widget* CreateWindowWithParentAndBounds(WidgetDelegate* delegate,
-                                                 gfx::NativeView parent,
-                                                 const gfx::Rect& bounds);
+                                        gfx::NativeView parent,
+                                        const gfx::Rect& bounds = gfx::Rect());
 
   // Creates a decorated window Widget in the same desktop context as |context|.
   // The returned Widget is owned by its NativeWidget; see Widget class comment
   // for details.
   static Widget* CreateWindowWithContext(WidgetDelegate* delegate,
-                                         gfx::NativeWindow context);
-  static Widget* CreateWindowWithContextAndBounds(WidgetDelegate* delegate,
-                                                  gfx::NativeWindow context,
-                                                  const gfx::Rect& bounds);
+                                         gfx::NativeWindow context,
+                                         const gfx::Rect& bounds = gfx::Rect());
 
   // Closes all Widgets that aren't identified as "secondary widgets". Called
   // during application shutdown when the last non-secondary widget is closed.
@@ -350,8 +426,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Returns all Widgets owned by |native_view| (including child widgets, but
   // not including itself).
-  static void GetAllOwnedWidgets(gfx::NativeView native_view,
-                                 Widgets* owned);
+  static void GetAllOwnedWidgets(gfx::NativeView native_view, Widgets* owned);
 
   // Re-parent a NativeView and notify all Widgets in |native_view|'s hierarchy
   // of the change.
@@ -371,7 +446,9 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Returns true if the specified type requires a NonClientView.
   static bool RequiresNonClientView(InitParams::Type type);
 
-  void Init(const InitParams& params);
+  // Initializes the widget, and in turn, the native widget. |params| should be
+  // moved to Init() by the caller.
+  void Init(InitParams params);
 
   // Returns the gfx::NativeView associated with this Widget.
   gfx::NativeView GetNativeView() const;
@@ -396,7 +473,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   virtual bool GetAccelerator(int cmd_id, ui::Accelerator* accelerator) const;
 
   // Forwarded from the RootView so that the widget can do any cleanup.
-  void ViewHierarchyChanged(const View::ViewHierarchyChangedDetails& details);
+  void ViewHierarchyChanged(const ViewHierarchyChangedDetails& details);
 
   // Called right before changing the widget's parent NativeView to do any
   // cleanup.
@@ -437,14 +514,15 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Retrieves the restored bounds for the window.
   gfx::Rect GetRestoredBounds() const;
 
-  // Retrieves the current workspace for the window.
+  // Retrieves the current workspace for the window. (On macOS: an opaque
+  // binary blob that encodes the workspace and other window state.)
   std::string GetWorkspace() const;
 
   // Sizes and/or places the widget to the specified bounds, size or position.
   void SetBounds(const gfx::Rect& bounds);
   void SetSize(const gfx::Size& size);
 
-  // Sizes the window to the specified size and centerizes it.
+  // Sizes the window to the specified size and centers it.
   void CenterWindow(const gfx::Size& size);
 
   // Like SetBounds(), but ensures the Widget is fully visible on screen or
@@ -493,6 +571,14 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // discouraged and only supported for backwards-compatibility with Close().
   void CloseWithReason(ClosedReason closed_reason);
 
+  // A UI test which tries to asynchronously examine a widget (e.g. the pixel
+  // tests) will fail if the widget is closed before that.  This can happen
+  // easily with widgets that close on focus loss coupled with tests being run
+  // in parallel, since one test's widget can be closed by the appearance of
+  // another test's.  This method can be used to temporarily disable
+  // Widget::Close() for such asynchronous cases.
+  void SetBlockCloseForTesting(bool block_close) { block_close_ = block_close; }
+
   // TODO(beng): Move off public API.
   // Closes the widget immediately. Compare to |Close|. This will destroy the
   // window handle associated with this Widget, so should not be called from
@@ -526,12 +612,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Returns whether the Widget is the currently active window.
   virtual bool IsActive() const;
 
-  // Sets the widget to be on top of all other widgets in the windowing system.
-  void SetAlwaysOnTop(bool on_top);
+  // Sets the z-order of the widget. This only applies to top-level widgets.
+  void SetZOrderLevel(ui::ZOrderLevel order);
 
-  // Returns whether the widget has been set to be on top of most other widgets
-  // in the windowing system.
-  bool IsAlwaysOnTop() const;
+  // Gets the z-order of the widget. This only applies to top-level widgets.
+  ui::ZOrderLevel GetZOrderLevel() const;
 
   // Sets the widget to be visible on all work spaces.
   void SetVisibleOnAllWorkspaces(bool always_visible);
@@ -554,6 +639,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Accessors for fullscreen state.
   void SetFullscreen(bool fullscreen);
   bool IsFullscreen() const;
+
+  // macOS: Sets whether the window can share fullscreen windows' spaces.
+  void SetCanAppearInExistingFullscreenSpaces(
+      bool can_appear_in_existing_fullscreen_spaces);
 
   // Sets the opacity of the widget. This may allow widgets behind the widget
   // in the Z-order to become visible, depending on the capabilities of the
@@ -612,7 +701,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // OnDragDone() is called on it. |location| is in the widget's coordinate
   // system.
   void RunShellDrag(View* view,
-                    const ui::OSExchangeData& data,
+                    std::unique_ptr<ui::OSExchangeData> data,
                     const gfx::Point& location,
                     int operation,
                     ui::DragDropTypes::DragEventSource source);
@@ -627,6 +716,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Adds the specified |rect| in client area coordinates to the rectangle to be
   // redrawn.
   virtual void SchedulePaintInRect(const gfx::Rect& rect);
+
+  // Schedule a layout to occur. This is called by RootView, client code should
+  // not need to call this.
+  void ScheduleLayout();
 
   // Sets the currently visible cursor. If |cursor| is NULL, the cursor used
   // before the current is restored.
@@ -695,9 +788,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
     return const_cast<NonClientView*>(
         const_cast<const Widget*>(this)->non_client_view());
   }
-  const NonClientView* non_client_view() const {
-    return non_client_view_;
-  }
+  const NonClientView* non_client_view() const { return non_client_view_; }
 
   ClientView* client_view() {
     return const_cast<ClientView*>(
@@ -705,9 +796,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   }
   const ClientView* client_view() const {
     // non_client_view_ may be NULL, especially during creation.
-    return non_client_view_ ? non_client_view_->client_view() : NULL;
+    return non_client_view_ ? non_client_view_->client_view() : nullptr;
   }
 
+  // Returns the compositor for this Widget, note that this may change during
+  // the Widget's lifetime (e.g. when switching monitors on Chrome OS).
   ui::Compositor* GetCompositor() {
     return const_cast<ui::Compositor*>(
         const_cast<const Widget*>(this)->GetCompositor());
@@ -716,8 +809,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Returns the widget's layer, if any.
   ui::Layer* GetLayer() {
-    return const_cast<ui::Layer*>(
-        const_cast<const Widget*>(this)->GetLayer());
+    return const_cast<ui::Layer*>(const_cast<const Widget*>(this)->GetLayer());
   }
   const ui::Layer* GetLayer() const;
 
@@ -804,13 +896,19 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Returns the internal name for this Widget and NativeWidget.
   std::string GetName() const;
 
+  // Prevents the widget from being rendered as inactive during the lifetime of
+  // the returned lock. Multiple locks can exist with disjoint lifetimes. The
+  // returned lock can safely outlive the associated widget.
+  std::unique_ptr<PaintAsActiveLock> LockPaintAsActive();
+
+  base::WeakPtr<Widget> GetWeakPtr();
+
   // Overridden from NativeWidgetDelegate:
   bool IsModal() const override;
   bool IsDialogBox() const override;
   bool CanActivate() const override;
+  bool ShouldPaintAsActive() const override;
   bool IsNativeWidgetInitialized() const override;
-  bool IsAlwaysRenderAsActive() const override;
-  void SetAlwaysRenderAsActive(bool always_render_as_active) override;
   bool OnNativeWidgetActivationChanged(bool active) override;
   void OnNativeFocus() override;
   void OnNativeBlur() override;
@@ -846,6 +944,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
       gfx::NativeView child,
       ui::Layer* child_layer,
       const gfx::Point& location) override;
+  void LayoutRootViewIfNecessary() override;
 
   // Overridden from ui::EventSource:
   ui::EventSink* GetEventSink() override;
@@ -859,6 +958,10 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
 
  protected:
+  // Call this to propagate native theme changes to the root view. Subclasses
+  // may override this to customize how native theme updates are propagated.
+  virtual void PropagateNativeThemeChanged();
+
   // Creates the RootView to be used within this Widget. Subclasses may override
   // to create custom RootViews that do specialized event processing.
   // TODO(beng): Investigate whether or not this is needed.
@@ -876,8 +979,11 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   virtual void OnDragComplete();
 
  private:
-  friend class ComboboxTest;
+  class PaintAsActiveLockImpl;
+
   friend class ButtonTest;
+  friend class ComboboxTest;
+  friend class PaintAsActiveLockImpl;
   friend class TextfieldTest;
   friend class ViewAuraTest;
   friend void DisableActivationChangeHandlingForTests();
@@ -906,9 +1012,18 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // layer.
   const View::Views& GetViewsWithLayers();
 
+  // Undoes LockPaintAsActive(). Called by PaintAsActiveLock destructor.
+  void UnlockPaintAsActive();
+
+  // Notifies the window frame that the active rendering state has changed.
+  void UpdatePaintAsActiveState(bool paint_as_active);
+
+  // If a descendent of |root_view_| is focused, then clear the focus.
+  void ClearFocusFromWidget();
+
   static bool g_disable_activation_change_handling_;
 
-  internal::NativeWidgetPrivate* native_widget_;
+  internal::NativeWidgetPrivate* native_widget_ = nullptr;
 
   base::ObserverList<WidgetObserver> observers_;
 
@@ -916,7 +1031,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // Non-owned pointer to the Widget's delegate. If a NULL delegate is supplied
   // to Init() a default WidgetDelegate is created.
-  WidgetDelegate* widget_delegate_;
+  WidgetDelegate* widget_delegate_ = nullptr;
 
   // The root of the View hierarchy attached to this window.
   // WARNING: see warning in tooltip_manager_ for ordering dependencies with
@@ -927,7 +1042,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // window controls, sizing borders etc). To use an implementation other than
   // the default, this class must be sub-classed and this value set to the
   // desired implementation before calling |InitWindow()|.
-  NonClientView* non_client_view_;
+  NonClientView* non_client_view_ = nullptr;
 
   // The focus manager keeping track of focus for this Widget and any of its
   // children.  NULL for non top-level widgets.
@@ -936,25 +1051,27 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   std::unique_ptr<FocusManager> focus_manager_;
 
   // A theme provider to use when no other theme provider is specified.
-  std::unique_ptr<ui::DefaultThemeProvider> default_theme_provider_;
+  const ui::DefaultThemeProvider default_theme_provider_;
 
   // Valid for the lifetime of RunShellDrag(), indicates the view the drag
   // started from.
-  View* dragged_view_;
+  View* dragged_view_ = nullptr;
 
   // See class documentation for Widget above for a note about ownership.
-  InitParams::Ownership ownership_;
+  InitParams::Ownership ownership_ = InitParams::NATIVE_WIDGET_OWNS_WIDGET;
 
   // See set_is_secondary_widget().
-  bool is_secondary_widget_;
+  bool is_secondary_widget_ = true;
 
   // The current frame type in use by this window. Defaults to
-  // FRAME_TYPE_DEFAULT.
-  FrameType frame_type_;
+  // FrameType::kDefault.
+  FrameType frame_type_ = FrameType::kDefault;
 
-  // True when the window should be rendered as active, regardless of whether
-  // or not it actually is.
-  bool always_render_as_active_;
+  // Tracks whether the native widget is active.
+  bool native_widget_active_ = false;
+
+  // Tracks locks on the paint-as-active behavior. See LockPaintAsActive().
+  size_t paint_as_active_refcount_ = 0;
 
   // Set to true if the widget is in the process of closing.
   bool widget_closed_ = false;
@@ -966,7 +1083,7 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
 
   // The saved "show" state for this window. See note in SetInitialBounds
   // that explains why we save this.
-  ui::WindowShowState saved_show_state_;
+  ui::WindowShowState saved_show_state_ = ui::SHOW_STATE_DEFAULT;
 
   // The restored bounds used for the initial show. This is only used if
   // |saved_show_state_| is maximized.
@@ -975,46 +1092,52 @@ class VIEWS_EXPORT Widget : public internal::NativeWidgetDelegate,
   // Focus is automatically set to the view provided by the delegate
   // when the widget is shown. Set this value to false to override
   // initial focus for the widget.
-  bool focus_on_creation_;
+  bool focus_on_creation_ = true;
 
   // See |is_top_level()| accessor.
-  bool is_top_level_;
+  bool is_top_level_ = false;
 
   // Tracks whether native widget has been initialized.
-  bool native_widget_initialized_;
+  bool native_widget_initialized_ = false;
 
   // Whether native widget has been destroyed.
-  bool native_widget_destroyed_;
+  bool native_widget_destroyed_ = false;
 
   // TODO(beng): Remove NativeWidgetGtk's dependence on these:
   // If true, the mouse is currently down.
-  bool is_mouse_button_pressed_;
+  bool is_mouse_button_pressed_ = false;
 
   // True if capture losses should be ignored.
-  bool ignore_capture_loss_;
+  bool ignore_capture_loss_ = false;
 
   // TODO(beng): Remove NativeWidgetGtk's dependence on these:
   // The following are used to detect duplicate mouse move events and not
   // deliver them. Displaying a window may result in the system generating
   // duplicate move events even though the mouse hasn't moved.
-  bool last_mouse_event_was_move_;
+  bool last_mouse_event_was_move_ = false;
   gfx::Point last_mouse_event_position_;
 
   // True if event capture should be released on a mouse up event. Default is
   // true.
-  bool auto_release_capture_;
+  bool auto_release_capture_ = true;
 
   // See description in GetViewsWithLayers().
   View::Views views_with_layers_;
 
   // Does |views_with_layers_| need updating?
-  bool views_with_layers_dirty_;
+  bool views_with_layers_dirty_ = false;
 
   // True when window movement via mouse interaction with the frame should be
   // disabled.
-  bool movement_disabled_;
+  bool movement_disabled_ = false;
 
-  ScopedObserver<ui::NativeTheme, ui::NativeThemeObserver> observer_manager_;
+  // Block the widget from closing.
+  bool block_close_ = false;
+
+  ScopedObserver<ui::NativeTheme, ui::NativeThemeObserver> observer_manager_{
+      this};
+
+  base::WeakPtrFactory<Widget> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(Widget);
 };

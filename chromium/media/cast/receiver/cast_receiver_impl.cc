@@ -70,47 +70,31 @@ void CastReceiverImpl::ReceivePacket(std::unique_ptr<Packet> packet) {
     return;
   }
   cast_environment_->PostTask(
-      CastEnvironment::MAIN,
-      FROM_HERE,
-      base::Bind(base::IgnoreResult(&FrameReceiver::ProcessPacket),
-                 target,
-                 base::Passed(&packet)));
+      CastEnvironment::MAIN, FROM_HERE,
+      base::BindOnce(base::IgnoreResult(&FrameReceiver::ProcessPacket), target,
+                     std::move(packet)));
 }
 
 void CastReceiverImpl::RequestDecodedAudioFrame(
     const AudioFrameDecodedCallback& callback) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   DCHECK(!callback.is_null());
-  audio_receiver_.RequestEncodedFrame(base::Bind(
+  audio_receiver_.RequestEncodedFrame(base::BindOnce(
       &CastReceiverImpl::DecodeEncodedAudioFrame,
       // Note: Use of Unretained is safe since this Closure is guaranteed to be
       // invoked or discarded by |audio_receiver_| before destruction of |this|.
-      base::Unretained(this),
-      callback));
-}
-
-void CastReceiverImpl::RequestEncodedAudioFrame(
-    const ReceiveEncodedFrameCallback& callback) {
-  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
-  audio_receiver_.RequestEncodedFrame(callback);
+      base::Unretained(this), callback));
 }
 
 void CastReceiverImpl::RequestDecodedVideoFrame(
     const VideoFrameDecodedCallback& callback) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   DCHECK(!callback.is_null());
-  video_receiver_.RequestEncodedFrame(base::Bind(
+  video_receiver_.RequestEncodedFrame(base::BindOnce(
       &CastReceiverImpl::DecodeEncodedVideoFrame,
       // Note: Use of Unretained is safe since this Closure is guaranteed to be
       // invoked or discarded by |video_receiver_| before destruction of |this|.
-      base::Unretained(this),
-      callback));
-}
-
-void CastReceiverImpl::RequestEncodedVideoFrame(
-    const ReceiveEncodedFrameCallback& callback) {
-  DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
-  video_receiver_.RequestEncodedFrame(callback);
+      base::Unretained(this), callback));
 }
 
 void CastReceiverImpl::DecodeEncodedAudioFrame(
@@ -118,23 +102,23 @@ void CastReceiverImpl::DecodeEncodedAudioFrame(
     std::unique_ptr<EncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   if (!encoded_frame) {
-    callback.Run(base::WrapUnique<AudioBus>(NULL), base::TimeTicks(), false);
+    callback.Run(base::WrapUnique<AudioBus>(nullptr), base::TimeTicks(), false);
     return;
   }
 
   if (!audio_decoder_) {
-    audio_decoder_.reset(new AudioDecoder(cast_environment_,
-                                          num_audio_channels_,
-                                          audio_sampling_rate_,
-                                          audio_codec_));
+    audio_decoder_ =
+        std::make_unique<AudioDecoder>(cast_environment_, num_audio_channels_,
+                                       audio_sampling_rate_, audio_codec_);
   }
   const FrameId frame_id = encoded_frame->frame_id;
   const RtpTimeTicks rtp_timestamp = encoded_frame->rtp_timestamp;
   const base::TimeTicks playout_time = encoded_frame->reference_time;
   audio_decoder_->DecodeFrame(
       std::move(encoded_frame),
-      base::Bind(&CastReceiverImpl::EmitDecodedAudioFrame, cast_environment_,
-                 callback, frame_id, rtp_timestamp, playout_time));
+      base::BindOnce(&CastReceiverImpl::EmitDecodedAudioFrame,
+                     cast_environment_, callback, frame_id, rtp_timestamp,
+                     playout_time));
 }
 
 void CastReceiverImpl::DecodeEncodedVideoFrame(
@@ -142,7 +126,7 @@ void CastReceiverImpl::DecodeEncodedVideoFrame(
     std::unique_ptr<EncodedFrame> encoded_frame) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   if (!encoded_frame) {
-    callback.Run(base::WrapRefCounted<VideoFrame>(NULL), base::TimeTicks(),
+    callback.Run(base::WrapRefCounted<VideoFrame>(nullptr), base::TimeTicks(),
                  false);
     return;
   }
@@ -152,8 +136,10 @@ void CastReceiverImpl::DecodeEncodedVideoFrame(
                        TRACE_EVENT_SCOPE_THREAD, "rtp_timestamp",
                        encoded_frame->rtp_timestamp.lower_32_bits());
 
-  if (!video_decoder_)
-    video_decoder_.reset(new VideoDecoder(cast_environment_, video_codec_));
+  if (!video_decoder_) {
+    video_decoder_ =
+        std::make_unique<VideoDecoder>(cast_environment_, video_codec_);
+  }
   const FrameId frame_id = encoded_frame->frame_id;
   const RtpTimeTicks rtp_timestamp = encoded_frame->rtp_timestamp;
   const base::TimeTicks playout_time = encoded_frame->reference_time;
@@ -197,11 +183,11 @@ void CastReceiverImpl::EmitDecodedVideoFrame(
     FrameId frame_id,
     RtpTimeTicks rtp_timestamp,
     const base::TimeTicks& playout_time,
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     bool is_continuous) {
   DCHECK(cast_environment->CurrentlyOn(CastEnvironment::MAIN));
 
-  if (video_frame.get()) {
+  if (video_frame) {
     // TODO(miu): This is reporting incorrect timestamp and delay.
     // http://crbug.com/547251
     std::unique_ptr<FrameEvent> playout_event(new FrameEvent());
@@ -220,7 +206,7 @@ void CastReceiverImpl::EmitDecodedVideoFrame(
                          (playout_time - base::TimeTicks()).InMicroseconds());
   }
 
-  callback.Run(video_frame, playout_time, is_continuous);
+  callback.Run(std::move(video_frame), playout_time, is_continuous);
 }
 
 }  // namespace cast

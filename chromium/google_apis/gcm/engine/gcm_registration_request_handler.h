@@ -11,17 +11,16 @@
 namespace gcm {
 
 // Used to obtain the registration ID for applications that want to use GCM.
-class GCM_EXPORT GCMRegistrationRequestHandler :
-    public RegistrationRequest::CustomRequestHandler {
+class GCM_EXPORT GCMRegistrationRequestHandler
+    : public RegistrationRequest::CustomRequestHandler {
  public:
   GCMRegistrationRequestHandler(const std::string& senders);
   ~GCMRegistrationRequestHandler() override;
 
   // RegistrationRequest::RequestHandler overrides:
   void BuildRequestBody(std::string* body) override;
-  void ReportUMAs(RegistrationRequest::Status status,
-                  int retry_count,
-                  base::TimeDelta complete_time) override;
+  void ReportStatusToUMA(RegistrationRequest::Status status) override;
+  void ReportNetErrorCodeToUMA(int net_error_code) override;
 
  private:
   std::string senders_;

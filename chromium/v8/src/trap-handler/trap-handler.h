@@ -9,8 +9,8 @@
 #include <stdlib.h>
 
 #include "src/base/build_config.h"
-#include "src/flags.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
+#include "src/flags/flags.h"
 
 namespace v8 {
 namespace internal {
@@ -22,6 +22,8 @@ namespace trap_handler {
 #elif V8_TARGET_ARCH_X64 && V8_OS_WIN
 #define V8_TRAP_HANDLER_SUPPORTED true
 #elif V8_TARGET_ARCH_X64 && V8_OS_MACOSX
+#define V8_TRAP_HANDLER_SUPPORTED true
+#elif V8_TARGET_ARCH_X64 && V8_OS_FREEBSD
 #define V8_TRAP_HANDLER_SUPPORTED true
 #else
 #define V8_TRAP_HANDLER_SUPPORTED false

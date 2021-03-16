@@ -22,20 +22,22 @@
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_radial_gradient.h"
 
 #include "third_party/blink/renderer/core/svg/svg_radial_gradient_element.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 
 namespace blink {
 
 LayoutSVGResourceRadialGradient::LayoutSVGResourceRadialGradient(
     SVGRadialGradientElement* node)
     : LayoutSVGResourceGradient(node),
-      attributes_wrapper_(RadialGradientAttributesWrapper::Create()) {}
+      attributes_wrapper_(
+          MakeGarbageCollected<RadialGradientAttributesWrapper>()) {}
 
 LayoutSVGResourceRadialGradient::~LayoutSVGResourceRadialGradient() = default;
 
-bool LayoutSVGResourceRadialGradient::CollectGradientAttributes() {
+void LayoutSVGResourceRadialGradient::CollectGradientAttributes() {
   DCHECK(GetElement());
   attributes_wrapper_->Set(RadialGradientAttributes());
-  return ToSVGRadialGradientElement(GetElement())
+  To<SVGRadialGradientElement>(GetElement())
       ->CollectGradientAttributes(MutableAttributes());
 }
 
@@ -72,7 +74,7 @@ scoped_refptr<Gradient> LayoutSVGResourceRadialGradient::BuildGradient() const {
       Radius(attributes), 1,
       PlatformSpreadMethodFromSVGType(attributes.SpreadMethod()),
       Gradient::ColorInterpolation::kUnpremultiplied,
-      Gradient::DegenerateHandling::kDisallow);
+      Gradient::DegenerateHandling::kAllow);
   gradient->AddColorStops(attributes.Stops());
   return gradient;
 }

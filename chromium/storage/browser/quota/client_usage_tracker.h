@@ -26,21 +26,32 @@
 
 namespace storage {
 
-class StorageMonitor;
 class UsageTracker;
 
-// This class holds per-client usage tracking information and caches per-host
-// usage data.  An instance of this class is created per client.
+// These values are logged to UMA. Entries should not be renumbered and
+// numeric values should never be reused. Please keep in sync with
+// "InvalidOriginReason" in src/tools/metrics/histograms/enums.xml.
+enum class InvalidOriginReason {
+  kIsOpaque = 0,
+  kIsEmpty = 1,
+  kMaxValue = kIsEmpty
+};
+
+// Holds per-client usage tracking information and caches
+// per-host usage data.
+//
+// A UsageTracker object will own one ClientUsageTracker instance per client.
+// This class is not thread-safe. All methods other than the constructor must be
+// called on the same sequence.
 class ClientUsageTracker : public SpecialStoragePolicy::Observer,
                            public base::SupportsWeakPtr<ClientUsageTracker> {
  public:
   using OriginSetByHost = std::map<std::string, std::set<url::Origin>>;
 
   ClientUsageTracker(UsageTracker* tracker,
-                     QuotaClient* client,
+                     scoped_refptr<QuotaClient> client,
                      blink::mojom::StorageType type,
-                     SpecialStoragePolicy* special_storage_policy,
-                     StorageMonitor* storage_monitor);
+                     SpecialStoragePolicy* special_storage_policy);
   ~ClientUsageTracker() override;
 
   void GetGlobalLimitedUsage(UsageCallback callback);
@@ -48,21 +59,15 @@ class ClientUsageTracker : public SpecialStoragePolicy::Observer,
   void GetHostUsage(const std::string& host, UsageCallback callback);
   void UpdateUsageCache(const url::Origin& origin, int64_t delta);
   int64_t GetCachedUsage() const;
-  void GetCachedHostsUsage(std::map<std::string, int64_t>* host_usage) const;
-  void GetCachedOriginsUsage(
-      std::map<url::Origin, int64_t>* origin_usage) const;
-  void GetCachedOrigins(std::set<url::Origin>* origins) const;
+  std::map<std::string, int64_t> GetCachedHostsUsage() const;
+  std::map<url::Origin, int64_t> GetCachedOriginsUsage() const;
+  std::set<url::Origin> GetCachedOrigins() const;
   bool IsUsageCacheEnabledForOrigin(const url::Origin& origin) const;
   void SetUsageCacheEnabled(const url::Origin& origin, bool enabled);
-
  private:
   using UsageMap = std::map<url::Origin, int64_t>;
 
-  struct AccumulateInfo {
-    int pending_jobs = 0;
-    int64_t limited_usage = 0;
-    int64_t unlimited_usage = 0;
-  };
+  struct AccumulateInfo;
 
   void AccumulateLimitedOriginUsage(AccumulateInfo* info,
                                     UsageCallback callback,
@@ -84,8 +89,6 @@ class ClientUsageTracker : public SpecialStoragePolicy::Observer,
                              const base::Optional<url::Origin>& origin,
                              int64_t usage);
 
-  void DidGetHostUsageAfterUpdate(const url::Origin& origin, int64_t usage);
-
   // Methods used by our GatherUsage tasks, as a task makes progress
   // origins and hosts are added incrementally to the cache.
   void AddCachedOrigin(const url::Origin& origin, int64_t usage);
@@ -96,18 +99,16 @@ class ClientUsageTracker : public SpecialStoragePolicy::Observer,
   bool GetCachedOriginUsage(const url::Origin& origin, int64_t* usage) const;
 
   // SpecialStoragePolicy::Observer overrides
-  void OnGranted(const GURL& origin_url, int change_flags) override;
-  void OnRevoked(const GURL& origin_url, int change_flags) override;
+  void OnGranted(const url::Origin& origin_url, int change_flags) override;
+  void OnRevoked(const url::Origin& origin_url, int change_flags) override;
   void OnCleared() override;
 
   void UpdateGlobalUsageValue(int64_t* usage_value, int64_t delta);
 
   bool IsStorageUnlimited(const url::Origin& origin) const;
 
-  UsageTracker* tracker_;
-  QuotaClient* client_;
+  scoped_refptr<QuotaClient> client_;
   const blink::mojom::StorageType type_;
-  StorageMonitor* storage_monitor_;
 
   int64_t global_limited_usage_;
   int64_t global_unlimited_usage_;

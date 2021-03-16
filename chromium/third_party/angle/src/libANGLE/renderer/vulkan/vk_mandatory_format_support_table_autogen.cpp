@@ -3,11 +3,11 @@
 // vk_mandatory_format_support_data.json and the vk.xml file situated at
 // /third_party/vulkan-validation-layers/src/scripts/vk.xml
 //
-// Copyright 2019 The ANGLE Project Authors. All rights reserved.
+// Copyright 2020 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// vk_mandatory_format_support_table:
+// vk_mandatory_format_support_table_autogen.cpp:
 //   Queries for full Vulkan mandatory format support information based on VK format.
 
 #include "libANGLE/renderer/vulkan/vk_format_utils.h"

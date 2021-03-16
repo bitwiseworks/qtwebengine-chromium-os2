@@ -8,20 +8,21 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "p2p/base/pseudo_tcp.h"
+
 #include <string.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <string>
 #include <vector>
 
-#include "p2p/base/pseudo_tcp.h"
 #include "rtc_base/gunit.h"
 #include "rtc_base/helpers.h"
 #include "rtc_base/location.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/memory_stream.h"
 #include "rtc_base/message_handler.h"
-#include "rtc_base/message_queue.h"
 #include "rtc_base/thread.h"
 #include "rtc_base/time_utils.h"
 #include "test/gtest.h"
@@ -42,7 +43,7 @@ class PseudoTcpForTest : public cricket::PseudoTcp {
   void disableWindowScale() { PseudoTcp::disableWindowScale(); }
 };
 
-class PseudoTcpTestBase : public testing::Test,
+class PseudoTcpTestBase : public ::testing::Test,
                           public rtc::MessageHandler,
                           public cricket::IPseudoTcpNotify {
  public:

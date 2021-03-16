@@ -28,6 +28,7 @@
 
 #include <memory>
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_buffer.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_destination_node.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_context.h"
@@ -79,7 +80,6 @@ class OfflineAudioDestinationHandler final : public AudioDestinationHandler {
   // allows creation of the AudioBuffer when startRendering is called
   // instead of when the OfflineAudioContext is created.
   void InitializeOfflineRenderThread(AudioBuffer* render_target);
-  AudioBuffer* RenderTarget() const { return render_target_.Get(); }
 
   unsigned NumberOfChannels() const { return number_of_channels_; }
 
@@ -125,10 +125,19 @@ class OfflineAudioDestinationHandler final : public AudioDestinationHandler {
   // from AudioWorkletThread will be used until the rendering is finished.
   void PrepareTaskRunnerForRendering();
 
-  // This AudioHandler renders into this AudioBuffer.
-  // This Persistent doesn't make a reference cycle including the owner
-  // OfflineAudioDestinationNode. It is accessed by both audio and main thread.
-  CrossThreadPersistent<AudioBuffer> render_target_;
+  // For cross-thread posting, this object uses two different targets.
+  // 1. rendering thread -> main thread: WeakPtr
+  //    When the main thread starts deleting this object, a task posted with
+  //    a WeakPtr from the rendering thread will be cancelled.
+  // 2. main thread -> rendering thread: scoped_refptr
+  //    |render_thread_| is owned by this object, so it is safe to target with
+  //    WrapRefCounted() instead of GetWeakPtr().
+  base::WeakPtr<OfflineAudioDestinationHandler> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
+  // This AudioHandler renders into this SharedAudioBuffer.
+  std::unique_ptr<SharedAudioBuffer> shared_render_target_;
   // Temporary AudioBus for each render quantum.
   scoped_refptr<AudioBus> render_bus_;
 
@@ -151,6 +160,8 @@ class OfflineAudioDestinationHandler final : public AudioDestinationHandler {
 
   scoped_refptr<base::SingleThreadTaskRunner> render_thread_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
+
+  base::WeakPtrFactory<OfflineAudioDestinationHandler> weak_factory_{this};
 };
 
 class OfflineAudioDestinationNode final : public AudioDestinationNode {
@@ -164,6 +175,17 @@ class OfflineAudioDestinationNode final : public AudioDestinationNode {
                               unsigned number_of_channels,
                               uint32_t frames_to_process,
                               float sample_rate);
+
+  AudioBuffer* DestinationBuffer() const { return destination_buffer_; }
+
+  void SetDestinationBuffer(AudioBuffer* buffer) {
+    destination_buffer_ = buffer;
+  }
+
+  void Trace(Visitor* visitor) override;
+
+ private:
+  Member<AudioBuffer> destination_buffer_;
 };
 
 }  // namespace blink

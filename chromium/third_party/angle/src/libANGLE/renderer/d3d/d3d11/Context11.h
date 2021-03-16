@@ -62,8 +62,14 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
     // Program Pipeline object creation
     ProgramPipelineImpl *createProgramPipeline(const gl::ProgramPipelineState &data) override;
 
-    // Path object creation.
-    std::vector<PathImpl *> createPaths(GLsizei) override;
+    // Memory object creation.
+    MemoryObjectImpl *createMemoryObject() override;
+
+    // Semaphore creation.
+    SemaphoreImpl *createSemaphore() override;
+
+    // Overlay creation.
+    OverlayImpl *createOverlay(const gl::OverlayState &state) override;
 
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
@@ -79,18 +85,45 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
                                       GLint first,
                                       GLsizei count,
                                       GLsizei instanceCount) override;
+    angle::Result drawArraysInstancedBaseInstance(const gl::Context *context,
+                                                  gl::PrimitiveMode mode,
+                                                  GLint first,
+                                                  GLsizei count,
+                                                  GLsizei instanceCount,
+                                                  GLuint baseInstance) override;
 
     angle::Result drawElements(const gl::Context *context,
                                gl::PrimitiveMode mode,
                                GLsizei count,
                                gl::DrawElementsType type,
                                const void *indices) override;
+    angle::Result drawElementsBaseVertex(const gl::Context *context,
+                                         gl::PrimitiveMode mode,
+                                         GLsizei count,
+                                         gl::DrawElementsType type,
+                                         const void *indices,
+                                         GLint baseVertex) override;
     angle::Result drawElementsInstanced(const gl::Context *context,
                                         gl::PrimitiveMode mode,
                                         GLsizei count,
                                         gl::DrawElementsType type,
                                         const void *indices,
                                         GLsizei instances) override;
+    angle::Result drawElementsInstancedBaseVertex(const gl::Context *context,
+                                                  gl::PrimitiveMode mode,
+                                                  GLsizei count,
+                                                  gl::DrawElementsType type,
+                                                  const void *indices,
+                                                  GLsizei instances,
+                                                  GLint baseVertex) override;
+    angle::Result drawElementsInstancedBaseVertexBaseInstance(const gl::Context *context,
+                                                              gl::PrimitiveMode mode,
+                                                              GLsizei count,
+                                                              gl::DrawElementsType type,
+                                                              const void *indices,
+                                                              GLsizei instances,
+                                                              GLint baseVertex,
+                                                              GLuint baseInstance) override;
     angle::Result drawRangeElements(const gl::Context *context,
                                     gl::PrimitiveMode mode,
                                     GLuint start,
@@ -98,6 +131,14 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
                                     GLsizei count,
                                     gl::DrawElementsType type,
                                     const void *indices) override;
+    angle::Result drawRangeElementsBaseVertex(const gl::Context *context,
+                                              gl::PrimitiveMode mode,
+                                              GLuint start,
+                                              GLuint end,
+                                              GLsizei count,
+                                              gl::DrawElementsType type,
+                                              const void *indices,
+                                              GLint baseVertex) override;
     angle::Result drawArraysIndirect(const gl::Context *context,
                                      gl::PrimitiveMode mode,
                                      const void *indirect) override;
@@ -107,20 +148,23 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
                                        const void *indirect) override;
 
     // Device loss
-    GLenum getResetStatus() override;
+    gl::GraphicsResetStatus getResetStatus() override;
 
     // Vendor and description strings.
     std::string getVendorString() const override;
     std::string getRendererDescription() const override;
 
     // EXT_debug_marker
-    void insertEventMarker(GLsizei length, const char *marker) override;
-    void pushGroupMarker(GLsizei length, const char *marker) override;
-    void popGroupMarker() override;
+    angle::Result insertEventMarker(GLsizei length, const char *marker) override;
+    angle::Result pushGroupMarker(GLsizei length, const char *marker) override;
+    angle::Result popGroupMarker() override;
 
     // KHR_debug
-    void pushDebugGroup(GLenum source, GLuint id, GLsizei length, const char *message) override;
-    void popDebugGroup() override;
+    angle::Result pushDebugGroup(const gl::Context *context,
+                                 GLenum source,
+                                 GLuint id,
+                                 const std::string &message) override;
+    angle::Result popDebugGroup(const gl::Context *context) override;
 
     // State sync with dirty bits.
     angle::Result syncState(const gl::Context *context,
@@ -173,7 +217,9 @@ class Context11 : public ContextD3D, public MultisampleTextureInitializer
                                    GLsizei indexCount,
                                    gl::DrawElementsType indexType,
                                    const void *indices,
-                                   GLsizei instanceCount);
+                                   GLsizei instanceCount,
+                                   GLint baseVertex,
+                                   GLuint baseInstance);
 
     Renderer11 *mRenderer;
     IncompleteTextureSet mIncompleteTextures;

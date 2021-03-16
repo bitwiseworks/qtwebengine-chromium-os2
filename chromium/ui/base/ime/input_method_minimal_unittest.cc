@@ -7,9 +7,10 @@
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/dummy_text_input_client.h"
+#include "ui/base/ime/init/input_method_initializer.h"
 #include "ui/base/ime/input_method_delegate.h"
-#include "ui/base/ime/input_method_initializer.h"
 #include "ui/events/event.h"
+#include "ui/events/test/keyboard_layout.h"
 
 namespace ui {
 namespace {
@@ -21,11 +22,9 @@ class InputMethodDelegateForTesting : public internal::InputMethodDelegate {
   ~InputMethodDelegateForTesting() override {}
 
   ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* key_event,
-      base::OnceCallback<void(bool)> ack_callback) override {
+      ui::KeyEvent* key_event) override {
     if (!propagation_post_ime_)
       key_event->StopPropagation();
-    CallDispatchKeyEventPostIMEAck(key_event, std::move(ack_callback));
     return ui::EventDispatchDetails();
   }
 
@@ -54,6 +53,8 @@ class InputMethodMinimalTest : public testing::Test {
 };
 
 TEST_F(InputMethodMinimalTest, StopPropagationTest) {
+  ui::ScopedKeyboardLayout keyboard_layout(ui::KEYBOARD_LAYOUT_ENGLISH_US);
+
   std::unique_ptr<DummyTextInputClient> client =
       std::make_unique<DummyTextInputClient>();
   input_method_minimal_->SetFocusedTextInputClient(client.get());

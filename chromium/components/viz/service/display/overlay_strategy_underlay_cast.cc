@@ -6,10 +6,17 @@
 
 #include "base/containers/adapters.h"
 #include "base/lazy_instance.h"
+#include "base/unguessable_token.h"
+#include "build/chromecast_buildflags.h"
 #include "components/viz/common/quads/draw_quad.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
-#include "components/viz/common/quads/texture_draw_quad.h"
+#include "components/viz/common/quads/video_hole_draw_quad.h"
 #include "ui/gfx/geometry/rect_conversions.h"
+
+#if BUILDFLAG(IS_CHROMECAST)
+#include "base/no_destructor.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#endif
 
 namespace viz {
 namespace {
@@ -17,21 +24,37 @@ namespace {
 base::LazyInstance<OverlayStrategyUnderlayCast::OverlayCompositedCallback>::
     DestructorAtExit g_overlay_composited_callback = LAZY_INSTANCE_INITIALIZER;
 
+#if BUILDFLAG(IS_CHROMECAST)
+// This persistent mojo::Remote is bound then used by all the instances
+// of OverlayStrategyUnderlayCast.
+mojo::Remote<chromecast::media::mojom::VideoGeometrySetter>&
+GetVideoGeometrySetter() {
+  static base::NoDestructor<
+      mojo::Remote<chromecast::media::mojom::VideoGeometrySetter>>
+      g_video_geometry_setter;
+  return *g_video_geometry_setter;
+}
+#endif
+
 }  // namespace
 
 OverlayStrategyUnderlayCast::OverlayStrategyUnderlayCast(
-    OverlayCandidateValidator* capability_checker)
+    OverlayProcessorUsingStrategy* capability_checker)
     : OverlayStrategyUnderlay(capability_checker) {}
 
 OverlayStrategyUnderlayCast::~OverlayStrategyUnderlayCast() {}
 
 bool OverlayStrategyUnderlayCast::Attempt(
     const SkMatrix44& output_color_matrix,
-    const OverlayProcessor::FilterOperationsMap& render_pass_backdrop_filters,
+    const OverlayProcessorInterface::FilterOperationsMap&
+        render_pass_backdrop_filters,
     DisplayResourceProvider* resource_provider,
     RenderPassList* render_pass_list,
+    const PrimaryPlane* primary_plane,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
+  // Before we attempt an overlay strategy, the candidate list should be empty.
+  DCHECK(candidate_list->empty());
   RenderPass* render_pass = render_pass_list->back().get();
   QuadList& quad_list = render_pass->quad_list;
   bool found_underlay = false;
@@ -54,14 +77,15 @@ bool OverlayStrategyUnderlayCast::Attempt(
       // sitting underneath the primary plane. This is only looking at where the
       // quad is supposed to be to replace it with a transparent quad to allow
       // the underlay to be visible.
+      // VIDEO_HOLE implies it requires overlay.
       is_underlay =
+          quad->material == DrawQuad::Material::kVideoHole &&
           OverlayCandidate::FromDrawQuad(resource_provider, output_color_matrix,
-                                         quad, &candidate) &&
-          OverlayCandidate::RequiresOverlay(quad);
+                                         quad, &candidate);
       found_underlay = is_underlay;
     }
 
-    if (!found_underlay && quad->material == DrawQuad::SOLID_COLOR) {
+    if (!found_underlay && quad->material == DrawQuad::Material::kSolidColor) {
       const SolidColorDrawQuad* solid = SolidColorDrawQuad::MaterialCast(quad);
       if (solid->color == SK_ColorBLACK)
         continue;
@@ -80,28 +104,30 @@ bool OverlayStrategyUnderlayCast::Attempt(
   }
 
   if (found_underlay) {
-    // If the primary plane shows up in the candidates list make sure it isn't
-    // opaque otherwise the video underlay won't be visible.
-    if (!candidate_list->empty()) {
-      DCHECK_EQ(1u, candidate_list->size());
-      DCHECK(candidate_list->front().use_output_surface_for_resource);
-      candidate_list->front().is_opaque = false;
-    }
-
     for (auto it = quad_list.begin(); it != quad_list.end(); ++it) {
       OverlayCandidate candidate;
-      if (!OverlayCandidate::FromDrawQuad(
+      if (it->material != DrawQuad::Material::kVideoHole ||
+          !OverlayCandidate::FromDrawQuad(
               resource_provider, output_color_matrix, *it, &candidate)) {
         continue;
       }
 
-      render_pass->quad_list.ReplaceExistingQuadWithOpaqueTransparentSolidColor(
-          it);
-
-      if (!g_overlay_composited_callback.Get().is_null()) {
+      // TODO(guohuideng): when migration to GPU process complete, remove
+      // the code that's for the browser process compositor.
+#if BUILDFLAG(IS_CHROMECAST)
+      if (g_overlay_composited_callback.Get().is_null()) {
+        DCHECK(GetVideoGeometrySetter());
+        GetVideoGeometrySetter()->SetVideoGeometry(
+            candidate.display_rect, candidate.transform,
+            VideoHoleDrawQuad::MaterialCast(*it)->overlay_plane_id);
+      } else {
         g_overlay_composited_callback.Get().Run(candidate.display_rect,
                                                 candidate.transform);
       }
+#endif
+
+      render_pass->quad_list.ReplaceExistingQuadWithOpaqueTransparentSolidColor(
+          it);
 
       break;
     }
@@ -114,8 +140,8 @@ bool OverlayStrategyUnderlayCast::Attempt(
   return found_underlay;
 }
 
-OverlayProcessor::StrategyType OverlayStrategyUnderlayCast::GetUMAEnum() const {
-  return OverlayProcessor::StrategyType::kUnderlayCast;
+OverlayStrategy OverlayStrategyUnderlayCast::GetUMAEnum() const {
+  return OverlayStrategy::kUnderlayCast;
 }
 
 // static
@@ -123,5 +149,14 @@ void OverlayStrategyUnderlayCast::SetOverlayCompositedCallback(
     const OverlayCompositedCallback& cb) {
   g_overlay_composited_callback.Get() = cb;
 }
+
+#if BUILDFLAG(IS_CHROMECAST)
+// static
+void OverlayStrategyUnderlayCast::ConnectVideoGeometrySetter(
+    mojo::PendingRemote<chromecast::media::mojom::VideoGeometrySetter>
+        video_geometry_setter) {
+  GetVideoGeometrySetter().Bind(std::move(video_geometry_setter));
+}
+#endif
 
 }  // namespace viz

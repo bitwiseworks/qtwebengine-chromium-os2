@@ -46,17 +46,6 @@ TEST(NativeValueTraitsImplTest, IDLInterface) {
   EXPECT_EQ(nullptr, internals);
 }
 
-TEST(NativeValueTraitsImplTest, IDLCallbackFunction) {
-  V8TestingScope scope;
-  DummyExceptionStateForTesting exception_state;
-  v8::Local<v8::Function> function =
-      v8::Function::New(scope.GetContext(), nullptr).ToLocalChecked();
-  ASSERT_DEATH_IF_SUPPORTED(
-      NativeValueTraits<V8TestSequenceCallback>::NativeValue(
-          scope.GetIsolate(), function, exception_state),
-      "");
-}
-
 TEST(NativeValueTraitsImplTest, IDLRecord) {
   V8TestingScope scope;
   {
@@ -259,7 +248,7 @@ TEST(NativeValueTraitsImplTest, IDLSequence) {
         EvaluateScriptForArray(scope, "['Vini, vidi, vici.', 65535, 0.125]");
 
     NonThrowableExceptionState exception_state;
-    Vector<ScriptValue> script_value_vector =
+    HeapVector<ScriptValue> script_value_vector =
         NativeValueTraits<IDLSequence<ScriptValue>>::NativeValue(
             scope.GetIsolate(), v8_array, exception_state);
     EXPECT_EQ(3U, script_value_vector.size());

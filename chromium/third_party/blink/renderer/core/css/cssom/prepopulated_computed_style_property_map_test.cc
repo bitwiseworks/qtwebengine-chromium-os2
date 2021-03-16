@@ -19,8 +19,8 @@ class PrepopulatedComputedStylePropertyMapTest : public PageTestBase {
   PrepopulatedComputedStylePropertyMapTest() = default;
 
   void SetElementWithStyle(const String& value) {
-    GetDocument().body()->SetInnerHTMLFromString("<div id='target' style='" +
-                                                 value + "'></div>");
+    GetDocument().body()->setInnerHTML("<div id='target' style='" + value +
+                                       "'></div>");
     UpdateAllLifecyclePhasesForTest();
   }
 
@@ -28,7 +28,7 @@ class PrepopulatedComputedStylePropertyMapTest : public PageTestBase {
     Element* node = GetDocument().getElementById("target");
     return CSSProperty::Get(property_id)
         .CSSValueFromComputedStyle(node->ComputedStyleRef(),
-                                   nullptr /* layout_object */, node,
+                                   nullptr /* layout_object */,
                                    false /* allow_visited_style */);
   }
 
@@ -38,8 +38,8 @@ class PrepopulatedComputedStylePropertyMapTest : public PageTestBase {
 
   void SetUp() override {
     PageTestBase::SetUp(IntSize());
-    declaration_ =
-        CSSComputedStyleDeclaration::Create(GetDocument().documentElement());
+    declaration_ = MakeGarbageCollected<CSSComputedStyleDeclaration>(
+        GetDocument().documentElement());
   }
 
   Node* PageNode() { return GetDocument().documentElement(); }
@@ -50,7 +50,7 @@ class PrepopulatedComputedStylePropertyMapTest : public PageTestBase {
 
 TEST_F(PrepopulatedComputedStylePropertyMapTest, NativePropertyAccessors) {
   Vector<CSSPropertyID> native_properties(
-      {CSSPropertyColor, CSSPropertyAlignItems});
+      {CSSPropertyID::kColor, CSSPropertyID::kAlignItems});
   Vector<AtomicString> empty_custom_properties;
 
   UpdateAllLifecyclePhasesForTest();
@@ -58,29 +58,32 @@ TEST_F(PrepopulatedComputedStylePropertyMapTest, NativePropertyAccessors) {
 
   PrepopulatedComputedStylePropertyMap* map =
       MakeGarbageCollected<PrepopulatedComputedStylePropertyMap>(
-          GetDocument(), node->ComputedStyleRef(), node, native_properties,
+          GetDocument(), node->ComputedStyleRef(), native_properties,
           empty_custom_properties);
 
   DummyExceptionStateForTesting exception_state;
 
-  map->get(&GetDocument(), "color", exception_state);
+  map->get(GetDocument().GetExecutionContext(), "color", exception_state);
   EXPECT_FALSE(exception_state.HadException());
 
-  map->has(&GetDocument(), "color", exception_state);
+  map->has(GetDocument().GetExecutionContext(), "color", exception_state);
   EXPECT_FALSE(exception_state.HadException());
 
-  map->getAll(&GetDocument(), "color", exception_state);
+  map->getAll(GetDocument().GetExecutionContext(), "color", exception_state);
   EXPECT_FALSE(exception_state.HadException());
 
-  map->get(&GetDocument(), "align-contents", exception_state);
+  map->get(GetDocument().GetExecutionContext(), "align-contents",
+           exception_state);
   EXPECT_TRUE(exception_state.HadException());
   exception_state.ClearException();
 
-  map->has(&GetDocument(), "align-contents", exception_state);
+  map->has(GetDocument().GetExecutionContext(), "align-contents",
+           exception_state);
   EXPECT_TRUE(exception_state.HadException());
   exception_state.ClearException();
 
-  map->getAll(&GetDocument(), "align-contents", exception_state);
+  map->getAll(GetDocument().GetExecutionContext(), "align-contents",
+              exception_state);
   EXPECT_TRUE(exception_state.HadException());
   exception_state.ClearException();
 }
@@ -94,40 +97,45 @@ TEST_F(PrepopulatedComputedStylePropertyMapTest, CustomPropertyAccessors) {
 
   PrepopulatedComputedStylePropertyMap* map =
       MakeGarbageCollected<PrepopulatedComputedStylePropertyMap>(
-          GetDocument(), node->ComputedStyleRef(), node,
-          empty_native_properties, custom_properties);
+          GetDocument(), node->ComputedStyleRef(), empty_native_properties,
+          custom_properties);
 
   DummyExceptionStateForTesting exception_state;
 
-  const CSSStyleValue* foo = map->get(&GetDocument(), "--foo", exception_state);
+  const CSSStyleValue* foo =
+      map->get(GetDocument().GetExecutionContext(), "--foo", exception_state);
   ASSERT_NE(nullptr, foo);
   ASSERT_EQ(CSSStyleValue::kUnparsedType, foo->GetType());
   EXPECT_FALSE(exception_state.HadException());
 
-  EXPECT_EQ(true, map->has(&GetDocument(), "--foo", exception_state));
+  EXPECT_EQ(true, map->has(GetDocument().GetExecutionContext(), "--foo",
+                           exception_state));
   EXPECT_FALSE(exception_state.HadException());
 
-  CSSStyleValueVector fooAll =
-      map->getAll(&GetDocument(), "--foo", exception_state);
+  CSSStyleValueVector fooAll = map->getAll(GetDocument().GetExecutionContext(),
+                                           "--foo", exception_state);
   EXPECT_EQ(1U, fooAll.size());
   ASSERT_NE(nullptr, fooAll[0]);
   ASSERT_EQ(CSSStyleValue::kUnparsedType, fooAll[0]->GetType());
   EXPECT_FALSE(exception_state.HadException());
 
-  EXPECT_EQ(nullptr, map->get(&GetDocument(), "--quix", exception_state));
+  EXPECT_EQ(nullptr, map->get(GetDocument().GetExecutionContext(), "--quix",
+                              exception_state));
   EXPECT_FALSE(exception_state.HadException());
 
-  EXPECT_EQ(false, map->has(&GetDocument(), "--quix", exception_state));
+  EXPECT_EQ(false, map->has(GetDocument().GetExecutionContext(), "--quix",
+                            exception_state));
   EXPECT_FALSE(exception_state.HadException());
 
   EXPECT_EQ(CSSStyleValueVector(),
-            map->getAll(&GetDocument(), "--quix", exception_state));
+            map->getAll(GetDocument().GetExecutionContext(), "--quix",
+                        exception_state));
   EXPECT_FALSE(exception_state.HadException());
 }
 
 TEST_F(PrepopulatedComputedStylePropertyMapTest, WidthBeingAuto) {
   SetElementWithStyle("width:auto");
-  const CSSValue* value = GetNativeValue(CSSPropertyWidth);
+  const CSSValue* value = GetNativeValue(CSSPropertyID::kWidth);
   EXPECT_EQ("auto", value->CssText());
 }
 

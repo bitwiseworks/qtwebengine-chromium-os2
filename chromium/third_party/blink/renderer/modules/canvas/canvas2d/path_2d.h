@@ -28,9 +28,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_PATH_2D_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_CANVAS_CANVAS2D_PATH_2D_H_
 
+#include "base/macros.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_dom_matrix_2d_init.h"
 #include "third_party/blink/renderer/bindings/modules/v8/path_2d_or_string.h"
 #include "third_party/blink/renderer/core/geometry/dom_matrix.h"
-#include "third_party/blink/renderer/core/geometry/dom_matrix_2d_init.h"
 #include "third_party/blink/renderer/core/svg/svg_path_utilities.h"
 #include "third_party/blink/renderer/modules/canvas/canvas2d/canvas_path.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
@@ -43,7 +44,6 @@ class ExceptionState;
 
 class MODULES_EXPORT Path2D final : public ScriptWrappable, public CanvasPath {
   DEFINE_WRAPPERTYPEINFO();
-  WTF_MAKE_NONCOPYABLE(Path2D);
 
  public:
   static Path2D* Create(Path2DOrString pathorstring) {
@@ -67,7 +67,10 @@ class MODULES_EXPORT Path2D final : public ScriptWrappable, public CanvasPath {
                ExceptionState& exception_state) {
     DOMMatrixReadOnly* matrix =
         DOMMatrixReadOnly::fromMatrix2D(transform, exception_state);
-    if (!matrix)
+    if (!matrix || !std::isfinite(matrix->m11()) ||
+        !std::isfinite(matrix->m12()) || !std::isfinite(matrix->m21()) ||
+        !std::isfinite(matrix->m22()) || !std::isfinite(matrix->m41()) ||
+        !std::isfinite(matrix->m42()))
       return;
     path_.AddPath(path->GetPath(), matrix->GetAffineTransform());
   }
@@ -79,6 +82,9 @@ class MODULES_EXPORT Path2D final : public ScriptWrappable, public CanvasPath {
     BuildPathFromString(path_data, path_);
   }
   ~Path2D() override = default;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(Path2D);
 };
 
 }  // namespace blink

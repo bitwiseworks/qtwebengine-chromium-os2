@@ -87,7 +87,7 @@ int do_show(int nArg, char **azArg){
     const char *zName;
     int bConfig;
     int eOpt;
-  } aOpt [] = {
+  } aOpt [] = { 
     { "array",       0, LSM_INFO_ARRAY_STRUCTURE },
     { "array-pages", 0, LSM_INFO_ARRAY_PAGES },
     { "blocksize",   1, LSM_CONFIG_BLOCK_SIZE },
@@ -95,14 +95,14 @@ int do_show(int nArg, char **azArg){
     { "freelist",    0, LSM_INFO_FREELIST },
     { "page-ascii",  0, LSM_INFO_PAGE_ASCII_DUMP },
     { "page-hex",    0, LSM_INFO_PAGE_HEX_DUMP },
-    { 0, 0 }
+    { 0, 0 } 
   };
 
-  char *z = 0;
+  char *z = 0; 
   int iDb = 0;                    /* Index of DATABASE in azArg[] */
 
   /* Check if there is a "-config" option: */
-  if( nArg>2 && strlen(azArg[0])>1
+  if( nArg>2 && strlen(azArg[0])>1 
    && memcmp(azArg[0], "-config", strlen(azArg[0]))==0
   ){
     zConfig = azArg[1];

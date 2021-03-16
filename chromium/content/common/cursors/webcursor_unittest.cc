@@ -1,356 +1,213 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
-#include "base/pickle.h"
 #include "build/build_config.h"
 #include "content/common/cursors/webcursor.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/platform/web_cursor_info.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/cursor/cursor.h"
+#include "ui/base/cursor/cursor_lookup.h"
+#include "ui/base/mojom/cursor_type.mojom-shared.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
 #endif
 
-using blink::WebCursorInfo;
-
 namespace content {
+namespace {
 
-TEST(WebCursorTest, OKCursorSerialization) {
-  WebCursor custom_cursor;
-  // This is a valid custom cursor.
-  base::Pickle ok_custom_pickle;
-  // Type and hotspots.
-  ok_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  ok_custom_pickle.WriteInt(0);
-  ok_custom_pickle.WriteInt(0);
-  // X & Y
-  ok_custom_pickle.WriteInt(1);
-  ok_custom_pickle.WriteInt(1);
-  // Scale
-  ok_custom_pickle.WriteFloat(1.0);
-  // Data len including enough data for a 1x1 image.
-  ok_custom_pickle.WriteInt(4);
-  ok_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  ok_custom_pickle.WriteUInt32(0);
-  base::PickleIterator iter(ok_custom_pickle);
-  EXPECT_TRUE(custom_cursor.Deserialize(&iter));
+// Creates a basic bitmap for testing with the given width and height.
+SkBitmap CreateTestBitmap(int width, int height) {
+  SkBitmap bitmap;
+  bitmap.allocN32Pixels(width, height);
+  bitmap.eraseColor(SK_ColorRED);
+  return bitmap;
 }
 
-TEST(WebCursorTest, BrokenCursorSerialization) {
-  WebCursor custom_cursor;
-  // This custom cursor has not been send with enough data.
-  base::Pickle short_custom_pickle;
-  // Type and hotspots.
-  short_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  short_custom_pickle.WriteInt(0);
-  short_custom_pickle.WriteInt(0);
-  // X & Y
-  short_custom_pickle.WriteInt(1);
-  short_custom_pickle.WriteInt(1);
-  // Scale
-  short_custom_pickle.WriteFloat(1.0);
-  // Data len not including enough data for a 1x1 image.
-  short_custom_pickle.WriteInt(3);
-  short_custom_pickle.WriteUInt32(0);
-  base::PickleIterator iter(short_custom_pickle);
-  EXPECT_FALSE(custom_cursor.Deserialize(&iter));
+TEST(WebCursorTest, DefaultConstructor) {
+  WebCursor webcursor;
+  EXPECT_EQ(ui::mojom::CursorType::kNull, webcursor.cursor().type());
+  EXPECT_TRUE(webcursor.cursor().custom_bitmap().isNull());
+  EXPECT_TRUE(webcursor.cursor().custom_hotspot().IsOrigin());
+  EXPECT_EQ(1.f, webcursor.cursor().image_scale_factor());
+}
 
-  // This custom cursor has enough data but is too big.
-  base::Pickle large_custom_pickle;
-  // Type and hotspots.
-  large_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  large_custom_pickle.WriteInt(0);
-  large_custom_pickle.WriteInt(0);
-  // X & Y
-  static const int kTooBigSize = 4096 + 1;
-  large_custom_pickle.WriteInt(kTooBigSize);
-  large_custom_pickle.WriteInt(1);
-  // Scale
-  large_custom_pickle.WriteFloat(1.0);
-  // Data len including enough data for a 4097x1 image.
-  large_custom_pickle.WriteInt(kTooBigSize * 4);
-  for (int i = 0; i < kTooBigSize; ++i)
-    large_custom_pickle.WriteUInt32(0);
-  iter = base::PickleIterator(large_custom_pickle);
-  EXPECT_FALSE(custom_cursor.Deserialize(&iter));
+TEST(WebCursorTest, WebCursorCursorConstructor) {
+  ui::Cursor cursor(ui::mojom::CursorType::kHand);
+  WebCursor webcursor(cursor);
+  EXPECT_EQ(cursor, webcursor.cursor());
+}
 
-  // This custom cursor uses negative lengths.
-  base::Pickle neg_custom_pickle;
-  // Type and hotspots.
-  neg_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  neg_custom_pickle.WriteInt(0);
-  neg_custom_pickle.WriteInt(0);
-  // X & Y
-  neg_custom_pickle.WriteInt(-1);
-  neg_custom_pickle.WriteInt(-1);
-  // Scale
-  neg_custom_pickle.WriteFloat(1.0);
-  // Data len including enough data for a 1x1 image.
-  neg_custom_pickle.WriteInt(4);
-  neg_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  neg_custom_pickle.WriteUInt32(0);
-  iter = base::PickleIterator(neg_custom_pickle);
-  EXPECT_FALSE(custom_cursor.Deserialize(&iter));
+TEST(WebCursorTest, WebCursorCursorConstructorCustom) {
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_bitmap(CreateTestBitmap(32, 32));
+  cursor.set_custom_hotspot(gfx::Point(10, 20));
+  cursor.set_image_scale_factor(2.f);
+  WebCursor webcursor(cursor);
+  EXPECT_EQ(cursor, webcursor.cursor());
 
-  // This custom cursor uses zero scale.
-  base::Pickle scale_zero_custom_pickle;
-  // Type and hotspots.
-  scale_zero_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  scale_zero_custom_pickle.WriteInt(0);
-  scale_zero_custom_pickle.WriteInt(0);
-  // X & Y
-  scale_zero_custom_pickle.WriteInt(1);
-  scale_zero_custom_pickle.WriteInt(1);
-  // Scale
-  scale_zero_custom_pickle.WriteFloat(0);
-  // Data len including enough data for a 1x1 image.
-  scale_zero_custom_pickle.WriteInt(4);
-  scale_zero_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  scale_zero_custom_pickle.WriteUInt32(0);
-  iter = base::PickleIterator(scale_zero_custom_pickle);
-  EXPECT_FALSE(custom_cursor.Deserialize(&iter));
+#if defined(USE_AURA)
+  // Test if the custom cursor is correctly cached and updated
+  // on aura platform.
+  gfx::NativeCursor native_cursor = webcursor.GetNativeCursor();
+  EXPECT_EQ(gfx::Point(5, 10), GetCursorHotspot(native_cursor));
+  EXPECT_TRUE(webcursor.has_custom_cursor_for_test());
+  webcursor.SetCursor(cursor);
+  EXPECT_FALSE(webcursor.has_custom_cursor_for_test());
+  webcursor.GetNativeCursor();
+  EXPECT_TRUE(webcursor.has_custom_cursor_for_test());
 
-  // This custom cursor uses tiny scale.
-  base::Pickle scale_tiny_custom_pickle;
-  // Type and hotspots.
-  scale_tiny_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  scale_tiny_custom_pickle.WriteInt(0);
-  scale_tiny_custom_pickle.WriteInt(0);
-  // X & Y
-  scale_tiny_custom_pickle.WriteInt(1);
-  scale_tiny_custom_pickle.WriteInt(1);
-  // Scale
-  scale_tiny_custom_pickle.WriteFloat(0.001f);
-  // Data len including enough data for a 1x1 image.
-  scale_tiny_custom_pickle.WriteInt(4);
-  scale_tiny_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  scale_tiny_custom_pickle.WriteUInt32(0);
-  iter = base::PickleIterator(scale_tiny_custom_pickle);
-  EXPECT_FALSE(custom_cursor.Deserialize(&iter));
+#if defined(USE_OZONE)
+  // Test if the rotating custom cursor works correctly.
+  display::Display display;
+  display.set_panel_rotation(display::Display::ROTATE_90);
+  webcursor.SetDisplayInfo(display);
+  EXPECT_FALSE(webcursor.has_custom_cursor_for_test());
+  native_cursor = webcursor.GetNativeCursor();
+  EXPECT_TRUE(webcursor.has_custom_cursor_for_test());
+  // Hotspot should be scaled & rotated.  We're using the icon created for 2.0,
+  // on the display with dsf=1.0, so the host spot should be
+  // ((32 - 20) / 2, 10 / 2) = (6, 5).
+  EXPECT_EQ(gfx::Point(6, 5), GetCursorHotspot(native_cursor));
+#endif
+#endif
+}
+
+TEST(WebCursorTest, CopyConstructorType) {
+  ui::Cursor cursor(ui::mojom::CursorType::kHand);
+  WebCursor webcursor(cursor);
+  WebCursor copy(webcursor);
+  EXPECT_EQ(webcursor, copy);
+}
+
+TEST(WebCursorTest, CopyConstructorCustom) {
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_bitmap(CreateTestBitmap(32, 32));
+  cursor.set_custom_hotspot(gfx::Point(10, 20));
+  cursor.set_image_scale_factor(1.5f);
+  WebCursor webcursor(cursor);
+  WebCursor copy(webcursor);
+  EXPECT_EQ(webcursor, copy);
 }
 
 TEST(WebCursorTest, ClampHotspot) {
-  WebCursor custom_cursor;
-  // This is a valid custom cursor.
-  base::Pickle ok_custom_pickle;
-  // Type and hotspots.
-  ok_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  // Hotspot is invalid --- outside the bounds of the image.
-  ok_custom_pickle.WriteInt(5);
-  ok_custom_pickle.WriteInt(5);
-  // X & Y
-  ok_custom_pickle.WriteInt(2);
-  ok_custom_pickle.WriteInt(2);
-  // Scale
-  ok_custom_pickle.WriteFloat(1.0);
-  // Data len including enough data for a 2x2 image.
-  ok_custom_pickle.WriteInt(4 * 4);
-  for (size_t i = 0; i < 4; i++)
-    ok_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  ok_custom_pickle.WriteUInt32(0);
-  base::PickleIterator iter(ok_custom_pickle);
-  EXPECT_TRUE(custom_cursor.Deserialize(&iter));
-
-  // Convert to WebCursorInfo, make sure the hotspot got clamped.
-  CursorInfo info;
-  custom_cursor.GetCursorInfo(&info);
-  EXPECT_EQ(gfx::Point(1, 1), info.hotspot);
-
-  // Set hotspot to an invalid point again, pipe back through WebCursor,
-  // and make sure the hotspot got clamped again.
-  info.hotspot = gfx::Point(-1, -1);
-  custom_cursor.InitFromCursorInfo(info);
-  custom_cursor.GetCursorInfo(&info);
-  EXPECT_EQ(gfx::Point(0, 0), info.hotspot);
+  // Initialize a cursor with an invalid hotspot; it should be clamped.
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_hotspot(gfx::Point(100, 100));
+  cursor.set_custom_bitmap(CreateTestBitmap(5, 7));
+  WebCursor webcursor(cursor);
+  EXPECT_EQ(gfx::Point(4, 6), webcursor.cursor().custom_hotspot());
+  // SetCursor should also clamp the hotspot.
+  EXPECT_TRUE(webcursor.SetCursor(cursor));
+  EXPECT_EQ(gfx::Point(4, 6), webcursor.cursor().custom_hotspot());
 }
 
-TEST(WebCursorTest, EmptyImage) {
-  WebCursor custom_cursor;
-  base::Pickle broken_cursor_pickle;
-  broken_cursor_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  // Hotspot is at origin
-  broken_cursor_pickle.WriteInt(0);
-  broken_cursor_pickle.WriteInt(0);
-  // X & Y are empty
-  broken_cursor_pickle.WriteInt(0);
-  broken_cursor_pickle.WriteInt(0);
-  // Scale
-  broken_cursor_pickle.WriteFloat(1.0);
-  // No data for the image since the size is 0.
-  broken_cursor_pickle.WriteInt(0);
-  // Custom Windows message.
-  broken_cursor_pickle.WriteInt(0);
+TEST(WebCursorTest, SetCursor) {
+  WebCursor webcursor;
+  EXPECT_TRUE(webcursor.SetCursor(ui::Cursor()));
+  EXPECT_TRUE(webcursor.SetCursor(ui::Cursor(ui::mojom::CursorType::kHand)));
+  EXPECT_TRUE(webcursor.SetCursor(ui::Cursor(ui::mojom::CursorType::kCustom)));
 
-  // Make sure we can read this on all platforms; it is technicaally a valid
-  // cursor.
-  base::PickleIterator iter(broken_cursor_pickle);
-  EXPECT_TRUE(custom_cursor.Deserialize(&iter));
-}
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_bitmap(CreateTestBitmap(32, 32));
+  cursor.set_custom_hotspot(gfx::Point(10, 20));
+  cursor.set_image_scale_factor(1.5f);
+  EXPECT_TRUE(webcursor.SetCursor(cursor));
 
-TEST(WebCursorTest, Scale2) {
-  WebCursor custom_cursor;
-  // This is a valid custom cursor.
-  base::Pickle ok_custom_pickle;
-  // Type and hotspots.
-  ok_custom_pickle.WriteInt(WebCursorInfo::kTypeCustom);
-  ok_custom_pickle.WriteInt(0);
-  ok_custom_pickle.WriteInt(0);
-  // X & Y
-  ok_custom_pickle.WriteInt(1);
-  ok_custom_pickle.WriteInt(1);
-  // Scale - 2 image pixels per UI pixel.
-  ok_custom_pickle.WriteFloat(2.0);
-  // Data len including enough data for a 1x1 image.
-  ok_custom_pickle.WriteInt(4);
-  ok_custom_pickle.WriteUInt32(0);
-  // Custom Windows message.
-  ok_custom_pickle.WriteUInt32(0);
-  base::PickleIterator iter(ok_custom_pickle);
-  EXPECT_TRUE(custom_cursor.Deserialize(&iter));
-}
+  // SetCursor should return false when the scale factor is too small.
+  cursor.set_image_scale_factor(0.001f);
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
 
-TEST(WebCursorTest, AlphaConversion) {
-  SkBitmap bitmap;
-  SkPMColor testColor = SkPreMultiplyARGB(10, 255, 255, 255);
-  bitmap.allocN32Pixels(1,1);
-  *bitmap.getAddr32(0, 0) = testColor;
-  CursorInfo cursor_info;
-  cursor_info.type = WebCursorInfo::kTypeCustom;
-  cursor_info.custom_image = bitmap;
-  cursor_info.image_scale_factor = 1;
-  WebCursor custom_cursor;
+  // SetCursor should return false when the scale factor is too large.
+  cursor.set_image_scale_factor(1000.f);
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
 
-  // This round trip will convert the cursor to unpremultiplied form.
-  custom_cursor.InitFromCursorInfo(cursor_info);
-  custom_cursor.GetCursorInfo(&cursor_info);
-  EXPECT_EQ(kUnpremul_SkAlphaType, cursor_info.custom_image.alphaType());
-  EXPECT_EQ(testColor,
-            SkPreMultiplyColor(*cursor_info.custom_image.getAddr32(0, 0)));
+  // SetCursor should return false when the image width is too large.
+  cursor.set_image_scale_factor(1.f);
+  cursor.set_custom_bitmap(CreateTestBitmap(1025, 3));
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
 
-  // Second round trip should not do any conversion because data is already
-  // unpremultiplied.
-  custom_cursor.InitFromCursorInfo(cursor_info);
-  custom_cursor.GetCursorInfo(&cursor_info);
-  EXPECT_EQ(kUnpremul_SkAlphaType, cursor_info.custom_image.alphaType());
-  EXPECT_EQ(testColor,
-            SkPreMultiplyColor(*cursor_info.custom_image.getAddr32(0, 0)));
+  // SetCursor should return false when the image height is too large.
+  cursor.set_custom_bitmap(CreateTestBitmap(3, 1025));
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
 
-#if defined(OS_MACOSX)
-  // On MacOS, test roundtrip through NSCursor conversion.
-  WebCursor custom_cursor_copy;
-  custom_cursor_copy.InitFromNSCursor(custom_cursor.GetNativeCursor());
-  custom_cursor_copy.GetCursorInfo(&cursor_info);
-  EXPECT_EQ(kUnpremul_SkAlphaType, cursor_info.custom_image.alphaType());
-  EXPECT_EQ(testColor,
-            SkPreMultiplyColor(*cursor_info.custom_image.getAddr32(0, 0)));
-#endif
+  // SetCursor should return false when the scaled image width is too large.
+  cursor.set_image_scale_factor(0.02f);
+  cursor.set_custom_bitmap(CreateTestBitmap(50, 5));
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
+
+  // SetCursor should return false when the scaled image height is too large.
+  cursor.set_image_scale_factor(0.1f);
+  cursor.set_custom_bitmap(CreateTestBitmap(5, 200));
+  EXPECT_FALSE(webcursor.SetCursor(cursor));
 }
 
 #if defined(USE_AURA)
 TEST(WebCursorTest, CursorScaleFactor) {
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_hotspot(gfx::Point(0, 1));
+  cursor.set_image_scale_factor(2.0f);
+  cursor.set_custom_bitmap(CreateTestBitmap(128, 128));
+  WebCursor webcursor(cursor);
+
   display::Display display;
-  display.set_device_scale_factor(80.2f);
-
-  CursorInfo info;
-  info.type = WebCursorInfo::kTypeCustom;
-  info.hotspot = gfx::Point(0, 1);
-  info.image_scale_factor = 2.0f;
-
-  SkImageInfo image_info =
-      SkImageInfo::MakeN32(256, 256, kUnpremul_SkAlphaType);
-  info.custom_image = SkBitmap();
-  info.custom_image.setInfo(image_info);
-  info.custom_image.allocN32Pixels(256, 256);
-  info.custom_image.eraseColor(0xFFFFFFFF);
-
-  WebCursor cursor;
-  cursor.InitFromCursorInfo(info);
-  cursor.SetDisplayInfo(display);
+  display.set_device_scale_factor(4.2f);
+  webcursor.SetDisplayInfo(display);
 
 #if defined(USE_OZONE)
   // For Ozone cursors, the size of the cursor is capped at 64px, and this is
   // enforce through the calculated scale factor.
-  EXPECT_EQ(0.25f, cursor.GetNativeCursor().device_scale_factor());
+  EXPECT_EQ(0.5f, webcursor.GetNativeCursor().image_scale_factor());
 #else
-  EXPECT_EQ(40.1f, cursor.GetNativeCursor().device_scale_factor());
+  EXPECT_EQ(2.1f, webcursor.GetNativeCursor().image_scale_factor());
 #endif
 
   // Test that the Display dsf is copied.
-  WebCursor cursor2 = cursor;
-  EXPECT_EQ(cursor.GetNativeCursor().device_scale_factor(),
-            cursor2.GetNativeCursor().device_scale_factor());
+  WebCursor copy(webcursor);
+  EXPECT_EQ(webcursor.GetNativeCursor().image_scale_factor(),
+            copy.GetNativeCursor().image_scale_factor());
 }
 
 TEST(WebCursorTest, UnscaledImageCopy) {
-  CursorInfo info;
-  info.type = WebCursorInfo::kTypeCustom;
-  info.hotspot = gfx::Point(0, 1);
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_hotspot(gfx::Point(0, 1));
+  cursor.set_custom_bitmap(CreateTestBitmap(2, 2));
+  WebCursor webcursor(cursor);
 
-  SkImageInfo image_info = SkImageInfo::MakeN32(2, 2, kUnpremul_SkAlphaType);
-  info.custom_image = SkBitmap();
-  info.custom_image.setInfo(image_info);
-  info.custom_image.allocN32Pixels(2, 2);
-  info.custom_image.eraseColor(0xFFFFFFFF);
-
-  WebCursor cursor;
-  cursor.InitFromCursorInfo(info);
-
-  SkBitmap image_copy;
+  SkBitmap copy;
   gfx::Point hotspot;
-  float dsf;
-  cursor.CreateScaledBitmapAndHotspotFromCustomData(&image_copy, &hotspot,
-                                                    &dsf);
-  EXPECT_EQ(1.0f, dsf);
-
-  EXPECT_EQ(kBGRA_8888_SkColorType, image_copy.colorType());
-  EXPECT_EQ(kUnpremul_SkAlphaType, image_copy.alphaType());
-  EXPECT_EQ(2, image_copy.width());
-  EXPECT_EQ(2, image_copy.height());
+  float dsf = 0.f;
+  webcursor.CreateScaledBitmapAndHotspotFromCustomData(&copy, &hotspot, &dsf);
+  EXPECT_EQ(1.f, dsf);
+  EXPECT_EQ(2, copy.width());
+  EXPECT_EQ(2, copy.height());
   EXPECT_EQ(0, hotspot.x());
   EXPECT_EQ(1, hotspot.y());
 }
 #endif
 
 #if defined(OS_WIN)
-namespace {
+void ScaleCursor(float scale, int hotspot_x, int hotspot_y) {
+  ui::Cursor cursor(ui::mojom::CursorType::kCustom);
+  cursor.set_custom_hotspot(gfx::Point(hotspot_x, hotspot_y));
+  cursor.set_custom_bitmap(CreateTestBitmap(10, 10));
+  WebCursor webcursor(cursor);
 
-void ScaleCursor(float scale_factor, int hotspot_x, int hotspot_y) {
   display::Display display;
-  display.set_device_scale_factor(scale_factor);
+  display.set_device_scale_factor(scale);
+  webcursor.SetDisplayInfo(display);
 
-  CursorInfo info;
-  info.type = WebCursorInfo::kTypeCustom;
-  info.hotspot = gfx::Point(hotspot_x, hotspot_y);
-
-  info.custom_image = SkBitmap();
-  info.custom_image.allocN32Pixels(10, 10);
-  info.custom_image.eraseColor(0);
-
-  WebCursor cursor;
-  cursor.SetDisplayInfo(display);
-  cursor.InitFromCursorInfo(info);
-
-  HCURSOR windows_cursor_handle = cursor.GetNativeCursor().platform();
+  HCURSOR windows_cursor_handle = webcursor.GetNativeCursor().platform();
   EXPECT_NE(nullptr, windows_cursor_handle);
   ICONINFO windows_icon_info;
   EXPECT_TRUE(GetIconInfo(windows_cursor_handle, &windows_icon_info));
   EXPECT_FALSE(windows_icon_info.fIcon);
-  EXPECT_EQ(static_cast<DWORD>(scale_factor * hotspot_x),
-            windows_icon_info.xHotspot);
-  EXPECT_EQ(static_cast<DWORD>(scale_factor * hotspot_y),
-            windows_icon_info.yHotspot);
+  EXPECT_EQ(static_cast<DWORD>(scale * hotspot_x), windows_icon_info.xHotspot);
+  EXPECT_EQ(static_cast<DWORD>(scale * hotspot_y), windows_icon_info.yHotspot);
 }
-
-}  // namespace
 
 TEST(WebCursorTest, WindowsCursorScaledAtHiDpi) {
   ScaleCursor(2.0f, 4, 6);
@@ -359,4 +216,5 @@ TEST(WebCursorTest, WindowsCursorScaledAtHiDpi) {
 }
 #endif
 
+}  // namespace
 }  // namespace content

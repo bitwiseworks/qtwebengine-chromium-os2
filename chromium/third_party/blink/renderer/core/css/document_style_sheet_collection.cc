@@ -50,11 +50,8 @@ DocumentStyleSheetCollection::DocumentStyleSheetCollection(
 void DocumentStyleSheetCollection::CollectStyleSheetsFromCandidates(
     StyleEngine& master_engine,
     DocumentStyleSheetCollector& collector) {
-  // TODO(keishi) Check added for crbug.com/699269 diagnosis. Remove once done.
-  CHECK(HeapObjectHeader::FromPayload(this)->IsValid());
   CHECK(ThreadState::Current()->IsOnThreadHeap(this));
   for (Node* n : style_sheet_candidate_nodes_) {
-    CHECK(HeapObjectHeader::FromPayload(n)->IsValid());
     CHECK(ThreadState::Current()->IsOnThreadHeap(n));
     StyleSheetCandidate candidate(*n);
 
@@ -84,7 +81,7 @@ void DocumentStyleSheetCollection::CollectStyleSheetsFromCandidates(
             GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
       continue;
 
-    CSSStyleSheet* css_sheet = ToCSSStyleSheet(sheet);
+    CSSStyleSheet* css_sheet = To<CSSStyleSheet>(sheet);
     collector.AppendActiveStyleSheet(
         std::make_pair(css_sheet, master_engine.RuleSetForSheet(*css_sheet)));
   }
@@ -124,7 +121,7 @@ void DocumentStyleSheetCollection::CollectStyleSheets(
 void DocumentStyleSheetCollection::UpdateActiveStyleSheets(
     StyleEngine& master_engine) {
   // StyleSheetCollection is GarbageCollected<>, allocate it on the heap.
-  StyleSheetCollection* collection = StyleSheetCollection::Create();
+  auto* collection = MakeGarbageCollected<StyleSheetCollection>();
   ActiveDocumentStyleSheetCollector collector(*collection);
   CollectStyleSheets(master_engine, collector);
   ApplyActiveStyleSheetChanges(*collection);
@@ -144,7 +141,7 @@ void DocumentStyleSheetCollection::CollectViewportRules(
             GetDocument().GetStyleEngine().PreferredStylesheetSetName()))
       continue;
     viewport_resolver.CollectViewportRulesFromAuthorSheet(
-        *ToCSSStyleSheet(sheet));
+        To<CSSStyleSheet>(*sheet));
   }
 }
 

@@ -90,9 +90,7 @@ static_library("libwebp_dec") {
 }
 
 static_library("libwebp_demux") {
-  sources = [
-    "src/demux/demux.c",
-  ]
+  sources = [ "src/demux/demux.c" ]
   all_dependent_configs = [ ":libwebp_config" ]
   configs += [ ":libwebp_config_internal" ]
   configs -= [ "//build/config/compiler:chromium_code" ]
@@ -186,7 +184,7 @@ static_library("libwebp_dsp") {
     ":libwebp_webp",
   ]
   if (is_android) {
-    deps += [ "//third_party/android_tools:cpu_features" ]
+    deps += [ "//third_party/android_ndk:cpu_features" ]
   }
   if (current_cpu == "x86" || current_cpu == "x64") {
     defines = [
@@ -383,9 +381,7 @@ static_library("libwebp_utils") {
 
   public_configs = [ ":libwebp_utils_warnings" ]
 
-  deps = [
-    ":libwebp_webp",
-  ]
+  deps = [ ":libwebp_webp" ]
 }
 
 if (!use_system_libwebp) {
@@ -457,6 +453,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imageio_util") {
     sources = [
+      "examples/unicode.h",
       "imageio/imageio_util.c",
       "imageio/imageio_util.h",
     ]
@@ -467,9 +464,7 @@ if (current_toolchain == host_toolchain) {
       configs += [ "//build/config/compiler:optimize_max" ]
     }
 
-    deps = [
-      ":libwebp_webp",
-    ]
+    deps = [ ":libwebp_webp" ]
     configs += [ ":libwebp_config" ]
     configs += [ ":libwebp_config_internal" ]
     visibility = [ ":*" ]
@@ -477,6 +472,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imagedec") {
     sources = [
+      "examples/unicode.h",
       "imageio/image_dec.c",
       "imageio/image_dec.h",
       "imageio/jpegdec.c",
@@ -515,6 +511,7 @@ if (current_toolchain == host_toolchain) {
 
   source_set("imageenc") {
     sources = [
+      "examples/unicode.h",
       "imageio/image_enc.c",
       "imageio/image_enc.h",
     ]
@@ -538,6 +535,7 @@ if (current_toolchain == host_toolchain) {
     sources = [
       "examples/cwebp.c",
       "examples/stopwatch.h",
+      "examples/unicode.h",
     ]
 
     deps = [
@@ -562,6 +560,7 @@ if (current_toolchain == host_toolchain) {
     sources = [
       "examples/dwebp.c",
       "examples/stopwatch.h",
+      "examples/unicode.h",
     ]
 
     deps = [
@@ -590,9 +589,7 @@ if (current_toolchain == host_toolchain) {
 #     Eliminated need for cflags_cc.
 
 fuzzer_test("libwebp_simple_api_fuzzer") {
-  sources = [
-    "fuzzing/fuzz_simple_api.cc",
-  ]
+  sources = [ "fuzzing/fuzz_simple_api.cc" ]
   dict = "fuzzing/fuzz.dict"
   seed_corpus = "fuzzing/fuzz_seed_corpus"
   deps = [
@@ -605,9 +602,7 @@ fuzzer_test("libwebp_simple_api_fuzzer") {
 }
 
 fuzzer_test("libwebp_advanced_api_fuzzer") {
-  sources = [
-    "fuzzing/fuzz_advanced_api.cc",
-  ]
+  sources = [ "fuzzing/fuzz_advanced_api.cc" ]
   dict = "fuzzing/fuzz.dict"
   seed_corpus = "fuzzing/fuzz_seed_corpus"
   deps = [
@@ -636,9 +631,7 @@ fuzzer_test("libwebp_animation_api_fuzzer") {
 }
 
 fuzzer_test("libwebp_demux_api_fuzzer") {
-  sources = [
-    "fuzzing/fuzz_demux_api.cc",
-  ]
+  sources = [ "fuzzing/fuzz_demux_api.cc" ]
   dict = "fuzzing/fuzz.dict"
   seed_corpus = "fuzzing/fuzz_seed_corpus"
   deps = [
@@ -651,9 +644,7 @@ fuzzer_test("libwebp_demux_api_fuzzer") {
 }
 
 fuzzer_test("libwebp_enc_dec_api_fuzzer") {
-  sources = [
-    "fuzzing/fuzz_webp_enc_dec.cc",
-  ]
+  sources = [ "fuzzing/fuzz_webp_enc_dec.cc" ]
   dict = "fuzzing/fuzz.dict"
   seed_corpus = "fuzzing/fuzz_seed_corpus"
   deps = [

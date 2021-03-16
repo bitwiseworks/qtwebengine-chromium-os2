@@ -51,13 +51,14 @@ Geolocation* NavigatorGeolocation::geolocation(Navigator& navigator) {
 }
 
 Geolocation* NavigatorGeolocation::geolocation() {
-  if (!geolocation_ && GetSupplementable()->GetFrame())
-    geolocation_ =
-        Geolocation::Create(GetSupplementable()->GetFrame()->GetDocument());
+  if (!geolocation_ && GetSupplementable()->GetFrame()) {
+    geolocation_ = Geolocation::Create(
+        GetSupplementable()->GetFrame()->GetDocument()->ToExecutionContext());
+  }
   return geolocation_;
 }
 
-void NavigatorGeolocation::Trace(blink::Visitor* visitor) {
+void NavigatorGeolocation::Trace(Visitor* visitor) {
   visitor->Trace(geolocation_);
   Supplement<Navigator>::Trace(visitor);
 }

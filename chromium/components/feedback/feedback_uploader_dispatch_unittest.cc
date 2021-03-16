@@ -13,10 +13,11 @@
 #include "base/task/task_traits.h"
 #include "base/test/bind_test_util.h"
 #include "components/feedback/feedback_uploader_factory.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "components/variations/variations_associated_data.h"
 #include "components/variations/variations_http_header_provider.h"
+#include "content/public/test/browser_task_environment.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "net/http/http_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
@@ -42,7 +43,7 @@ void QueueReport(FeedbackUploader* uploader, const std::string& report_data) {
 class FeedbackUploaderDispatchTest : public ::testing::Test {
  protected:
   FeedbackUploaderDispatchTest()
-      : browser_thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+      : task_environment_(content::BrowserTaskEnvironment::IO_MAINLOOP),
         shared_url_loader_factory_(
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)) {}
@@ -74,7 +75,7 @@ class FeedbackUploaderDispatchTest : public ::testing::Test {
   content::BrowserContext* context() { return &context_; }
 
  private:
-  content::TestBrowserThreadBundle browser_thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
   content::TestBrowserContext context_;
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
@@ -87,25 +88,20 @@ TEST_F(FeedbackUploaderDispatchTest, VariationHeaders) {
   // headers. Also, the variations header provider may have been registered to
   // observe some other field trial list, so reset it.
   variations::VariationsHttpHeaderProvider::GetInstance()->ResetForTesting();
-  base::FieldTrialList field_trial_list_(nullptr);
   CreateFieldTrialWithId("Test", "Group1", 123);
 
   FeedbackUploader uploader(
-      shared_url_loader_factory(), context(),
-      FeedbackUploaderFactory::CreateUploaderTaskRunner());
+      context(), FeedbackUploaderFactory::CreateUploaderTaskRunner());
+  uploader.set_url_loader_factory_for_test(shared_url_loader_factory());
 
   net::HttpRequestHeaders headers;
   test_url_loader_factory()->SetInterceptor(
       base::BindLambdaForTesting([&](const network::ResourceRequest& request) {
-        headers = request.headers;
+        EXPECT_TRUE(variations::HasVariationsHeader(request));
       }));
 
   QueueReport(&uploader, "test");
   base::RunLoop().RunUntilIdle();
-
-  std::string value;
-  EXPECT_TRUE(headers.GetHeader("X-Client-Data", &value));
-  EXPECT_FALSE(value.empty());
 
   variations::VariationsHttpHeaderProvider::GetInstance()->ResetForTesting();
 }
@@ -113,19 +109,19 @@ TEST_F(FeedbackUploaderDispatchTest, VariationHeaders) {
 TEST_F(FeedbackUploaderDispatchTest, 204Response) {
   FeedbackUploader::SetMinimumRetryDelayForTesting(kTestRetryDelay);
   FeedbackUploader uploader(
-      shared_url_loader_factory(), context(),
-      FeedbackUploaderFactory::CreateUploaderTaskRunner());
+      context(), FeedbackUploaderFactory::CreateUploaderTaskRunner());
+  uploader.set_url_loader_factory_for_test(shared_url_loader_factory());
 
   EXPECT_EQ(kTestRetryDelay, uploader.retry_delay());
   // Successful reports should not introduce any retries, and should not
   // increase the backoff delay.
-  network::ResourceResponseHead head;
+  auto head = network::mojom::URLResponseHead::New();
   std::string headers("HTTP/1.1 204 No Content\n\n");
-  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::URLLoaderCompletionStatus status;
-  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl), head, "",
-                                         status);
+  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl),
+                                         std::move(head), "", status);
   QueueReport(&uploader, "Successful report");
   base::RunLoop().RunUntilIdle();
 
@@ -136,19 +132,19 @@ TEST_F(FeedbackUploaderDispatchTest, 204Response) {
 TEST_F(FeedbackUploaderDispatchTest, 400Response) {
   FeedbackUploader::SetMinimumRetryDelayForTesting(kTestRetryDelay);
   FeedbackUploader uploader(
-      shared_url_loader_factory(), context(),
-      FeedbackUploaderFactory::CreateUploaderTaskRunner());
+      context(), FeedbackUploaderFactory::CreateUploaderTaskRunner());
+  uploader.set_url_loader_factory_for_test(shared_url_loader_factory());
 
   EXPECT_EQ(kTestRetryDelay, uploader.retry_delay());
   // Failed reports due to client errors are not retried. No backoff delay
   // should be doubled.
-  network::ResourceResponseHead head;
+  auto head = network::mojom::URLResponseHead::New();
   std::string headers("HTTP/1.1 400 Bad Request\n\n");
-  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::URLLoaderCompletionStatus status;
-  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl), head, "",
-                                         status);
+  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl),
+                                         std::move(head), "", status);
   QueueReport(&uploader, "Client error failed report");
   base::RunLoop().RunUntilIdle();
 
@@ -159,18 +155,18 @@ TEST_F(FeedbackUploaderDispatchTest, 400Response) {
 TEST_F(FeedbackUploaderDispatchTest, 500Response) {
   FeedbackUploader::SetMinimumRetryDelayForTesting(kTestRetryDelay);
   FeedbackUploader uploader(
-      shared_url_loader_factory(), context(),
-      FeedbackUploaderFactory::CreateUploaderTaskRunner());
+      context(), FeedbackUploaderFactory::CreateUploaderTaskRunner());
+  uploader.set_url_loader_factory_for_test(shared_url_loader_factory());
 
   EXPECT_EQ(kTestRetryDelay, uploader.retry_delay());
   // Failed reports due to server errors are retried.
-  network::ResourceResponseHead head;
+  auto head = network::mojom::URLResponseHead::New();
   std::string headers("HTTP/1.1 500 Server Error\n\n");
-  head.headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      net::HttpUtil::AssembleRawHeaders(headers.c_str(), headers.size()));
+  head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(headers));
   network::URLLoaderCompletionStatus status;
-  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl), head, "",
-                                         status);
+  test_url_loader_factory()->AddResponse(GURL(kFeedbackPostUrl),
+                                         std::move(head), "", status);
   QueueReport(&uploader, "Server error failed report");
   base::RunLoop().RunUntilIdle();
 

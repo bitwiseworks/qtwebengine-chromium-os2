@@ -7,10 +7,11 @@
 #include <string>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/time/tick_clock.h"
 #include "base/values.h"
 #include "google_apis/gaia/gaia_oauth_client.h"
@@ -125,12 +126,12 @@ const int kTestExpiresIn = 3920;
 
 const std::string kDummyGetTokensResult =
     "{\"access_token\":\"" + kTestAccessToken + "\","
-    "\"expires_in\":" + base::IntToString(kTestExpiresIn) + ","
+    "\"expires_in\":" + base::NumberToString(kTestExpiresIn) + ","
     "\"refresh_token\":\"" + kTestRefreshToken + "\"}";
 
 const std::string kDummyRefreshTokenResult =
     "{\"access_token\":\"" + kTestAccessToken + "\","
-    "\"expires_in\":" + base::IntToString(kTestExpiresIn) + "}";
+    "\"expires_in\":" + base::NumberToString(kTestExpiresIn) + "}";
 
 const std::string kDummyUserInfoResult =
     "{\"email\":\"" + kTestUserEmail + "\"}";
@@ -151,14 +152,14 @@ const std::string kDummyFullUserInfoResult =
     "}";
 
 const std::string kDummyTokenInfoResult =
-  "{\"issued_to\": \"1234567890.apps.googleusercontent.com\","
-  "\"audience\": \"1234567890.apps.googleusercontent.com\","
-  "\"scope\": \"https://googleapis.com/oauth2/v2/tokeninfo\","
-  "\"expires_in\":" + base::IntToString(kTestExpiresIn) + "}";
+    "{\"issued_to\": \"1234567890.apps.googleusercontent.com\","
+    "\"audience\": \"1234567890.apps.googleusercontent.com\","
+    "\"scope\": \"https://googleapis.com/oauth2/v2/tokeninfo\","
+    "\"expires_in\":" + base::NumberToString(kTestExpiresIn) + "}";
 
 const std::string kDummyTokenHandleInfoResult =
     "{\"audience\": \"1234567890.apps.googleusercontent.com\","
-    "\"expires_in\":" + base::IntToString(kTestExpiresIn) + "}";
+    "\"expires_in\":" + base::NumberToString(kTestExpiresIn) + "}";
 
 }  // namespace
 
@@ -167,14 +168,13 @@ namespace gaia {
 class GaiaOAuthClientTest : public testing::Test {
  protected:
   GaiaOAuthClientTest()
-      : scoped_task_environment_(
-            base::test::ScopedTaskEnvironment::MainThreadType::MOCK_TIME) {}
+      : task_environment_(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
   void SetUp() override {
     client_info_.client_id = "test_client_id";
     client_info_.client_secret = "test_client_secret";
     client_info_.redirect_uri = "test_redirect_uri";
-  };
+  }
 
   scoped_refptr<network::SharedURLLoaderFactory> GetSharedURLLoaderFactory() {
     return base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
@@ -186,11 +186,11 @@ class GaiaOAuthClientTest : public testing::Test {
     // TestURLLoaderFactory to its clients via mojo pipes. In addition,
     // some retries may have back off, so may need to advance (mock) time
     // for them to finish, too.
-    scoped_task_environment_.FastForwardUntilNoTasksRemain();
+    task_environment_.FastForwardUntilNoTasksRemain();
   }
 
  protected:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::TaskEnvironment task_environment_;
   network::TestURLLoaderFactory url_loader_factory_;
 
   OAuthClientInfo client_info_;
@@ -283,8 +283,7 @@ TEST_F(GaiaOAuthClientTest, NetworkFailureRecoverBackoff) {
   injector.set_max_failure_count(21);
   injector.set_results(kDummyGetTokensResult);
 
-  base::TimeTicks start =
-      scoped_task_environment_.GetMockTickClock()->NowTicks();
+  base::TimeTicks start = task_environment_.GetMockTickClock()->NowTicks();
 
   GaiaOAuthClient auth(GetSharedURLLoaderFactory());
   auth.GetTokensFromAuthCode(client_info_, "auth_code", -1, &delegate);
@@ -298,7 +297,7 @@ TEST_F(GaiaOAuthClientTest, NetworkFailureRecoverBackoff) {
   //    0.6 * 700ms * 1.4^(20-2) ~ 179s
   //
   // ... so the whole thing should take at least 307s
-  EXPECT_GE(scoped_task_environment_.GetMockTickClock()->NowTicks() - start,
+  EXPECT_GE(task_environment_.GetMockTickClock()->NowTicks() - start,
             base::TimeDelta::FromSeconds(307));
 }
 
@@ -427,7 +426,7 @@ TEST_F(GaiaOAuthClientTest, GetUserInfo) {
   FlushNetwork();
 
   std::unique_ptr<base::Value> value =
-      base::JSONReader::Read(kDummyFullUserInfoResult);
+      base::JSONReader::ReadDeprecated(kDummyFullUserInfoResult);
   DCHECK(value);
   ASSERT_TRUE(value->is_dict());
   base::DictionaryValue* expected_result;

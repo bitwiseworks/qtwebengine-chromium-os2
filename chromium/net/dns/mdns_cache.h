@@ -50,7 +50,8 @@ class NET_EXPORT_PRIVATE MDnsCache {
     std::string optional_;
   };
 
-  typedef base::Callback<void(const RecordParsed*)> RecordRemovedCallback;
+  typedef base::RepeatingCallback<void(const RecordParsed*)>
+      RecordRemovedCallback;
 
   enum UpdateType {
     RecordAdded,
@@ -92,6 +93,12 @@ class NET_EXPORT_PRIVATE MDnsCache {
   // passed in if it was removed, scoped null otherwise.
   std::unique_ptr<const RecordParsed> RemoveRecord(const RecordParsed* record);
 
+  bool IsCacheOverfilled() const;
+
+  void set_entry_limit_for_testing(size_t entry_limit) {
+    entry_limit_ = entry_limit;
+  }
+
  private:
   typedef std::map<Key, std::unique_ptr<const RecordParsed>> RecordMap;
 
@@ -108,6 +115,7 @@ class NET_EXPORT_PRIVATE MDnsCache {
   RecordMap mdns_cache_;
 
   base::Time next_expiration_;
+  size_t entry_limit_;
 
   DISALLOW_COPY_AND_ASSIGN(MDnsCache);
 };

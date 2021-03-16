@@ -7,6 +7,7 @@
 #include "fpdfsdk/cpdfsdk_annot.h"
 #include "fpdfsdk/cpdfsdk_annotiterator.h"
 #include "fpdfsdk/cpdfsdk_formfillenvironment.h"
+#include "fpdfsdk/cpdfsdk_helpers.h"
 #include "fpdfsdk/formfiller/cffl_formfiller.h"
 #include "fpdfsdk/formfiller/cffl_interactiveformfiller.h"
 #include "public/fpdf_fwlevent.h"
@@ -32,7 +33,7 @@ class CPWLEditEmbedderTest : public EmbedderTest {
 
     m_pFormFillEnv =
         CPDFSDKFormFillEnvironmentFromFPDFFormHandle(form_handle());
-    CPDFSDK_AnnotIterator iter(m_pFormFillEnv->GetPageView(0),
+    CPDFSDK_AnnotIterator iter(m_pFormFillEnv->GetPageViewAtIndex(0),
                                CPDF_Annot::Subtype::WIDGET);
     // Normal text field.
     m_pAnnot = iter.GetFirstAnnot();
@@ -47,24 +48,30 @@ class CPWLEditEmbedderTest : public EmbedderTest {
     ASSERT_TRUE(m_pAnnotCharLimit);
     ASSERT_EQ(CPDF_Annot::Subtype::WIDGET,
               m_pAnnotCharLimit->GetAnnotSubtype());
+
+    // Password text field.
+    CPDFSDK_Annot* password_annot = iter.GetNextAnnot(m_pAnnotCharLimit);
+    ASSERT_TRUE(password_annot);
+    ASSERT_EQ(CPDF_Annot::Subtype::WIDGET, password_annot->GetAnnotSubtype());
+
     CPDFSDK_Annot* pLastAnnot = iter.GetLastAnnot();
-    ASSERT_EQ(m_pAnnotCharLimit, pLastAnnot);
+    ASSERT_EQ(password_annot, pLastAnnot);
   }
 
   void FormFillerAndWindowSetup(CPDFSDK_Annot* pAnnotTextField) {
     CFFL_InteractiveFormFiller* pInteractiveFormFiller =
         m_pFormFillEnv->GetInteractiveFormFiller();
     {
-      CPDFSDK_Annot::ObservedPtr pObserved(pAnnotTextField);
+      ObservedPtr<CPDFSDK_Annot> pObserved(pAnnotTextField);
       EXPECT_TRUE(pInteractiveFormFiller->OnSetFocus(&pObserved, 0));
     }
 
     m_pFormFiller =
-        pInteractiveFormFiller->GetFormFiller(pAnnotTextField, false);
+        pInteractiveFormFiller->GetFormFillerForTesting(pAnnotTextField);
     ASSERT_TRUE(m_pFormFiller);
 
-    CPWL_Wnd* pWindow =
-        m_pFormFiller->GetPDFWindow(m_pFormFillEnv->GetPageView(0), false);
+    CPWL_Wnd* pWindow = m_pFormFiller->GetPWLWindow(
+        m_pFormFillEnv->GetPageViewAtIndex(0), false);
     ASSERT_TRUE(pWindow);
     m_pEdit = static_cast<CPWL_Edit*>(pWindow);
   }
@@ -216,8 +223,7 @@ TEST_F(CPWLEditEmbedderTest, InsertTextInPopulatedTextFieldLeft) {
   TypeTextIntoTextField(10);
 
   // Move cursor to beginning of text field.
-  EXPECT_TRUE(
-      GetCFFLFormFiller()->OnKeyDown(GetCPDFSDKAnnot(), FWL_VKEY_Home, 0));
+  EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(FWL_VKEY_Home, 0));
 
   GetCPWLEdit()->ReplaceSelection(L"Hello");
   EXPECT_STREQ(L"HelloABCDEFGHIJ", GetCPWLEdit()->GetText().c_str());
@@ -229,8 +235,7 @@ TEST_F(CPWLEditEmbedderTest, InsertTextInPopulatedTextFieldMiddle) {
 
   // Move cursor to middle of text field.
   for (int i = 0; i < 5; ++i) {
-    EXPECT_TRUE(
-        GetCFFLFormFiller()->OnKeyDown(GetCPDFSDKAnnot(), FWL_VKEY_Left, 0));
+    EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(FWL_VKEY_Left, 0));
   }
 
   GetCPWLEdit()->ReplaceSelection(L"Hello");
@@ -319,8 +324,7 @@ TEST_F(CPWLEditEmbedderTest, InsertTextInPopulatedCharLimitTextFieldMiddle) {
   FormFillerAndWindowSetup(GetCPDFSDKAnnotCharLimit());
   // Move cursor to middle of text field.
   for (int i = 0; i < 5; ++i) {
-    EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(GetCPDFSDKAnnotCharLimit(),
-                                               FWL_VKEY_Right, 0));
+    EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(FWL_VKEY_Right, 0));
   }
 
   GetCPWLEdit()->ReplaceSelection(L"Hippopotamus");
@@ -330,8 +334,7 @@ TEST_F(CPWLEditEmbedderTest, InsertTextInPopulatedCharLimitTextFieldMiddle) {
 TEST_F(CPWLEditEmbedderTest, InsertTextInPopulatedCharLimitTextFieldRight) {
   FormFillerAndWindowSetup(GetCPDFSDKAnnotCharLimit());
   // Move cursor to end of text field.
-  EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(GetCPDFSDKAnnotCharLimit(),
-                                             FWL_VKEY_End, 0));
+  EXPECT_TRUE(GetCFFLFormFiller()->OnKeyDown(FWL_VKEY_End, 0));
 
   GetCPWLEdit()->ReplaceSelection(L"Hippopotamus");
   EXPECT_STREQ(L"ElephantHi", GetCPWLEdit()->GetText().c_str());

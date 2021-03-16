@@ -41,7 +41,15 @@ class SVGPathNonInterpolableValue : public NonInterpolableValue {
 };
 
 DEFINE_NON_INTERPOLABLE_VALUE_TYPE(SVGPathNonInterpolableValue);
-DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(SVGPathNonInterpolableValue);
+template <>
+struct DowncastTraits<SVGPathNonInterpolableValue> {
+  static bool AllowFrom(const NonInterpolableValue* value) {
+    return value && AllowFrom(*value);
+  }
+  static bool AllowFrom(const NonInterpolableValue& value) {
+    return value.GetType() == SVGPathNonInterpolableValue::static_type_;
+  }
+};
 
 enum PathComponentIndex : unsigned {
   kPathArgsIndex,
@@ -70,15 +78,13 @@ InterpolationValue PathInterpolationFunctions::ConvertValue(
     length++;
   }
 
-  std::unique_ptr<InterpolableList> path_args =
-      InterpolableList::Create(length);
+  auto path_args = std::make_unique<InterpolableList>(length);
   for (wtf_size_t i = 0; i < interpolable_path_segs.size(); i++)
     path_args->Set(i, std::move(interpolable_path_segs[i]));
 
-  std::unique_ptr<InterpolableList> result =
-      InterpolableList::Create(kPathComponentIndexCount);
+  auto result = std::make_unique<InterpolableList>(kPathComponentIndexCount);
   result->Set(kPathArgsIndex, std::move(path_args));
-  result->Set(kPathNeutralIndex, InterpolableNumber::Create(0));
+  result->Set(kPathNeutralIndex, std::make_unique<InterpolableNumber>(0));
 
   return InterpolationValue(
       std::move(result), SVGPathNonInterpolableValue::Create(path_seg_types));
@@ -90,7 +96,8 @@ InterpolationValue PathInterpolationFunctions::ConvertValue(
   if (style_path)
     return ConvertValue(style_path->ByteStream(), coordinateConversion);
 
-  std::unique_ptr<SVGPathByteStream> empty_path = SVGPathByteStream::Create();
+  std::unique_ptr<SVGPathByteStream> empty_path =
+      std::make_unique<SVGPathByteStream>();
   return ConvertValue(*empty_path, ForceAbsolute);
 }
 
@@ -111,7 +118,7 @@ class UnderlyingPathSegTypesChecker
 
   static const Vector<SVGPathSegType>& GetPathSegTypes(
       const InterpolationValue& underlying) {
-    return ToSVGPathNonInterpolableValue(*underlying.non_interpolable_value)
+    return To<SVGPathNonInterpolableValue>(*underlying.non_interpolable_value)
         .PathSegTypes();
   }
 
@@ -128,12 +135,12 @@ InterpolationValue PathInterpolationFunctions::MaybeConvertNeutral(
     InterpolationType::ConversionCheckers& conversion_checkers) {
   conversion_checkers.push_back(
       UnderlyingPathSegTypesChecker::Create(underlying));
-  std::unique_ptr<InterpolableList> result =
-      InterpolableList::Create(kPathComponentIndexCount);
-  result->Set(kPathArgsIndex, ToInterpolableList(*underlying.interpolable_value)
-                                  .Get(kPathArgsIndex)
-                                  ->CloneAndZero());
-  result->Set(kPathNeutralIndex, InterpolableNumber::Create(1));
+  auto result = std::make_unique<InterpolableList>(kPathComponentIndexCount);
+  result->Set(kPathArgsIndex,
+              To<InterpolableList>(*underlying.interpolable_value)
+                  .Get(kPathArgsIndex)
+                  ->CloneAndZero());
+  result->Set(kPathNeutralIndex, std::make_unique<InterpolableNumber>(1));
   return InterpolationValue(std::move(result),
                             underlying.non_interpolable_value.get());
 }
@@ -155,10 +162,11 @@ PairwiseInterpolationValue PathInterpolationFunctions::MaybeMergeSingles(
     InterpolationValue&& start,
     InterpolationValue&& end) {
   const Vector<SVGPathSegType>& start_types =
-      ToSVGPathNonInterpolableValue(*start.non_interpolable_value)
+      To<SVGPathNonInterpolableValue>(*start.non_interpolable_value)
           .PathSegTypes();
   const Vector<SVGPathSegType>& end_types =
-      ToSVGPathNonInterpolableValue(*end.non_interpolable_value).PathSegTypes();
+      To<SVGPathNonInterpolableValue>(*end.non_interpolable_value)
+          .PathSegTypes();
   if (start_types.size() == 0 || !PathSegTypesMatch(start_types, end_types))
     return nullptr;
 
@@ -172,9 +180,9 @@ void PathInterpolationFunctions::Composite(
     double underlying_fraction,
     const InterpolationType& type,
     const InterpolationValue& value) {
-  const InterpolableList& list = ToInterpolableList(*value.interpolable_value);
+  const auto& list = To<InterpolableList>(*value.interpolable_value);
   double neutral_component =
-      ToInterpolableNumber(list.Get(kPathNeutralIndex))->Value();
+      To<InterpolableNumber>(list.Get(kPathNeutralIndex))->Value();
 
   if (neutral_component == 0) {
     underlying_value_owner.Set(type, value);
@@ -182,10 +190,10 @@ void PathInterpolationFunctions::Composite(
   }
 
   DCHECK(PathSegTypesMatch(
-      ToSVGPathNonInterpolableValue(
+      To<SVGPathNonInterpolableValue>(
           *underlying_value_owner.Value().non_interpolable_value)
           .PathSegTypes(),
-      ToSVGPathNonInterpolableValue(*value.non_interpolable_value)
+      To<SVGPathNonInterpolableValue>(*value.non_interpolable_value)
           .PathSegTypes()));
   underlying_value_owner.MutableValue().interpolable_value->ScaleAndAdd(
       neutral_component, *value.interpolable_value);
@@ -197,11 +205,11 @@ std::unique_ptr<SVGPathByteStream> PathInterpolationFunctions::AppliedValue(
     const InterpolableValue& interpolable_value,
     const NonInterpolableValue* non_interpolable_value) {
   std::unique_ptr<SVGPathByteStream> path_byte_stream =
-      SVGPathByteStream::Create();
+      std::make_unique<SVGPathByteStream>();
   InterpolatedSVGPathSource source(
-      ToInterpolableList(
-          *ToInterpolableList(interpolable_value).Get(kPathArgsIndex)),
-      ToSVGPathNonInterpolableValue(non_interpolable_value)->PathSegTypes());
+      To<InterpolableList>(
+          *To<InterpolableList>(interpolable_value).Get(kPathArgsIndex)),
+      To<SVGPathNonInterpolableValue>(non_interpolable_value)->PathSegTypes());
   SVGPathByteStreamBuilder builder(*path_byte_stream);
   svg_path_parser::ParsePath(source, builder);
   return path_byte_stream;

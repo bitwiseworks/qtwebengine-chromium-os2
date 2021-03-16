@@ -71,7 +71,7 @@ TextEvent::TextEvent(AbstractView* view,
               Bubbles::kYes,
               Cancelable::kYes,
               ComposedMode::kComposed,
-              CurrentTimeTicks(),
+              base::TimeTicks::Now(),
               view,
               0,
               nullptr),
@@ -90,7 +90,7 @@ TextEvent::TextEvent(AbstractView* view,
               Bubbles::kYes,
               Cancelable::kYes,
               ComposedMode::kComposed,
-              CurrentTimeTicks(),
+              base::TimeTicks::Now(),
               view,
               0,
               nullptr),
@@ -119,7 +119,7 @@ const AtomicString& TextEvent::InterfaceName() const {
   return event_interface_names::kTextEvent;
 }
 
-void TextEvent::Trace(blink::Visitor* visitor) {
+void TextEvent::Trace(Visitor* visitor) {
   visitor->Trace(pasting_fragment_);
   UIEvent::Trace(visitor);
 }

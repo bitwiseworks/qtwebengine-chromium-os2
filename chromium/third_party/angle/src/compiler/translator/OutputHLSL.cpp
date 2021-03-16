@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -39,11 +39,11 @@ constexpr const char kImage2DFunctionString[] = "// @@ IMAGE2D DECLARATION FUNCT
 
 TString ArrayHelperFunctionName(const char *prefix, const TType &type)
 {
-    TStringStream fnName;
+    TStringStream fnName = sh::InitializeStream<TStringStream>();
     fnName << prefix << "_";
     if (type.isArray())
     {
-        for (unsigned int arraySize : *type.getArraySizes())
+        for (unsigned int arraySize : type.getArraySizes())
         {
             fnName << arraySize << "_";
         }
@@ -132,7 +132,7 @@ const char *kZeros       = "_ANGLE_ZEROS_";
 constexpr int kZeroCount = 256;
 std::string DefineZeroArray()
 {
-    std::stringstream ss;
+    std::stringstream ss = sh::InitializeStream<std::stringstream>();
     // For 'static', if the declaration does not include an initializer, the value is set to zero.
     // https://docs.microsoft.com/en-us/windows/desktop/direct3dhlsl/dx-graphics-hlsl-variable-syntax
     ss << "static uint " << kZeros << "[" << kZeroCount << "];\n";
@@ -141,9 +141,9 @@ std::string DefineZeroArray()
 
 std::string GetZeroInitializer(size_t size)
 {
-    std::stringstream ss;
-    size_t quotient = size / kZeroCount;
-    size_t reminder = size % kZeroCount;
+    std::stringstream ss = sh::InitializeStream<std::stringstream>();
+    size_t quotient      = size / kZeroCount;
+    size_t reminder      = size % kZeroCount;
 
     for (size_t i = 0; i < quotient; ++i)
     {
@@ -172,6 +172,49 @@ TReferencedBlock::TReferencedBlock(const TInterfaceBlock *aBlock,
                                    const TVariable *aInstanceVariable)
     : block(aBlock), instanceVariable(aInstanceVariable)
 {}
+
+bool OutputHLSL::needStructMapping(TIntermTyped *node)
+{
+    ASSERT(node->getBasicType() == EbtStruct);
+    for (unsigned int n = 0u; getAncestorNode(n) != nullptr; ++n)
+    {
+        TIntermNode *ancestor               = getAncestorNode(n);
+        const TIntermBinary *ancestorBinary = ancestor->getAsBinaryNode();
+        if (ancestorBinary)
+        {
+            switch (ancestorBinary->getOp())
+            {
+                case EOpIndexDirectStruct:
+                {
+                    const TStructure *structure = ancestorBinary->getLeft()->getType().getStruct();
+                    const TIntermConstantUnion *index =
+                        ancestorBinary->getRight()->getAsConstantUnion();
+                    const TField *field = structure->fields()[index->getIConst(0)];
+                    if (field->type()->getStruct() == nullptr)
+                    {
+                        return false;
+                    }
+                    break;
+                }
+                case EOpIndexDirect:
+                case EOpIndexIndirect:
+                    break;
+                default:
+                    return true;
+            }
+        }
+        else
+        {
+            const TIntermAggregate *ancestorAggregate = ancestor->getAsAggregate();
+            if (ancestorAggregate)
+            {
+                return true;
+            }
+            return false;
+        }
+    }
+    return true;
+}
 
 void OutputHLSL::writeFloat(TInfoSinkBase &out, float f)
 {
@@ -228,12 +271,14 @@ const TConstantUnion *OutputHLSL::writeConstantUnionArray(TInfoSinkBase &out,
 }
 
 OutputHLSL::OutputHLSL(sh::GLenum shaderType,
+                       ShShaderSpec shaderSpec,
                        int shaderVersion,
                        const TExtensionBehavior &extensionBehavior,
                        const char *sourcePath,
                        ShShaderOutput outputType,
                        int numRenderTargets,
-                       const std::vector<Uniform> &uniforms,
+                       int maxDualSourceDrawBuffers,
+                       const std::vector<ShaderVariable> &uniforms,
                        ShCompileOptions compileOptions,
                        sh::WorkGroupSize workGroupSize,
                        TSymbolTable *symbolTable,
@@ -241,6 +286,7 @@ OutputHLSL::OutputHLSL(sh::GLenum shaderType,
                        const std::vector<InterfaceBlock> &shaderStorageBlocks)
     : TIntermTraverser(true, true, true, symbolTable),
       mShaderType(shaderType),
+      mShaderSpec(shaderSpec),
       mShaderVersion(shaderVersion),
       mExtensionBehavior(extensionBehavior),
       mSourcePath(sourcePath),
@@ -249,20 +295,24 @@ OutputHLSL::OutputHLSL(sh::GLenum shaderType,
       mInsideFunction(false),
       mInsideMain(false),
       mNumRenderTargets(numRenderTargets),
+      mMaxDualSourceDrawBuffers(maxDualSourceDrawBuffers),
       mCurrentFunctionMetadata(nullptr),
       mWorkGroupSize(workGroupSize),
-      mPerfDiagnostics(perfDiagnostics)
+      mPerfDiagnostics(perfDiagnostics),
+      mNeedStructMapping(false)
 {
-    mUsesFragColor   = false;
-    mUsesFragData    = false;
-    mUsesDepthRange  = false;
-    mUsesFragCoord   = false;
-    mUsesPointCoord  = false;
-    mUsesFrontFacing = false;
-    mUsesPointSize   = false;
-    mUsesInstanceID  = false;
+    mUsesFragColor        = false;
+    mUsesFragData         = false;
+    mUsesDepthRange       = false;
+    mUsesFragCoord        = false;
+    mUsesPointCoord       = false;
+    mUsesFrontFacing      = false;
+    mUsesHelperInvocation = false;
+    mUsesPointSize        = false;
+    mUsesInstanceID       = false;
     mHasMultiviewExtensionEnabled =
-        IsExtensionEnabled(mExtensionBehavior, TExtension::OVR_multiview);
+        IsExtensionEnabled(mExtensionBehavior, TExtension::OVR_multiview) ||
+        IsExtensionEnabled(mExtensionBehavior, TExtension::OVR_multiview2);
     mUsesViewID                  = false;
     mUsesVertexID                = false;
     mUsesFragDepth               = false;
@@ -276,6 +326,7 @@ OutputHLSL::OutputHLSL(sh::GLenum shaderType,
     mUsesNestedBreak             = false;
     mRequiresIEEEStrictCompiling = false;
     mUseZeroArray                = false;
+    mUsesSecondaryColor          = false;
 
     mUniqueIndex = 0;
 
@@ -285,14 +336,16 @@ OutputHLSL::OutputHLSL(sh::GLenum shaderType,
 
     mExcessiveLoopIndex = nullptr;
 
-    mStructureHLSL             = new StructureHLSL;
-    mTextureFunctionHLSL       = new TextureFunctionHLSL;
-    mImageFunctionHLSL         = new ImageFunctionHLSL;
-    mAtomicCounterFunctionHLSL = new AtomicCounterFunctionHLSL;
+    mStructureHLSL       = new StructureHLSL;
+    mTextureFunctionHLSL = new TextureFunctionHLSL;
+    mImageFunctionHLSL   = new ImageFunctionHLSL;
+    mAtomicCounterFunctionHLSL =
+        new AtomicCounterFunctionHLSL((compileOptions & SH_FORCE_ATOMIC_VALUE_RESOLUTION) != 0);
 
     unsigned int firstUniformRegister =
         ((compileOptions & SH_SKIP_D3D_CONSTANT_REGISTER_ZERO) != 0) ? 1u : 0u;
-    mResourcesHLSL = new ResourcesHLSL(mStructureHLSL, outputType, uniforms, firstUniformRegister);
+    mResourcesHLSL = new ResourcesHLSL(mStructureHLSL, outputType, compileOptions, uniforms,
+                                       firstUniformRegister);
 
     if (mOutputType == SH_HLSL_3_0_OUTPUT)
     {
@@ -379,6 +432,11 @@ const std::map<std::string, unsigned int> &OutputHLSL::getUniformBlockRegisterMa
     return mResourcesHLSL->getUniformBlockRegisterMap();
 }
 
+const std::map<std::string, bool> &OutputHLSL::getUniformBlockUseStructuredBufferMap() const
+{
+    return mResourcesHLSL->getUniformBlockUseStructuredBufferMap();
+}
+
 const std::map<std::string, unsigned int> &OutputHLSL::getUniformRegisterMap() const
 {
     return mResourcesHLSL->getUniformRegisterMap();
@@ -416,7 +474,7 @@ TString OutputHLSL::structInitializerString(int indent,
         init += indentString + "{\n";
         for (unsigned int arrayIndex = 0u; arrayIndex < type.getOutermostArraySize(); ++arrayIndex)
         {
-            TStringStream indexedString;
+            TStringStream indexedString = sh::InitializeStream<TStringStream>();
             indexedString << name << "[" << arrayIndex << "]";
             TType elementType = type;
             elementType.toArrayElementType();
@@ -559,7 +617,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
                         const std::vector<MappedStruct> &std140Structs,
                         const BuiltInFunctionEmulator *builtInFunctionEmulator) const
 {
-    TString mappedStructs = generateStructMapping(std140Structs);
+    TString mappedStructs;
+    if (mNeedStructMapping)
+    {
+        mappedStructs = generateStructMapping(std140Structs);
+    }
 
     out << mStructureHLSL->structsHeader();
 
@@ -629,12 +691,15 @@ void OutputHLSL::header(TInfoSinkBase &out,
     {
         const bool usingMRTExtension =
             IsExtensionEnabled(mExtensionBehavior, TExtension::EXT_draw_buffers);
+        const bool usingBFEExtension =
+            IsExtensionEnabled(mExtensionBehavior, TExtension::EXT_blend_func_extended);
 
         out << "// Varyings\n";
         writeReferencedVaryings(out);
         out << "\n";
 
-        if (mShaderVersion >= 300)
+        if ((IsDesktopGLSpec(mShaderSpec) && mShaderVersion >= 130) ||
+            (!IsDesktopGLSpec(mShaderSpec) && mShaderVersion >= 300))
         {
             for (const auto &outputVariable : mReferencedOutputVariables)
             {
@@ -663,6 +728,23 @@ void OutputHLSL::header(TInfoSinkBase &out,
             }
 
             out << "};\n";
+
+            if (usingBFEExtension && mUsesSecondaryColor)
+            {
+                out << "static float4 gl_SecondaryColor[" << mMaxDualSourceDrawBuffers
+                    << "] = \n"
+                       "{\n";
+                for (int i = 0; i < mMaxDualSourceDrawBuffers; i++)
+                {
+                    out << "    float4(0, 0, 0, 0)";
+                    if (i + 1 != mMaxDualSourceDrawBuffers)
+                    {
+                        out << ",";
+                    }
+                    out << "\n";
+                }
+                out << "};\n";
+            }
         }
 
         if (mUsesFragDepth)
@@ -683,6 +765,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
         if (mUsesFrontFacing)
         {
             out << "static bool gl_FrontFacing = false;\n";
+        }
+
+        if (mUsesHelperInvocation)
+        {
+            out << "static bool gl_HelperInvocation = false;\n";
         }
 
         out << "\n";
@@ -780,6 +867,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
         {
             out << "#define GL_USES_FRAG_DATA\n";
         }
+
+        if (mShaderVersion < 300 && usingBFEExtension && mUsesSecondaryColor)
+        {
+            out << "#define GL_USES_SECONDARY_COLOR\n";
+        }
     }
     else if (mShaderType == GL_VERTEX_SHADER)
     {
@@ -849,6 +941,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
                 mResourcesHLSL->samplerMetadataUniforms(out, 4);
             }
 
+            if (mUsesVertexID)
+            {
+                out << "    uint dx_VertexID : packoffset(c3.w);\n";
+            }
+
             out << "};\n"
                    "\n";
         }
@@ -891,8 +988,8 @@ void OutputHLSL::header(TInfoSinkBase &out,
 
         out << kImage2DFunctionString << "\n";
 
-        std::ostringstream systemValueDeclaration;
-        std::ostringstream glBuiltinInitialization;
+        std::ostringstream systemValueDeclaration  = sh::InitializeStream<std::ostringstream>();
+        std::ostringstream glBuiltinInitialization = sh::InitializeStream<std::ostringstream>();
 
         systemValueDeclaration << "\nstruct CS_INPUT\n{\n";
         glBuiltinInitialization << "\nvoid initGLBuiltins(CS_INPUT input)\n"
@@ -967,6 +1064,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
         out << "#define GL_USES_FRONT_FACING\n";
     }
 
+    if (mUsesHelperInvocation)
+    {
+        out << "#define GL_USES_HELPER_INVOCATION\n";
+    }
+
     if (mUsesPointSize)
     {
         out << "#define GL_USES_POINT_SIZE\n";
@@ -975,6 +1077,11 @@ void OutputHLSL::header(TInfoSinkBase &out,
     if (mHasMultiviewExtensionEnabled)
     {
         out << "#define GL_ANGLE_MULTIVIEW_ENABLED\n";
+    }
+
+    if (mUsesVertexID)
+    {
+        out << "#define GL_USES_VERTEX_ID\n";
     }
 
     if (mUsesViewID)
@@ -1015,8 +1122,10 @@ void OutputHLSL::visitSymbol(TIntermSymbol *node)
     TInfoSinkBase &out = getInfoSink();
 
     // Handle accessing std140 structs by value
-    if (IsInStd140UniformBlock(node) && node->getBasicType() == EbtStruct)
+    if (IsInStd140UniformBlock(node) && node->getBasicType() == EbtStruct &&
+        needStructMapping(node))
     {
+        mNeedStructMapping = true;
         out << "map";
     }
 
@@ -1107,6 +1216,16 @@ void OutputHLSL::visitSymbol(TIntermSymbol *node)
             out << "gl_Color";
             mUsesFragData = true;
         }
+        else if (qualifier == EvqSecondaryFragColorEXT)
+        {
+            out << "gl_SecondaryColor[0]";
+            mUsesSecondaryColor = true;
+        }
+        else if (qualifier == EvqSecondaryFragDataEXT)
+        {
+            out << "gl_SecondaryColor";
+            mUsesSecondaryColor = true;
+        }
         else if (qualifier == EvqFragCoord)
         {
             mUsesFragCoord = true;
@@ -1120,6 +1239,11 @@ void OutputHLSL::visitSymbol(TIntermSymbol *node)
         else if (qualifier == EvqFrontFacing)
         {
             mUsesFrontFacing = true;
+            out << name;
+        }
+        else if (qualifier == EvqHelperInvocation)
+        {
+            mUsesHelperInvocation = true;
             out << name;
         }
         else if (qualifier == EvqPointSize)
@@ -1545,10 +1669,12 @@ bool OutputHLSL::visitBinary(Visit visit, TIntermBinary *node)
         case EOpIndexDirectInterfaceBlock:
         {
             ASSERT(!IsInShaderStorageBlock(node->getLeft()));
-            bool structInStd140UniformBlock =
-                node->getBasicType() == EbtStruct && IsInStd140UniformBlock(node->getLeft());
+            bool structInStd140UniformBlock = node->getBasicType() == EbtStruct &&
+                                              IsInStd140UniformBlock(node->getLeft()) &&
+                                              needStructMapping(node);
             if (visit == PreVisit && structInStd140UniformBlock)
             {
+                mNeedStructMapping = true;
                 out << "map";
             }
             if (visit == InVisit)
@@ -1900,7 +2026,7 @@ ImmutableString OutputHLSL::samplerNamePrefixFromStruct(TIntermTyped *node)
         {
             int index = nodeBinary->getRight()->getAsConstantUnion()->getIConst(0);
 
-            std::stringstream prefixSink;
+            std::stringstream prefixSink = sh::InitializeStream<std::stringstream>();
             prefixSink << samplerNamePrefixFromStruct(nodeBinary->getLeft()) << "_" << index;
             return ImmutableString(prefixSink.str());
         }
@@ -1910,7 +2036,7 @@ ImmutableString OutputHLSL::samplerNamePrefixFromStruct(TIntermTyped *node)
             int index           = nodeBinary->getRight()->getAsConstantUnion()->getIConst(0);
             const TField *field = s->fields()[index];
 
-            std::stringstream prefixSink;
+            std::stringstream prefixSink = sh::InitializeStream<std::stringstream>();
             prefixSink << samplerNamePrefixFromStruct(nodeBinary->getLeft()) << "_"
                        << field->name();
             return ImmutableString(prefixSink.str());
@@ -1967,7 +2093,7 @@ bool OutputHLSL::visitBlock(Visit visit, TIntermBlock *node)
             statement->getAsFunctionDefinition() == nullptr &&
             (statement->getAsDeclarationNode() == nullptr ||
              IsDeclarationWrittenOut(statement->getAsDeclarationNode())) &&
-            statement->getAsInvariantDeclarationNode() == nullptr)
+            statement->getAsGlobalQualifierDeclarationNode() == nullptr)
         {
             out << ";\n";
         }
@@ -2113,8 +2239,11 @@ bool OutputHLSL::visitDeclaration(Visit visit, TIntermDeclaration *node)
                 {
                     symbol->traverse(this);
                     out << ArrayString(symbol->getType());
-                    if (declarator->getQualifier() != EvqShared ||
-                        mCompileOptions & SH_INIT_SHARED_VARIABLES)
+                    // Temporarily disable shadred memory initialization. It is very slow for D3D11
+                    // drivers to compile a compute shader if we add code to initialize a
+                    // groupshared array variable with a large array size. And maybe produce
+                    // incorrect result. See http://anglebug.com/3226.
+                    if (declarator->getQualifier() != EvqShared)
                     {
                         out << " = " + zeroInitializer(symbol->getType());
                     }
@@ -2143,7 +2272,8 @@ bool OutputHLSL::visitDeclaration(Visit visit, TIntermDeclaration *node)
     return false;
 }
 
-bool OutputHLSL::visitInvariantDeclaration(Visit visit, TIntermInvariantDeclaration *node)
+bool OutputHLSL::visitGlobalQualifierDeclaration(Visit visit,
+                                                 TIntermGlobalQualifierDeclaration *node)
 {
     // Do not do any translation
     return false;
@@ -2201,7 +2331,8 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
         {
             TIntermSequence *arguments = node->getSequence();
 
-            bool lod0 = mInsideDiscontinuousLoop || mOutputLod0Function;
+            bool lod0 = (mInsideDiscontinuousLoop || mOutputLod0Function) &&
+                        mShaderType == GL_FRAGMENT_SHADER;
             if (node->getOp() == EOpCallFunctionInAST)
             {
                 if (node->isArray())
@@ -2367,6 +2498,9 @@ bool OutputHLSL::visitAggregate(Visit visit, TIntermAggregate *node)
             break;
         case EOpSmoothstep:
             outputTriplet(out, visit, "smoothstep(", ", ", ")");
+            break;
+        case EOpFma:
+            outputTriplet(out, visit, "mad(", ", ", ")");
             break;
         case EOpFrexp:
         case EOpLdexp:

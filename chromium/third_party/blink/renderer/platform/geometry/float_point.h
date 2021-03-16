@@ -31,9 +31,14 @@
 #include "build/build_config.h"
 #include "third_party/blink/renderer/platform/geometry/float_size.h"
 #include "third_party/blink/renderer/platform/geometry/int_point.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/geometry/int_size.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
+#include "third_party/blink/renderer/platform/wtf/hash_traits.h"
+#include "third_party/skia/include/core/SkPoint.h"
+#include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/point_f.h"
+#include "ui/gfx/geometry/scroll_offset.h"
 
 #if defined(OS_MACOSX)
 typedef struct CGPoint CGPoint;
@@ -43,22 +48,7 @@ typedef struct CGPoint CGPoint;
 #endif
 #endif
 
-struct SkPoint;
-
-namespace gfx {
-class PointF;
-class Point3F;
-class ScrollOffset;
-class Vector2dF;
-}
-
 namespace blink {
-
-class DoublePoint;
-class IntPoint;
-class IntSize;
-class LayoutPoint;
-class LayoutSize;
 
 class PLATFORM_EXPORT FloatPoint {
   DISALLOW_NEW();
@@ -66,21 +56,26 @@ class PLATFORM_EXPORT FloatPoint {
  public:
   constexpr FloatPoint() : x_(0), y_(0) {}
   constexpr FloatPoint(float x, float y) : x_(x), y_(y) {}
-  explicit FloatPoint(const IntPoint&);
-  explicit FloatPoint(const SkPoint&);
-  explicit FloatPoint(const DoublePoint&);
-  explicit FloatPoint(const LayoutPoint&);
-  constexpr explicit FloatPoint(const FloatSize& size)
-      : x_(size.Width()), y_(size.Height()) {}
-  explicit FloatPoint(const LayoutSize&);
-  constexpr explicit FloatPoint(const IntSize& size)
-      : x_(size.Width()), y_(size.Height()) {}
-  explicit FloatPoint(const gfx::PointF& point)
-      : x_(point.x()), y_(point.y()) {}
+  constexpr explicit FloatPoint(const IntPoint& p) : x_(p.X()), y_(p.Y()) {}
+  explicit FloatPoint(const SkPoint& p) : x_(p.x()), y_(p.y()) {}
+  constexpr explicit FloatPoint(const FloatSize& s)
+      : x_(s.Width()), y_(s.Height()) {}
+  constexpr explicit FloatPoint(const IntSize& s)
+      : x_(s.Width()), y_(s.Height()) {}
+  constexpr explicit FloatPoint(const gfx::PointF& p) : x_(p.x()), y_(p.y()) {}
+  constexpr explicit FloatPoint(const gfx::Vector2dF& v)
+      : x_(v.x()), y_(v.y()) {}
+  // We also have conversion operators to FloatPoint defined LayoutPoint,
+  // LayoutSize and DoublePoint.
 
   static constexpr FloatPoint Zero() { return FloatPoint(); }
 
   static FloatPoint NarrowPrecision(double x, double y);
+
+  bool IsValid() const {
+    return x_ != -std::numeric_limits<float>::infinity() &&
+           y_ != -std::numeric_limits<float>::infinity();
+  }
 
   constexpr float X() const { return x_; }
   constexpr float Y() const { return y_; }
@@ -99,7 +94,6 @@ class PLATFORM_EXPORT FloatPoint {
     x_ += a.Width();
     y_ += a.Height();
   }
-  void Move(const LayoutSize&);
   void Move(const FloatSize& a) {
     x_ += a.Width();
     y_ += a.Height();
@@ -108,7 +102,6 @@ class PLATFORM_EXPORT FloatPoint {
     x_ += a.X();
     y_ += a.Y();
   }
-  void MoveBy(const LayoutPoint&);
   void MoveBy(const FloatPoint& a) {
     x_ += a.X();
     y_ += a.Y();
@@ -138,15 +131,23 @@ class PLATFORM_EXPORT FloatPoint {
   operator CGPoint() const;
 #endif
 
-  operator gfx::PointF() const;
-  explicit operator gfx::ScrollOffset() const;
-  explicit operator gfx::Vector2dF() const;
-  operator gfx::Point3F() const;
+  constexpr operator gfx::PointF() const { return gfx::PointF(x_, y_); }
+  constexpr explicit operator gfx::Vector2dF() const {
+    return gfx::Vector2dF(x_, y_);
+  }
+  explicit operator SkPoint() const { return SkPoint::Make(x_, y_); }
+  explicit operator gfx::ScrollOffset() const {
+    return gfx::ScrollOffset(x_, y_);
+  }
+  operator gfx::Point3F() const { return gfx::Point3F(x_, y_, 0.f); }
 
   String ToString() const;
 
  private:
   float x_, y_;
+
+  friend struct ::WTF::DefaultHash<blink::FloatSize>;
+  friend struct ::WTF::HashTraits<blink::FloatSize>;
 };
 
 inline FloatPoint& operator+=(FloatPoint& a, const FloatSize& b) {
@@ -225,6 +226,10 @@ inline IntPoint FlooredIntPoint(const FloatPoint& p) {
   return IntPoint(clampTo<int>(floorf(p.X())), clampTo<int>(floorf(p.Y())));
 }
 
+inline IntPoint FlooredIntPoint(const gfx::PointF& p) {
+  return IntPoint(clampTo<int>(floorf(p.x())), clampTo<int>(floorf(p.y())));
+}
+
 inline IntPoint CeiledIntPoint(const FloatPoint& p) {
   return IntPoint(clampTo<int>(ceilf(p.X())), clampTo<int>(ceilf(p.Y())));
 }
@@ -251,4 +256,42 @@ PLATFORM_EXPORT WTF::TextStream& operator<<(WTF::TextStream&,
 
 }  // namespace blink
 
-#endif
+namespace WTF {
+
+template <>
+struct DefaultHash<blink::FloatPoint> {
+  STATIC_ONLY(DefaultHash);
+  struct Hash {
+    STATIC_ONLY(Hash);
+    typedef typename IntTypes<sizeof(float)>::UnsignedType Bits;
+    static unsigned GetHash(const blink::FloatPoint& key) {
+      return HashInts(bit_cast<Bits>(key.X()), bit_cast<Bits>(key.Y()));
+    }
+    static bool Equal(const blink::FloatPoint& a, const blink::FloatPoint& b) {
+      return bit_cast<Bits>(a.X()) == bit_cast<Bits>(b.X()) &&
+             bit_cast<Bits>(a.Y()) == bit_cast<Bits>(b.Y());
+    }
+    static const bool safe_to_compare_to_empty_or_deleted = true;
+  };
+};
+
+template <>
+struct HashTraits<blink::FloatPoint> : GenericHashTraits<blink::FloatPoint> {
+  STATIC_ONLY(HashTraits);
+  static const bool kEmptyValueIsZero = false;
+  static blink::FloatPoint EmptyValue() {
+    return blink::FloatPoint(std::numeric_limits<float>::infinity(),
+                             std::numeric_limits<float>::infinity());
+  }
+  static void ConstructDeletedValue(blink::FloatPoint& slot, bool) {
+    slot = blink::FloatPoint(-std::numeric_limits<float>::infinity(),
+                             -std::numeric_limits<float>::infinity());
+  }
+  static bool IsDeletedValue(const blink::FloatPoint& value) {
+    return !value.IsValid();
+  }
+};
+
+}  // namespace WTF
+
+#endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_GEOMETRY_FLOAT_POINT_H_

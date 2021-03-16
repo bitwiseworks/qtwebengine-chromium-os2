@@ -77,8 +77,18 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
   // Returns the height of the top controls in DIP.
   virtual int GetTopControlsHeight() const;
 
+  // Returns the minimum visible height the top controls can have in DIP.
+  virtual int GetTopControlsMinHeight() const;
+
   // Returns the height of the bottom controls in DIP.
   virtual int GetBottomControlsHeight() const;
+
+  // Returns the minimum visible height the bottom controls can have in DIP.
+  virtual int GetBottomControlsMinHeight() const;
+
+  // Returns true if the changes in browser controls height (including min
+  // height) should be animated.
+  virtual bool ShouldAnimateBrowserControlsHeightChanges() const;
 
   // Returns true if the browser controls resize the renderer's view size.
   virtual bool DoBrowserControlsShrinkRendererSize() const;
@@ -98,10 +108,10 @@ class CONTENT_EXPORT RenderViewHostDelegateView {
                              int selected_item,
                              const std::vector<MenuItem>& items,
                              bool right_aligned,
-                             bool allow_multiple_selection) {};
+                             bool allow_multiple_selection) {}
 
   // Hides a popup menu opened by ShowPopupMenu().
-  virtual void HidePopupMenu() {};
+  virtual void HidePopupMenu() {}
 #endif
 
 #if defined(OS_ANDROID)

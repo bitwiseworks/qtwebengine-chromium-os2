@@ -20,17 +20,19 @@
 #include "api/crypto/frame_encryptor_interface.h"
 #include "api/dtls_transport_interface.h"
 #include "api/dtmf_sender_interface.h"
+#include "api/frame_transformer_interface.h"
 #include "api/media_stream_interface.h"
 #include "api/media_types.h"
 #include "api/proxy.h"
 #include "api/rtc_error.h"
 #include "api/rtp_parameters.h"
+#include "api/scoped_refptr.h"
 #include "rtc_base/ref_count.h"
-#include "rtc_base/scoped_ref_ptr.h"
+#include "rtc_base/system/rtc_export.h"
 
 namespace webrtc {
 
-class RtpSenderInterface : public rtc::RefCountInterface {
+class RTC_EXPORT RtpSenderInterface : public rtc::RefCountInterface {
  public:
   // Returns true if successful in setting the track.
   // Fails if an audio track is set on a video RtpSender, or vice-versa.
@@ -61,13 +63,18 @@ class RtpSenderInterface : public rtc::RefCountInterface {
   // tracks.
   virtual std::vector<std::string> stream_ids() const = 0;
 
+  // Sets the IDs of the media streams associated with this sender's track.
+  // These are signalled in the SDP so that the remote side can associate
+  // tracks.
+  virtual void SetStreams(const std::vector<std::string>& stream_ids) {}
+
   // Returns the list of encoding parameters that will be applied when the SDP
   // local description is set. These initial encoding parameters can be set by
   // PeerConnection::AddTransceiver, and later updated with Get/SetParameters.
   // TODO(orphis): Make it pure virtual once Chrome has updated
   virtual std::vector<RtpEncodingParameters> init_send_encodings() const;
 
-  virtual RtpParameters GetParameters() = 0;
+  virtual RtpParameters GetParameters() const = 0;
   // Note that only a subset of the parameters can currently be changed. See
   // rtpparameters.h
   // The encodings are in increasing quality order for simulcast.
@@ -87,6 +94,9 @@ class RtpSenderInterface : public rtc::RefCountInterface {
   // user. This can be used to update the state of the object.
   virtual rtc::scoped_refptr<FrameEncryptorInterface> GetFrameEncryptor() const;
 
+  virtual void SetEncoderToPacketizerFrameTransformer(
+      rtc::scoped_refptr<FrameTransformerInterface> frame_transformer);
+
  protected:
   ~RtpSenderInterface() override = default;
 };
@@ -104,14 +114,18 @@ PROXY_CONSTMETHOD0(cricket::MediaType, media_type)
 PROXY_CONSTMETHOD0(std::string, id)
 PROXY_CONSTMETHOD0(std::vector<std::string>, stream_ids)
 PROXY_CONSTMETHOD0(std::vector<RtpEncodingParameters>, init_send_encodings)
-PROXY_METHOD0(RtpParameters, GetParameters);
+PROXY_CONSTMETHOD0(RtpParameters, GetParameters)
 PROXY_METHOD1(RTCError, SetParameters, const RtpParameters&)
-PROXY_CONSTMETHOD0(rtc::scoped_refptr<DtmfSenderInterface>, GetDtmfSender);
+PROXY_CONSTMETHOD0(rtc::scoped_refptr<DtmfSenderInterface>, GetDtmfSender)
 PROXY_METHOD1(void,
               SetFrameEncryptor,
-              rtc::scoped_refptr<FrameEncryptorInterface>);
+              rtc::scoped_refptr<FrameEncryptorInterface>)
 PROXY_CONSTMETHOD0(rtc::scoped_refptr<FrameEncryptorInterface>,
-                   GetFrameEncryptor);
+                   GetFrameEncryptor)
+PROXY_METHOD1(void, SetStreams, const std::vector<std::string>&)
+PROXY_METHOD1(void,
+              SetEncoderToPacketizerFrameTransformer,
+              rtc::scoped_refptr<FrameTransformerInterface>)
 END_PROXY_MAP()
 
 }  // namespace webrtc

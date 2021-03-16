@@ -11,8 +11,8 @@
 #include "base/strings/string16.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/oobe_screen.h"
-#include "chrome/browser/chromeos/login/screens/core_oobe_view.h"
 #include "chrome/browser/chromeos/login/screens/hid_detection_screen.h"
+#include "chrome/browser/ui/webui/chromeos/login/core_oobe_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -20,19 +20,13 @@
 #include "components/login/localized_values_builder.h"
 #include "components/prefs/pref_service.h"
 
-namespace {
-
-const char kJsScreenPath[] = "login.HIDDetectionScreen";
-
-}  // namespace
-
 namespace chromeos {
 
+constexpr StaticOobeScreenId HIDDetectionView::kScreenId;
+
 HIDDetectionScreenHandler::HIDDetectionScreenHandler(
-    CoreOobeView* core_oobe_view)
-    : BaseScreenHandler(kScreenId), core_oobe_view_(core_oobe_view) {
-  set_call_js_prefix(kJsScreenPath);
-}
+    JSCallsContainer* js_calls_container)
+    : BaseScreenHandler(kScreenId, js_calls_container) {}
 
 HIDDetectionScreenHandler::~HIDDetectionScreenHandler() {
   if (screen_)
@@ -44,7 +38,6 @@ void HIDDetectionScreenHandler::Show() {
     show_on_init_ = true;
     return;
   }
-  core_oobe_view_->InitDemoModeDetection();
 
   PrefService* local_state = g_browser_process->local_state();
   int num_of_times_dialog_was_shown = local_state->GetInteger(
@@ -75,6 +68,48 @@ void HIDDetectionScreenHandler::CheckIsScreenRequired(
   screen_->CheckIsScreenRequired(on_check_done);
 }
 
+void HIDDetectionScreenHandler::SetKeyboardState(const std::string& value) {
+  keyboard_state_ = value;
+  CallJS("login.HIDDetectionScreen.setKeyboardState", value);
+}
+
+void HIDDetectionScreenHandler::SetMouseState(const std::string& value) {
+  mouse_state_ = value;
+  CallJS("login.HIDDetectionScreen.setMouseState", value);
+}
+
+void HIDDetectionScreenHandler::SetKeyboardPinCode(const std::string& value) {
+  keyboard_pin_code_ = value;
+  CallJS("login.HIDDetectionScreen.setKeyboardPinCode", value);
+}
+
+void HIDDetectionScreenHandler::SetPinDialogVisible(bool value) {
+  num_keys_entered_expected_ = value;
+  CallJS("login.HIDDetectionScreen.setPinDialogVisible", value);
+}
+
+void HIDDetectionScreenHandler::SetNumKeysEnteredPinCode(int value) {
+  num_keys_entered_pin_code_ = value;
+  CallJS("login.HIDDetectionScreen.setNumKeysEnteredPinCode", value);
+}
+
+void HIDDetectionScreenHandler::SetPointingDeviceName(
+    const std::string& value) {
+  mouse_device_name_ = value;
+  CallJS("login.HIDDetectionScreen.setPointingDeviceName", value);
+}
+
+void HIDDetectionScreenHandler::SetKeyboardDeviceName(
+    const std::string& value) {
+  keyboard_device_name_ = value;
+  CallJS("login.HIDDetectionScreen.setKeyboardDeviceName", value);
+}
+
+void HIDDetectionScreenHandler::SetContinueButtonEnabled(bool value) {
+  continue_button_enabled_ = value;
+  CallJS("login.HIDDetectionScreen.setContinueButtonEnabled", value);
+}
+
 void HIDDetectionScreenHandler::DeclareLocalizedValues(
     ::login::LocalizedValuesBuilder* builder) {
   builder->Add("hidDetectionContinue", IDS_HID_DETECTION_CONTINUE_BUTTON);
@@ -88,16 +123,22 @@ void HIDDetectionScreenHandler::DeclareLocalizedValues(
       IDS_HID_DETECTION_CONNECTED_USB_MOUSE);
   builder->Add("hidDetectionPointingDeviceConnected",
       IDS_HID_DETECTION_CONNECTED_POINTING_DEVICE);
+  builder->Add("hidDetectionKeyboardPairing",
+               IDS_HID_DETECTION_PAIRING_BLUETOOTH_KEYBOARD);
   builder->Add("hidDetectionUSBKeyboardConnected",
       IDS_HID_DETECTION_CONNECTED_USB_KEYBOARD);
   builder->Add("hidDetectionBTMousePaired",
       IDS_HID_DETECTION_PAIRED_BLUETOOTH_MOUSE);
   builder->Add("hidDetectionBTEnterKey", IDS_HID_DETECTION_BLUETOOTH_ENTER_KEY);
-}
-
-void HIDDetectionScreenHandler::DeclareJSCallbacks() {
-  AddCallback(
-      "HIDDetectionOnContinue", &HIDDetectionScreenHandler::HandleOnContinue);
+  builder->Add("hidDetectionPinDialogTitle",
+               IDS_HID_DETECTION_PAIRING_BLUETOOTH_KEYBOARD_PIN_DIALOG_TITLE);
+  builder->Add("hidDetectionBluetoothPairingCode",
+               IDS_HID_DETECTION_BLUETOOTH_PAIRING_CODE);
+  builder->Add("hidDetectionBluetoothPairingCodeExplanation",
+               IDS_HID_DETECTION_BLUETOOTH_PAIRING_CODE_EXPLANATION);
+  builder->Add("hidDetectionBluetoothKeyboardPaired",
+               IDS_HID_DETECTION_PAIRED_BLUETOOTH_KEYBOARD);
+  builder->Add("oobeModalDialogClose", IDS_CHROMEOS_OOBE_CLOSE_DIALOG);
 }
 
 void HIDDetectionScreenHandler::Initialize() {
@@ -105,13 +146,6 @@ void HIDDetectionScreenHandler::Initialize() {
     Show();
     show_on_init_ = false;
   }
-}
-
-void HIDDetectionScreenHandler::HandleOnContinue() {
-  // Continue button pressed.
-  core_oobe_view_->StopDemoModeDetection();
-  if (screen_)
-    screen_->OnContinueButtonClicked();
 }
 
 // static

@@ -4,6 +4,7 @@
 
 #include "media/audio/win/core_audio_util_win.h"
 
+#include <comdef.h>
 #include <devicetopology.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <objbase.h>
@@ -24,6 +25,7 @@
 #include "base/win/scoped_variant.h"
 #include "base/win/windows_version.h"
 #include "media/audio/audio_device_description.h"
+#include "media/audio/audio_features.h"
 #include "media/base/media_switches.h"
 
 using Microsoft::WRL::ComPtr;
@@ -40,7 +42,7 @@ const GUID kCommunicationsSessionId = {
 
 namespace {
 
-enum { KSAUDIO_SPEAKER_UNSUPPORTED = 0 };
+constexpr uint32_t KSAUDIO_SPEAKER_UNSUPPORTED = 0xFFFFFFFF;
 
 // Used for mapping UMA histograms with corresponding source of logging.
 enum class UmaLogStep {
@@ -214,52 +216,65 @@ const char* WaveFormatTagToString(WORD format_tag) {
 // in that order within each block.
 std::string ChannelMaskToString(DWORD channel_mask) {
   std::string ss;
-  if (channel_mask & SPEAKER_FRONT_LEFT)
-    ss += "FRONT_LEFT | ";
-  if (channel_mask & SPEAKER_FRONT_RIGHT)
-    ss += "FRONT_RIGHT | ";
-  if (channel_mask & SPEAKER_FRONT_CENTER)
-    ss += "FRONT_CENTER | ";
-  if (channel_mask & SPEAKER_LOW_FREQUENCY)
-    ss += "LOW_FREQUENCY | ";
-  if (channel_mask & SPEAKER_BACK_LEFT)
-    ss += "BACK_LEFT | ";
-  if (channel_mask & SPEAKER_BACK_RIGHT)
-    ss += "BACK_RIGHT | ";
-  if (channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER)
-    ss += "FRONT_LEFT_OF_CENTER | ";
-  if (channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER)
-    ss += "RIGHT_OF_CENTER | ";
-  if (channel_mask & SPEAKER_BACK_CENTER)
-    ss += "BACK_CENTER | ";
-  if (channel_mask & SPEAKER_SIDE_LEFT)
-    ss += "SIDE_LEFT | ";
-  if (channel_mask & SPEAKER_SIDE_RIGHT)
-    ss += "SIDE_RIGHT | ";
-  if (channel_mask & SPEAKER_TOP_CENTER)
-    ss += "TOP_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_LEFT)
-    ss += "TOP_FRONT_LEFT | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_CENTER)
-    ss += "TOP_FRONT_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_FRONT_RIGHT)
-    ss += "TOP_FRONT_RIGHT | ";
-  if (channel_mask & SPEAKER_TOP_BACK_LEFT)
-    ss += "TOP_BACK_LEFT | ";
-  if (channel_mask & SPEAKER_TOP_BACK_CENTER)
-    ss += "TOP_BACK_CENTER | ";
-  if (channel_mask & SPEAKER_TOP_BACK_RIGHT)
-    ss += "TOP_BACK_RIGHT | ";
+  if (channel_mask == KSAUDIO_SPEAKER_DIRECTOUT)
+    // A very rare channel mask where speaker orientation is "hard coded".
+    // In direct-out mode, the audio device renders the first channel to the
+    // first output connector on the device, the second channel to the second
+    // output on the device, and so on.
+    ss += "DIRECT_OUT";
+  else {
+    if (channel_mask & SPEAKER_FRONT_LEFT)
+      ss += "FRONT_LEFT | ";
+    if (channel_mask & SPEAKER_FRONT_RIGHT)
+      ss += "FRONT_RIGHT | ";
+    if (channel_mask & SPEAKER_FRONT_CENTER)
+      ss += "FRONT_CENTER | ";
+    if (channel_mask & SPEAKER_LOW_FREQUENCY)
+      ss += "LOW_FREQUENCY | ";
+    if (channel_mask & SPEAKER_BACK_LEFT)
+      ss += "BACK_LEFT | ";
+    if (channel_mask & SPEAKER_BACK_RIGHT)
+      ss += "BACK_RIGHT | ";
+    if (channel_mask & SPEAKER_FRONT_LEFT_OF_CENTER)
+      ss += "FRONT_LEFT_OF_CENTER | ";
+    if (channel_mask & SPEAKER_FRONT_RIGHT_OF_CENTER)
+      ss += "RIGHT_OF_CENTER | ";
+    if (channel_mask & SPEAKER_BACK_CENTER)
+      ss += "BACK_CENTER | ";
+    if (channel_mask & SPEAKER_SIDE_LEFT)
+      ss += "SIDE_LEFT | ";
+    if (channel_mask & SPEAKER_SIDE_RIGHT)
+      ss += "SIDE_RIGHT | ";
+    if (channel_mask & SPEAKER_TOP_CENTER)
+      ss += "TOP_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_LEFT)
+      ss += "TOP_FRONT_LEFT | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_CENTER)
+      ss += "TOP_FRONT_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_FRONT_RIGHT)
+      ss += "TOP_FRONT_RIGHT | ";
+    if (channel_mask & SPEAKER_TOP_BACK_LEFT)
+      ss += "TOP_BACK_LEFT | ";
+    if (channel_mask & SPEAKER_TOP_BACK_CENTER)
+      ss += "TOP_BACK_CENTER | ";
+    if (channel_mask & SPEAKER_TOP_BACK_RIGHT)
+      ss += "TOP_BACK_RIGHT | ";
 
-  if (!ss.empty()) {
-    // Delete last appended " | " substring.
-    ss.erase(ss.end() - 3, ss.end());
+    if (!ss.empty()) {
+      // Delete last appended " | " substring.
+      ss.erase(ss.end() - 3, ss.end());
+    }
   }
 
-  std::bitset<8 * sizeof(DWORD)> mask(channel_mask);
-  ss += " (";
-  ss += std::to_string(mask.count());
-  ss += ")";
+  // Add number of utilized channels, e.g. "(2)" but exclude this part for
+  // direct output mode since the number of ones in the channel mask does not
+  // reflect the number of channels for this case.
+  if (channel_mask != KSAUDIO_SPEAKER_DIRECTOUT) {
+    std::bitset<8 * sizeof(DWORD)> mask(channel_mask);
+    ss += " (";
+    ss += std::to_string(mask.count());
+    ss += ")";
+  }
   return ss;
 }
 
@@ -300,7 +315,8 @@ ChannelConfig GuessChannelConfig(WORD channels) {
 }
 
 bool IAudioClient3IsSupported() {
-  return CoreAudioUtil::GetIAudioClientVersion() >= 3;
+  return base::FeatureList::IsEnabled(features::kAllowIAudioClient3) &&
+         CoreAudioUtil::GetIAudioClientVersion() >= 3;
 }
 
 std::string GetDeviceID(IMMDevice* device) {
@@ -321,7 +337,7 @@ HRESULT GetDeviceFriendlyNameInternal(IMMDevice* device,
   // Retrieve user-friendly name of endpoint device.
   // Example: "Microphone (Realtek High Definition Audio)".
   ComPtr<IPropertyStore> properties;
-  HRESULT hr = device->OpenPropertyStore(STGM_READ, properties.GetAddressOf());
+  HRESULT hr = device->OpenPropertyStore(STGM_READ, &properties);
   if (FAILED(hr))
     return hr;
 
@@ -344,21 +360,15 @@ ComPtr<IMMDeviceEnumerator> CreateDeviceEnumeratorInternal(
     bool allow_reinitialize,
     const UMALogCallback& uma_log_cb) {
   ComPtr<IMMDeviceEnumerator> device_enumerator;
-  HRESULT hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL,
+  HRESULT hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
                                   CLSCTX_INPROC_SERVER,
                                   IID_PPV_ARGS(&device_enumerator));
   if (hr == CO_E_NOTINITIALIZED && allow_reinitialize) {
     LOG(ERROR) << "CoCreateInstance fails with CO_E_NOTINITIALIZED";
-    // We have seen crashes which indicates that this method can in fact
-    // fail with CO_E_NOTINITIALIZED in combination with certain 3rd party
-    // modules. Calling CoInitializeEx is an attempt to resolve the reported
-    // issues. See http://crbug.com/378465 for details.
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    if (SUCCEEDED(hr)) {
-      hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL,
-                              CLSCTX_INPROC_SERVER,
-                              IID_PPV_ARGS(&device_enumerator));
-    }
+    // Buggy third-party DLLs can uninitialize COM out from under us.  Attempt
+    // to re-initialize it.  See http://crbug.com/378465 for more details.
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
+    return CreateDeviceEnumeratorInternal(false, uma_log_cb);
   }
   uma_log_cb.Run(UmaLogStep::CREATE_DEVICE_ENUMERATOR, hr);
   return device_enumerator;
@@ -430,6 +440,27 @@ ComPtr<IMMDevice> CreateDeviceInternal(const std::string& device_id,
                                        ERole role,
                                        const UMALogCallback& uma_log_cb) {
   ComPtr<IMMDevice> endpoint_device;
+  // In loopback mode, a client of WASAPI can capture the audio stream that
+  // is being played by a rendering endpoint device.
+  // See https://crbug.com/956526 for why we use both a DCHECK and then deal
+  // with the error here and below.
+  DCHECK(!(AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+           data_flow != eCapture));
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+      data_flow != eCapture) {
+    LOG(WARNING) << "Loopback device must be an input device";
+    return endpoint_device;
+  }
+
+  // Usage of AudioDeviceDescription::kCommunicationsDeviceId as |device_id|
+  // is not allowed. Instead, set |device_id| to kDefaultDeviceId and select
+  // between default device and default communication device by using different
+  // |role| values (eConsole or eCommunications).
+  DCHECK(!AudioDeviceDescription::IsCommunicationsDevice(device_id));
+  if (AudioDeviceDescription::IsCommunicationsDevice(device_id)) {
+    LOG(WARNING) << "Invalid device identifier";
+    return endpoint_device;
+  }
 
   // Create the IMMDeviceEnumerator interface.
   ComPtr<IMMDeviceEnumerator> device_enum(
@@ -439,11 +470,15 @@ ComPtr<IMMDevice> CreateDeviceInternal(const std::string& device_id,
 
   HRESULT hr;
   if (AudioDeviceDescription::IsDefaultDevice(device_id)) {
-    hr = device_enum->GetDefaultAudioEndpoint(data_flow, role,
-                                              endpoint_device.GetAddressOf());
+    hr =
+        device_enum->GetDefaultAudioEndpoint(data_flow, role, &endpoint_device);
+  } else if (AudioDeviceDescription::IsLoopbackDevice(device_id)) {
+    // To open a stream in loopback mode, the client must obtain an IMMDevice
+    // interface for the *rendering* endpoint device.
+    hr = device_enum->GetDefaultAudioEndpoint(eRender, role, &endpoint_device);
   } else {
     hr = device_enum->GetDevice(base::UTF8ToUTF16(device_id).c_str(),
-                                endpoint_device.GetAddressOf());
+                                &endpoint_device);
   }
   DVLOG_IF(1, FAILED(hr)) << "Create Device failed: " << std::hex << hr;
 
@@ -576,27 +611,38 @@ HRESULT GetPreferredAudioParametersInternal(IAudioClient* client,
     DVLOG(1) << "IAudioClient => frames_per_buffer: " << frames_per_buffer;
   }
 
+  // Retrieve the current channel configuration (e.g. CHANNEL_LAYOUT_STEREO).
   ChannelLayout channel_layout = GetChannelLayout(format);
+
   AudioParameters audio_params(
       AudioParameters::AUDIO_PCM_LOW_LATENCY, channel_layout, sample_rate,
       frames_per_buffer,
       AudioParameters::HardwareCapabilities(min_frames_per_buffer,
                                             max_frames_per_buffer));
-  // Set the number of channels explicitly to two for input devices if
-  // the channel layout is discrete to ensure that the parameters are valid
-  // and that clients does not have to support multi-channel input cases.
-  // Any required down-mixing from N (N > 2) to 2 must be performed by the
-  // input stream implementation instead.
-  // See https://crbug/868026 for examples where this approach is needed.
-  if (!is_output_device &&
-      audio_params.channel_layout() == CHANNEL_LAYOUT_DISCRETE) {
-    DLOG(WARNING)
-        << "Forcing number of channels to 2 for CHANNEL_LAYOUT_DISCRETE";
-    audio_params.set_channels_for_discrete(2);
+
+  if (audio_params.channel_layout() == CHANNEL_LAYOUT_DISCRETE) {
+    if (!is_output_device) {
+      // Set the number of channels explicitly to two for input devices if
+      // the channel layout is discrete to ensure that the parameters are valid
+      // and that clients does not have to support multi-channel input cases.
+      // Any required down-mixing from N (N > 2) to 2 must be performed by the
+      // input stream implementation instead.
+      // See crbug.com/868026 for examples where this approach is needed.
+      DVLOG(1) << "Forcing number of channels to 2 for CHANNEL_LAYOUT_DISCRETE";
+      audio_params.set_channels_for_discrete(2);
+    } else {
+      // Some output devices return CHANNEL_LAYOUT_DISCRETE. Keep this channel
+      // format but update the number of channels with the correct value. The
+      // number of channels will be zero otherwise.
+      // See crbug.com/957886 for more details.
+      DVLOG(1) << "Setting number of channels to " << format->nChannels
+               << " for CHANNEL_LAYOUT_DISCRETE";
+      audio_params.set_channels_for_discrete(format->nChannels);
+    }
   }
+  DVLOG(1) << audio_params.AsHumanReadableString();
   DCHECK(audio_params.IsValid());
   *params = audio_params;
-  DVLOG(1) << params->AsHumanReadableString();
 
   return hr;
 }
@@ -633,7 +679,15 @@ bool CoreAudioUtil::IsSupported() {
   return g_is_supported;
 }
 
-// CoreAudioUtil implementation.
+std::string CoreAudioUtil::ErrorToString(HRESULT hresult) {
+  const _com_error error(hresult);
+  // If the HRESULT is within the range 0x80040200 to 0x8004FFFF, the WCode()
+  // method returns the HRESULT minus 0x80040200; otherwise, it returns zero.
+  return base::StringPrintf("HRESULT: 0x%08lX, WCode: %u, message: \"%s\"",
+                            error.Error(), error.WCode(),
+                            base::UTF16ToUTF8(error.ErrorMessage()).c_str());
+}
+
 std::string CoreAudioUtil::WaveFormatToString(const WaveFormatWrapper format) {
   // Start with the WAVEFORMATEX part.
   std::string wave_format = base::StringPrintf(
@@ -668,11 +722,11 @@ base::TimeDelta CoreAudioUtil::ReferenceTimeToTimeDelta(REFERENCE_TIME time) {
 }
 
 uint32_t CoreAudioUtil::GetIAudioClientVersion() {
-  if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
+  if (base::win::GetVersion() >= base::win::Version::WIN10) {
     // Minimum supported client: Windows 10.
     // Minimum supported server: Windows Server 2016
     return 3;
-  } else if (base::win::GetVersion() >= base::win::VERSION_WIN8) {
+  } else if (base::win::GetVersion() >= base::win::Version::WIN8) {
     // Minimum supported client: Windows 8.
     // Minimum supported server: Windows Server 2012.
     return 2;
@@ -698,7 +752,7 @@ int CoreAudioUtil::NumberOfActiveDevices(EDataFlow data_flow) {
   // This method will succeed even if all devices are disabled.
   ComPtr<IMMDeviceCollection> collection;
   HRESULT hr = device_enumerator->EnumAudioEndpoints(
-      data_flow, DEVICE_STATE_ACTIVE, collection.GetAddressOf());
+      data_flow, DEVICE_STATE_ACTIVE, &collection);
   if (FAILED(hr)) {
     LOG(ERROR) << "IMMDeviceCollection::EnumAudioEndpoints: " << std::hex << hr;
     return 0;
@@ -775,7 +829,7 @@ std::string CoreAudioUtil::GetAudioControllerID(IMMDevice* device,
       // For our purposes checking the first connected device should be enough
       // and if there are cases where there are more than one device connected
       // we're not sure how to handle that anyway. So we pass 0.
-      FAILED(topology->GetConnector(0, connector.GetAddressOf())) ||
+      FAILED(topology->GetConnector(0, &connector)) ||
       FAILED(connector->GetDeviceIdConnectedTo(&filter_id))) {
     DLOG(ERROR) << "Failed to get the device identifier of the audio device";
     return std::string();
@@ -787,9 +841,8 @@ std::string CoreAudioUtil::GetAudioControllerID(IMMDevice* device,
   ComPtr<IMMDevice> device_node;
   ComPtr<IPropertyStore> properties;
   base::win::ScopedPropVariant instance_id;
-  if (FAILED(enumerator->GetDevice(filter_id, device_node.GetAddressOf())) ||
-      FAILED(device_node->OpenPropertyStore(STGM_READ,
-                                            properties.GetAddressOf())) ||
+  if (FAILED(enumerator->GetDevice(filter_id, &device_node)) ||
+      FAILED(device_node->OpenPropertyStore(STGM_READ, &properties)) ||
       FAILED(properties->GetValue(PKEY_Device_InstanceId,
                                   instance_id.Receive())) ||
       instance_id.get().vt != VT_LPWSTR) {
@@ -835,8 +888,7 @@ std::string CoreAudioUtil::GetMatchingOutputDeviceID(
   // Now enumerate the available (and active) output devices and see if any of
   // them is associated with the same controller.
   ComPtr<IMMDeviceCollection> collection;
-  enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE,
-                                 collection.GetAddressOf());
+  enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection);
   if (!collection.Get())
     return std::string();
 
@@ -844,7 +896,7 @@ std::string CoreAudioUtil::GetMatchingOutputDeviceID(
   collection->GetCount(&count);
   ComPtr<IMMDevice> output_device;
   for (UINT i = 0; i < count; ++i) {
-    collection->Item(i, output_device.GetAddressOf());
+    collection->Item(i, &output_device);
     std::string output_controller_id(
         GetAudioControllerID(output_device.Get(), enumerator.Get()));
     if (output_controller_id == controller_id)
@@ -872,7 +924,7 @@ std::string CoreAudioUtil::GetFriendlyName(const std::string& device_id,
 
 EDataFlow CoreAudioUtil::GetDataFlow(IMMDevice* device) {
   ComPtr<IMMEndpoint> endpoint;
-  HRESULT hr = device->QueryInterface(endpoint.GetAddressOf());
+  HRESULT hr = device->QueryInterface(IID_PPV_ARGS(&endpoint));
   if (FAILED(hr)) {
     DVLOG(1) << "IMMDevice::QueryInterface: " << std::hex << hr;
     return eAll;
@@ -1050,6 +1102,15 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
   UMALogCallback uma_log_cb(
       is_output_device ? base::BindRepeating(&LogUMAPreferredOutputParams)
                        : base::BindRepeating(&LogUMAEmptyCb));
+
+  // Loopback audio streams must be input streams.
+  DCHECK(!(AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+           is_output_device));
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id) && is_output_device) {
+    LOG(WARNING) << "Loopback device must be an input device";
+    return E_FAIL;
+  }
+
   ComPtr<IMMDevice> device(
       CreateDeviceByID(device_id, is_output_device, uma_log_cb));
   if (!device.Get())
@@ -1083,7 +1144,10 @@ HRESULT CoreAudioUtil::GetPreferredAudioParameters(const std::string& device_id,
 
 ChannelConfig CoreAudioUtil::GetChannelConfig(const std::string& device_id,
                                               EDataFlow data_flow) {
-  ComPtr<IAudioClient> client(CreateClient(device_id, data_flow, eConsole));
+  const ERole role = AudioDeviceDescription::IsCommunicationsDevice(device_id)
+                         ? eCommunications
+                         : eConsole;
+  ComPtr<IAudioClient> client(CreateClient(device_id, data_flow, role));
 
   WAVEFORMATEXTENSIBLE mix_format;
   if (!client.Get() ||

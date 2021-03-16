@@ -118,8 +118,8 @@ guide](https://google.github.io/styleguide/htmlcssguide.html).
     * Do not add JS to element event handlers.
 
 <div class="note">
-Polymer event handlers like <code>on-tap</code> are allowed and often reduce the
-amount of addressing (adding an ID just to wire up event handling).
+Polymer event handlers like <code>on-click</code> are allowed and often reduce
+the amount of addressing (adding an ID just to wire up event handling).
 </div>
 
 ### Body
@@ -207,8 +207,7 @@ compatibility issues are less relevant for Chrome-only code).
 
 * Alphabetize properties.
     * `-webkit` properties should be listed at the top, sorted alphabetically.
-    * `--variables` and `--mixins: {}` should be alphabetically declared when
-      possible.
+    * `--variables` should be alphabetically declared when possible.
 
 * Insert a space after the colon separating property and value.
 
@@ -241,6 +240,16 @@ compatibility issues are less relevant for Chrome-only code).
 * Use scalable `font-size` units like `%` or `em` to respect users' default font
   size
 
+* Don't use CSS Mixins (`--mixin: {}` or `@apply --mixin;`) in new code. [We're
+  removing them.](https://crbug.com/973674)
+    * Mixins were [dropped from CSS](https://www.xanthir.com/b4o00) in favor of
+      [CSS Shadow Parts](https://drafts.csswg.org/css-shadow-parts/).
+    * Instead, replace CSS mixin usage with one of these natively supported
+      alternatives:
+        * CSS Shadow Parts or CSS variables for styling of DOM nodes residing in
+          the Shadow DOM of a child node.
+        * Plain CSS classes, for grouping a set of styles together for easy
+          reuse.
 
 ### Color
 
@@ -248,7 +257,7 @@ compatibility issues are less relevant for Chrome-only code).
   readability.
 
 * Prefer `rgb()` or `rgba()` with decimal values instead of hex notation
-  (`#rrggbb`) because alpha can be more easily added.
+  (`#rrggbb`).
     * Exception: shades of gray (i.e. `#333`)
 
 * If the hex value is `#rrggbb`, use the shorthand notation `#rgb`.
@@ -302,7 +311,8 @@ For properties that don't have an RTL-friendly alternatives, use
 ### Style
 
 See the [Google JavaScript Style
-Guide](https://google.github.io/styleguide/jsguide.html).
+Guide](https://google.github.io/styleguide/jsguide.html) as well as
+[ECMAScript Features in Chromium](es.md).
 
 * Use `$('element-id')` instead of `document.getElementById`
 
@@ -350,17 +360,13 @@ Guide](https://google.github.io/styleguide/jsguide.html).
     * DO: `Object<T>`
     * DON'T: `Object<string, T>`
 
-### Events
+* Use template types for any class that supports them, for example:
+    * `Array`
+    * `CustomEvent`
+    * `Map`
+    * `Promise`
+    * `Set`
 
-* Use Polymer's `on-tap` for click events instead of `on-click`
-    * `on-tap` handlers should use `stopPropagation()` to prevent parents from
-      handling the event where appropriate.
-
-<div class="note">
-Calling <code>stopPropagation()</code> from an <code>on-tap</code> handler will
-not prevent on-click event handlers, so make sure that <i>on-tap</i> is used
-consistently throughout the page.
-</div>
 
 ## Polymer
 
@@ -393,6 +399,10 @@ fooChanged_: function() {
   this.bar = this.derive(this.foo);
 },
 ```
+
+* Use native `on-click` for click events instead of `on-tap`. 'tap' is a
+  synthetic event provided by Polymer for backward compatibility with some
+  browsers and is not needed by Chrome.
 
 * Make good use of the  [`dom-if` template](
 https://www.polymer-project.org/2.0/docs/devguide/templates#dom-if):
@@ -450,15 +460,10 @@ function isWindows() {
 ```
 
 `<include src="[path]">` reads the file at `path` and replaces the `<include>`
-tag with the file contents of `[path]`.
-
-Don't use `</include>` to close these tags; they're not needed nor supported.
-
-<div class="note">
-Using <code>&lt;include&gt;</code> simply pastes the entire contents of a file,
-which can lead to duplication.  If you simply want to ensure some code is loaded
-(and usually you do), you should use HTML Imports instead.
-</div>
+tag with the file contents of `[path]`. Don't use `<include>` in new JS code;
+[it is being removed.](https://docs.google.com/document/d/1Z18WTNv28z5FW3smNEm_GtsfVD2IL-CmmAikwjw3ryo/edit?usp=sharing#heading=h.66ycuu6hfi9n)
+Instead, use JS imports in new pages and pages that use JS modules. Use HTML
+imports in existing pages that are still using HTML imports/Polymer 2.
 
 Grit can read and inline resources when enabled via `flattenhtml="true"`.
 

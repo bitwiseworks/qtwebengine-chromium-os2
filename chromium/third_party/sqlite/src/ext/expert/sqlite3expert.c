@@ -15,7 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#ifndef SQLITE_OMIT_VIRTUALTABLE
+#ifndef SQLITE_OMIT_VIRTUALTABLE 
 
 typedef sqlite3_int64 i64;
 typedef sqlite3_uint64 u64;
@@ -68,7 +68,7 @@ struct IdxScan {
 };
 
 /*
-** Information regarding a single database table. Extracted from
+** Information regarding a single database table. Extracted from 
 ** "PRAGMA table_info" by function idxGetTableInfo().
 */
 struct IdxColumn {
@@ -152,7 +152,7 @@ struct sqlite3expert {
 
 
 /*
-** Allocate and return nByte bytes of zeroed memory using sqlite3_malloc().
+** Allocate and return nByte bytes of zeroed memory using sqlite3_malloc(). 
 ** If the allocation fails, set *pRc to SQLITE_NOMEM and return NULL.
 */
 static void *idxMalloc(int *pRc, int nByte){
@@ -208,11 +208,11 @@ static int idxHashString(const char *z, int n){
 /*
 ** If zKey is already present in the hash table, return non-zero and do
 ** nothing. Otherwise, add an entry with key zKey and payload string zVal to
-** the hash table passed as the second argument.
+** the hash table passed as the second argument. 
 */
 static int idxHashAdd(
-  int *pRc,
-  IdxHash *pHash,
+  int *pRc, 
+  IdxHash *pHash, 
   const char *zKey,
   const char *zVal
 ){
@@ -244,7 +244,7 @@ static int idxHashAdd(
 }
 
 /*
-** If zKey/nKey is present in the hash table, return a pointer to the
+** If zKey/nKey is present in the hash table, return a pointer to the 
 ** hash-entry object.
 */
 static IdxHashEntry *idxHashFind(IdxHash *pHash, const char *zKey, int nKey){
@@ -383,7 +383,7 @@ static char *expertDequote(const char *zIn){
   return zRet;
 }
 
-/*
+/* 
 ** This function is the implementation of both the xConnect and xCreate
 ** methods of the r-tree virtual table.
 **
@@ -439,7 +439,7 @@ static int expertBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo){
   int rc = SQLITE_OK;
   int n = 0;
   IdxScan *pScan;
-  const int opmask =
+  const int opmask = 
     SQLITE_INDEX_CONSTRAINT_EQ | SQLITE_INDEX_CONSTRAINT_GT |
     SQLITE_INDEX_CONSTRAINT_LT | SQLITE_INDEX_CONSTRAINT_GE |
     SQLITE_INDEX_CONSTRAINT_LE;
@@ -456,10 +456,10 @@ static int expertBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo){
     /* Add the constraints to the IdxScan object */
     for(i=0; i<pIdxInfo->nConstraint; i++){
       struct sqlite3_index_constraint *pCons = &pIdxInfo->aConstraint[i];
-      if( pCons->usable
-       && pCons->iColumn>=0
+      if( pCons->usable 
+       && pCons->iColumn>=0 
        && p->pTab->aCol[pCons->iColumn].iPk==0
-       && (pCons->op & opmask)
+       && (pCons->op & opmask) 
       ){
         IdxConstraint *pNew;
         const char *zColl = sqlite3_vtab_collation(pIdxInfo, i);
@@ -502,9 +502,9 @@ static int expertBestIndex(sqlite3_vtab *pVtab, sqlite3_index_info *pIdxInfo){
 }
 
 static int expertUpdate(
-  sqlite3_vtab *pVtab,
-  int nData,
-  sqlite3_value **azData,
+  sqlite3_vtab *pVtab, 
+  int nData, 
+  sqlite3_value **azData, 
   sqlite_int64 *pRowid
 ){
   (void)pVtab;
@@ -514,7 +514,7 @@ static int expertUpdate(
   return SQLITE_OK;
 }
 
-/*
+/* 
 ** Virtual table module xOpen method.
 */
 static int expertOpen(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
@@ -526,7 +526,7 @@ static int expertOpen(sqlite3_vtab *pVTab, sqlite3_vtab_cursor **ppCursor){
   return rc;
 }
 
-/*
+/* 
 ** Virtual table module xClose method.
 */
 static int expertClose(sqlite3_vtab_cursor *cur){
@@ -539,7 +539,7 @@ static int expertClose(sqlite3_vtab_cursor *cur){
 /*
 ** Virtual table module xEof method.
 **
-** Return non-zero if the cursor does not currently point to a valid
+** Return non-zero if the cursor does not currently point to a valid 
 ** record (i.e if the scan has finished), or zero otherwise.
 */
 static int expertEof(sqlite3_vtab_cursor *cur){
@@ -547,7 +547,7 @@ static int expertEof(sqlite3_vtab_cursor *cur){
   return pCsr->pData==0;
 }
 
-/*
+/* 
 ** Virtual table module xNext method.
 */
 static int expertNext(sqlite3_vtab_cursor *cur){
@@ -566,7 +566,7 @@ static int expertNext(sqlite3_vtab_cursor *cur){
   return rc;
 }
 
-/*
+/* 
 ** Virtual table module xRowid method.
 */
 static int expertRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
@@ -575,7 +575,7 @@ static int expertRowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid){
   return SQLITE_OK;
 }
 
-/*
+/* 
 ** Virtual table module xColumn method.
 */
 static int expertColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
@@ -588,11 +588,11 @@ static int expertColumn(sqlite3_vtab_cursor *cur, sqlite3_context *ctx, int i){
   return SQLITE_OK;
 }
 
-/*
+/* 
 ** Virtual table module xFilter method.
 */
 static int expertFilter(
-  sqlite3_vtab_cursor *cur,
+  sqlite3_vtab_cursor *cur, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -745,7 +745,7 @@ static int idxGetTableInfo(
 }
 
 /*
-** This function is a no-op if *pRc is set to anything other than
+** This function is a no-op if *pRc is set to anything other than 
 ** SQLITE_OK when it is called.
 **
 ** If *pRc is initially set to SQLITE_OK, then the text specified by
@@ -835,7 +835,7 @@ static char *idxAppendColDefn(
 
 /*
 ** Search database dbm for an index compatible with the one idxCreateFromCons()
-** would create from arguments pScan, pEq and pTail. If no error occurs and
+** would create from arguments pScan, pEq and pTail. If no error occurs and 
 ** such an index is found, return non-zero. Or, if no such index is found,
 ** return zero.
 **
@@ -911,7 +911,7 @@ static int idxFindCompatible(
 static int idxCreateFromCons(
   sqlite3expert *p,
   IdxScan *pScan,
-  IdxConstraint *pEq,
+  IdxConstraint *pEq, 
   IdxConstraint *pTail
 ){
   sqlite3 *dbm = p->dbm;
@@ -940,7 +940,7 @@ static int idxCreateFromCons(
         h += ((h<<3) + zCols[i]);
       }
       zName = sqlite3_mprintf("%s_idx_%08x", zTable, h);
-      if( zName==0 ){
+      if( zName==0 ){ 
         rc = SQLITE_NOMEM;
       }else{
         if( idxIdentifierRequiresQuotes(zTable) ){
@@ -978,7 +978,7 @@ static int idxFindConstraint(IdxConstraint *pList, IdxConstraint *p){
 }
 
 static int idxCreateFromWhere(
-  sqlite3expert *p,
+  sqlite3expert *p, 
   IdxScan *pScan,                 /* Create indexes for this scan */
   IdxConstraint *pTail            /* range/ORDER BY constraints for inclusion */
 ){
@@ -1013,7 +1013,7 @@ static int idxCreateFromWhere(
 }
 
 /*
-** Create candidate indexes in database [dbm] based on the data in
+** Create candidate indexes in database [dbm] based on the data in 
 ** linked-list pScan.
 */
 static int idxCreateCandidates(sqlite3expert *p){
@@ -1060,7 +1060,7 @@ static void idxScanFree(IdxScan *pScan, IdxScan *pLast){
 }
 
 /*
-** Free all elements of the linked list starting from pStatement up
+** Free all elements of the linked list starting from pStatement up 
 ** until pLast (pLast is not freed).
 */
 static void idxStatementFree(IdxStatement *pStatement, IdxStatement *pLast){
@@ -1209,15 +1209,15 @@ static int idxAuthCallback(
 }
 
 static int idxProcessOneTrigger(
-  sqlite3expert *p,
-  IdxWrite *pWrite,
+  sqlite3expert *p, 
+  IdxWrite *pWrite, 
   char **pzErr
 ){
   static const char *zInt = UNIQUE_TABLE_NAME;
   static const char *zDrop = "DROP TABLE " UNIQUE_TABLE_NAME;
   IdxTable *pTab = pWrite->pTab;
   const char *zTab = pTab->zName;
-  const char *zSql =
+  const char *zSql = 
     "SELECT 'CREATE TEMP' || substr(sql, 7) FROM sqlite_master "
     "WHERE tbl_name = %Q AND type IN ('table', 'trigger') "
     "ORDER BY type;";
@@ -1258,7 +1258,7 @@ static int idxProcessOneTrigger(
       int i;
       zWrite = idxAppendText(&rc, zWrite, "UPDATE %Q SET ", zInt);
       for(i=0; i<pTab->nCol; i++){
-        zWrite = idxAppendText(&rc, zWrite, "%s%Q=?", i==0 ? "" : ", ",
+        zWrite = idxAppendText(&rc, zWrite, "%s%Q=?", i==0 ? "" : ", ", 
             pTab->aCol[i].zName
         );
       }
@@ -1346,14 +1346,14 @@ static int idxCreateVtabSchema(sqlite3expert *p, char **pzErrmsg){
         /* The statement the vtab will pass to sqlite3_declare_vtab() */
         zInner = idxAppendText(&rc, 0, "CREATE TABLE x(");
         for(i=0; i<pTab->nCol; i++){
-          zInner = idxAppendText(&rc, zInner, "%s%Q COLLATE %s",
+          zInner = idxAppendText(&rc, zInner, "%s%Q COLLATE %s", 
               (i==0 ? "" : ", "), pTab->aCol[i].zName, pTab->aCol[i].zColl
           );
         }
         zInner = idxAppendText(&rc, zInner, ")");
 
         /* The CVT statement to create the vtab */
-        zOuter = idxAppendText(&rc, 0,
+        zOuter = idxAppendText(&rc, 0, 
             "CREATE VIRTUAL TABLE %Q USING expert(%Q)", zName, zInner
         );
         if( rc==SQLITE_OK ){
@@ -1491,7 +1491,7 @@ static void idxRemFunc(
 
 static int idxLargestIndex(sqlite3 *db, int *pnMax, char **pzErr){
   int rc = SQLITE_OK;
-  const char *zMax =
+  const char *zMax = 
     "SELECT max(i.seqno) FROM "
     "  sqlite_master AS s, "
     "  pragma_index_list(s.name) AS l, "
@@ -1534,7 +1534,7 @@ static int idxPopulateOneStat1(
     const char *zComma = zCols==0 ? "" : ", ";
     const char *zName = (const char*)sqlite3_column_text(pIndexXInfo, 0);
     const char *zColl = (const char*)sqlite3_column_text(pIndexXInfo, 1);
-    zCols = idxAppendText(&rc, zCols,
+    zCols = idxAppendText(&rc, zCols, 
         "%sx.%Q IS rem(%d, x.%Q) COLLATE %s", zComma, zName, nCol, zName, zColl
     );
     zOrder = idxAppendText(&rc, zOrder, "%s%d", zComma, ++nCol);
@@ -1631,13 +1631,13 @@ static int idxBuildSampleTable(sqlite3expert *p, const char *zTab){
 ** indexes have already been created in database sqlite3expert.dbm, this
 ** function populates sqlite_stat1 table in the same database.
 **
-** The stat1 data is generated by querying the
+** The stat1 data is generated by querying the 
 */
 static int idxPopulateStat1(sqlite3expert *p, char **pzErr){
   int rc = SQLITE_OK;
   int nMax =0;
   struct IdxRemCtx *pCtx = 0;
-  struct IdxSampleCtx samplectx;
+  struct IdxSampleCtx samplectx; 
   int i;
   i64 iPrev = -100000;
   sqlite3_stmt *pAllIndex = 0;
@@ -1649,7 +1649,7 @@ static int idxPopulateStat1(sqlite3expert *p, char **pzErr){
     "  sqlite_master AS s, "
     "  pragma_index_list(s.name) AS l "
     "WHERE s.type = 'table'";
-  const char *zIndexXInfo =
+  const char *zIndexXInfo = 
     "SELECT name, coll FROM pragma_index_xinfo(?) WHERE key";
   const char *zWrite = "INSERT INTO sqlite_stat1 VALUES(?, ?, ?)";
 
@@ -1705,7 +1705,7 @@ static int idxPopulateStat1(sqlite3expert *p, char **pzErr){
     iPrev = iRowid;
   }
   if( rc==SQLITE_OK && p->iSample<100 ){
-    rc = sqlite3_exec(p->dbv,
+    rc = sqlite3_exec(p->dbv, 
         "DROP TABLE IF EXISTS temp." UNIQUE_TABLE_NAME, 0,0,0
     );
   }
@@ -1753,12 +1753,12 @@ sqlite3expert *sqlite3_expert_new(sqlite3 *db, char **pzErrmsg){
       sqlite3_db_config(pNew->dbm, SQLITE_DBCONFIG_TRIGGER_EQP, 1, (int*)0);
     }
   }
-
+  
 
   /* Copy the entire schema of database [db] into [dbm]. */
   if( rc==SQLITE_OK ){
     sqlite3_stmt *pSql;
-    rc = idxPrintfPrepareStmt(pNew->db, &pSql, pzErrmsg,
+    rc = idxPrintfPrepareStmt(pNew->db, &pSql, pzErrmsg, 
         "SELECT sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%%'"
         " AND sql NOT LIKE 'CREATE VIRTUAL %%'"
     );
@@ -1879,8 +1879,8 @@ int sqlite3_expert_analyze(sqlite3expert *p, char **pzErr){
 
   /* Formulate the EXPERT_REPORT_CANDIDATES text */
   for(pEntry=p->hIdx.pFirst; pEntry; pEntry=pEntry->pNext){
-    p->zCandidates = idxAppendText(&rc, p->zCandidates,
-        "%s;%s%s\n", pEntry->zVal,
+    p->zCandidates = idxAppendText(&rc, p->zCandidates, 
+        "%s;%s%s\n", pEntry->zVal, 
         pEntry->zVal2 ? " -- stat1: " : "", pEntry->zVal2
     );
   }

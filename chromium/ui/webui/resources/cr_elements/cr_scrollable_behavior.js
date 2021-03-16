@@ -34,13 +34,18 @@
  * will not be sized correctly.
  */
 
+// clang-format off
+// #import {beforeNextRender, Polymer} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+// #import 'chrome://resources/polymer/v3_0/iron-list/iron-list.js';
+// clang-format on
+
 /** @polymerBehavior */
-const CrScrollableBehavior = {
+/* #export */ const CrScrollableBehavior = {
 
   /** @private {number|null} */
   intervalId_: null,
 
-  ready: function() {
+  ready() {
     const readyAsync = () => {
       this.requestUpdateScroll();
 
@@ -61,7 +66,7 @@ const CrScrollableBehavior = {
     readyAsync();
   },
 
-  detached: function() {
+  detached() {
     if (this.intervalId_ !== null) {
       clearInterval(this.intervalId_);
     }
@@ -72,37 +77,53 @@ const CrScrollableBehavior = {
    * This ensures that the <iron-list> contents of dynamically sized
    * containers are resized correctly.
    */
-  updateScrollableContents: function() {
+  updateScrollableContents() {
     if (this.intervalId_ !== null) {
       return;
     }  // notifyResize is already in progress.
 
     this.requestUpdateScroll();
 
-    let nodeList = this.root.querySelectorAll('[scrollable] iron-list');
+    const nodeList = this.root.querySelectorAll('[scrollable] iron-list');
     if (!nodeList.length) {
       return;
     }
 
+    let nodesToResize = Array.from(nodeList).map(node => ({
+                                                   node: node,
+                                                   lastScrollHeight: 0,
+                                                 }));
     // Use setInterval to avoid initial render / sizing issues.
-    this.intervalId_ = window.setInterval(function() {
-      const unreadyNodes = [];
-      for (let i = 0; i < nodeList.length; i++) {
-        const node = nodeList[i];
-        if (node.parentNode.scrollHeight == 0) {
-          unreadyNodes.push(node);
-          continue;
+    this.intervalId_ = window.setInterval(() => {
+      const checkAgain = [];
+      nodesToResize.forEach(({node, lastScrollHeight}) => {
+        const scrollHeight = node.parentNode.scrollHeight;
+        // A hidden scroll-container has a height of 0. When not hidden, it has
+        // a min-height of 1px and the iron-list needs a resize to show the
+        // initial items and update the |scrollHeight|. The initial item count
+        // is determined by the |scrollHeight|. A scrollHeight of 1px will
+        // result in the minimum default item count (currently 3). After the
+        // |scrollHeight| is updated to be greater than 1px, another resize is
+        // needed to correctly calculate the number of physical iron-list items
+        // to render.
+        if (scrollHeight !== lastScrollHeight) {
+          const ironList = /** @type {!IronListElement} */ (node);
+          ironList.notifyResize();
         }
-        const ironList = /** @type {!IronListElement} */ (node);
-        ironList.notifyResize();
-      }
-      if (unreadyNodes.length == 0) {
+        if (scrollHeight <= 1) {
+          checkAgain.push({
+            node: node,
+            lastScrollHeight: scrollHeight,
+          });
+        }
+      });
+      if (checkAgain.length === 0) {
         window.clearInterval(this.intervalId_);
         this.intervalId_ = null;
       } else {
-        nodeList = unreadyNodes;
+        nodesToResize = checkAgain;
       }
-    }.bind(this), 10);
+    }, 10);
   },
 
   /**
@@ -110,7 +131,7 @@ const CrScrollableBehavior = {
    * Called from ready() and updateScrollableContents(). May also be called
    * directly when the contents change (e.g. when not using iron-list).
    */
-  requestUpdateScroll: function() {
+  requestUpdateScroll() {
     requestAnimationFrame(function() {
       const scrollableElements = this.root.querySelectorAll('[scrollable]');
       for (let i = 0; i < scrollableElements.length; i++) {
@@ -120,7 +141,7 @@ const CrScrollableBehavior = {
   },
 
   /** @param {!IronListElement} list */
-  saveScroll: function(list) {
+  saveScroll(list) {
     // Store a FIFO of saved scroll positions so that multiple updates in a
     // frame are applied correctly. Specifically we need to track when '0' is
     // saved (but not apply it), and still handle patterns like [30, 0, 32].
@@ -129,12 +150,12 @@ const CrScrollableBehavior = {
   },
 
   /** @param {!IronListElement} list */
-  restoreScroll: function(list) {
+  restoreScroll(list) {
     this.async(function() {
       const scrollTop = list.savedScrollTops.shift();
       // Ignore scrollTop of 0 in case it was intermittent (we do not need to
       // explicitly scroll to 0).
-      if (scrollTop != 0) {
+      if (scrollTop !== 0) {
         list.scroll(0, scrollTop);
       }
     });
@@ -145,7 +166,7 @@ const CrScrollableBehavior = {
    * @param {!Event} event
    * @private
    */
-  updateScrollEvent_: function(event) {
+  updateScrollEvent_(event) {
     const scrollable = /** @type {!HTMLElement} */ (event.target);
     this.updateScroll_(scrollable);
   },
@@ -156,7 +177,7 @@ const CrScrollableBehavior = {
    * @param {!HTMLElement} scrollable
    * @private
    */
-  updateScroll_: function(scrollable) {
+  updateScroll_(scrollable) {
     scrollable.classList.toggle(
         'can-scroll', scrollable.clientHeight < scrollable.scrollHeight);
     scrollable.classList.toggle('is-scrolled', scrollable.scrollTop > 0);

@@ -16,7 +16,6 @@
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
 #include "api/audio_codecs/builtin_audio_encoder_factory.h"
 #include "api/create_peerconnection_factory.h"
-#include "api/video_track_source_proxy.h"
 #include "media/engine/internal_decoder_factory.h"
 #include "media/engine/internal_encoder_factory.h"
 #include "media/engine/multiplex_codec_factory.h"
@@ -123,9 +122,9 @@ bool SimplePeerConnection::InitializePeerConnection(const char** turn_urls,
   RTC_DCHECK(peer_connection_.get() == nullptr);
 
   if (g_peer_connection_factory == nullptr) {
-    g_worker_thread.reset(new rtc::Thread());
+    g_worker_thread = rtc::Thread::Create();
     g_worker_thread->Start();
-    g_signaling_thread.reset(new rtc::Thread());
+    g_signaling_thread = rtc::Thread::Create();
     g_signaling_thread->Start();
 
     g_peer_connection_factory = webrtc::CreatePeerConnectionFactory(
@@ -134,10 +133,10 @@ bool SimplePeerConnection::InitializePeerConnection(const char** turn_urls,
         webrtc::CreateBuiltinAudioDecoderFactory(),
         std::unique_ptr<webrtc::VideoEncoderFactory>(
             new webrtc::MultiplexEncoderFactory(
-                absl::make_unique<webrtc::InternalEncoderFactory>())),
+                std::make_unique<webrtc::InternalEncoderFactory>())),
         std::unique_ptr<webrtc::VideoDecoderFactory>(
             new webrtc::MultiplexDecoderFactory(
-                absl::make_unique<webrtc::InternalDecoderFactory>())),
+                std::make_unique<webrtc::InternalDecoderFactory>())),
         nullptr, nullptr);
   }
   if (!g_peer_connection_factory.get()) {
@@ -343,7 +342,8 @@ bool SimplePeerConnection::SetRemoteDescription(const char* type,
       webrtc::CreateSessionDescription(sdp_type, remote_desc, &error));
   if (!session_description) {
     RTC_LOG(WARNING) << "Can't parse received session description message. "
-                     << "SdpParseError was: " << error.description;
+                        "SdpParseError was: "
+                     << error.description;
     return false;
   }
   RTC_LOG(INFO) << " Received session description :" << remote_desc;
@@ -364,7 +364,8 @@ bool SimplePeerConnection::AddIceCandidate(const char* candidate,
       webrtc::CreateIceCandidate(sdp_mid, sdp_mlineindex, candidate, &error));
   if (!ice_candidate.get()) {
     RTC_LOG(WARNING) << "Can't parse received candidate message. "
-                     << "SdpParseError was: " << error.description;
+                        "SdpParseError was: "
+                     << error.description;
     return false;
   }
   if (!peer_connection_->AddIceCandidate(ice_candidate.get())) {
@@ -447,9 +448,6 @@ void SimplePeerConnection::AddStreams(bool audio_only) {
         new rtc::RefCountedObject<webrtc::jni::AndroidVideoTrackSource>(
             g_signaling_thread.get(), env, /* is_screencast= */ false,
             /* align_timestamps= */ true));
-    rtc::scoped_refptr<webrtc::VideoTrackSourceProxy> proxy_source =
-        webrtc::VideoTrackSourceProxy::Create(g_signaling_thread.get(),
-                                              g_worker_thread.get(), source);
 
     // link with VideoCapturer (Camera);
     jmethodID link_camera_method = webrtc::GetStaticMethodID(
@@ -457,13 +455,13 @@ void SimplePeerConnection::AddStreams(bool audio_only) {
         "(JLorg/webrtc/SurfaceTextureHelper;)Lorg/webrtc/VideoCapturer;");
     jobject camera_tmp =
         env->CallStaticObjectMethod(pc_factory_class, link_camera_method,
-                                    (jlong)proxy_source.get(), texture_helper);
+                                    (jlong)source.get(), texture_helper);
     CHECK_EXCEPTION(env);
     g_camera = (jobject)env->NewGlobalRef(camera_tmp);
 
     rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track(
         g_peer_connection_factory->CreateVideoTrack(kVideoLabel,
-                                                    proxy_source.release()));
+                                                    source.release()));
     stream->AddTrack(video_track);
 #else
     rtc::scoped_refptr<CapturerTrackSource> video_device =

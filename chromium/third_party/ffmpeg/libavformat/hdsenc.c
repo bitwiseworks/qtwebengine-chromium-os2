@@ -146,8 +146,7 @@ static void hds_free(AVFormatContext *s)
             av_write_trailer(os->ctx);
         if (os->ctx)
             avio_context_free(&os->ctx->pb);
-        if (os->ctx)
-            avformat_free_context(os->ctx);
+        avformat_free_context(os->ctx);
         av_freep(&os->metadata);
         for (j = 0; j < os->nb_extra_packets; j++)
             av_freep(&os->extra_packets[j]);
@@ -315,7 +314,7 @@ static int hds_write_header(AVFormatContext *s)
 {
     HDSContext *c = s->priv_data;
     int ret = 0, i;
-    AVOutputFormat *oformat;
+    ff_const59 AVOutputFormat *oformat;
 
     if (mkdir(s->url, 0777) == -1 && errno != EEXIST) {
         ret = AVERROR(errno);

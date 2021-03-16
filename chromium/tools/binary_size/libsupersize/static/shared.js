@@ -34,8 +34,6 @@
  * a certain type.
  * @prop {number} size Byte size
  * @prop {number} count Number of symbols
- * @prop {number} highlight Byte size of children that should be
- * highlighted.
  */
 
 /**
@@ -101,6 +99,16 @@ const _BYTE_UNITS = Object.freeze({
 });
 
 /**
+ * @enum {number} All possible states for a delta symbol.
+ */
+const _DIFF_STATUSES = Object.freeze({
+  UNCHANGED: 0,
+  CHANGED: 1,
+  ADDED: 2,
+  REMOVED: 3,
+});
+
+/**
  * Special types used by containers, such as folders and files.
  */
 const _CONTAINER_TYPES = {
@@ -115,6 +123,8 @@ const _CONTAINER_TYPE_SET = new Set(Object.values(_CONTAINER_TYPES));
 const _CODE_SYMBOL_TYPE = 't';
 /** Type for a dex method symbol */
 const _DEX_METHOD_SYMBOL_TYPE = 'm';
+/** Type for a non-method dex symbol */
+const _DEX_SYMBOL_TYPE = 'x';
 /** Type for an 'other' symbol */
 const _OTHER_SYMBOL_TYPE = 'o';
 

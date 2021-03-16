@@ -32,7 +32,7 @@
 //    // Create your visitor, a subclass of SpdyDeframerVisitorInterface.
 //    // For example, using DeframerCallbackCollector to collect frames:
 //    std::vector<CollectedFrame> collected_frames;
-//    auto your_visitor = SpdyMakeUnique<DeframerCallbackCollector>(
+//    auto your_visitor = std::make_unique<DeframerCallbackCollector>(
 //        &collected_frames);
 //
 //    // Transfer ownership of your visitor to the converter, which ensures that
@@ -45,7 +45,7 @@
 //    framer.set_visitor(the_deframer.get());
 //
 //    // Process frames.
-//    SpdyStringPiece input = ...
+//    QuicheStringPiece input = ...
 //    while (!input.empty() && !framer.HasError()) {
 //      size_t consumed = framer.ProcessInput(input.data(), input.size());
 //      input.remove_prefix(consumed);
@@ -68,20 +68,17 @@
 // are met.
 
 #include <cstdint>
-
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "base/logging.h"
-#include "base/macros.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "net/third_party/quiche/src/spdy/core/http2_frame_decoder_adapter.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_protocol_test_utils.h"
 #include "net/third_party/quiche/src/spdy/core/spdy_test_utils.h"
-#include "net/third_party/quiche/src/spdy/platform/api/spdy_string.h"
+#include "net/third_party/quiche/src/spdy/platform/api/spdy_logging.h"
 
 namespace spdy {
 namespace test {
@@ -93,7 +90,7 @@ typedef std::vector<std::pair<SpdyKnownSettingsId, uint32_t>> SettingVector;
 // particular the order of each header entry, though it doesn't expose the
 // inner details of the HPACK block, such as the type of encoding selected
 // for each header entry, nor dynamic table size changes.
-typedef std::pair<SpdyString, SpdyString> StringPair;
+typedef std::pair<std::string, std::string> StringPair;
 typedef std::vector<StringPair> StringPairVector;
 
 // Forward decl.
@@ -116,43 +113,43 @@ class SpdyDeframerVisitorInterface {
   static std::unique_ptr<SpdyDeframerVisitorInterface> LogBeforeVisiting(
       std::unique_ptr<SpdyDeframerVisitorInterface> wrapped_visitor);
 
-  virtual void OnAltSvc(std::unique_ptr<SpdyAltSvcIR> frame) {}
-  virtual void OnData(std::unique_ptr<SpdyDataIR> frame) {}
-  virtual void OnGoAway(std::unique_ptr<SpdyGoAwayIR> frame) {}
+  virtual void OnAltSvc(std::unique_ptr<SpdyAltSvcIR> /*frame*/) {}
+  virtual void OnData(std::unique_ptr<SpdyDataIR> /*frame*/) {}
+  virtual void OnGoAway(std::unique_ptr<SpdyGoAwayIR> /*frame*/) {}
 
   // SpdyHeadersIR and SpdyPushPromiseIR each has a SpdyHeaderBlock which
   // significantly modifies the headers, so the actual header entries (name
   // and value strings) are provided in a vector.
-  virtual void OnHeaders(std::unique_ptr<SpdyHeadersIR> frame,
-                         std::unique_ptr<StringPairVector> headers) {}
+  virtual void OnHeaders(std::unique_ptr<SpdyHeadersIR> /*frame*/,
+                         std::unique_ptr<StringPairVector> /*headers*/) {}
 
-  virtual void OnPing(std::unique_ptr<SpdyPingIR> frame) {}
-  virtual void OnPingAck(std::unique_ptr<SpdyPingIR> frame);
-  virtual void OnPriority(std::unique_ptr<SpdyPriorityIR> frame) {}
+  virtual void OnPing(std::unique_ptr<SpdyPingIR> /*frame*/) {}
+  virtual void OnPingAck(std::unique_ptr<SpdyPingIR> /*frame*/);
+  virtual void OnPriority(std::unique_ptr<SpdyPriorityIR> /*frame*/) {}
 
   // SpdyHeadersIR and SpdyPushPromiseIR each has a SpdyHeaderBlock which
   // significantly modifies the headers, so the actual header entries (name
   // and value strings) are provided in a vector.
-  virtual void OnPushPromise(std::unique_ptr<SpdyPushPromiseIR> frame,
-                             std::unique_ptr<StringPairVector> headers) {}
+  virtual void OnPushPromise(std::unique_ptr<SpdyPushPromiseIR> /*frame*/,
+                             std::unique_ptr<StringPairVector> /*headers*/) {}
 
-  virtual void OnRstStream(std::unique_ptr<SpdyRstStreamIR> frame) {}
+  virtual void OnRstStream(std::unique_ptr<SpdyRstStreamIR> /*frame*/) {}
 
   // SpdySettingsIR has a map for settings, so loses info about the order of
   // settings, and whether the same setting appeared more than once, so the
   // the actual settings (parameter and value) are provided in a vector.
-  virtual void OnSettings(std::unique_ptr<SpdySettingsIR> frame,
-                          std::unique_ptr<SettingVector> settings) {}
+  virtual void OnSettings(std::unique_ptr<SpdySettingsIR> /*frame*/,
+                          std::unique_ptr<SettingVector> /*settings*/) {}
 
   // A settings frame with an ACK has no content, but for uniformity passing
   // a frame with the ACK flag set.
-  virtual void OnSettingsAck(std::unique_ptr<SpdySettingsIR> frame);
+  virtual void OnSettingsAck(std::unique_ptr<SpdySettingsIR> /*frame*/);
 
-  virtual void OnWindowUpdate(std::unique_ptr<SpdyWindowUpdateIR> frame) {}
+  virtual void OnWindowUpdate(std::unique_ptr<SpdyWindowUpdateIR> /*frame*/) {}
 
   // The SpdyFramer will not process any more data at this point.
-  virtual void OnError(http2::Http2DecoderAdapter::SpdyFramerError error,
-                       SpdyTestDeframer* deframer) {}
+  virtual void OnError(http2::Http2DecoderAdapter::SpdyFramerError /*error*/,
+                       SpdyTestDeframer* /*deframer*/) {}
 };
 
 class SpdyTestDeframer : public SpdyFramerVisitorInterface {

@@ -15,6 +15,7 @@ namespace cc {
 namespace {
 // Surfaces and CompositorTimingHistory don't support more than 1 pending swap.
 const int kMaxPendingSubmitFrames = 1;
+
 }  // namespace
 
 SchedulerStateMachine::SchedulerStateMachine(const SchedulerSettings& settings)
@@ -22,36 +23,44 @@ SchedulerStateMachine::SchedulerStateMachine(const SchedulerSettings& settings)
 
 SchedulerStateMachine::~SchedulerStateMachine() = default;
 
-const char* SchedulerStateMachine::LayerTreeFrameSinkStateToString(
-    LayerTreeFrameSinkState state) {
+perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState::
+    LayerTreeFrameSinkState
+    SchedulerStateMachine::LayerTreeFrameSinkStateToProtozeroEnum(
+        LayerTreeFrameSinkState state) {
+  using pbzeroMajorState =
+      perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState;
   switch (state) {
     case LayerTreeFrameSinkState::NONE:
-      return "LayerTreeFrameSinkState::NONE";
+      return pbzeroMajorState::LAYER_TREE_FRAME_NONE;
     case LayerTreeFrameSinkState::ACTIVE:
-      return "LayerTreeFrameSinkState::ACTIVE";
+      return pbzeroMajorState::LAYER_TREE_FRAME_ACTIVE;
     case LayerTreeFrameSinkState::CREATING:
-      return "LayerTreeFrameSinkState::CREATING";
+      return pbzeroMajorState::LAYER_TREE_FRAME_CREATING;
     case LayerTreeFrameSinkState::WAITING_FOR_FIRST_COMMIT:
-      return "LayerTreeFrameSinkState::WAITING_FOR_FIRST_COMMIT";
+      return pbzeroMajorState::LAYER_TREE_FRAME_WAITING_FOR_FIRST_COMMIT;
     case LayerTreeFrameSinkState::WAITING_FOR_FIRST_ACTIVATION:
-      return "LayerTreeFrameSinkState::WAITING_FOR_FIRST_ACTIVATION";
+      return pbzeroMajorState::LAYER_TREE_FRAME_WAITING_FOR_FIRST_ACTIVATION;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroMajorState::LAYER_TREE_FRAME_UNSPECIFIED;
 }
 
-const char* SchedulerStateMachine::BeginImplFrameStateToString(
-    BeginImplFrameState state) {
+perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState::
+    BeginImplFrameState
+    SchedulerStateMachine::BeginImplFrameStateToProtozeroEnum(
+        BeginImplFrameState state) {
+  using pbzeroMajorState =
+      perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState;
   switch (state) {
     case BeginImplFrameState::IDLE:
-      return "BeginImplFrameState::IDLE";
+      return pbzeroMajorState::BEGIN_IMPL_FRAME_IDLE;
     case BeginImplFrameState::INSIDE_BEGIN_FRAME:
-      return "BeginImplFrameState::INSIDE_BEGIN_FRAME";
+      return pbzeroMajorState::BEGIN_IMPL_FRAME_INSIDE_BEGIN_FRAME;
     case BeginImplFrameState::INSIDE_DEADLINE:
-      return "BeginImplFrameState::INSIDE_DEADLINE";
+      return pbzeroMajorState::BEGIN_IMPL_FRAME_INSIDE_DEADLINE;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroMajorState::BEGIN_IMPL_FRAME_UNSPECIFIED;
 }
 
 const char* SchedulerStateMachine::BeginImplFrameDeadlineModeToString(
@@ -72,168 +81,204 @@ const char* SchedulerStateMachine::BeginImplFrameDeadlineModeToString(
   return "???";
 }
 
-const char* SchedulerStateMachine::BeginMainFrameStateToString(
-    BeginMainFrameState state) {
+perfetto::protos::pbzero::ChromeCompositorSchedulerState::
+    BeginImplFrameDeadlineMode
+    SchedulerStateMachine::BeginImplFrameDeadlineModeToProtozeroEnum(
+        BeginImplFrameDeadlineMode mode) {
+  using pbzeroSchedulerState =
+      perfetto::protos::pbzero::ChromeCompositorSchedulerState;
+  switch (mode) {
+    case BeginImplFrameDeadlineMode::NONE:
+      return pbzeroSchedulerState::DEADLINE_MODE_NONE;
+    case BeginImplFrameDeadlineMode::IMMEDIATE:
+      return pbzeroSchedulerState::DEADLINE_MODE_IMMEDIATE;
+    case BeginImplFrameDeadlineMode::REGULAR:
+      return pbzeroSchedulerState::DEADLINE_MODE_REGULAR;
+    case BeginImplFrameDeadlineMode::LATE:
+      return pbzeroSchedulerState::DEADLINE_MODE_LATE;
+    case BeginImplFrameDeadlineMode::BLOCKED:
+      return pbzeroSchedulerState::DEADLINE_MODE_BLOCKED;
+  }
+  NOTREACHED();
+  return pbzeroSchedulerState::DEADLINE_MODE_UNSPECIFIED;
+}
+
+perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState::
+    BeginMainFrameState
+    SchedulerStateMachine::BeginMainFrameStateToProtozeroEnum(
+        BeginMainFrameState state) {
+  using pbzeroMajorState =
+      perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState;
   switch (state) {
     case BeginMainFrameState::IDLE:
-      return "BeginMainFrameState::IDLE";
+      return pbzeroMajorState::BEGIN_MAIN_FRAME_IDLE;
     case BeginMainFrameState::SENT:
-      return "BeginMainFrameState::SENT";
-    case BeginMainFrameState::STARTED:
-      return "BeginMainFrameState::STARTED";
+      return pbzeroMajorState::BEGIN_MAIN_FRAME_SENT;
     case BeginMainFrameState::READY_TO_COMMIT:
-      return "BeginMainFrameState::READY_TO_COMMIT";
+      return pbzeroMajorState::BEGIN_MAIN_FRAME_READY_TO_COMMIT;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroMajorState::BEGIN_MAIN_FRAME_UNSPECIFIED;
 }
 
-const char* SchedulerStateMachine::ForcedRedrawOnTimeoutStateToString(
-    ForcedRedrawOnTimeoutState state) {
+perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState::
+    ForcedRedrawOnTimeoutState
+    SchedulerStateMachine::ForcedRedrawOnTimeoutStateToProtozeroEnum(
+        ForcedRedrawOnTimeoutState state) {
+  using pbzeroMajorState =
+      perfetto::protos::pbzero::ChromeCompositorStateMachine::MajorState;
   switch (state) {
     case ForcedRedrawOnTimeoutState::IDLE:
-      return "ForcedRedrawOnTimeoutState::IDLE";
+      return pbzeroMajorState::FORCED_REDRAW_IDLE;
     case ForcedRedrawOnTimeoutState::WAITING_FOR_COMMIT:
-      return "ForcedRedrawOnTimeoutState::WAITING_FOR_COMMIT";
+      return pbzeroMajorState::FORCED_REDRAW_WAITING_FOR_COMMIT;
     case ForcedRedrawOnTimeoutState::WAITING_FOR_ACTIVATION:
-      return "ForcedRedrawOnTimeoutState::WAITING_FOR_ACTIVATION";
+      return pbzeroMajorState::FORCED_REDRAW_WAITING_FOR_ACTIVATION;
     case ForcedRedrawOnTimeoutState::WAITING_FOR_DRAW:
-      return "ForcedRedrawOnTimeoutState::WAITING_FOR_DRAW";
+      return pbzeroMajorState::FORCED_REDRAW_WAITING_FOR_DRAW;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroMajorState::FORCED_REDRAW_UNSPECIFIED;
 }
 
-const char* ScrollHandlerStateToString(ScrollHandlerState state) {
+perfetto::protos::pbzero::ChromeCompositorStateMachine::MinorState::
+    ScrollHandlerState
+    ScrollHandlerStateToProtozeroEnum(ScrollHandlerState state) {
+  using pbzeroMinorState =
+      perfetto::protos::pbzero::ChromeCompositorStateMachine::MinorState;
   switch (state) {
     case ScrollHandlerState::SCROLL_AFFECTS_SCROLL_HANDLER:
-      return "SCROLL_AFFECTS_SCROLL_HANDLER";
+      return pbzeroMinorState::SCROLL_AFFECTS_SCROLL_HANDLER;
     case ScrollHandlerState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER:
-      return "SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER";
+      return pbzeroMinorState::SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroMinorState::SCROLL_HANDLER_UNSPECIFIED;
 }
 
-const char* SchedulerStateMachine::ActionToString(Action action) {
+perfetto::protos::pbzero::ChromeCompositorSchedulerAction
+SchedulerStateMachine::ActionToProtozeroEnum(Action action) {
+  using pbzeroSchedulerAction =
+      perfetto::protos::pbzero::ChromeCompositorSchedulerAction;
   switch (action) {
     case Action::NONE:
-      return "Action::NONE";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_NONE;
     case Action::SEND_BEGIN_MAIN_FRAME:
-      return "Action::SEND_BEGIN_MAIN_FRAME";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_SEND_BEGIN_MAIN_FRAME;
     case Action::COMMIT:
-      return "Action::COMMIT";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_COMMIT;
     case Action::ACTIVATE_SYNC_TREE:
-      return "Action::ACTIVATE_SYNC_TREE";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_ACTIVATE_SYNC_TREE;
     case Action::DRAW_IF_POSSIBLE:
-      return "Action::DRAW_IF_POSSIBLE";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_DRAW_IF_POSSIBLE;
     case Action::DRAW_FORCED:
-      return "Action::DRAW_FORCED";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_DRAW_FORCED;
     case Action::DRAW_ABORT:
-      return "Action::DRAW_ABORT";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_DRAW_ABORT;
     case Action::BEGIN_LAYER_TREE_FRAME_SINK_CREATION:
-      return "Action::BEGIN_LAYER_TREE_FRAME_SINK_CREATION";
+      return pbzeroSchedulerAction::
+          CC_SCHEDULER_ACTION_BEGIN_LAYER_TREE_FRAME_SINK_CREATION;
     case Action::PREPARE_TILES:
-      return "Action::PREPARE_TILES";
+      return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_PREPARE_TILES;
     case Action::INVALIDATE_LAYER_TREE_FRAME_SINK:
-      return "Action::INVALIDATE_LAYER_TREE_FRAME_SINK";
+      return pbzeroSchedulerAction::
+          CC_SCHEDULER_ACTION_INVALIDATE_LAYER_TREE_FRAME_SINK;
     case Action::PERFORM_IMPL_SIDE_INVALIDATION:
-      return "Action::PERFORM_IMPL_SIDE_INVALIDATION";
-    case Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_SENT:
-      return "Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_SENT";
+      return pbzeroSchedulerAction::
+          CC_SCHEDULER_ACTION_PERFORM_IMPL_SIDE_INVALIDATION;
+    case Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_UNTIL:
+      return pbzeroSchedulerAction::
+          CC_SCHEDULER_ACTION_NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_UNTIL;
+    case Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_SOON:
+      return pbzeroSchedulerAction::
+          CC_SCHEDULER_ACTION_NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_SOON;
   }
   NOTREACHED();
-  return "???";
+  return pbzeroSchedulerAction::CC_SCHEDULER_ACTION_UNSPECIFIED;
 }
 
-std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
-SchedulerStateMachine::AsValue() const {
-  std::unique_ptr<base::trace_event::TracedValue> state(
-      new base::trace_event::TracedValue());
-  AsValueInto(state.get());
-  return std::move(state);
-}
+void SchedulerStateMachine::AsProtozeroInto(
+    perfetto::protos::pbzero::ChromeCompositorStateMachine* state) const {
+  auto* major_state = state->set_major_state();
+  major_state->set_next_action(ActionToProtozeroEnum(NextAction()));
+  major_state->set_begin_impl_frame_state(
+      BeginImplFrameStateToProtozeroEnum(begin_impl_frame_state_));
+  major_state->set_begin_main_frame_state(
+      BeginMainFrameStateToProtozeroEnum(begin_main_frame_state_));
+  major_state->set_layer_tree_frame_sink_state(
+      LayerTreeFrameSinkStateToProtozeroEnum(layer_tree_frame_sink_state_));
+  major_state->set_forced_redraw_state(
+      ForcedRedrawOnTimeoutStateToProtozeroEnum(forced_redraw_state_));
 
-void SchedulerStateMachine::AsValueInto(
-    base::trace_event::TracedValue* state) const {
-  state->BeginDictionary("major_state");
-  state->SetString("next_action", ActionToString(NextAction()));
-  state->SetString("begin_impl_frame_state",
-                   BeginImplFrameStateToString(begin_impl_frame_state_));
-  state->SetString("begin_main_frame_state",
-                   BeginMainFrameStateToString(begin_main_frame_state_));
-  state->SetString(
-      "layer_tree_frame_sink_state",
-      LayerTreeFrameSinkStateToString(layer_tree_frame_sink_state_));
-  state->SetString("forced_redraw_state",
-                   ForcedRedrawOnTimeoutStateToString(forced_redraw_state_));
-  state->EndDictionary();
-
-  state->BeginDictionary("minor_state");
-  state->SetInteger("commit_count", commit_count_);
-  state->SetInteger("current_frame_number", current_frame_number_);
-  state->SetInteger("last_frame_number_submit_performed",
-                    last_frame_number_submit_performed_);
-  state->SetInteger("last_frame_number_draw_performed",
-                    last_frame_number_draw_performed_);
-  state->SetInteger("last_frame_number_begin_main_frame_sent",
-                    last_frame_number_begin_main_frame_sent_);
-  state->SetBoolean("did_draw", did_draw_);
-  state->SetBoolean("did_send_begin_main_frame_for_current_frame",
-                    did_send_begin_main_frame_for_current_frame_);
-  state->SetBoolean("did_notify_begin_main_frame_not_sent",
-                    did_notify_begin_main_frame_not_sent_);
-  state->SetBoolean("wants_begin_main_frame_not_expected",
-                    wants_begin_main_frame_not_expected_);
-  state->SetBoolean("did_commit_during_frame", did_commit_during_frame_);
-  state->SetBoolean("did_invalidate_layer_tree_frame_sink",
-                    did_invalidate_layer_tree_frame_sink_);
-  state->SetBoolean("did_perform_impl_side_invalidaion",
-                    did_perform_impl_side_invalidation_);
-  state->SetBoolean("did_prepare_tiles", did_prepare_tiles_);
-  state->SetInteger("consecutive_checkerboard_animations",
-                    consecutive_checkerboard_animations_);
-  state->SetInteger("pending_submit_frames", pending_submit_frames_);
-  state->SetInteger("submit_frames_with_current_layer_tree_frame_sink",
-                    submit_frames_with_current_layer_tree_frame_sink_);
-  state->SetBoolean("needs_redraw", needs_redraw_);
-  state->SetBoolean("needs_prepare_tiles", needs_prepare_tiles_);
-  state->SetBoolean("needs_begin_main_frame", needs_begin_main_frame_);
-  state->SetBoolean("needs_one_begin_impl_frame", needs_one_begin_impl_frame_);
-  state->SetBoolean("visible", visible_);
-  state->SetBoolean("begin_frame_source_paused", begin_frame_source_paused_);
-  state->SetBoolean("can_draw", can_draw_);
-  state->SetBoolean("resourceless_draw", resourceless_draw_);
-  state->SetBoolean("has_pending_tree", has_pending_tree_);
-  state->SetBoolean("pending_tree_is_ready_for_activation",
-                    pending_tree_is_ready_for_activation_);
-  state->SetBoolean("active_tree_needs_first_draw",
-                    active_tree_needs_first_draw_);
-  state->SetBoolean("active_tree_is_ready_to_draw",
-                    active_tree_is_ready_to_draw_);
-  state->SetBoolean("did_create_and_initialize_first_layer_tree_frame_sink",
-                    did_create_and_initialize_first_layer_tree_frame_sink_);
-  state->SetString("tree_priority", TreePriorityToString(tree_priority_));
-  state->SetString("scroll_handler_state",
-                   ScrollHandlerStateToString(scroll_handler_state_));
-  state->SetBoolean("critical_begin_main_frame_to_activate_is_fast",
-                    critical_begin_main_frame_to_activate_is_fast_);
-  state->SetBoolean("main_thread_missed_last_deadline",
-                    main_thread_missed_last_deadline_);
-  state->SetBoolean("skip_next_begin_main_frame_to_reduce_latency",
-                    skip_next_begin_main_frame_to_reduce_latency_);
-  state->SetBoolean("video_needs_begin_frames", video_needs_begin_frames_);
-  state->SetBoolean("defer_main_frame_update", defer_main_frame_update_);
-  state->SetBoolean("last_commit_had_no_updates", last_commit_had_no_updates_);
-  state->SetBoolean("did_draw_in_last_frame", did_draw_in_last_frame_);
-  state->SetBoolean("did_submit_in_last_frame", did_submit_in_last_frame_);
-  state->SetBoolean("needs_impl_side_invalidation",
-                    needs_impl_side_invalidation_);
-  state->SetBoolean("current_pending_tree_is_impl_side",
-                    current_pending_tree_is_impl_side_);
-  state->SetBoolean("previous_pending_tree_was_impl_side",
-                    previous_pending_tree_was_impl_side_);
-  state->EndDictionary();
+  auto* minor_state = state->set_minor_state();
+  minor_state->set_commit_count(commit_count_);
+  minor_state->set_current_frame_number(current_frame_number_);
+  minor_state->set_last_frame_number_submit_performed(
+      last_frame_number_submit_performed_);
+  minor_state->set_last_frame_number_draw_performed(
+      last_frame_number_draw_performed_);
+  minor_state->set_last_frame_number_begin_main_frame_sent(
+      last_frame_number_begin_main_frame_sent_);
+  minor_state->set_did_draw(did_draw_);
+  minor_state->set_did_send_begin_main_frame_for_current_frame(
+      did_send_begin_main_frame_for_current_frame_);
+  minor_state->set_did_notify_begin_main_frame_not_expected_until(
+      did_notify_begin_main_frame_not_expected_until_);
+  minor_state->set_did_notify_begin_main_frame_not_expected_soon(
+      did_notify_begin_main_frame_not_expected_soon_);
+  minor_state->set_wants_begin_main_frame_not_expected(
+      wants_begin_main_frame_not_expected_);
+  minor_state->set_did_commit_during_frame(did_commit_during_frame_);
+  minor_state->set_did_invalidate_layer_tree_frame_sink(
+      did_invalidate_layer_tree_frame_sink_);
+  minor_state->set_did_perform_impl_side_invalidaion(
+      did_perform_impl_side_invalidation_);
+  minor_state->set_did_prepare_tiles(did_prepare_tiles_);
+  minor_state->set_consecutive_checkerboard_animations(
+      consecutive_checkerboard_animations_);
+  minor_state->set_pending_submit_frames(pending_submit_frames_);
+  minor_state->set_submit_frames_with_current_layer_tree_frame_sink(
+      submit_frames_with_current_layer_tree_frame_sink_);
+  minor_state->set_needs_redraw(needs_redraw_);
+  minor_state->set_needs_prepare_tiles(needs_prepare_tiles_);
+  minor_state->set_needs_begin_main_frame(needs_begin_main_frame_);
+  minor_state->set_needs_one_begin_impl_frame(needs_one_begin_impl_frame_);
+  minor_state->set_visible(visible_);
+  minor_state->set_begin_frame_source_paused(begin_frame_source_paused_);
+  minor_state->set_can_draw(can_draw_);
+  minor_state->set_resourceless_draw(resourceless_draw_);
+  minor_state->set_has_pending_tree(has_pending_tree_);
+  minor_state->set_pending_tree_is_ready_for_activation(
+      pending_tree_is_ready_for_activation_);
+  minor_state->set_active_tree_needs_first_draw(active_tree_needs_first_draw_);
+  minor_state->set_active_tree_is_ready_to_draw(active_tree_is_ready_to_draw_);
+  minor_state->set_did_create_and_initialize_first_layer_tree_frame_sink(
+      did_create_and_initialize_first_layer_tree_frame_sink_);
+  minor_state->set_tree_priority(TreePriorityToProtozeroEnum(tree_priority_));
+  minor_state->set_scroll_handler_state(
+      ScrollHandlerStateToProtozeroEnum(scroll_handler_state_));
+  minor_state->set_critical_begin_main_frame_to_activate_is_fast(
+      critical_begin_main_frame_to_activate_is_fast_);
+  minor_state->set_main_thread_missed_last_deadline(
+      main_thread_missed_last_deadline_);
+  minor_state->set_skip_next_begin_main_frame_to_reduce_latency(
+      skip_next_begin_main_frame_to_reduce_latency_);
+  minor_state->set_video_needs_begin_frames(video_needs_begin_frames_);
+  minor_state->set_defer_begin_main_frame(defer_begin_main_frame_);
+  minor_state->set_last_commit_had_no_updates(last_commit_had_no_updates_);
+  minor_state->set_did_draw_in_last_frame(did_draw_in_last_frame_);
+  minor_state->set_did_submit_in_last_frame(did_submit_in_last_frame_);
+  minor_state->set_needs_impl_side_invalidation(needs_impl_side_invalidation_);
+  minor_state->set_current_pending_tree_is_impl_side(
+      current_pending_tree_is_impl_side_);
+  minor_state->set_previous_pending_tree_was_impl_side(
+      previous_pending_tree_was_impl_side_);
+  minor_state->set_processing_animation_worklets_for_active_tree(
+      processing_animation_worklets_for_active_tree_);
+  minor_state->set_processing_animation_worklets_for_pending_tree(
+      processing_animation_worklets_for_pending_tree_);
+  minor_state->set_processing_paint_worklets_for_pending_tree(
+      processing_paint_worklets_for_pending_tree_);
 }
 
 bool SchedulerStateMachine::PendingDrawsShouldBeAborted() const {
@@ -367,18 +412,36 @@ bool SchedulerStateMachine::ShouldActivateSyncTree() const {
 
   // We should not activate a second tree before drawing the first one.
   // Even if we need to force activation of the pending tree, we should abort
-  // drawing the active tree first.
-  if (active_tree_needs_first_draw_)
+  // drawing the active tree first. Relax this requirement for synchronous
+  // compositor where scheduler does not control draw, and blocking commit
+  // may lead to bad scheduling.
+  if (!settings_.using_synchronous_renderer_compositor &&
+      active_tree_needs_first_draw_) {
+    return false;
+  }
+
+  // Delay pending tree activation until paint worklets have completed painting
+  // the pending tree. This must occur before the |ShouldAbortCurrentFrame|
+  // check as we cannot have an unpainted active tree.
+  //
+  // Note that paint worklets continue to paint when the page is not visible, so
+  // any abort will eventually happen when they complete.
+  if (processing_paint_worklets_for_pending_tree_)
     return false;
 
   if (ShouldAbortCurrentFrame())
     return true;
 
+  // Delay pending tree activation until animation worklets have completed
+  // their asynchronous updates to pick up initial values.
+  if (processing_animation_worklets_for_pending_tree_)
+    return false;
+
   // At this point, only activate if we are ready to activate.
   return pending_tree_is_ready_for_activation_;
 }
 
-bool SchedulerStateMachine::ShouldNotifyBeginMainFrameNotSent() const {
+bool SchedulerStateMachine::ShouldNotifyBeginMainFrameNotExpectedUntil() const {
   // This method returns true if most of the conditions for sending a
   // BeginMainFrame are met, but one is not actually requested. This gives the
   // main thread the chance to do something else.
@@ -402,9 +465,16 @@ bool SchedulerStateMachine::ShouldNotifyBeginMainFrameNotSent() const {
   if (begin_frame_source_paused_)
     return false;
 
+  // If we've gone idle and have stopped getting BeginFrames, we should send
+  // SendBeginMainFrameNotExpectedSoon instead.
+  if (!BeginFrameNeeded() &&
+      begin_impl_frame_state_ == BeginImplFrameState::IDLE) {
+    return false;
+  }
+
   // Do not notify that no BeginMainFrame was sent too many times in a single
   // frame.
-  if (did_notify_begin_main_frame_not_sent_)
+  if (did_notify_begin_main_frame_not_expected_until_)
     return false;
 
   // Do not notify if a commit happened during this frame as the main thread
@@ -412,6 +482,30 @@ bool SchedulerStateMachine::ShouldNotifyBeginMainFrameNotSent() const {
   // actions. (This occurs if the main frame was scheduled but didn't complete
   // before the vsync deadline).
   if (did_commit_during_frame_)
+    return false;
+
+  return true;
+}
+
+bool SchedulerStateMachine::ShouldNotifyBeginMainFrameNotExpectedSoon() const {
+  if (!wants_begin_main_frame_not_expected_)
+    return false;
+
+  // Don't notify if a BeginMainFrame has already been requested or is in
+  // progress.
+  if (needs_begin_main_frame_ ||
+      begin_main_frame_state_ != BeginMainFrameState::IDLE) {
+    return false;
+  }
+
+  // Only send this when we've stopped getting BeginFrames and have gone idle.
+  if (BeginFrameNeeded() ||
+      begin_impl_frame_state_ != BeginImplFrameState::IDLE) {
+    return false;
+  }
+
+  // Do not notify that we're not expecting frames more than once per frame.
+  if (did_notify_begin_main_frame_not_expected_soon_)
     return false;
 
   return true;
@@ -430,8 +524,8 @@ bool SchedulerStateMachine::CouldSendBeginMainFrame() const {
   if (begin_frame_source_paused_)
     return false;
 
-  // Do not make a new commits when it is deferred.
-  if (defer_main_frame_update_)
+  // Do not send begin main frame when it is deferred.
+  if (defer_begin_main_frame_)
     return false;
 
   return true;
@@ -493,18 +587,16 @@ bool SchedulerStateMachine::ShouldSendBeginMainFrame() const {
   if (!HasInitializedLayerTreeFrameSink())
     return false;
 
-  if (!settings_.main_frame_while_submit_frame_throttled_enabled) {
-    // Throttle the BeginMainFrames on CompositorFrameAck unless we just
-    // submitted a frame to potentially improve impl-thread latency over
-    // main-thread throughput.
-    // TODO(brianderson): Remove this restriction to improve throughput or
-    // make it conditional on ImplLatencyTakesPriority.
-    bool just_submitted_in_deadline =
-        begin_impl_frame_state_ == BeginImplFrameState::INSIDE_DEADLINE &&
-        did_submit_in_last_frame_;
-    if (IsDrawThrottled() && !just_submitted_in_deadline)
-      return false;
-  }
+  // Throttle the BeginMainFrames on CompositorFrameAck unless we just
+  // submitted a frame to potentially improve impl-thread latency over
+  // main-thread throughput.
+  // TODO(brianderson): Remove this restriction to improve throughput or
+  // make it conditional on ImplLatencyTakesPriority.
+  bool just_submitted_in_deadline =
+      begin_impl_frame_state_ == BeginImplFrameState::INSIDE_DEADLINE &&
+      did_submit_in_last_frame_;
+  if (IsDrawThrottled() && !just_submitted_in_deadline)
+    return false;
 
   if (skip_next_begin_main_frame_to_reduce_latency_)
     return false;
@@ -597,8 +689,10 @@ SchedulerStateMachine::Action SchedulerStateMachine::NextAction() const {
     return Action::INVALIDATE_LAYER_TREE_FRAME_SINK;
   if (ShouldBeginLayerTreeFrameSinkCreation())
     return Action::BEGIN_LAYER_TREE_FRAME_SINK_CREATION;
-  if (ShouldNotifyBeginMainFrameNotSent())
-    return Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_SENT;
+  if (ShouldNotifyBeginMainFrameNotExpectedUntil())
+    return Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_UNTIL;
+  if (ShouldNotifyBeginMainFrameNotExpectedSoon())
+    return Action::NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_SOON;
   return Action::NONE;
 }
 
@@ -664,8 +758,7 @@ bool SchedulerStateMachine::ShouldDeferInvalidatingForMainFrame() const {
     return true;
 
   // If the main frame was already sent, wait for the main thread to respond.
-  if (begin_main_frame_state_ == BeginMainFrameState::SENT ||
-      begin_main_frame_state_ == BeginMainFrameState::STARTED)
+  if (begin_main_frame_state_ == BeginMainFrameState::SENT)
     return true;
 
   // If the main thread committed during the last frame, i.e. it was not
@@ -737,11 +830,20 @@ void SchedulerStateMachine::WillSendBeginMainFrame() {
   last_frame_number_begin_main_frame_sent_ = current_frame_number_;
 }
 
-void SchedulerStateMachine::WillNotifyBeginMainFrameNotSent() {
+void SchedulerStateMachine::WillNotifyBeginMainFrameNotExpectedUntil() {
   DCHECK(visible_);
   DCHECK(!begin_frame_source_paused_);
-  DCHECK(!did_notify_begin_main_frame_not_sent_);
-  did_notify_begin_main_frame_not_sent_ = true;
+  DCHECK(BeginFrameNeeded() ||
+         begin_impl_frame_state_ != BeginImplFrameState::IDLE);
+  DCHECK(!did_notify_begin_main_frame_not_expected_until_);
+  did_notify_begin_main_frame_not_expected_until_ = true;
+}
+
+void SchedulerStateMachine::WillNotifyBeginMainFrameNotExpectedSoon() {
+  DCHECK(!BeginFrameNeeded());
+  DCHECK(begin_impl_frame_state_ == BeginImplFrameState::IDLE);
+  DCHECK(!did_notify_begin_main_frame_not_expected_soon_);
+  did_notify_begin_main_frame_not_expected_soon_ = true;
 }
 
 void SchedulerStateMachine::WillCommit(bool commit_has_no_updates) {
@@ -792,6 +894,11 @@ void SchedulerStateMachine::WillCommit(bool commit_has_no_updates) {
 }
 
 void SchedulerStateMachine::WillActivate() {
+  // We cannot activate the pending tree while paint worklets are still being
+  // processed; the pending tree *must* be fully painted before it can ever be
+  // activated because we cannot paint the active tree.
+  DCHECK(!processing_paint_worklets_for_pending_tree_);
+
   if (layer_tree_frame_sink_state_ ==
       LayerTreeFrameSinkState::WAITING_FOR_FIRST_ACTIVATION)
     layer_tree_frame_sink_state_ = LayerTreeFrameSinkState::ACTIVE;
@@ -851,8 +958,7 @@ void SchedulerStateMachine::DidDrawInternal(DrawResult draw_result) {
 
       if (consecutive_checkerboard_animations_ >=
               settings_.maximum_number_of_failed_draws_before_draw_is_forced &&
-          forced_redraw_state_ == ForcedRedrawOnTimeoutState::IDLE &&
-          settings_.timeout_and_draw_when_animation_checkerboards) {
+          forced_redraw_state_ == ForcedRedrawOnTimeoutState::IDLE) {
         // We need to force a draw, but it doesn't make sense to do this until
         // we've committed and have new textures.
         forced_redraw_state_ = ForcedRedrawOnTimeoutState::WAITING_FOR_COMMIT;
@@ -963,9 +1069,9 @@ void SchedulerStateMachine::SetVideoNeedsBeginFrames(
   video_needs_begin_frames_ = video_needs_begin_frames;
 }
 
-void SchedulerStateMachine::SetDeferMainFrameUpdate(
-    bool defer_main_frame_update) {
-  defer_main_frame_update_ = defer_main_frame_update;
+void SchedulerStateMachine::SetDeferBeginMainFrame(
+    bool defer_begin_main_frame) {
+  defer_begin_main_frame_ = defer_begin_main_frame;
 }
 
 // These are the cases where we require a BeginFrame message to make progress
@@ -977,7 +1083,7 @@ bool SchedulerStateMachine::BeginFrameRequiredForAction() const {
     return true;
 
   return needs_redraw_ || needs_one_begin_impl_frame_ ||
-         (needs_begin_main_frame_ && !defer_main_frame_update_) ||
+         (needs_begin_main_frame_ && !defer_begin_main_frame_) ||
          needs_impl_side_invalidation_;
 }
 
@@ -997,8 +1103,13 @@ bool SchedulerStateMachine::ProactiveBeginFrameWanted() const {
   // request frames when commits are disabled, because the frame requests will
   // not provide the needed commit (and will wake up the process when it could
   // stay idle).
+  // TODO(schenney) crbug.com/805798 This will need to change. We do want to
+  // issue BeginMainFrames even if commits are deferred if this is during page
+  // load and we want to run lifecycle updates in preparation for the first
+  // commit. We probably need another flag to indicate that we are
+  // pre-rendering the page or in a page navigation state.
   if ((begin_main_frame_state_ != BeginMainFrameState::IDLE) &&
-      !defer_main_frame_update_)
+      !defer_begin_main_frame_)
     return true;
 
   // If the pending tree activates quickly, we'll want a BeginImplFrame soon
@@ -1023,11 +1134,15 @@ bool SchedulerStateMachine::ProactiveBeginFrameWanted() const {
   if (last_commit_had_no_updates_)
     return true;
 
+  // If there is active interaction happening (e.g. scroll/pinch), then keep
+  // reqeusting frames.
+  if (tree_priority_ == SMOOTHNESS_TAKES_PRIORITY)
+    return true;
+
   return false;
 }
 
-void SchedulerStateMachine::OnBeginImplFrame(uint64_t source_id,
-                                             uint64_t sequence_number,
+void SchedulerStateMachine::OnBeginImplFrame(const viz::BeginFrameId& frame_id,
                                              bool animate_only) {
   begin_impl_frame_state_ = BeginImplFrameState::INSIDE_BEGIN_FRAME;
   current_frame_number_++;
@@ -1043,7 +1158,8 @@ void SchedulerStateMachine::OnBeginImplFrame(uint64_t source_id,
   did_submit_in_last_frame_ = false;
   needs_one_begin_impl_frame_ = false;
 
-  did_notify_begin_main_frame_not_sent_ = false;
+  did_notify_begin_main_frame_not_expected_until_ = false;
+  did_notify_begin_main_frame_not_expected_soon_ = false;
   did_send_begin_main_frame_for_current_frame_ = false;
   did_commit_during_frame_ = false;
   did_invalidate_layer_tree_frame_sink_ = false;
@@ -1073,8 +1189,7 @@ void SchedulerStateMachine::OnBeginImplFrameIdle() {
   main_thread_missed_last_deadline_ =
       CommitPending() || has_pending_tree_ || active_tree_needs_first_draw_;
   main_thread_failed_to_respond_last_deadline_ =
-      begin_main_frame_state_ == BeginMainFrameState::SENT ||
-      begin_main_frame_state_ == BeginMainFrameState::STARTED;
+      begin_main_frame_state_ == BeginMainFrameState::SENT;
 
   // If we're entering a state where we won't get BeginFrames set all the
   // funnels so that we don't perform any actions that we shouldn't.
@@ -1119,6 +1234,11 @@ bool SchedulerStateMachine::ShouldTriggerBeginImplFrameDeadlineImmediately()
   if (IsDrawThrottled())
     return false;
 
+  // Delay immediate draws when we have pending animation worklet updates to
+  // give them time to produce output before we draw.
+  if (processing_animation_worklets_for_active_tree_)
+    return false;
+
   // In full-pipe mode, we just gave all pipeline stages a chance to contribute.
   // We shouldn't wait any longer in any case - even if there are no updates.
   if (settings_.wait_for_all_pipeline_stages_before_draw)
@@ -1159,18 +1279,20 @@ bool SchedulerStateMachine::ShouldBlockDeadlineIndefinitely() const {
   if (!visible_)
     return false;
 
-  // Wait for main frame to be ready for commits if in full-pipe mode, so that
-  // we ensure we block during renderer initialization. In commit_to_active_tree
-  // mode, we cannot block for defer_main_frame_update_, as this may negatively
-  // affect animation smoothness during resize or orientation changes.
-  if (defer_main_frame_update_ &&
-      settings_.wait_for_all_pipeline_stages_before_draw)
-    return true;
+  // Do not wait for main frame to be ready for commits if in full-pipe mode,
+  // if we're deferring commits, as the main thread may be blocked on paused
+  // virtual time, causing deadlock against external frame control.
+  if (defer_begin_main_frame_ &&
+      settings_.wait_for_all_pipeline_stages_before_draw) {
+    return false;
+  }
 
   // Wait for main frame if one is in progress or about to be started.
   if (ShouldSendBeginMainFrame())
     return true;
 
+  // TODO(schenney): Is the right way to handle main frame without commit
+  // to add a new begin_main_frame_state_?
   if (begin_main_frame_state_ != BeginMainFrameState::IDLE)
     return true;
 
@@ -1243,8 +1365,9 @@ void SchedulerStateMachine::SetNeedsPrepareTiles() {
   }
 }
 void SchedulerStateMachine::DidSubmitCompositorFrame() {
-  TRACE_EVENT_ASYNC_BEGIN1("cc", "Scheduler:pending_submit_frames", this,
-                           "pending_frames", pending_submit_frames_);
+  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("cc", "Scheduler:pending_submit_frames",
+                                    TRACE_ID_LOCAL(this), "pending_frames",
+                                    pending_submit_frames_);
   DCHECK_LT(pending_submit_frames_, kMaxPendingSubmitFrames);
 
   pending_submit_frames_++;
@@ -1255,8 +1378,9 @@ void SchedulerStateMachine::DidSubmitCompositorFrame() {
 }
 
 void SchedulerStateMachine::DidReceiveCompositorFrameAck() {
-  TRACE_EVENT_ASYNC_END1("cc", "Scheduler:pending_submit_frames", this,
-                         "pending_frames", pending_submit_frames_);
+  TRACE_EVENT_NESTABLE_ASYNC_END1("cc", "Scheduler:pending_submit_frames",
+                                  TRACE_ID_LOCAL(this), "pending_frames",
+                                  pending_submit_frames_);
   pending_submit_frames_--;
 }
 
@@ -1296,8 +1420,7 @@ void SchedulerStateMachine::SetNeedsOneBeginImplFrame() {
 }
 
 void SchedulerStateMachine::NotifyReadyToCommit() {
-  DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::STARTED)
-      << AsValue()->ToString();
+  DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::SENT);
   begin_main_frame_state_ = BeginMainFrameState::READY_TO_COMMIT;
   // In commit_to_active_tree mode, commit should happen right after BeginFrame,
   // meaning when this function is called, next action should be commit.
@@ -1306,7 +1429,7 @@ void SchedulerStateMachine::NotifyReadyToCommit() {
 }
 
 void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
-  DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::STARTED);
+  DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::SENT);
 
   // If the main thread aborted, it doesn't matter if the  main thread missed
   // the last deadline since it didn't have an update anyway.
@@ -1315,7 +1438,14 @@ void SchedulerStateMachine::BeginMainFrameAborted(CommitEarlyOutReason reason) {
   switch (reason) {
     case CommitEarlyOutReason::ABORTED_LAYER_TREE_FRAME_SINK_LOST:
     case CommitEarlyOutReason::ABORTED_NOT_VISIBLE:
+    case CommitEarlyOutReason::ABORTED_DEFERRED_MAIN_FRAME_UPDATE:
     case CommitEarlyOutReason::ABORTED_DEFERRED_COMMIT:
+      // TODO(schenney) For ABORTED_DEFERRED_COMMIT we will need to do
+      // something different because we have updated the main frame, but
+      // we have not committed it. So we do not need a begin main frame
+      // but we might need a commit.
+      // We might have top split the compositor commit code from frame updates,
+      // or track a pending commit separately from a pending main frame update.
       begin_main_frame_state_ = BeginMainFrameState::IDLE;
       SetNeedsBeginMainFrame();
       return;
@@ -1340,6 +1470,12 @@ void SchedulerStateMachine::DidLoseLayerTreeFrameSink() {
 }
 
 bool SchedulerStateMachine::NotifyReadyToActivate() {
+  // It is not valid for clients to try and activate the pending tree whilst
+  // paint worklets are still being processed; the pending tree *must* be fully
+  // painted before it can ever be activated (even if e.g. it is not visible),
+  // because we cannot paint the active tree.
+  DCHECK(!processing_paint_worklets_for_pending_tree_);
+
   if (!has_pending_tree_ || pending_tree_is_ready_for_activation_)
     return false;
 
@@ -1349,6 +1485,38 @@ bool SchedulerStateMachine::NotifyReadyToActivate() {
 
 void SchedulerStateMachine::NotifyReadyToDraw() {
   active_tree_is_ready_to_draw_ = true;
+}
+
+void SchedulerStateMachine::NotifyAnimationWorkletStateChange(
+    AnimationWorkletState state,
+    TreeType tree) {
+  if (tree == TreeType::ACTIVE) {
+    switch (state) {
+      case AnimationWorkletState::PROCESSING:
+        DCHECK_GE(processing_animation_worklets_for_active_tree_, 0);
+        DCHECK_LE(processing_animation_worklets_for_active_tree_, 1);
+        processing_animation_worklets_for_active_tree_++;
+        break;
+
+      case AnimationWorkletState::IDLE:
+        DCHECK_LE(processing_animation_worklets_for_active_tree_, 2);
+        DCHECK_GE(processing_animation_worklets_for_active_tree_, 1);
+        processing_animation_worklets_for_active_tree_--;
+    }
+  } else {
+    processing_animation_worklets_for_pending_tree_ =
+        (state == AnimationWorkletState::PROCESSING);
+  }
+}
+
+void SchedulerStateMachine::NotifyPaintWorkletStateChange(
+    PaintWorkletState state) {
+  bool processing_paint_worklets_for_pending_tree =
+      (state == PaintWorkletState::PROCESSING);
+  DCHECK_NE(processing_paint_worklets_for_pending_tree,
+            processing_paint_worklets_for_pending_tree_);
+  processing_paint_worklets_for_pending_tree_ =
+      processing_paint_worklets_for_pending_tree;
 }
 
 void SchedulerStateMachine::DidCreateAndInitializeLayerTreeFrameSink() {
@@ -1365,11 +1533,6 @@ void SchedulerStateMachine::DidCreateAndInitializeLayerTreeFrameSink() {
   pending_submit_frames_ = 0;
   submit_frames_with_current_layer_tree_frame_sink_ = 0;
   main_thread_missed_last_deadline_ = false;
-}
-
-void SchedulerStateMachine::NotifyBeginMainFrameStarted() {
-  DCHECK_EQ(begin_main_frame_state_, BeginMainFrameState::SENT);
-  begin_main_frame_state_ = BeginMainFrameState::STARTED;
 }
 
 bool SchedulerStateMachine::HasInitializedLayerTreeFrameSink() const {

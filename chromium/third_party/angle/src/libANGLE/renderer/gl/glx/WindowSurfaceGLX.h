@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -31,7 +31,7 @@ class WindowSurfaceGLX : public SurfaceGLX
     ~WindowSurfaceGLX() override;
 
     egl::Error initialize(const egl::Display *display) override;
-    egl::Error makeCurrent() override;
+    egl::Error makeCurrent(const gl::Context *context) override;
 
     egl::Error swap(const gl::Context *context) override;
     egl::Error postSubBuffer(const gl::Context *context,
@@ -54,6 +54,9 @@ class WindowSurfaceGLX : public SurfaceGLX
 
     egl::Error checkForResize() override;
     glx::Drawable getDrawable() const override;
+
+    egl::Error getSyncValues(EGLuint64KHR *ust, EGLuint64KHR *msc, EGLuint64KHR *sbc) override;
+    egl::Error getMscRate(EGLint *numerator, EGLint *denominator) override;
 
   private:
     bool getWindowDimensions(Window window, unsigned int *width, unsigned int *height) const;

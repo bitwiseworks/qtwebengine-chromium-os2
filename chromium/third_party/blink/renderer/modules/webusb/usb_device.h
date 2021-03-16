@@ -5,13 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_WEBUSB_USB_DEVICE_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_WEBUSB_USB_DEVICE_H_
 
-#include "device/usb/public/mojom/device.mojom-blink.h"
+#include <bitset>
+#include "mojo/public/cpp/bindings/pending_remote.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "services/device/public/mojom/usb_device.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/array_buffer_or_array_buffer_view.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/wtf/bit_vector.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
 namespace blink {
@@ -21,20 +23,14 @@ class ScriptState;
 class USBConfiguration;
 class USBControlTransferParameters;
 
-class USBDevice : public ScriptWrappable, public ContextLifecycleObserver {
+class USBDevice : public ScriptWrappable,
+                  public ExecutionContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(USBDevice);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static USBDevice* Create(device::mojom::blink::UsbDeviceInfoPtr device_info,
-                           device::mojom::blink::UsbDevicePtr device,
-                           ExecutionContext* context) {
-    return MakeGarbageCollected<USBDevice>(std::move(device_info),
-                                           std::move(device), context);
-  }
-
   explicit USBDevice(device::mojom::blink::UsbDeviceInfoPtr,
-                     device::mojom::blink::UsbDevicePtr,
+                     mojo::PendingRemote<device::mojom::blink::UsbDevice>,
                      ExecutionContext*);
   ~USBDevice() override;
 
@@ -100,17 +96,20 @@ class USBDevice : public ScriptWrappable, public ContextLifecycleObserver {
                                        Vector<unsigned> packet_lengths);
   ScriptPromise reset(ScriptState*);
 
-  // ContextLifecycleObserver interface.
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver interface.
+  void ContextDestroyed() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
+  static const size_t kEndpointsBitsNumber = 16;
+
   wtf_size_t FindConfigurationIndex(uint8_t configuration_value) const;
   wtf_size_t FindInterfaceIndex(uint8_t interface_number) const;
   wtf_size_t FindAlternateIndex(wtf_size_t interface_index,
                                 uint8_t alternate_setting) const;
   bool IsProtectedInterfaceClass(wtf_size_t interface_index) const;
+  bool EnsureNoDeviceChangeInProgress(ScriptPromiseResolver*) const;
   bool EnsureNoDeviceOrInterfaceChangeInProgress(ScriptPromiseResolver*) const;
   bool EnsureDeviceConfigured(ScriptPromiseResolver*) const;
   bool EnsureInterfaceClaimed(uint8_t interface_number,
@@ -169,16 +168,22 @@ class USBDevice : public ScriptWrappable, public ContextLifecycleObserver {
   bool MarkRequestComplete(ScriptPromiseResolver*);
 
   device::mojom::blink::UsbDeviceInfoPtr device_info_;
-  device::mojom::blink::UsbDevicePtr device_;
+  mojo::Remote<device::mojom::blink::UsbDevice> device_;
   HeapHashSet<Member<ScriptPromiseResolver>> device_requests_;
   bool opened_;
   bool device_state_change_in_progress_;
   wtf_size_t configuration_index_;
-  WTF::BitVector claimed_interfaces_;
-  WTF::BitVector interface_state_change_in_progress_;
+
+  // These vectors have one entry for each interface in the currently selected
+  // configured. Use the index returned by FindInterfaceIndex().
+  WTF::Vector<bool> claimed_interfaces_;
+  WTF::Vector<bool> interface_state_change_in_progress_;
   WTF::Vector<wtf_size_t> selected_alternates_;
-  WTF::BitVector in_endpoints_;
-  WTF::BitVector out_endpoints_;
+
+  // These bit sets have one entry for each endpoint. Index using the endpoint
+  // number (lower 4 bits of the endpoint address).
+  std::bitset<kEndpointsBitsNumber> in_endpoints_;
+  std::bitset<kEndpointsBitsNumber> out_endpoints_;
 };
 
 }  // namespace blink

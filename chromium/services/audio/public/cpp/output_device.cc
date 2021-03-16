@@ -6,35 +6,35 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/optional.h"
 #include "base/threading/thread_restrictions.h"
 #include "media/audio/audio_output_device_thread_callback.h"
+#include "media/mojo/mojom/audio_data_pipe.mojom.h"
+#include "media/mojo/mojom/audio_logging.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/system/platform_handle.h"
-#include "services/audio/public/mojom/constants.mojom.h"
 
 namespace audio {
 
 OutputDevice::OutputDevice(
-    std::unique_ptr<service_manager::Connector> connector,
+    mojo::PendingRemote<mojom::StreamFactory> stream_factory,
     const media::AudioParameters& params,
     media::AudioRendererSink::RenderCallback* render_callback,
     const std::string& device_id)
     : audio_parameters_(params),
       render_callback_(render_callback),
-      weak_factory_(this) {
+      stream_factory_(std::move(stream_factory)) {
   DETACH_FROM_SEQUENCE(sequence_checker_);
   DCHECK(params.IsValid());
-  connector->BindInterface(audio::mojom::kServiceName,
-                           mojo::MakeRequest(&stream_factory_));
 
-  media::mojom::AudioOutputStreamRequest stream_request =
-      mojo::MakeRequest(&stream_);
-  stream_.set_connection_error_handler(base::BindOnce(
-      &OutputDevice::OnConnectionError, weak_factory_.GetWeakPtr()));
   stream_factory_->CreateOutputStream(
-      std::move(stream_request), nullptr, nullptr, device_id, params,
-      base::UnguessableToken::Create(), base::nullopt,
+      stream_.BindNewPipeAndPassReceiver(), mojo::NullAssociatedRemote(),
+      mojo::NullRemote(), device_id, params, base::UnguessableToken::Create(),
+      base::nullopt,
       base::BindOnce(&OutputDevice::StreamCreated, weak_factory_.GetWeakPtr()));
+  stream_.set_disconnect_handler(base::BindOnce(
+      &OutputDevice::OnConnectionError, weak_factory_.GetWeakPtr()));
 }
 
 OutputDevice::~OutputDevice() {
@@ -62,10 +62,8 @@ void OutputDevice::StreamCreated(
   if (!data_pipe)
     return;
 
-  base::PlatformFile socket_handle;
-  auto result =
-      mojo::UnwrapPlatformFile(std::move(data_pipe->socket), &socket_handle);
-  DCHECK_EQ(result, MOJO_RESULT_OK);
+  DCHECK(data_pipe->socket.is_valid_platform_file());
+  base::ScopedPlatformFile socket_handle = data_pipe->socket.TakePlatformFile();
   base::UnsafeSharedMemoryRegion& shared_memory_region =
       data_pipe->shared_memory;
   DCHECK(shared_memory_region.IsValid());
@@ -75,7 +73,7 @@ void OutputDevice::StreamCreated(
   audio_callback_ = std::make_unique<media::AudioOutputDeviceThreadCallback>(
       audio_parameters_, std::move(shared_memory_region), render_callback_);
   audio_thread_ = std::make_unique<media::AudioDeviceThread>(
-      audio_callback_.get(), socket_handle, "audio::OutputDevice",
+      audio_callback_.get(), std::move(socket_handle), "audio::OutputDevice",
       base::ThreadPriority::REALTIME_AUDIO);
 }
 

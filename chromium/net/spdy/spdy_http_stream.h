@@ -14,6 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/completion_once_callback.h"
+#include "net/base/load_timing_info.h"
 #include "net/base/net_export.h"
 #include "net/log/net_log_source.h"
 #include "net/spdy/multiplexed_http_stream.h"
@@ -92,6 +93,7 @@ class NET_EXPORT_PRIVATE SpdyHttpStream : public SpdyStream::Delegate,
   void OnDataSent() override;
   void OnTrailers(const spdy::SpdyHeaderBlock& trailers) override;
   void OnClose(int status) override;
+  bool CanGreaseFrameType() const override;
   NetLogSource source_dependency() const override;
 
  private:
@@ -112,6 +114,12 @@ class NET_EXPORT_PRIVATE SpdyHttpStream : public SpdyStream::Delegate,
   // subsequent sending may happen asynchronously. Must be called only
   // when HasUploadData() is true.
   void ReadAndSendRequestBodyData();
+
+  // Send an empty body.  Must only be called if there is no upload data and
+  // sending greased HTTP/2 frames is enabled.  This allows SpdyStream to
+  // prepend a greased HTTP/2 frame to the empty DATA frame that closes the
+  // stream.
+  void SendEmptyBody();
 
   // Called when data has just been read from the request body stream;
   // does the actual sending of data.
@@ -208,7 +216,7 @@ class NET_EXPORT_PRIVATE SpdyHttpStream : public SpdyStream::Delegate,
 
   bool was_alpn_negotiated_;
 
-  base::WeakPtrFactory<SpdyHttpStream> weak_factory_;
+  base::WeakPtrFactory<SpdyHttpStream> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SpdyHttpStream);
 };

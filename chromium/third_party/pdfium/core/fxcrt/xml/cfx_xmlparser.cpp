@@ -87,20 +87,22 @@ std::unique_ptr<CFX_XMLDocument> CFX_XMLParser::Parse() {
 }
 
 bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
-  FX_FILESIZE current_buffer_idx = 0;
-  FX_FILESIZE buffer_size = 0;
+  if (xml_plane_size_ <= 0)
+    return false;
 
   FX_SAFE_SIZE_T alloc_size_safe = xml_plane_size_;
   alloc_size_safe += 1;  // For NUL.
-  if (!alloc_size_safe.IsValid() || alloc_size_safe.ValueOrDie() <= 0 ||
-      xml_plane_size_ <= 0)
+  if (!alloc_size_safe.IsValid())
     return false;
 
-  std::vector<wchar_t> buffer;
-  buffer.resize(pdfium::base::ValueOrDieForType<size_t>(alloc_size_safe));
+  FX_FILESIZE current_buffer_idx = 0;
+  FX_FILESIZE buffer_size = 0;
+
+  std::vector<wchar_t, FxAllocAllocator<wchar_t>> buffer;
+  buffer.resize(alloc_size_safe.ValueOrDie());
 
   std::stack<wchar_t> character_to_skip_too_stack;
-  std::stack<FX_XMLNODETYPE> node_type_stack;
+  std::stack<CFX_XMLNode::Type> node_type_stack;
   WideString current_attribute_name;
   FDE_XmlSyntaxState current_parser_state = FDE_XmlSyntaxState::Text;
   int32_t iCount = 0;
@@ -126,7 +128,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
         case FDE_XmlSyntaxState::Text:
           if (ch == L'<') {
             if (!current_text_.empty()) {
-              current_node_->AppendChild(
+              current_node_->AppendLastChild(
                   doc->CreateNode<CFX_XMLText>(GetTextData()));
             } else {
               current_buffer_idx++;
@@ -149,11 +151,11 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             current_buffer_idx++;
             current_parser_state = FDE_XmlSyntaxState::CloseElement;
           } else if (ch == L'?') {
-            node_type_stack.push(FX_XMLNODE_Instruction);
+            node_type_stack.push(CFX_XMLNode::Type::kInstruction);
             current_buffer_idx++;
             current_parser_state = FDE_XmlSyntaxState::Target;
           } else {
-            node_type_stack.push(FX_XMLNODE_Element);
+            node_type_stack.push(CFX_XMLNode::Type::kElement);
             current_parser_state = FDE_XmlSyntaxState::Tag;
           }
           break;
@@ -168,7 +170,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             if (target_name.EqualsASCII("originalXFAVersion") ||
                 target_name.EqualsASCII("acrobat")) {
               auto* node = doc->CreateNode<CFX_XMLInstruction>(target_name);
-              current_node_->AppendChild(node);
+              current_node_->AppendLastChild(node);
               current_node_ = node;
             }
           } else {
@@ -184,7 +186,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             current_parser_state = FDE_XmlSyntaxState::AttriName;
 
             auto* child = doc->CreateNode<CFX_XMLElement>(GetTextData());
-            current_node_->AppendChild(child);
+            current_node_->AppendLastChild(child);
             current_node_ = child;
           } else {
             current_text_.push_back(ch);
@@ -198,12 +200,13 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           }
           if (!IsXMLNameChar(ch, current_text_.empty())) {
             if (current_text_.empty()) {
-              if (node_type_stack.top() == FX_XMLNODE_Element) {
+              if (node_type_stack.top() == CFX_XMLNode::Type::kElement) {
                 if (ch == L'>' || ch == L'/') {
                   current_parser_state = FDE_XmlSyntaxState::BreakElement;
                   break;
                 }
-              } else if (node_type_stack.top() == FX_XMLNODE_Instruction) {
+              } else if (node_type_stack.top() ==
+                         CFX_XMLNode::Type::kInstruction) {
                 if (ch == L'?') {
                   current_parser_state = FDE_XmlSyntaxState::CloseInstruction;
                   current_buffer_idx++;
@@ -214,7 +217,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
               }
               return false;
             } else {
-              if (node_type_stack.top() == FX_XMLNODE_Instruction) {
+              if (node_type_stack.top() == CFX_XMLNode::Type::kInstruction) {
                 if (ch != '=' && !IsXMLWhiteSpace(ch)) {
                   current_parser_state = FDE_XmlSyntaxState::TargetData;
                   break;
@@ -234,7 +237,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             break;
           }
           if (ch != L'=') {
-            if (node_type_stack.top() == FX_XMLNODE_Instruction) {
+            if (node_type_stack.top() == CFX_XMLNode::Type::kInstruction) {
               current_parser_state = FDE_XmlSyntaxState::TargetData;
               break;
             }
@@ -291,7 +294,7 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             current_parser_state = FDE_XmlSyntaxState::Text;
 
             if (current_node_ &&
-                current_node_->GetType() == FX_XMLNODE_Instruction)
+                current_node_->GetType() == CFX_XMLNode::Type::kInstruction)
               current_node_ = current_node_->GetParent();
           }
           break;
@@ -334,13 +337,13 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
           }
           current_buffer_idx++;
           break;
-        case FDE_XmlSyntaxState::SkipCommentOrDecl:
-          if (FXSYS_wcsnicmp(buffer.data() + current_buffer_idx, L"--", 2) ==
-              0) {
+        case FDE_XmlSyntaxState::SkipCommentOrDecl: {
+          auto current_span =
+              pdfium::make_span(buffer).subspan(current_buffer_idx);
+          if (FXSYS_wcsnicmp(current_span.data(), L"--", 2) == 0) {
             current_buffer_idx += 2;
             current_parser_state = FDE_XmlSyntaxState::SkipComment;
-          } else if (FXSYS_wcsnicmp(buffer.data() + current_buffer_idx,
-                                    L"[CDATA[", 7) == 0) {
+          } else if (FXSYS_wcsnicmp(current_span.data(), L"[CDATA[", 7) == 0) {
             current_buffer_idx += 7;
             current_parser_state = FDE_XmlSyntaxState::SkipCData;
           } else {
@@ -349,13 +352,14 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             character_to_skip_too_stack.push(L'>');
           }
           break;
+        }
         case FDE_XmlSyntaxState::SkipCData: {
-          if (FXSYS_wcsnicmp(buffer.data() + current_buffer_idx, L"]]>", 3) ==
-              0) {
+          auto current_span =
+              pdfium::make_span(buffer).subspan(current_buffer_idx);
+          if (FXSYS_wcsnicmp(current_span.data(), L"]]>", 3) == 0) {
             current_buffer_idx += 3;
             current_parser_state = FDE_XmlSyntaxState::Text;
-
-            current_node_->AppendChild(
+            current_node_->AppendLastChild(
                 doc->CreateNode<CFX_XMLCharData>(GetTextData()));
           } else {
             current_text_.push_back(ch);
@@ -412,15 +416,16 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
             current_buffer_idx++;
           }
           break;
-        case FDE_XmlSyntaxState::SkipComment:
-          if (FXSYS_wcsnicmp(buffer.data() + current_buffer_idx, L"-->", 3) ==
-              0) {
+        case FDE_XmlSyntaxState::SkipComment: {
+          auto current_span =
+              pdfium::make_span(buffer).subspan(current_buffer_idx);
+          if (FXSYS_wcsnicmp(current_span.data(), L"-->", 3) == 0) {
             current_buffer_idx += 2;
             current_parser_state = FDE_XmlSyntaxState::Text;
           }
-
           current_buffer_idx++;
           break;
+        }
         case FDE_XmlSyntaxState::TargetData:
           if (IsXMLWhiteSpace(ch)) {
             if (current_text_.empty()) {
@@ -458,8 +463,8 @@ bool CFX_XMLParser::DoSyntaxParse(CFX_XMLDocument* doc) {
     }
   }
 
-  current_node_->AppendChild(doc->CreateNode<CFX_XMLText>(GetTextData()));
-  return true;
+  NOTREACHED();
+  return false;
 }
 
 void CFX_XMLParser::ProcessTextChar(wchar_t character) {

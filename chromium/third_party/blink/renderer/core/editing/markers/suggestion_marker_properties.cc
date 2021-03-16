@@ -65,8 +65,21 @@ SuggestionMarkerProperties::Builder::SetBackgroundColor(
 
 SuggestionMarkerProperties::Builder&
 SuggestionMarkerProperties::Builder::SetThickness(
-    ws::mojom::ImeTextSpanThickness thickness) {
+    ui::mojom::ImeTextSpanThickness thickness) {
   data_.thickness_ = thickness;
+  return *this;
+}
+
+SuggestionMarkerProperties::Builder&
+SuggestionMarkerProperties::Builder::SetUnderlineStyle(
+    ui::mojom::ImeTextSpanUnderlineStyle underline_style) {
+  data_.underline_style_ = underline_style;
+  return *this;
+}
+
+SuggestionMarkerProperties::Builder&
+SuggestionMarkerProperties::Builder::SetTextColor(Color text_color) {
+  data_.text_color_ = text_color;
   return *this;
 }
 

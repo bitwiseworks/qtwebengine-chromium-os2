@@ -18,12 +18,12 @@ class GLOzoneGLX : public GLOzone {
 
   bool InitializeGLOneOffPlatform() override;
   bool InitializeStaticGLBindings(gl::GLImplementation implementation) override;
-  void InitializeDebugGLBindings() override;
   void SetDisabledExtensionsPlatform(
       const std::string& disabled_extensions) override;
   bool InitializeExtensionSettingsOneOffPlatform() override;
   void ShutdownGL() override;
   bool GetGLWindowSystemBindingInfo(
+      const gl::GLVersionInfo& gl_info,
       gl::GLWindowSystemBindingInfo* info) override;
   scoped_refptr<gl::GLContext> CreateGLContext(
       gl::GLShareGroup* share_group,

@@ -7,17 +7,22 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "base/bind.h"
+#include "base/callback_helpers.h"
 #include "base/macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/cast_channel/cast_message_handler.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/cast_socket_service.h"
 #include "components/cast_channel/cast_transport.h"
-#include "components/cast_channel/proto/cast_channel.pb.h"
+#include "net/base/completion_once_callback.h"
+#include "net/base/completion_repeating_callback.h"
 #include "net/base/ip_endpoint.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
 
@@ -29,9 +34,16 @@ class MockCastTransport : public CastTransport {
   void SetReadDelegate(
       std::unique_ptr<CastTransport::Delegate> delegate) override;
 
+  void SendMessage(const CastMessage& message,
+                   net::CompletionOnceCallback callback) override {
+    // GMock does not handle move-only types, we need to rely on a mock method
+    // that takes a repeating callback, which will work well with GMock actions.
+    SendMessage(message, base::AdaptCallbackForRepeating(std::move(callback)));
+  }
+
   MOCK_METHOD2(SendMessage,
                void(const CastMessage& message,
-                    const net::CompletionCallback& callback));
+                    const net::CompletionRepeatingCallback& callback));
 
   MOCK_METHOD0(Start, void(void));
 
@@ -84,13 +96,13 @@ class MockCastSocketService : public CastSocketService {
 
   MOCK_METHOD2(OpenSocketInternal,
                void(const net::IPEndPoint& ip_endpoint,
-                    const base::Callback<void(CastSocket*)>& open_cb));
+                    const base::RepeatingCallback<void(CastSocket*)>& open_cb));
   MOCK_CONST_METHOD1(GetSocket, CastSocket*(int channel_id));
 };
 
 class MockCastSocket : public CastSocket {
  public:
-  using MockOnOpenCallback = base::Callback<void(CastSocket* socket)>;
+  using MockOnOpenCallback = base::RepeatingCallback<void(CastSocket* socket)>;
 
   MockCastSocket();
   ~MockCastSocket() override;
@@ -101,8 +113,14 @@ class MockCastSocket : public CastSocket {
     ConnectInternal(base::AdaptCallbackForRepeating(std::move(callback)));
   }
 
+  void Close(net::CompletionOnceCallback callback) override {
+    // GMock does not handle move-only types, we need to rely on a mock method
+    // that takes a repeating callback, which will work well with GMock actions.
+    Close(base::AdaptCallbackForRepeating(std::move(callback)));
+  }
+
   MOCK_METHOD1(ConnectInternal, void(const MockOnOpenCallback& callback));
-  MOCK_METHOD1(Close, void(const net::CompletionCallback& callback));
+  MOCK_METHOD1(Close, void(const net::CompletionRepeatingCallback& callback));
   MOCK_CONST_METHOD0(ready_state, ReadyState());
   MOCK_METHOD1(AddObserver, void(Observer* observer));
   MOCK_METHOD1(RemoveObserver, void(Observer* observer));
@@ -149,6 +167,8 @@ class MockCastMessageHandler : public CastMessageHandler {
 
   MOCK_METHOD3(EnsureConnection,
                void(int, const std::string&, const std::string&));
+  MOCK_METHOD3(CloseConnection,
+               void(int, const std::string&, const std::string&));
   MOCK_METHOD3(RequestAppAvailability,
                void(CastSocket* socket,
                     const std::string& app_id,
@@ -163,9 +183,10 @@ class MockCastMessageHandler : public CastMessageHandler {
                     const std::string&,
                     base::TimeDelta,
                     LaunchSessionCallback callback));
-  MOCK_METHOD3(StopSession,
+  MOCK_METHOD4(StopSession,
                void(int channel_id,
                     const std::string& session_id,
+                    const base::Optional<std::string>& client_id,
                     ResultCallback callback));
   MOCK_METHOD2(SendAppMessage,
                Result(int channel_id, const CastMessage& message));
@@ -175,10 +196,10 @@ class MockCastMessageHandler : public CastMessageHandler {
                                    const std::string& source_id,
                                    const std::string& destination_id));
   MOCK_METHOD4(SendSetVolumeRequest,
-               Result(int channel_id,
-                      const base::Value& body,
-                      const std::string& source_id,
-                      ResultCallback callback));
+               void(int channel_id,
+                    const base::Value& body,
+                    const std::string& source_id,
+                    ResultCallback callback));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockCastMessageHandler);

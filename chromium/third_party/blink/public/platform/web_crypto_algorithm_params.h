@@ -108,17 +108,17 @@ class WebCryptoAesCtrParams : public WebCryptoAlgorithmParams {
 
 class WebCryptoAesKeyGenParams : public WebCryptoAlgorithmParams {
  public:
-  explicit WebCryptoAesKeyGenParams(unsigned short length_bits)
+  explicit WebCryptoAesKeyGenParams(uint16_t length_bits)
       : length_bits_(length_bits) {}
 
   WebCryptoAlgorithmParamsType GetType() const override {
     return kWebCryptoAlgorithmParamsTypeAesKeyGenParams;
   }
 
-  unsigned short LengthBits() const { return length_bits_; }
+  uint16_t LengthBits() const { return length_bits_; }
 
  private:
-  const unsigned short length_bits_;
+  const uint16_t length_bits_;
 };
 
 class WebCryptoHmacImportParams : public WebCryptoAlgorithmParamsWithHash {
@@ -359,17 +359,17 @@ class WebCryptoEcdhKeyDeriveParams : public WebCryptoAlgorithmParams {
 
 class WebCryptoAesDerivedKeyParams : public WebCryptoAlgorithmParams {
  public:
-  explicit WebCryptoAesDerivedKeyParams(unsigned short length_bits)
+  explicit WebCryptoAesDerivedKeyParams(uint16_t length_bits)
       : length_bits_(length_bits) {}
 
   WebCryptoAlgorithmParamsType GetType() const override {
     return kWebCryptoAlgorithmParamsTypeAesDerivedKeyParams;
   }
 
-  unsigned short LengthBits() const { return length_bits_; }
+  uint16_t LengthBits() const { return length_bits_; }
 
  private:
-  const unsigned short length_bits_;
+  const uint16_t length_bits_;
 };
 
 class WebCryptoHkdfParams : public WebCryptoAlgorithmParamsWithHash {
@@ -415,6 +415,31 @@ class WebCryptoPbkdf2Params : public WebCryptoAlgorithmParamsWithHash {
   const unsigned iterations_;
 };
 
+class WebCryptoEd25519Params : public WebCryptoAlgorithmParamsWithHash {
+ public:
+  explicit WebCryptoEd25519Params(const WebCryptoAlgorithm& hash)
+      : WebCryptoAlgorithmParamsWithHash(hash) {}
+
+  WebCryptoAlgorithmParamsType GetType() const override {
+    return kWebCryptoAlgorithmParamsTypeEd25519Params;
+  }
+};
+
+class WebCryptoX25519KeyDeriveParams : public WebCryptoAlgorithmParams {
+ public:
+  explicit WebCryptoX25519KeyDeriveParams(const WebCryptoKey& public_key)
+      : public_key_(public_key) {}
+
+  WebCryptoAlgorithmParamsType GetType() const override {
+    return kWebCryptoAlgorithmParamsTypeX25519KeyDeriveParams;
+  }
+
+  const WebCryptoKey& PublicKey() const { return public_key_; }
+
+ private:
+  const WebCryptoKey public_key_;
+};
+
 }  // namespace blink
 
-#endif
+#endif  // THIRD_PARTY_BLINK_PUBLIC_PLATFORM_WEB_CRYPTO_ALGORITHM_PARAMS_H_

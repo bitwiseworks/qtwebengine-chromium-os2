@@ -10,7 +10,7 @@ Rendered version of this file: https://chromium.googlesource.com/chromium/src/+/
 
 
 ## Procedure for adding/modifying file type(s)
-  * **Edit** `download_file_types.asciipb`, `enums.xml`, and `download_stats.cc`
+  * **Edit** `download_file_types.asciipb` and `enums.xml`.
   * Get it reviewed, **submit.**
   * **Push** it to all users via component update:
     * Wait 1-3 day for this to run on Canary to verify it doesn't crash Chrome.
@@ -24,6 +24,42 @@ Rendered version of this file: https://chromium.googlesource.com/chromium/src/+/
       access to the GCS bucket.
     * The Component Updater system will notice those files and push them to
       users withing ~6 hours. If not, contact `waffles@.`
+
+## Procedure for rollback
+While Omaha allows rollback through the release manager, the Chrome client will
+reject updates with lower version numbers. (This is important for running new
+versions on Canary/Dev channel). Rolling back a bad version is best achieved by:
+  * **Reverting** the changes on the Chromium source tree.
+  * **Submitting** a new CL incrementing the version number.
+  * **Push** the newest version, as above.
+
+## Procedure for incremental rollout
+  * Open the Omaha Release manager at:
+    https://omaharelease.corp.google.com/product/1436/cohorts
+  * **Disable** the automatic push by changing the _Push Scheduler_ from
+    `LATEST_TO_AUTO` to `NONE`. Then commit the changes by clicking _Commit
+    Automation Changes_.
+  * **Upload** the new version of the file types.
+    * In a synced checkout, run the following to generate protos for all
+      platforms and push them to GCS. Replace the arg with your build directory:
+        * % `chrome/browser/resources/safe_browsing/push_file_type_proto.py -d
+          out-gn/Debug`
+  * Create a new cohort.
+    * Under _Cohorts_, click _Manage_, then _Create Subcohort_ of Auto.
+    * Select a name and percentage for the new cohort.
+    * Return to the product page.
+  * **Push** to the new cohort.
+    * Select _Edit Schedule_ for the new cohort, and select the newest file
+      group and a time to roll out.
+  * After the incremental rollout is complete, remember to set the _Push
+    Scheduler_ back to `LATEST_TO_AUTO`
+
+Note: Everything after disabling automation could be scripted through the
+[ReleaseServiceManager](http://google3/java/com/google/installer/releasemanager/proto/releasemanager_stubby.proto).
+An example script using this API is
+[here](http://google3/googleclient/installer/tools/release/keystone/create_release_testing_cohorts.py).
+If we regularly need incremental rollouts, it may be worth creating our own
+scripts to do so reliably.
 
 
 ## Guidelines for a DownloadFileType entry:
@@ -45,8 +81,8 @@ See `download_file_types.proto` for all fields.
 
     * `SAMPLED_PING`: Don't send a full Safe Browsing ping, but
        send a no-PII "light-ping" for a random sample of SBER users.
-       This should be the default for unknown types. The verdict won't
-       be used.
+       This should be used for known safe types. The verdict won't be used.
+
     * `NO_PING`:  Don’t send any pings. This file is whitelisted. All
       NOT_DANGEROUS files should normally use this.
     * `FULL_PING`: Send full pings and use the verdict. All dangerous
@@ -54,7 +90,7 @@ See `download_file_types.proto` for all fields.
 
   * `platform_settings`: (repeated) Zero or more settings to differentiate
      behavior by platform. Keep them sorted by platform. At build time,
-     this list will be filtered to contain exactly one setting by chosing
+     this list will be filtered to contain exactly one setting by choosing
      as follows before writing out the binary proto.
 
        1. If there's an entry matching the built platform,
@@ -64,6 +100,12 @@ See `download_file_types.proto` for all fields.
        that will be used. Otherwise,
 
        3. The `default_file_type`'s settings will be filled in.
+
+    **Warning**: When specifying a new `platform_settings` for a file type, be
+    sure to specify values for all necessary settings. The `platform_settings`
+    will override all of the `default_file_type`'s settings, and this may result
+    in a change in behavior for `platform_settings` left unspecified. For
+    example, see [crbug.com/946558](https://crbug.com/956558#c5).
 
   * `platform_settings.danger_level`: (required) Controls how files should be
     handled by the UI in the absence of a better signal from the Safe Browsing
@@ -118,6 +160,10 @@ See `download_file_types.proto` for all fields.
       potentially dangerous changes in behavior for other programs. We
       allow automatically opening these file types, but always warn when
       they are downloaded.
+  * `platform_settings.max_file_size_to_analyze`: (optional).
+      Size in bytes of the largest file that the analyzer is willing to inspect;
+      for instance, a zip file larger than the threshold will not be unpacked
+      to allow scanning of the files within.
 
   * TODO(nparker): Support this: `platform_settings.unpacker`:
      optional. Specifies which archive unpacker internal to Chrome
@@ -138,5 +184,5 @@ See `download_file_types.proto` for all fields.
 
   * `default_file_type`: Settings used if a downloaded file is not in
     the above list. `extension` is ignored, but other settings are used.
-    The ping_setting should be SAMPLED_PING for all platforms.
-
+    The ping_setting should be FULL_PING for all platforms, so that
+    unknown file types generate pings.

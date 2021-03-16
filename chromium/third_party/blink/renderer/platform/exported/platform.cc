@@ -32,42 +32,34 @@
 
 #include <memory>
 
+#include "base/allocator/partition_allocator/memory_reclaimer.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
-#include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/blink/public/platform/interface_provider.h"
+#include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
-#include "third_party/blink/public/platform/web_canvas_capture_handler.h"
 #include "third_party/blink/public/platform/web_graphics_context_3d_provider.h"
-#include "third_party/blink/public/platform/web_image_capture_frame_grabber.h"
-#include "third_party/blink/public/platform/web_media_recorder_handler.h"
-#include "third_party/blink/public/platform/web_media_stream_center.h"
-#include "third_party/blink/public/platform/web_prerendering_support.h"
-#include "third_party/blink/public/platform/web_rtc_certificate_generator.h"
-#include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
-#include "third_party/blink/public/platform/web_storage_namespace.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
+#include "third_party/blink/renderer/platform/bindings/blink_isolate/blink_isolate.h"
 #include "third_party/blink/renderer/platform/bindings/parkable_string_manager.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/font_family_names.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/heap/blink_gc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/heap/gc_task_runner.h"
-#include "third_party/blink/renderer/platform/histogram.h"
-#include "third_party/blink/renderer/platform/instance_counters_memory_dump_provider.h"
+#include "third_party/blink/renderer/platform/instrumentation/instance_counters_memory_dump_provider.h"
+#include "third_party/blink/renderer/platform/instrumentation/memory_pressure_listener.h"
+#include "third_party/blink/renderer/platform/instrumentation/partition_alloc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/instrumentation/resource_coordinator/renderer_resource_coordinator.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/memory_cache_dump_provider.h"
 #include "third_party/blink/renderer/platform/language.h"
-#include "third_party/blink/renderer/platform/memory_coordinator.h"
-#include "third_party/blink/renderer/platform/partition_alloc_memory_dump_provider.h"
 #include "third_party/blink/renderer/platform/scheduler/common/simple_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
-#include "third_party/webrtc/api/async_resolver_factory.h"
 #include "third_party/webrtc/api/rtp_parameters.h"
 #include "third_party/webrtc/p2p/base/port_allocator.h"
 
@@ -75,17 +67,53 @@ namespace blink {
 
 namespace {
 
-class DefaultConnector {
- public:
-  DefaultConnector() {
-    service_manager::mojom::ConnectorRequest request;
-    connector_ = service_manager::Connector::Create(&request);
-  }
+class DefaultBrowserInterfaceBrokerProxy
+    : public ThreadSafeBrowserInterfaceBrokerProxy {
+  USING_FAST_MALLOC(DefaultBrowserInterfaceBrokerProxy);
 
-  service_manager::Connector* Get() { return connector_.get(); }
+ public:
+  DefaultBrowserInterfaceBrokerProxy() = default;
+
+  // ThreadSafeBrowserInterfaceBrokerProxy implementation:
+  void GetInterfaceImpl(mojo::GenericPendingReceiver receiver) override {}
 
  private:
-  std::unique_ptr<service_manager::Connector> connector_;
+  ~DefaultBrowserInterfaceBrokerProxy() override = default;
+};
+
+class IdleDelayedTaskHelper : public base::SingleThreadTaskRunner {
+  USING_FAST_MALLOC(IdleDelayedTaskHelper);
+
+ public:
+  IdleDelayedTaskHelper() = default;
+
+  bool RunsTasksInCurrentSequence() const override { return IsMainThread(); }
+
+  bool PostNonNestableDelayedTask(const base::Location& from_here,
+                                  base::OnceClosure task,
+                                  base::TimeDelta delay) override {
+    NOTIMPLEMENTED();
+    return false;
+  }
+
+  bool PostDelayedTask(const base::Location& from_here,
+                       base::OnceClosure task,
+                       base::TimeDelta delay) override {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    ThreadScheduler::Current()->PostDelayedIdleTask(
+        from_here, delay,
+        base::BindOnce([](base::OnceClosure task,
+                          base::TimeTicks deadline) { std::move(task).Run(); },
+                       std::move(task)));
+    return true;
+  }
+
+ protected:
+  ~IdleDelayedTaskHelper() override = default;
+
+ private:
+  THREAD_CHECKER(thread_checker_);
+  DISALLOW_COPY_AND_ASSIGN(IdleDelayedTaskHelper);
 };
 
 }  // namespace
@@ -94,27 +122,8 @@ static Platform* g_platform = nullptr;
 
 static GCTaskRunner* g_gc_task_runner = nullptr;
 
-static void MaxObservedSizeFunction(size_t size_in_mb) {
-  const size_t kSupportedMaxSizeInMB = 4 * 1024;
-  if (size_in_mb >= kSupportedMaxSizeInMB)
-    size_in_mb = kSupportedMaxSizeInMB - 1;
-
-  // Send a UseCounter only when we see the highest memory usage
-  // we've ever seen.
-  DEFINE_STATIC_LOCAL(EnumerationHistogram, committed_size_histogram,
-                      ("PartitionAlloc.CommittedSize", kSupportedMaxSizeInMB));
-  committed_size_histogram.Count(size_in_mb);
-}
-
-static void CallOnMainThreadFunction(WTF::MainThreadFunction function,
-                                     void* context) {
-  PostCrossThreadTask(
-      *Thread::MainThread()->GetTaskRunner(), FROM_HERE,
-      CrossThreadBind(function, CrossThreadUnretained(context)));
-}
-
 Platform::Platform() {
-  WTF::Partitions::Initialize(MaxObservedSizeFunction);
+  WTF::Partitions::Initialize();
 }
 
 Platform::~Platform() = default;
@@ -123,6 +132,8 @@ namespace {
 
 class SimpleMainThread : public Thread {
  public:
+  SimpleMainThread() : isolate_(WebIsolate::Create()) {}
+
   // We rely on base::ThreadTaskRunnerHandle for tasks posted on the main
   // thread. The task runner handle may not be available on Blink's startup
   // (== on SimpleMainThread's construction), because some tests like
@@ -156,6 +167,7 @@ class SimpleMainThread : public Thread {
  private:
   bool IsSimpleMainThread() const override { return true; }
 
+  std::unique_ptr<WebIsolate> isolate_;
   scheduler::SimpleThreadScheduler scheduler_;
   scoped_refptr<base::SingleThreadTaskRunner>
       main_thread_task_runner_for_testing_;
@@ -181,20 +193,18 @@ void Platform::CreateMainThreadAndInitialize(Platform* platform) {
 
 void Platform::InitializeCommon(Platform* platform,
                                 std::unique_ptr<Thread> main_thread) {
-  WTF::Initialize(CallOnMainThreadFunction);
+  WTF::Initialize();
 
   Thread::SetMainThread(std::move(main_thread));
 
   ProcessHeap::Init();
-  MemoryCoordinator::Initialize();
-  if (base::ThreadTaskRunnerHandle::IsSet()) {
-    base::trace_event::MemoryDumpProvider::Options options;
-    base::trace_event::MemoryDumpManager::GetInstance()->RegisterDumpProvider(
-        BlinkGCMemoryDumpProvider::Instance(), "BlinkGC",
-        base::ThreadTaskRunnerHandle::Get(), options);
-  }
 
-  ThreadState::AttachMainThread();
+  ThreadState* thread_state = ThreadState::AttachMainThread();
+  new BlinkGCMemoryDumpProvider(
+      thread_state, base::ThreadTaskRunnerHandle::Get(),
+      BlinkGCMemoryDumpProvider::HeapType::kBlinkMainThread);
+
+  MemoryPressureListenerRegistry::Initialize();
 
   // font_family_names are used by platform/fonts and are initialized by core.
   // In case core is not available (like on PPAPI plugins), we need to init
@@ -220,7 +230,11 @@ void Platform::InitializeCommon(Platform* platform,
       ParkableStringManagerDumpProvider::Instance(), "ParkableStrings",
       base::ThreadTaskRunnerHandle::Get());
 
-  RendererResourceCoordinator::Initialize();
+  RendererResourceCoordinator::MaybeInitialize();
+  // Use a delayed idle task as this is low priority work that should stop when
+  // the main thread is not doing any work.
+  WTF::Partitions::StartPeriodicReclaim(
+      base::MakeRefCounted<IdleDelayedTaskHelper>());
 }
 
 void Platform::SetCurrentPlatformForTesting(Platform* platform) {
@@ -251,30 +265,9 @@ Platform* Platform::Current() {
   return g_platform;
 }
 
-Thread* Platform::MainThread() {
-  return Thread::MainThread();
-}
-
-Thread* Platform::CurrentThread() {
-  return Thread::Current();
-}
-
-service_manager::Connector* Platform::GetConnector() {
-  DEFINE_STATIC_LOCAL(DefaultConnector, connector, ());
-  return connector.Get();
-}
-
-InterfaceProvider* Platform::GetInterfaceProvider() {
-  return InterfaceProvider::GetEmptyInterfaceProvider();
-}
-
-std::unique_ptr<WebStorageNamespace> Platform::CreateLocalStorageNamespace() {
-  return nullptr;
-}
-
-std::unique_ptr<WebStorageNamespace> Platform::CreateSessionStorageNamespace(
-    base::StringPiece namespace_id) {
-  return nullptr;
+ThreadSafeBrowserInterfaceBrokerProxy* Platform::GetBrowserInterfaceBroker() {
+  DEFINE_STATIC_LOCAL(DefaultBrowserInterfaceBrokerProxy, proxy, ());
+  return &proxy;
 }
 
 std::unique_ptr<Thread> Platform::CreateThread(
@@ -282,21 +275,13 @@ std::unique_ptr<Thread> Platform::CreateThread(
   return Thread::CreateThread(params);
 }
 
-std::unique_ptr<Thread> Platform::CreateWebAudioThread() {
-  return Thread::CreateWebAudioThread();
-}
-
 void Platform::CreateAndSetCompositorThread() {
   Thread::CreateAndSetCompositorThread();
 }
 
-Thread* Platform::CompositorThread() {
-  return Thread::CompositorThread();
-}
-
 scoped_refptr<base::SingleThreadTaskRunner>
 Platform::CompositorThreadTaskRunner() {
-  if (Thread* compositor_thread = CompositorThread())
+  if (Thread* compositor_thread = Thread::CompositorThread())
     return compositor_thread->GetTaskRunner();
   return nullptr;
 }
@@ -315,61 +300,8 @@ Platform::CreateSharedOffscreenGraphicsContext3DProvider() {
 }
 
 std::unique_ptr<WebGraphicsContext3DProvider>
-Platform::CreateWebGPUGraphicsContext3DProvider(const WebURL& top_document_url,
-                                                GraphicsInfo*) {
-  return nullptr;
-}
-
-std::unique_ptr<WebRTCPeerConnectionHandler>
-Platform::CreateRTCPeerConnectionHandler(
-    WebRTCPeerConnectionHandlerClient*,
-    scoped_refptr<base::SingleThreadTaskRunner>) {
-  return nullptr;
-}
-
-std::unique_ptr<cricket::PortAllocator> Platform::CreateWebRtcPortAllocator(
-    WebLocalFrame* frame) {
-  return nullptr;
-}
-
-std::unique_ptr<webrtc::AsyncResolverFactory>
-Platform::CreateWebRtcAsyncResolverFactory() {
-  return nullptr;
-}
-
-std::unique_ptr<WebMediaRecorderHandler> Platform::CreateMediaRecorderHandler(
-    scoped_refptr<base::SingleThreadTaskRunner>) {
-  return nullptr;
-}
-
-std::unique_ptr<WebRTCCertificateGenerator>
-Platform::CreateRTCCertificateGenerator() {
-  return nullptr;
-}
-
-std::unique_ptr<WebMediaStreamCenter> Platform::CreateMediaStreamCenter() {
-  return nullptr;
-}
-
-std::unique_ptr<WebCanvasCaptureHandler> Platform::CreateCanvasCaptureHandler(
-    const WebSize&,
-    double,
-    WebMediaStreamTrack*) {
-  return nullptr;
-}
-
-std::unique_ptr<WebImageCaptureFrameGrabber>
-Platform::CreateImageCaptureFrameGrabber() {
-  return nullptr;
-}
-
-std::unique_ptr<webrtc::RtpCapabilities> Platform::GetRtpSenderCapabilities(
-    const WebString& kind) {
-  return nullptr;
-}
-
-std::unique_ptr<webrtc::RtpCapabilities> Platform::GetRtpReceiverCapabilities(
-    const WebString& kind) {
+Platform::CreateWebGPUGraphicsContext3DProvider(
+    const WebURL& top_document_url) {
   return nullptr;
 }
 

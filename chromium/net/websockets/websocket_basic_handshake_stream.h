@@ -94,8 +94,6 @@ class NET_EXPORT_PRIVATE WebSocketBasicHandshakeStream final
   // the connection has been accepted.
   void ReadResponseHeadersCallback(CompletionOnceCallback callback, int result);
 
-  void OnFinishOpeningHandshake();
-
   // Validates the response and sends the finished handshake event.
   int ValidateResponse(int rv);
 
@@ -149,7 +147,7 @@ class NET_EXPORT_PRIVATE WebSocketBasicHandshakeStream final
 
   WebSocketEndpointLockManager* const websocket_endpoint_lock_manager_;
 
-  base::WeakPtrFactory<WebSocketBasicHandshakeStream> weak_ptr_factory_;
+  base::WeakPtrFactory<WebSocketBasicHandshakeStream> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WebSocketBasicHandshakeStream);
 };

@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/modules/accessibility/ax_object_cache_impl.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 
@@ -15,9 +16,14 @@ namespace blink {
 
 // This class should only be used from inside the accessibility directory.
 class AXRelationCache {
+  USING_FAST_MALLOC(AXRelationCache);
+
  public:
   explicit AXRelationCache(AXObjectCacheImpl*);
   virtual ~AXRelationCache();
+
+  // Scan the initial document.
+  void Init();
 
   // Returns true if the given object's position in the tree was due to
   // aria-owns.
@@ -34,6 +40,16 @@ class AXRelationCache {
   void UpdateAriaOwns(const AXObject* owner,
                       const Vector<String>& id_vector,
                       HeapVector<Member<AXObject>>& owned_children);
+
+  // Given an object that has explicitly set elements for aria-owns, update the
+  // internal state to reflect the new set of children owned by this object.
+  // Note that |owned_children| will be the AXObjects corresponding to the
+  // elements in |attr_associated_elements|. These elements are validated -
+  // exist in the DOM, and are a descendant of a shadow including ancestor.
+  void UpdateAriaOwnsFromAttrAssociatedElements(
+      const AXObject* owner,
+      const HeapVector<Member<Element>>& attr_associated_elements,
+      HeapVector<Member<AXObject>>& owned_children);
 
   // Return true if any label ever pointed to the element via the for attribute.
   bool MayHaveHTMLLabelViaForAttribute(const HTMLElement&);
@@ -65,6 +81,12 @@ class AXRelationCache {
   void UnmapOwnedChildren(const AXObject* owner, Vector<AXID>);
   void MapOwnedChildren(const AXObject* owner, Vector<AXID>);
   void GetReverseRelated(Node*, HeapVector<Member<AXObject>>& sources);
+
+  // Updates |aria_owner_to_children_mapping_| after calling UpdateAriaOwns for
+  // either the content attribute or the attr associated elements.
+  void UpdateAriaOwnerToChildrenMapping(
+      const AXObject* owner,
+      HeapVector<Member<AXObject>>& validated_owned_children_result);
 
   WeakPersistent<AXObjectCacheImpl> object_cache_;
 

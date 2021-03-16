@@ -31,21 +31,17 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_WTF_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_WTF_H_
 
-#include "third_party/blink/renderer/platform/wtf/compiler.h"
+#include "base/threading/platform_thread.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_export.h"
 
 namespace WTF {
 
-typedef void MainThreadFunction(void*);
+WTF_EXPORT extern base::PlatformThreadId g_main_thread_identifier;
 
 // This function must be called exactly once from the main thread before using
 // anything else in WTF.
-WTF_EXPORT void Initialize(void (*)(MainThreadFunction, void*));
+WTF_EXPORT void Initialize();
 WTF_EXPORT bool IsMainThread();
-
-namespace internal {
-void CallOnMainThread(MainThreadFunction*, void* context);
-}  // namespace internal
 
 }  // namespace WTF
 

@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2017 The ANGLE Project Authors. All rights reserved.
+// Copyright 2017 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -15,13 +15,14 @@
 
 #include "common/angleutils.h"
 #include "libANGLE/Debug.h"
+#include "libANGLE/ProgramExecutable.h"
 #include "libANGLE/RefCountObject.h"
 
 namespace rx
 {
 class GLImplFactory;
 class ProgramPipelineImpl;
-};  // namespace rx
+}  // namespace rx
 
 namespace gl
 {
@@ -36,22 +37,32 @@ class ProgramPipelineState final : angle::NonCopyable
 
     const std::string &getLabel() const;
 
+    const ProgramExecutable &getExecutable() const { return mExecutable; }
+    ProgramExecutable &getExecutable() { return mExecutable; }
+
   private:
     friend class ProgramPipeline;
 
     std::string mLabel;
+
+    ProgramExecutable mExecutable;
 };
 
-class ProgramPipeline final : public RefCountObject, public LabeledObject
+class ProgramPipeline final : public RefCountObject<ProgramPipelineID>, public LabeledObject
 {
   public:
-    ProgramPipeline(rx::GLImplFactory *factory, GLuint handle);
+    ProgramPipeline(rx::GLImplFactory *factory, ProgramPipelineID handle);
     ~ProgramPipeline() override;
 
     void onDestroy(const Context *context) override;
 
     void setLabel(const Context *context, const std::string &label) override;
     const std::string &getLabel() const override;
+
+    const ProgramPipelineState &getState() const { return mState; }
+
+    const ProgramExecutable &getExecutable() const { return mState.getExecutable(); }
+    ProgramExecutable &getExecutable() { return mState.getExecutable(); }
 
     rx::ProgramPipelineImpl *getImplementation() const;
 

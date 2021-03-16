@@ -43,12 +43,16 @@ class CORE_EXPORT DOMQuad : public ScriptWrappable {
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 
-  void Trace(blink::Visitor* visitor) override {
+  void Trace(Visitor* visitor) override {
     visitor->Trace(p1_);
     visitor->Trace(p2_);
     visitor->Trace(p3_);
     visitor->Trace(p4_);
     ScriptWrappable::Trace(visitor);
+  }
+
+  void set_needs_bounds_calculation(bool value) {
+    needs_bounds_calculation_ = value;
   }
 
  private:
@@ -59,10 +63,11 @@ class CORE_EXPORT DOMQuad : public ScriptWrappable {
   Member<DOMPoint> p3_;
   Member<DOMPoint> p4_;
 
-  double left_;
-  double right_;
-  double top_;
-  double bottom_;
+  double x_;
+  double y_;
+  double width_;
+  double height_;
+  bool needs_bounds_calculation_;
 };
 
 }  // namespace blink

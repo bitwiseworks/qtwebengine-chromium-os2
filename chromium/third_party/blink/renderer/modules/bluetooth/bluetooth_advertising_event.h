@@ -19,28 +19,6 @@ class BluetoothAdvertisingEvent final : public Event {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static BluetoothAdvertisingEvent* Create(
-      const AtomicString& event_type,
-      const BluetoothAdvertisingEventInit* initializer) {
-    return MakeGarbageCollected<BluetoothAdvertisingEvent>(event_type,
-                                                           initializer);
-  }
-
-  static BluetoothAdvertisingEvent* Create(
-      const AtomicString& event_type,
-      BluetoothDevice* device,
-      const String& name,
-      const HeapVector<StringOrUnsignedLong>& uuids,
-      base::Optional<short> appearance,
-      base::Optional<int8_t> txPower,
-      base::Optional<int8_t> rssi,
-      BluetoothManufacturerDataMap* manufacturer_data_map,
-      BluetoothServiceDataMap* service_data_map) {
-    return MakeGarbageCollected<BluetoothAdvertisingEvent>(
-        event_type, device, name, uuids, appearance, txPower, rssi,
-        manufacturer_data_map, service_data_map);
-  }
-
   BluetoothAdvertisingEvent(const AtomicString& event_type,
                             const BluetoothAdvertisingEventInit* initializer);
 
@@ -48,7 +26,7 @@ class BluetoothAdvertisingEvent final : public Event {
                             BluetoothDevice* device,
                             const String& name,
                             const HeapVector<StringOrUnsignedLong>& uuids,
-                            base::Optional<short> appearance,
+                            base::Optional<uint16_t> appearance,
                             base::Optional<int8_t> txPower,
                             base::Optional<int8_t> rssi,
                             BluetoothManufacturerDataMap* manufacturer_data_map,
@@ -56,16 +34,20 @@ class BluetoothAdvertisingEvent final : public Event {
 
   ~BluetoothAdvertisingEvent() override;
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   const AtomicString& InterfaceName() const override;
 
   BluetoothDevice* device() const;
   const String& name() const;
   const HeapVector<StringOrUnsignedLong>& uuids() const;
-  short appearance(bool& is_null) const;
-  int8_t txPower(bool& is_null) const;
-  int8_t rssi(bool& is_null) const;
+  base::Optional<uint16_t> appearance() const { return appearance_; }
+  base::Optional<int8_t> txPower() const { return txPower_; }
+  base::Optional<int8_t> rssi() const { return rssi_; }
+  // TODO(crbug.com/1060971): Remove |is_null| version.
+  uint16_t appearance(bool& is_null) const;  // DEPRECATED
+  int8_t txPower(bool& is_null) const;       // DEPRECATED
+  int8_t rssi(bool& is_null) const;          // DEPRECATED
   BluetoothManufacturerDataMap* manufacturerData() const;
   BluetoothServiceDataMap* serviceData() const;
 
@@ -73,7 +55,7 @@ class BluetoothAdvertisingEvent final : public Event {
   Member<BluetoothDevice> device_;
   String name_;
   HeapVector<StringOrUnsignedLong> uuids_;
-  base::Optional<short> appearance_;
+  base::Optional<uint16_t> appearance_;
   base::Optional<int8_t> txPower_;
   base::Optional<int8_t> rssi_;
   const Member<BluetoothManufacturerDataMap> manufacturer_data_map_;

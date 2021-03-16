@@ -27,18 +27,18 @@ class ManagedBookmarksTracker;
 class ManagedBookmarkService : public KeyedService,
                                public BaseBookmarkModelObserver {
  public:
-  typedef base::Callback<std::string()> GetManagementDomainCallback;
+  using GetManagementDomainCallback = base::RepeatingCallback<std::string()>;
 
   ManagedBookmarkService(PrefService* prefs,
-                         const GetManagementDomainCallback& callback);
+                         GetManagementDomainCallback callback);
   ~ManagedBookmarkService() override;
 
   // Called upon creation of the BookmarkModel.
   void BookmarkModelCreated(BookmarkModel* bookmark_model);
 
-  // Returns a task that will be used to load any additional root nodes. This
-  // task will be invoked in the Profile's IO task runner.
-  LoadExtraCallback GetLoadExtraNodesCallback();
+  // Returns a task that will be used to load a managed root node. This task
+  // will be invoked in the Profile's IO task runner.
+  LoadManagedNodeCallback GetLoadManagedNodeCallback();
 
   // Returns true if the |node| can have its title updated.
   bool CanSetPermanentNodeTitle(const BookmarkNode* node);

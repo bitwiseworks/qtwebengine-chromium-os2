@@ -30,10 +30,6 @@
 
 namespace blink {
 
-WebGLBuffer* WebGLBuffer::Create(WebGLRenderingContextBase* ctx) {
-  return MakeGarbageCollected<WebGLBuffer>(ctx);
-}
-
 WebGLBuffer::WebGLBuffer(WebGLRenderingContextBase* ctx)
     : WebGLSharedPlatform3DObject(ctx), initial_target_(0), size_(0) {
   GLuint buffer;
@@ -41,9 +37,7 @@ WebGLBuffer::WebGLBuffer(WebGLRenderingContextBase* ctx)
   SetObject(buffer);
 }
 
-WebGLBuffer::~WebGLBuffer() {
-  RunDestructor();
-}
+WebGLBuffer::~WebGLBuffer() = default;
 
 void WebGLBuffer::DeleteObjectImpl(gpu::gles2::GLES2Interface* gl) {
   gl->DeleteBuffers(1, &object_);

@@ -13,6 +13,13 @@ namespace cc {
 
 namespace {
 
+// Only expect precision up to 1 microsecond for double conversion error (mainly
+// due to timeline time getting converted between double and TimeTick).
+static constexpr double time_error_ms = 0.001;
+
+#define EXPECT_SCROLL_TIMELINE_TIME_NEAR(expected, value) \
+  EXPECT_NEAR(expected, ToDouble(value), time_error_ms)
+
 void SetScrollOffset(PropertyTrees* property_trees,
                      ElementId scroller_id,
                      gfx::ScrollOffset offset) {
@@ -31,7 +38,6 @@ void CreateScrollingElement(PropertyTrees* property_trees,
   // Create a corresponding TransformNode for the scrolling element.
   TransformNode transform_node;
   transform_node.scrolls = true;
-  transform_node.source_node_id = TransformTree::kRootNodeId;
   int transform_node_id =
       property_trees->transform_tree.Insert(transform_node, 0);
   property_trees->element_id_to_transform_node_index[scroller_id] =
@@ -59,6 +65,15 @@ double CalculateCurrentTime(double current_scroll_offset,
   return ((current_scroll_offset - start_scroll_offset) /
           (end_scroll_offset - start_scroll_offset)) *
          effective_time_range;
+}
+
+// Helper method to convert base::TimeTicks to double.
+// Returns double milliseconds if the input value is resolved or
+// std::numeric_limits<double>::quiet_NaN() otherwise.
+double ToDouble(base::Optional<base::TimeTicks> time_ticks) {
+  if (time_ticks)
+    return (time_ticks.value() - base::TimeTicks()).InMillisecondsF();
+  return std::numeric_limits<double>::quiet_NaN();
 }
 
 }  // namespace
@@ -98,36 +113,44 @@ TEST_F(ScrollTimelineTest, BasicCurrentTimeCalculations) {
   // just compute one edge and use it for vertical/horizontal.
   double time_range = content_size().height() - container_size().height();
 
-  ScrollTimeline vertical_timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                                   base::nullopt, base::nullopt, time_range);
-  ScrollTimeline horizontal_timeline(scroller_id(), ScrollTimeline::ScrollRight,
-                                     base::nullopt, base::nullopt, time_range);
+  scoped_refptr<ScrollTimeline> vertical_timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, time_range);
+  scoped_refptr<ScrollTimeline> horizontal_timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollRight,
+                             base::nullopt, base::nullopt, time_range);
 
   // Unscrolled, both timelines should read a current time of 0.
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset());
-  EXPECT_FLOAT_EQ(0, vertical_timeline.CurrentTime(scroll_tree(), false));
-  EXPECT_FLOAT_EQ(0, horizontal_timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      0, vertical_timeline->CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      0, horizontal_timeline->CurrentTime(scroll_tree(), false));
 
   // Now do some scrolling and make sure that the ScrollTimelines update.
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(75, 50));
 
   // As noted above, we have mapped the time range such that current time should
   // just be the scroll offset.
-  EXPECT_FLOAT_EQ(50, vertical_timeline.CurrentTime(scroll_tree(), false));
-  EXPECT_FLOAT_EQ(75, horizontal_timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      50, vertical_timeline->CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      75, horizontal_timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeIsAdjustedForTimeRange) {
   // Here we set a time range to 100, which gives the current time the form of
   // 'percentage scrolled'.
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                          base::nullopt, base::nullopt, 100);
+  scoped_refptr<ScrollTimeline> timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, 100);
 
   double halfwayY = (content_size().height() - container_size().height()) / 2.;
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, halfwayY));
 
-  EXPECT_FLOAT_EQ(50, timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(50,
+                                   timeline->CurrentTime(scroll_tree(), false));
 }
 
 // This test ensures that the ScrollTimeline's active scroller id is correct. We
@@ -153,35 +176,37 @@ TEST_F(ScrollTimelineTest, ActiveTimeIsSetOnlyAfterPromotion) {
   double halfwayY = (content_size().height() - container_size().height()) / 2.;
   SetScrollOffset(&pending_tree, scroller_id, gfx::ScrollOffset(0, halfwayY));
 
-  ScrollTimeline main_timeline(scroller_id, ScrollTimeline::ScrollDown,
-                               base::nullopt, base::nullopt, 100);
+  scoped_refptr<ScrollTimeline> main_timeline =
+      ScrollTimeline::Create(scroller_id, ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, 100);
 
-  // Now create an impl version of the ScrollTimeline. Initilly this should only
-  // have a pending scroller id, as the active tree may not yet have the
+  // Now create an impl version of the ScrollTimeline. Initially this should
+  // only have a pending scroller id, as the active tree may not yet have the
   // scroller in it (as in this case).
-  std::unique_ptr<ScrollTimeline> impl_timeline =
-      main_timeline.CreateImplInstance();
+  scoped_refptr<ScrollTimeline> impl_timeline = base::WrapRefCounted(
+      ToScrollTimeline(main_timeline->CreateImplInstance().get()));
 
-  EXPECT_TRUE(
-      std::isnan(impl_timeline->CurrentTime(active_tree.scroll_tree, true)));
-  EXPECT_FLOAT_EQ(50,
-                  impl_timeline->CurrentTime(pending_tree.scroll_tree, false));
+  EXPECT_TRUE(std::isnan(
+      ToDouble(impl_timeline->CurrentTime(active_tree.scroll_tree, true))));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      50, impl_timeline->CurrentTime(pending_tree.scroll_tree, false));
 
   // Now fake a tree activation; this should cause the ScrollTimeline to update
   // its active scroller id. Note that we deliberately pass in the pending_tree
   // and just claim it is the active tree; this avoids needing to properly
   // implement tree swapping just for the test.
-  impl_timeline->PromoteScrollTimelinePendingToActive();
-  EXPECT_FLOAT_EQ(50,
-                  impl_timeline->CurrentTime(pending_tree.scroll_tree, true));
-  EXPECT_FLOAT_EQ(50,
-                  impl_timeline->CurrentTime(pending_tree.scroll_tree, false));
+  impl_timeline->ActivateTimeline();
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      50, impl_timeline->CurrentTime(pending_tree.scroll_tree, true));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      50, impl_timeline->CurrentTime(pending_tree.scroll_tree, false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeIsAdjustedForPixelSnapping) {
   double time_range = content_size().height() - container_size().height();
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                          base::nullopt, base::nullopt, time_range);
+  scoped_refptr<ScrollTimeline> timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, time_range);
 
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 50));
 
@@ -191,88 +216,177 @@ TEST_F(ScrollTimelineTest, CurrentTimeIsAdjustedForPixelSnapping) {
       property_trees().transform_tree.FindNodeFromElementId(scroller_id());
   transform_node->snap_amount = gfx::Vector2dF(0, 0.5);
 
-  EXPECT_FLOAT_EQ(49.5, timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(49.5,
+                                   timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeHandlesStartScrollOffset) {
   double time_range = content_size().height() - container_size().height();
   const double start_scroll_offset = 20;
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                          start_scroll_offset, base::nullopt, time_range);
+  scoped_refptr<ScrollTimeline> timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             start_scroll_offset, base::nullopt, time_range);
 
-  // Unscrolled, the timeline should read a current time of unresolved, since
-  // the current offset (0) will be less than the startScrollOffset.
+  // Unscrolled, the timeline should read a current time of 0 since the current
+  // offset (0) will be less than the startScrollOffset.
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset());
-  EXPECT_TRUE(std::isnan(timeline.CurrentTime(scroll_tree(), false)));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(0,
+                                   timeline->CurrentTime(scroll_tree(), false));
 
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 19));
-  EXPECT_TRUE(std::isnan(timeline.CurrentTime(scroll_tree(), false)));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(0,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 20));
-  EXPECT_FLOAT_EQ(0, timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(0,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 50));
-  EXPECT_FLOAT_EQ(
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
       CalculateCurrentTime(50, start_scroll_offset, time_range, time_range),
-      timeline.CurrentTime(scroll_tree(), false));
+      timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 200));
-  EXPECT_FLOAT_EQ(
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
       CalculateCurrentTime(200, start_scroll_offset, time_range, time_range),
-      timeline.CurrentTime(scroll_tree(), false));
+      timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeHandlesEndScrollOffset) {
   double time_range = content_size().height() - container_size().height();
   const double end_scroll_offset = time_range - 20;
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                          base::nullopt, end_scroll_offset, time_range);
+  scoped_refptr<ScrollTimeline> timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             base::nullopt, end_scroll_offset, time_range);
 
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, time_range));
-  EXPECT_TRUE(std::isnan(timeline.CurrentTime(scroll_tree(), false)));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, time_range - 20));
-  EXPECT_FLOAT_EQ(
-      CalculateCurrentTime(time_range - 20, 0, end_scroll_offset, time_range),
-      timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, time_range - 50));
-  EXPECT_FLOAT_EQ(
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
       CalculateCurrentTime(time_range - 50, 0, end_scroll_offset, time_range),
-      timeline.CurrentTime(scroll_tree(), false));
+      timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, time_range - 200));
-  EXPECT_FLOAT_EQ(
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
       CalculateCurrentTime(time_range - 200, 0, end_scroll_offset, time_range),
-      timeline.CurrentTime(scroll_tree(), false));
+      timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeHandlesCombinedStartAndEndScrollOffset) {
   double time_range = content_size().height() - container_size().height();
   double start_scroll_offset = 20;
   double end_scroll_offset = time_range - 50;
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown,
-                          start_scroll_offset, end_scroll_offset, time_range);
+  scoped_refptr<ScrollTimeline> timeline = ScrollTimeline::Create(
+      scroller_id(), ScrollTimeline::ScrollDown, start_scroll_offset,
+      end_scroll_offset, time_range);
   SetScrollOffset(&property_trees(), scroller_id(),
                   gfx::ScrollOffset(0, time_range - 150));
-  EXPECT_FLOAT_EQ(CalculateCurrentTime(time_range - 150, start_scroll_offset,
-                                       end_scroll_offset, time_range),
-                  timeline.CurrentTime(scroll_tree(), false));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(
+      CalculateCurrentTime(time_range - 150, start_scroll_offset,
+                           end_scroll_offset, time_range),
+      timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest, CurrentTimeHandlesEqualStartAndEndScrollOffset) {
   double time_range = content_size().height() - container_size().height();
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown, 20, 20,
-                          time_range);
+  scoped_refptr<ScrollTimeline> timeline = ScrollTimeline::Create(
+      scroller_id(), ScrollTimeline::ScrollDown, 20, 20, time_range);
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 150));
-  EXPECT_TRUE(std::isnan(timeline.CurrentTime(scroll_tree(), false)));
+
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
 }
 
 TEST_F(ScrollTimelineTest,
        CurrentTimeHandlesStartOffsetLargerThanEndScrollOffset) {
   double time_range = content_size().height() - container_size().height();
-  ScrollTimeline timeline(scroller_id(), ScrollTimeline::ScrollDown, 50, 10,
-                          time_range);
+  scoped_refptr<ScrollTimeline> timeline = ScrollTimeline::Create(
+      scroller_id(), ScrollTimeline::ScrollDown, 50, 10, time_range);
+  SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 40));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(0,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
   SetScrollOffset(&property_trees(), scroller_id(), gfx::ScrollOffset(0, 150));
-  EXPECT_TRUE(std::isnan(timeline.CurrentTime(scroll_tree(), false)));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
+}
+
+TEST_F(ScrollTimelineTest, CurrentTimeHandlesScrollOffsets) {
+  const double time_range = 100;
+  const double start_scroll_offset = 20;
+  const double scroller_height =
+      content_size().height() - container_size().height();
+  const double end_scroll_offset = scroller_height - 20;
+
+  scoped_refptr<ScrollTimeline> timeline = ScrollTimeline::Create(
+      scroller_id(), ScrollTimeline::ScrollDown, start_scroll_offset,
+      end_scroll_offset, time_range);
+
+  // Before the start_scroll_offset the current time should be 0
+  SetScrollOffset(&property_trees(), scroller_id(),
+                  gfx::ScrollOffset(0, start_scroll_offset - 10));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(0,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
+  // At the end_scroll_offset the current time should be time-range
+  SetScrollOffset(&property_trees(), scroller_id(),
+                  gfx::ScrollOffset(0, end_scroll_offset));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
+
+  // After the end_scroll_offset the current time should be time-range
+  SetScrollOffset(&property_trees(), scroller_id(),
+                  gfx::ScrollOffset(0, end_scroll_offset + 10));
+  EXPECT_SCROLL_TIMELINE_TIME_NEAR(time_range,
+                                   timeline->CurrentTime(scroll_tree(), false));
+}
+
+TEST_F(ScrollTimelineTest, Activeness) {
+  // ScrollTimeline with zero scroller id is inactive.
+  scoped_refptr<ScrollTimeline> inactive_timeline1 =
+      ScrollTimeline::Create(base::nullopt, ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, 100);
+  EXPECT_FALSE(
+      inactive_timeline1->IsActive(scroll_tree(), false /*is_active_tree*/));
+  EXPECT_FALSE(
+      inactive_timeline1->IsActive(scroll_tree(), true /*is_active_tree*/));
+
+  // ScrollTimeline with a scroller that is not in the scroll tree is
+  // inactive.
+  scoped_refptr<ScrollTimeline> inactive_timeline2 =
+      ScrollTimeline::Create(ElementId(2), ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, 100);
+  EXPECT_FALSE(
+      inactive_timeline2->IsActive(scroll_tree(), false /*is_active_tree*/));
+  // Activate the scroll tree.
+  inactive_timeline2->ActivateTimeline();
+  EXPECT_FALSE(
+      inactive_timeline2->IsActive(scroll_tree(), true /*is_active_tree*/));
+
+  scoped_refptr<ScrollTimeline> active_timeline =
+      ScrollTimeline::Create(scroller_id(), ScrollTimeline::ScrollDown,
+                             base::nullopt, base::nullopt, 100);
+  EXPECT_TRUE(
+      active_timeline->IsActive(scroll_tree(), false /*is_active_tree*/));
+  EXPECT_FALSE(
+      active_timeline->IsActive(scroll_tree(), true /*is_active_tree*/));
+
+  // Activate the scroll tree.
+  active_timeline->ActivateTimeline();
+  EXPECT_TRUE(
+      active_timeline->IsActive(scroll_tree(), false /*is_active_tree*/));
+  EXPECT_TRUE(
+      active_timeline->IsActive(scroll_tree(), true /*is_active_tree*/));
 }
 
 }  // namespace cc

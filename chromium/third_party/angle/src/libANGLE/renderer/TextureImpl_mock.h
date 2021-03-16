@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2015 The ANGLE Project Authors. All rights reserved.
+// Copyright 2015 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -92,6 +92,14 @@ class MockTextureImpl : public TextureImpl
     MOCK_METHOD5(
         setStorage,
         angle::Result(const gl::Context *, gl::TextureType, size_t, GLenum, const gl::Extents &));
+    MOCK_METHOD7(setStorageExternalMemory,
+                 angle::Result(const gl::Context *,
+                               gl::TextureType,
+                               size_t,
+                               GLenum,
+                               const gl::Extents &,
+                               gl::MemoryObject *,
+                               GLuint64));
     MOCK_METHOD4(setImageExternal,
                  angle::Result(const gl::Context *,
                                gl::TextureType,
@@ -103,10 +111,11 @@ class MockTextureImpl : public TextureImpl
     MOCK_METHOD2(bindTexImage, angle::Result(const gl::Context *, egl::Surface *));
     MOCK_METHOD1(releaseTexImage, angle::Result(const gl::Context *));
 
-    MOCK_METHOD4(getAttachmentRenderTarget,
+    MOCK_METHOD5(getAttachmentRenderTarget,
                  angle::Result(const gl::Context *,
                                GLenum,
                                const gl::ImageIndex &,
+                               GLsizei,
                                FramebufferAttachmentRenderTarget **));
 
     MOCK_METHOD6(setStorageMultisample,

@@ -29,6 +29,7 @@ struct COMPONENT_EXPORT(URL) CustomScheme {
     ServiceWorkersAllowed = 0x10,
     ViewSourceAllowed = 0x20,
     ContentSecurityPolicyIgnored = 0x40,
+    CorsEnabled = 0x80,
   };
 
   std::string name;
@@ -50,6 +51,15 @@ struct COMPONENT_EXPORT(URL) CustomScheme {
   static void SaveSchemes(base::CommandLine* command_line);
   static void LoadSchemes(const base::CommandLine* command_line);
 };
+
+// Check if |scheme| is handled by Chromium, QtWebEngine (qrc), or the
+// application (custom schemes). If so, then the scheme cannot be overridden by
+// web APIs such as registerProtocolHandler.
+//
+// Implemented in QtWebEngine repository.
+//
+// Thread-safe.
+bool IsHandledProtocol(base::StringPiece scheme);
 
 } // namespace url
 

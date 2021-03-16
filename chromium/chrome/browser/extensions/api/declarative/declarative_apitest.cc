@@ -10,16 +10,13 @@
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/post_task.h"
-#include "base/test/thread_test_helper.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "content/public/browser/browser_task_traits.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/common/content_features.h"
 #include "extensions/browser/api/declarative/rules_registry_service.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_rules_registry.h"
@@ -27,8 +24,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/test_extension_dir.h"
-
-using content::BrowserThread;
 
 namespace extensions {
 
@@ -120,17 +115,58 @@ class DeclarativeApiTest : public ExtensionApiTest {
             extensions::declarative_webrequest_constants::kOnRequest);
 
     std::vector<const api::events::Rule*> rules;
-    base::PostTaskWithTraits(
-        FROM_HERE, {BrowserThread::IO},
-        base::BindOnce(&RulesRegistry::GetAllRules, rules_registry,
-                       extension_id, &rules));
-    scoped_refptr<base::ThreadTestHelper> io_helper(new base::ThreadTestHelper(
-        base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::IO})
-            .get()));
-    EXPECT_TRUE(io_helper->Run());
+    rules_registry->GetAllRules(extension_id, &rules);
     return rules.size();
   }
 };
+
+// Copied from origin_policy_browsertest.cc.
+const base::FilePath::CharType kDataRoot[] =
+    FILE_PATH_LITERAL("chrome/test/data/origin_policy_browsertest");
+
+class DeclarativeApiTestWithOriginPolicy : public DeclarativeApiTest {
+ protected:
+  base::string16 NavigateToAndReturnTitle(const char* url) {
+    EXPECT_TRUE(server());
+    ui_test_utils::NavigateToURL(browser(), GURL(server()->GetURL(url)));
+    base::string16 title;
+    ui_test_utils::GetCurrentTabTitle(browser(), &title);
+    return title;
+  }
+
+ private:
+  void SetUpInProcessBrowserTestFixture() override {
+    server_ = std::make_unique<net::test_server::EmbeddedTestServer>(
+        net::test_server::EmbeddedTestServer::TYPE_HTTPS);
+    server_->AddDefaultHandlers(base::FilePath(kDataRoot));
+    feature_list_.InitAndEnableFeature(features::kOriginPolicy);
+    EXPECT_TRUE(server()->Start());
+    DeclarativeApiTest::SetUpInProcessBrowserTestFixture();
+  }
+
+  void TearDownInProcessBrowserTestFixture() override { server_.reset(); }
+
+  net::test_server::EmbeddedTestServer* server() { return server_.get(); }
+
+  std::unique_ptr<net::test_server::EmbeddedTestServer> server_;
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// Regression test for crbug.com/1047275.
+IN_PROC_BROWSER_TEST_F(DeclarativeApiTestWithOriginPolicy,
+                       OriginPolicyEnabled) {
+  // Navigate to a page with an origin policy. It should load correctly.
+  EXPECT_EQ(base::ASCIIToUTF16("Page With Policy"),
+            NavigateToAndReturnTitle("/page-with-policy.html"));
+
+  // Load an extension that has the |declarativeWebRequest| permission.
+  ASSERT_TRUE(RunExtensionTest("declarative/api")) << message_;
+
+  // Future navigations to the page with the origin policy should still work,
+  // and not throw an interstitial.
+  EXPECT_EQ(base::ASCIIToUTF16("Page With Policy"),
+            NavigateToAndReturnTitle("/page-with-policy.html"));
+}
 
 IN_PROC_BROWSER_TEST_F(DeclarativeApiTest, DeclarativeApi) {
   ASSERT_TRUE(RunExtensionTest("declarative/api")) << message_;

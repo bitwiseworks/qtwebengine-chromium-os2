@@ -12,8 +12,10 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <vector>
 
+#include "absl/types/optional.h"
 #include "api/array_view.h"
 
 namespace webrtc {
@@ -36,8 +38,14 @@ class RtpGenericFrameDescriptor {
   bool LastPacketInSubFrame() const { return end_of_subframe_; }
   void SetLastPacketInSubFrame(bool last) { end_of_subframe_ = last; }
 
-  bool FirstSubFrameInFrame() const { return beginning_of_frame_; }
-  bool LastSubFrameInFrame() const { return end_of_frame_; }
+  // Denotes whether the frame is discardable. That is, whether skipping it
+  // would have no effect on the decodability of subsequent frames.
+  // An absl::optional is used because version 0 of the extension did not
+  // support this flag. (The optional aspect is relevant only when parsing.)
+  // TODO(bugs.webrtc.org/10243): Make this into a plain bool when v00 of
+  // the extension is deprecated.
+  absl::optional<bool> Discardable() const { return discardable_; }
+  void SetDiscardable(bool discardable) { discardable_ = discardable; }
 
   // Properties below undefined if !FirstPacketInSubFrame()
   // Valid range for temporal layer: [0, 7]
@@ -62,18 +70,11 @@ class RtpGenericFrameDescriptor {
   // Returns false on failure, i.e. number of dependencies is too large.
   bool AddFrameDependencyDiff(uint16_t fdiff);
 
-  void SetByteRepresentation(rtc::ArrayView<const uint8_t> representation);
-  rtc::ArrayView<const uint8_t> GetByteRepresentation();
-
  private:
-  friend class RtpGenericFrameDescriptorExtension;
-  void SetFirstSubFrameInFrame(bool first) { beginning_of_frame_ = first; }
-  void SetLastSubFrameInFrame(bool last) { end_of_frame_ = last; }
-
   bool beginning_of_subframe_ = false;
   bool end_of_subframe_ = false;
-  bool beginning_of_frame_ = true;
-  bool end_of_frame_ = true;
+
+  absl::optional<bool> discardable_;
 
   uint16_t frame_id_ = 0;
   uint8_t spatial_layers_ = 1;
@@ -82,8 +83,6 @@ class RtpGenericFrameDescriptor {
   uint16_t frame_deps_id_diffs_[kMaxNumFrameDependencies];
   int width_ = 0;
   int height_ = 0;
-
-  std::vector<uint8_t> byte_representation_;
 };
 
 }  // namespace webrtc

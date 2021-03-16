@@ -96,18 +96,13 @@ static int memjrnlRead(
   int iChunkOffset;
   FileChunk *pChunk;
 
-#if defined(SQLITE_ENABLE_ATOMIC_WRITE) \
- || defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
   if( (iAmt+iOfst)>p->endpoint.iOffset ){
     return SQLITE_IOERR_SHORT_READ;
   }
-#endif
-
-  assert( (iAmt+iOfst)<=p->endpoint.iOffset );
   assert( p->readpoint.iOffset==0 || p->readpoint.pChunk!=0 );
   if( p->readpoint.iOffset!=iOfst || iOfst==0 ){
     sqlite3_int64 iOff = 0;
-    for(pChunk=p->pFirst;
+    for(pChunk=p->pFirst; 
         ALWAYS(pChunk) && (iOff+p->nChunkSize)<=iOfst;
         pChunk=pChunk->pNext
     ){
@@ -142,7 +137,7 @@ static void memjrnlFreeChunks(MemJournal *p){
   for(pIter=p->pFirst; pIter; pIter=pNext){
     pNext = pIter->pNext;
     sqlite3_free(pIter);
-  }
+  } 
   p->pFirst = 0;
 }
 
@@ -214,7 +209,7 @@ static int memjrnlWrite(
     ** access writes are not required. The only exception to this is when
     ** the in-memory journal is being used by a connection using the
     ** atomic-write optimization. In this case the first 28 bytes of the
-    ** journal file may be written as part of committing the transaction. */
+    ** journal file may be written as part of committing the transaction. */ 
     assert( iOfst==p->endpoint.iOffset || iOfst==0 );
 #if defined(SQLITE_ENABLE_ATOMIC_WRITE) \
  || defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
@@ -265,7 +260,7 @@ static int memjrnlWrite(
 **
 ** If the journal file is already on disk, truncate it there. Or, if it
 ** is still in main memory but is being truncated to zero bytes in size,
-** ignore
+** ignore 
 */
 static int memjrnlTruncate(sqlite3_file *pJfd, sqlite_int64 size){
   MemJournal *p = (MemJournal *)pJfd;
@@ -292,8 +287,8 @@ static int memjrnlClose(sqlite3_file *pJfd){
 /*
 ** Sync the file.
 **
-** If the real file has been created, call its xSync method. Otherwise,
-** syncing an in-memory journal is a no-op.
+** If the real file has been created, call its xSync method. Otherwise, 
+** syncing an in-memory journal is a no-op. 
 */
 static int memjrnlSync(sqlite3_file *pJfd, int flags){
   UNUSED_PARAMETER2(pJfd, flags);
@@ -334,11 +329,11 @@ static const struct sqlite3_io_methods MemJournalMethods = {
   0                 /* xUnfetch */
 };
 
-/*
-** Open a journal file.
+/* 
+** Open a journal file. 
 **
-** The behaviour of the journal file depends on the value of parameter
-** nSpill. If nSpill is 0, then the journal file is always create and
+** The behaviour of the journal file depends on the value of parameter 
+** nSpill. If nSpill is 0, then the journal file is always create and 
 ** accessed using the underlying VFS. If nSpill is less than zero, then
 ** all content is always stored in main-memory. Finally, if nSpill is a
 ** positive value, then the journal file is initially created in-memory
@@ -389,9 +384,9 @@ void sqlite3MemJournalOpen(sqlite3_file *pJfd){
 #if defined(SQLITE_ENABLE_ATOMIC_WRITE) \
  || defined(SQLITE_ENABLE_BATCH_ATOMIC_WRITE)
 /*
-** If the argument p points to a MemJournal structure that is not an
+** If the argument p points to a MemJournal structure that is not an 
 ** in-memory-only journal file (i.e. is one that was opened with a +ve
-** nSpill parameter or as SQLITE_OPEN_MAIN_JOURNAL), and the underlying
+** nSpill parameter or as SQLITE_OPEN_MAIN_JOURNAL), and the underlying 
 ** file has not yet been created, create it now.
 */
 int sqlite3JournalCreate(sqlite3_file *pJfd){
@@ -425,7 +420,7 @@ int sqlite3JournalIsInMemory(sqlite3_file *p){
   return p->pMethods==&MemJournalMethods;
 }
 
-/*
+/* 
 ** Return the number of bytes required to store a JournalFile that uses vfs
 ** pVfs to create the underlying on-disk files.
 */

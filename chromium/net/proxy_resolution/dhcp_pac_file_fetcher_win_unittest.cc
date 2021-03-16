@@ -10,10 +10,11 @@
 #include "base/bind_helpers.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/timer/timer.h"
 #include "net/proxy_resolution/dhcp_pac_file_adapter_fetcher_win.h"
 #include "net/test/gtest_util.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -59,7 +60,7 @@ class RealFetchTester {
   void RunTest() {
     int result = fetcher_->Fetch(
         &pac_text_,
-        base::Bind(&RealFetchTester::OnCompletion, base::Unretained(this)),
+        base::BindOnce(&RealFetchTester::OnCompletion, base::Unretained(this)),
         NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     if (result != ERR_IO_PENDING)
       finished_ = true;
@@ -122,7 +123,7 @@ class RealFetchTester {
 };
 
 TEST(DhcpPacFileFetcherWin, RealFetch) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   // This tests a call to Fetch() with no stubbing out of dependencies.
   //
@@ -140,7 +141,7 @@ TEST(DhcpPacFileFetcherWin, RealFetch) {
 }
 
 TEST(DhcpPacFileFetcherWin, RealFetchWithCancel) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   // Does a Fetch() with an immediate cancel.  As before, just
   // exercises the code without stubbing out dependencies.
@@ -192,7 +193,7 @@ class DelayingDhcpPacFileFetcherWin : public DhcpPacFileFetcherWin {
 };
 
 TEST(DhcpPacFileFetcherWin, RealFetchWithDeferredCancel) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   // Does a Fetch() with a slightly delayed cancel.  As before, just
   // exercises the code without stubbing out dependencies, but
@@ -216,7 +217,7 @@ class DummyDhcpPacFileAdapterFetcher : public DhcpPacFileAdapterFetcher {
       : DhcpPacFileAdapterFetcher(context, runner),
         did_finish_(false),
         result_(OK),
-        pac_script_(L"bingo"),
+        pac_script_(STRING16_LITERAL("bingo")),
         fetch_delay_ms_(1) {}
 
   void Fetch(const std::string& adapter_name,
@@ -385,7 +386,7 @@ class FetcherClient {
   void RunTest() {
     int result = fetcher_.Fetch(
         &pac_text_,
-        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)),
+        base::BindOnce(&FetcherClient::OnCompletion, base::Unretained(this)),
         NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     ASSERT_THAT(result, IsError(ERR_IO_PENDING));
   }
@@ -393,7 +394,7 @@ class FetcherClient {
   int RunTestThatMayFailSync() {
     int result = fetcher_.Fetch(
         &pac_text_,
-        base::Bind(&FetcherClient::OnCompletion, base::Unretained(this)),
+        base::BindOnce(&FetcherClient::OnCompletion, base::Unretained(this)),
         NetLogWithSource(), TRAFFIC_ANNOTATION_FOR_TESTS);
     if (result != ERR_IO_PENDING)
       result_ = result;
@@ -423,7 +424,7 @@ class FetcherClient {
   void ResetTestState() {
     finished_ = false;
     result_ = ERR_UNEXPECTED;
-    pac_text_ = L"";
+    pac_text_.clear();
     fetcher_.ResetTestState();
   }
 
@@ -444,16 +445,16 @@ void TestNormalCaseURLConfiguredOneAdapter(FetcherClient* client) {
   TestURLRequestContext context;
   std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
       new DummyDhcpPacFileAdapterFetcher(&context, client->GetTaskRunner()));
-  adapter_fetcher->Configure(true, OK, L"bingo", 1);
+  adapter_fetcher->Configure(true, OK, STRING16_LITERAL("bingo"), 1);
   client->fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client->RunTest();
   client->RunMessageLoopUntilComplete();
   ASSERT_THAT(client->result_, IsOk());
-  ASSERT_EQ(L"bingo", client->pac_text_);
+  ASSERT_EQ(STRING16_LITERAL("bingo"), client->pac_text_);
 }
 
 TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredOneAdapter) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestNormalCaseURLConfiguredOneAdapter(&client);
@@ -461,20 +462,22 @@ TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredOneAdapter) {
 
 void TestNormalCaseURLConfiguredMultipleAdapters(FetcherClient* client) {
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "second", true, OK, L"bingo", base::TimeDelta::FromMilliseconds(50));
+      "second", true, OK, STRING16_LITERAL("bingo"),
+      base::TimeDelta::FromMilliseconds(50));
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "third", true, OK, L"rocko", base::TimeDelta::FromMilliseconds(1));
+      "third", true, OK, STRING16_LITERAL("rocko"),
+      base::TimeDelta::FromMilliseconds(1));
   client->RunTest();
   client->RunMessageLoopUntilComplete();
   ASSERT_THAT(client->result_, IsOk());
-  ASSERT_EQ(L"bingo", client->pac_text_);
+  ASSERT_EQ(STRING16_LITERAL("bingo"), client->pac_text_);
 }
 
 TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredMultipleAdapters) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestNormalCaseURLConfiguredMultipleAdapters(&client);
@@ -483,23 +486,24 @@ TEST(DhcpPacFileFetcherWin, NormalCaseURLConfiguredMultipleAdapters) {
 void TestNormalCaseURLConfiguredMultipleAdaptersWithTimeout(
     FetcherClient* client) {
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   // This will time out.
+  client->fetcher_.ConfigureAndPushBackAdapter("second", false, ERR_IO_PENDING,
+                                               STRING16_LITERAL("bingo"),
+                                               TestTimeouts::action_timeout());
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "second", false, ERR_IO_PENDING, L"bingo",
-      TestTimeouts::action_timeout());
-  client->fetcher_.ConfigureAndPushBackAdapter(
-      "third", true, OK, L"rocko", base::TimeDelta::FromMilliseconds(1));
+      "third", true, OK, STRING16_LITERAL("rocko"),
+      base::TimeDelta::FromMilliseconds(1));
   client->RunTest();
   client->RunMessageLoopUntilComplete();
   ASSERT_THAT(client->result_, IsOk());
-  ASSERT_EQ(L"rocko", client->pac_text_);
+  ASSERT_EQ(STRING16_LITERAL("rocko"), client->pac_text_);
 }
 
 TEST(DhcpPacFileFetcherWin,
      NormalCaseURLConfiguredMultipleAdaptersWithTimeout) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestNormalCaseURLConfiguredMultipleAdaptersWithTimeout(&client);
@@ -508,29 +512,29 @@ TEST(DhcpPacFileFetcherWin,
 void TestFailureCaseURLConfiguredMultipleAdaptersWithTimeout(
     FetcherClient* client) {
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   // This will time out.
-  client->fetcher_.ConfigureAndPushBackAdapter(
-      "second", false, ERR_IO_PENDING, L"bingo",
-      TestTimeouts::action_timeout());
+  client->fetcher_.ConfigureAndPushBackAdapter("second", false, ERR_IO_PENDING,
+                                               STRING16_LITERAL("bingo"),
+                                               TestTimeouts::action_timeout());
   // This is the first non-ERR_PAC_NOT_IN_DHCP error and as such
   // should be chosen.
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "third", true, ERR_PAC_STATUS_NOT_OK, L"",
+      "third", true, ERR_HTTP_RESPONSE_CODE_FAILURE, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "fourth", true, ERR_NOT_IMPLEMENTED, L"",
+      "fourth", true, ERR_NOT_IMPLEMENTED, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   client->RunTest();
   client->RunMessageLoopUntilComplete();
-  ASSERT_THAT(client->result_, IsError(ERR_PAC_STATUS_NOT_OK));
-  ASSERT_EQ(L"", client->pac_text_);
+  ASSERT_THAT(client->result_, IsError(ERR_HTTP_RESPONSE_CODE_FAILURE));
+  ASSERT_EQ(base::string16(), client->pac_text_);
 }
 
 TEST(DhcpPacFileFetcherWin,
      FailureCaseURLConfiguredMultipleAdaptersWithTimeout) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestFailureCaseURLConfiguredMultipleAdaptersWithTimeout(&client);
@@ -538,25 +542,25 @@ TEST(DhcpPacFileFetcherWin,
 
 void TestFailureCaseNoURLConfigured(FetcherClient* client) {
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "most_preferred", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   // This will time out.
-  client->fetcher_.ConfigureAndPushBackAdapter(
-      "second", false, ERR_IO_PENDING, L"bingo",
-      TestTimeouts::action_timeout());
+  client->fetcher_.ConfigureAndPushBackAdapter("second", false, ERR_IO_PENDING,
+                                               STRING16_LITERAL("bingo"),
+                                               TestTimeouts::action_timeout());
   // This is the first non-ERR_PAC_NOT_IN_DHCP error and as such
   // should be chosen.
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "third", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "third", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   client->RunTest();
   client->RunMessageLoopUntilComplete();
   ASSERT_THAT(client->result_, IsError(ERR_PAC_NOT_IN_DHCP));
-  ASSERT_EQ(L"", client->pac_text_);
+  ASSERT_EQ(base::string16(), client->pac_text_);
 }
 
 TEST(DhcpPacFileFetcherWin, FailureCaseNoURLConfigured) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestFailureCaseNoURLConfigured(&client);
@@ -566,12 +570,12 @@ void TestFailureCaseNoDhcpAdapters(FetcherClient* client) {
   client->RunTest();
   client->RunMessageLoopUntilComplete();
   ASSERT_THAT(client->result_, IsError(ERR_PAC_NOT_IN_DHCP));
-  ASSERT_EQ(L"", client->pac_text_);
+  ASSERT_EQ(base::string16(), client->pac_text_);
   ASSERT_EQ(0, client->fetcher_.num_fetchers_created_);
 }
 
 TEST(DhcpPacFileFetcherWin, FailureCaseNoDhcpAdapters) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestFailureCaseNoDhcpAdapters(&client);
@@ -583,13 +587,14 @@ void TestShortCircuitLessPreferredAdapters(FetcherClient* client) {
   // time.  Verify that we complete quickly and do not wait for the slow
   // adapters, i.e. we finish before timeout.
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "1", true, ERR_PAC_NOT_IN_DHCP, L"",
+      "1", true, ERR_PAC_NOT_IN_DHCP, base::string16(),
       base::TimeDelta::FromMilliseconds(1));
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "2", true, OK, L"bingo",
+      "2", true, OK, STRING16_LITERAL("bingo"),
       base::TimeDelta::FromMilliseconds(1));
   client->fetcher_.ConfigureAndPushBackAdapter(
-      "3", true, OK, L"wrongo", TestTimeouts::action_max_timeout());
+      "3", true, OK, STRING16_LITERAL("wrongo"),
+      TestTimeouts::action_max_timeout());
 
   // Increase the timeout to ensure the short circuit mechanism has
   // time to kick in before the timeout waiting for more adapters kicks in.
@@ -608,7 +613,7 @@ void TestShortCircuitLessPreferredAdapters(FetcherClient* client) {
 }
 
 TEST(DhcpPacFileFetcherWin, ShortCircuitLessPreferredAdapters) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestShortCircuitLessPreferredAdapters(&client);
@@ -618,7 +623,7 @@ void TestImmediateCancel(FetcherClient* client) {
   TestURLRequestContext context;
   std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
       new DummyDhcpPacFileAdapterFetcher(&context, client->GetTaskRunner()));
-  adapter_fetcher->Configure(true, OK, L"bingo", 1);
+  adapter_fetcher->Configure(true, OK, STRING16_LITERAL("bingo"), 1);
   client->fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client->RunTest();
   client->fetcher_.Cancel();
@@ -629,14 +634,14 @@ void TestImmediateCancel(FetcherClient* client) {
 // Regression test to check that when we cancel immediately, no
 // adapter fetchers get created.
 TEST(DhcpPacFileFetcherWin, ImmediateCancel) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestImmediateCancel(&client);
 }
 
 TEST(DhcpPacFileFetcherWin, ReuseFetcher) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
 
@@ -673,19 +678,19 @@ TEST(DhcpPacFileFetcherWin, ReuseFetcher) {
 }
 
 TEST(DhcpPacFileFetcherWin, OnShutdown) {
-  base::test::ScopedTaskEnvironment scoped_task_environment;
+  base::test::TaskEnvironment task_environment;
 
   FetcherClient client;
   TestURLRequestContext context;
   std::unique_ptr<DummyDhcpPacFileAdapterFetcher> adapter_fetcher(
       new DummyDhcpPacFileAdapterFetcher(&context, client.GetTaskRunner()));
-  adapter_fetcher->Configure(true, OK, L"bingo", 1);
+  adapter_fetcher->Configure(true, OK, STRING16_LITERAL("bingo"), 1);
   client.fetcher_.PushBackAdapter("a", adapter_fetcher.release());
   client.RunTest();
 
   client.fetcher_.OnShutdown();
-  EXPECT_TRUE(client.finished_);
-  EXPECT_THAT(client.result_, IsError(ERR_CONTEXT_SHUT_DOWN));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(client.finished_);
 
   client.ResetTestState();
   EXPECT_THAT(client.RunTestThatMayFailSync(), IsError(ERR_CONTEXT_SHUT_DOWN));

@@ -4,12 +4,15 @@
 
 #include "content/browser/indexed_db/indexed_db_tombstone_sweeper.h"
 
-#include "base/metrics/histogram_macros.h"
+#include <string>
+
+#include "base/metrics/histogram_functions.h"
 #include "base/rand_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/tick_clock.h"
+#include "components/services/storage/indexed_db/scopes/varint_coding.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_key.h"
 #include "third_party/blink/public/common/indexeddb/indexeddb_metadata.h"
@@ -66,15 +69,12 @@ const typename T::value_type& WrappingIterator<T>::Value() const {
   return *inner_;
 }
 
-IndexedDBTombstoneSweeper::IndexedDBTombstoneSweeper(Mode mode,
-                                                     int round_iterations,
+IndexedDBTombstoneSweeper::IndexedDBTombstoneSweeper(int round_iterations,
                                                      int max_iterations,
                                                      leveldb::DB* database)
-    : mode_(mode),
+    : IndexedDBPreCloseTaskQueue::PreCloseTask(database),
       max_round_iterations_(round_iterations),
-      max_iterations_(max_iterations),
-      database_(database),
-      ptr_factory_(this) {
+      max_iterations_(max_iterations) {
   sweep_state_.start_database_seed = static_cast<size_t>(base::RandUint64());
   sweep_state_.start_object_store_seed =
       static_cast<size_t>(base::RandUint64());
@@ -83,8 +83,12 @@ IndexedDBTombstoneSweeper::IndexedDBTombstoneSweeper(Mode mode,
 
 IndexedDBTombstoneSweeper::~IndexedDBTombstoneSweeper() {}
 
+bool IndexedDBTombstoneSweeper::RequiresMetadata() const {
+  return true;
+}
+
 void IndexedDBTombstoneSweeper::SetMetadata(
-    std::vector<IndexedDBDatabaseMetadata> const* metadata) {
+    const std::vector<IndexedDBDatabaseMetadata>* metadata) {
   database_metadata_ = metadata;
   total_indices_ = 0;
   for (const auto& db : *metadata) {
@@ -117,7 +121,7 @@ bool IndexedDBTombstoneSweeper::RunRound() {
   leveldb::Status s;
   Status status = DoSweep(&s);
 
-  if (status != Status::DONE_ERROR && mode_ == Mode::DELETION) {
+  if (status != Status::DONE_ERROR) {
     s = FlushDeletions();
     if (!s.ok())
       status = Status::DONE_ERROR;
@@ -134,7 +138,6 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
     base::Optional<StopReason> stop_reason,
     base::Optional<IndexedDBTombstoneSweeper::Status> status,
     const leveldb::Status& leveldb_error) {
-  static const char kUmaPrefix[] = "WebCore.IndexedDB.TombstoneSweeper.";
   DCHECK(stop_reason || status);
   DCHECK(!stop_reason || !status);
 
@@ -142,21 +145,10 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
   if (stop_reason && stop_reason == StopReason::METADATA_ERROR)
     return;
 
-  std::string uma_count_label = kUmaPrefix;
-  std::string uma_size_label = kUmaPrefix;
-
-  switch (mode_) {
-    case Mode::STATISTICS:
-      uma_count_label.append("NumTombstones.");
-      uma_size_label.append("TombstonesSize.");
-      break;
-    case Mode::DELETION:
-      uma_count_label.append("NumDeletedTombstones.");
-      uma_size_label.append("DeletedTombstonesSize.");
-      break;
-    default:
-      NOTREACHED();
-  }
+  std::string uma_count_label =
+      "WebCore.IndexedDB.TombstoneSweeper.NumDeletedTombstones.";
+  std::string uma_size_label =
+      "WebCore.IndexedDB.TombstoneSweeper.DeletedTombstonesSize.";
 
   if (stop_reason) {
     switch (stop_reason.value()) {
@@ -179,7 +171,7 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
         uma_size_label.append("MaxIterations");
         break;
       case Status::DONE_ERROR:
-        UMA_HISTOGRAM_ENUMERATION(
+        base::UmaHistogramEnumeration(
             "WebCore.IndexedDB.TombstoneSweeper.SweepError",
             leveldb_env::GetLevelDBStatusUMAValue(leveldb_error),
             leveldb_env::LEVELDB_STATUS_MAX);
@@ -205,26 +197,16 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
           (clock_for_testing_ ? clock_for_testing_->NowTicks()
                               : base::TimeTicks::Now()) -
           start_time_.value();
-      switch (mode_) {
-        case Mode::STATISTICS:
-          UMA_HISTOGRAM_TIMES(
-              "WebCore.IndexedDB.TombstoneSweeper.StatsTotalTime.Complete",
-              total_time);
-          break;
-        case Mode::DELETION:
-          UMA_HISTOGRAM_TIMES(
-              "WebCore.IndexedDB.TombstoneSweeper.DeletionTotalTime.Complete",
-              total_time);
-          if (metrics_.seen_tombstones > 0) {
-            // Only record deletion time if we do a deletion.
-            UMA_HISTOGRAM_TIMES(
-                "WebCore.IndexedDB.TombstoneSweeper.DeletionCommitTime."
-                "Complete",
-                total_deletion_time_);
-          }
-          break;
-        default:
-          NOTREACHED();
+
+      base::UmaHistogramTimes(
+          "WebCore.IndexedDB.TombstoneSweeper.DeletionTotalTime.Complete",
+          total_time);
+      if (metrics_.seen_tombstones > 0) {
+        // Only record deletion time if we do a deletion.
+        base::UmaHistogramTimes(
+            "WebCore.IndexedDB.TombstoneSweeper.DeletionCommitTime."
+            "Complete",
+            total_deletion_time_);
       }
     }
   }
@@ -244,8 +226,8 @@ void IndexedDBTombstoneSweeper::RecordUMAStats(
 
   // We put our max at 20 instead of 100 to reduce the number of buckets.
   if (total_indices_ > 0) {
-    const static int kIndexPercentageBucketCount = 20;
-    UMA_HISTOGRAM_ENUMERATION(
+    static const int kIndexPercentageBucketCount = 20;
+    base::UmaHistogramExactLinear(
         "WebCore.IndexedDB.TombstoneSweeper.IndexScanPercent",
         indices_scanned_ * kIndexPercentageBucketCount / total_indices_,
         kIndexPercentageBucketCount + 1);
@@ -258,12 +240,12 @@ leveldb::Status IndexedDBTombstoneSweeper::FlushDeletions() {
   base::TimeTicks start = base::TimeTicks::Now();
 
   leveldb::Status status =
-      database_->Write(leveldb::WriteOptions(), &round_deletion_batch_);
+      database()->Write(leveldb::WriteOptions(), &round_deletion_batch_);
   round_deletion_batch_.Clear();
   has_writes_ = false;
 
   if (!status.ok()) {
-    UMA_HISTOGRAM_ENUMERATION(
+    base::UmaHistogramEnumeration(
         "WebCore.IndexedDB.TombstoneSweeper.DeletionWriteError",
         leveldb_env::GetLevelDBStatusUMAValue(status),
         leveldb_env::LEVELDB_STATUS_MAX);
@@ -313,7 +295,7 @@ IndexedDBTombstoneSweeper::Status IndexedDBTombstoneSweeper::DoSweep(
     leveldb::ReadOptions iterator_options;
     iterator_options.fill_cache = false;
     iterator_options.verify_checksums = true;
-    iterator_.reset(database_->NewIterator(iterator_options));
+    iterator_.reset(database()->NewIterator(iterator_options));
   }
 
   if (!sweep_state_.database_it) {
@@ -434,7 +416,7 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
 
     std::string exists_value;
     leveldb::Status s =
-        database_->Get(leveldb::ReadOptions(), exists_key, &exists_value);
+        database()->Get(leveldb::ReadOptions(), exists_key, &exists_value);
     if (!s.ok()) {
       ++metrics_.num_errors_reading_exists_table;
       iterator_->Next();
@@ -458,10 +440,8 @@ bool IndexedDBTombstoneSweeper::IterateIndex(
     }
 
     if (decoded_exists_version != index_data_version) {
-      if (mode_ == Mode::DELETION) {
-        has_writes_ = true;
-        round_deletion_batch_.Delete(key_slice);
-      }
+      has_writes_ = true;
+      round_deletion_batch_.Delete(key_slice);
       ++metrics_.seen_tombstones;
       metrics_.seen_tombstones_size += entry_size;
     }

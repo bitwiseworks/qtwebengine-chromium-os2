@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -20,7 +21,7 @@
 #include "components/storage_monitor/test_storage_monitor.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 uint64_t kTestSize = 1000000ULL;
@@ -59,16 +60,16 @@ class StorageMonitorMacTest : public testing::Test {
   }
 
   void UpdateDisk(StorageInfo info, StorageMonitorMac::UpdateType update_type) {
-    base::PostTaskWithTraits(
+    base::PostTask(
         FROM_HERE, {content::BrowserThread::UI},
-        base::Bind(&StorageMonitorMac::UpdateDisk,
-                   base::Unretained(monitor_.get()), update_type,
-                   base::Owned(new std::string("dummy_bsd_name")), info));
+        base::BindOnce(&StorageMonitorMac::UpdateDisk,
+                       base::Unretained(monitor_.get()), update_type,
+                       base::Owned(new std::string("dummy_bsd_name")), info));
     base::RunLoop().RunUntilIdle();
   }
 
  protected:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   std::unique_ptr<MockRemovableStorageObserver> mock_storage_observer_;
 

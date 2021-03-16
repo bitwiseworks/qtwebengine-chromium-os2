@@ -4,12 +4,14 @@
 
 #include "chrome/browser/devtools/devtools_browser_context_manager.h"
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window.h"
 
-DevToolsBrowserContextManager::DevToolsBrowserContextManager()
-    : weak_factory_(this) {}
+DevToolsBrowserContextManager::DevToolsBrowserContextManager() {}
 
 DevToolsBrowserContextManager::~DevToolsBrowserContextManager() = default;
 
@@ -100,9 +102,17 @@ void DevToolsBrowserContextManager::DisposeBrowserContext(
 
 void DevToolsBrowserContextManager::OnOriginalProfileDestroyed(
     Profile* profile) {
-  base::EraseIf(registrations_, [&profile](const auto& it) {
-    return it.second->profile()->GetOriginalProfile() == profile;
-  });
+  // This is likely happening during shutdown. We'll immediately
+  // close all browser windows for our profile without unload handling.
+  BrowserList::BrowserVector browsers_to_close;
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (browser->profile() == profile)
+      browsers_to_close.push_back(browser);
+  }
+  for (auto* browser : browsers_to_close)
+    browser->window()->Close();
+  std::string context_id = profile->UniqueId();
+  registrations_.erase(context_id);
 }
 
 void DevToolsBrowserContextManager::OnBrowserRemoved(Browser* browser) {

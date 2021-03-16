@@ -11,6 +11,7 @@
 
 #include "base/bits.h"
 #include "base/containers/circular_deque.h"
+#include "base/json/json_writer.h"
 #include "base/json/string_escape.h"
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
@@ -268,7 +269,7 @@ class PickleWriter final : public TracedValue::Writer {
           TraceEvent::TraceValue json_value;
           CHECK(it.ReadBool(&json_value.as_bool));
           maybe_append_key_name(state_stack[current_state_index], &it, out);
-          TraceEvent::AppendValueAsJSON(TRACE_VALUE_TYPE_BOOL, json_value, out);
+          json_value.AppendAsJSON(TRACE_VALUE_TYPE_BOOL, out);
           break;
         }
 
@@ -278,7 +279,7 @@ class PickleWriter final : public TracedValue::Writer {
           maybe_append_key_name(state_stack[current_state_index], &it, out);
           TraceEvent::TraceValue json_value;
           json_value.as_int = value;
-          TraceEvent::AppendValueAsJSON(TRACE_VALUE_TYPE_INT, json_value, out);
+          json_value.AppendAsJSON(TRACE_VALUE_TYPE_INT, out);
           break;
         }
 
@@ -286,8 +287,7 @@ class PickleWriter final : public TracedValue::Writer {
           TraceEvent::TraceValue json_value;
           CHECK(it.ReadDouble(&json_value.as_double));
           maybe_append_key_name(state_stack[current_state_index], &it, out);
-          TraceEvent::AppendValueAsJSON(TRACE_VALUE_TYPE_DOUBLE, json_value,
-                                        out);
+          json_value.AppendAsJSON(TRACE_VALUE_TYPE_DOUBLE, out);
           break;
         }
 
@@ -297,8 +297,7 @@ class PickleWriter final : public TracedValue::Writer {
           maybe_append_key_name(state_stack[current_state_index], &it, out);
           TraceEvent::TraceValue json_value;
           json_value.as_string = value.c_str();
-          TraceEvent::AppendValueAsJSON(TRACE_VALUE_TYPE_STRING, json_value,
-                                        out);
+          json_value.AppendAsJSON(TRACE_VALUE_TYPE_STRING, out);
           break;
         }
 
@@ -324,7 +323,7 @@ class PickleWriter final : public TracedValue::Writer {
                   pickle_.size());
   }
 
-  std::unique_ptr<base::Value> ToBaseValue() const override {
+  std::unique_ptr<base::Value> ToBaseValue() const {
     base::Value root(base::Value::Type::DICTIONARY);
     Value* cur_dict = &root;
     Value* cur_list = nullptr;
@@ -341,7 +340,7 @@ class PickleWriter final : public TracedValue::Writer {
             stack.push_back(cur_dict);
             cur_dict = cur_dict->SetKey(ReadKeyName(it), std::move(new_dict));
           } else {
-            cur_list->GetList().push_back(std::move(new_dict));
+            cur_list->Append(std::move(new_dict));
             // |new_dict| is invalidated at this point, so |cur_dict| needs to
             // be reset.
             cur_dict = &cur_list->GetList().back();
@@ -369,7 +368,7 @@ class PickleWriter final : public TracedValue::Writer {
             cur_list = cur_dict->SetKey(ReadKeyName(it), std::move(new_list));
             cur_dict = nullptr;
           } else {
-            cur_list->GetList().push_back(std::move(new_list));
+            cur_list->Append(std::move(new_list));
             stack.push_back(cur_list);
             // |cur_list| is invalidated at this point by the Append, so it
             // needs to be reset.
@@ -380,44 +379,51 @@ class PickleWriter final : public TracedValue::Writer {
         case kTypeBool: {
           bool value;
           CHECK(it.ReadBool(&value));
-          base::Value new_bool(value);
           if (cur_dict) {
-            cur_dict->SetKey(ReadKeyName(it), std::move(new_bool));
+            cur_dict->SetBoolKey(ReadKeyName(it), value);
           } else {
-            cur_list->GetList().push_back(std::move(new_bool));
+            cur_list->Append(value);
           }
         } break;
 
         case kTypeInt: {
           int value;
           CHECK(it.ReadInt(&value));
-          base::Value new_int(value);
           if (cur_dict) {
-            cur_dict->SetKey(ReadKeyName(it), std::move(new_int));
+            cur_dict->SetIntKey(ReadKeyName(it), value);
           } else {
-            cur_list->GetList().push_back(std::move(new_int));
+            cur_list->Append(value);
           }
         } break;
 
         case kTypeDouble: {
-          double value;
-          CHECK(it.ReadDouble(&value));
-          base::Value new_double(value);
-          if (cur_dict) {
-            cur_dict->SetKey(ReadKeyName(it), std::move(new_double));
+          TraceEvent::TraceValue trace_value;
+          CHECK(it.ReadDouble(&trace_value.as_double));
+          Value base_value;
+          if (!std::isfinite(trace_value.as_double)) {
+            // base::Value doesn't support nan and infinity values. Use strings
+            // for them instead. This follows the same convention in
+            // AppendAsTraceFormat(), supported by TraceValue::Append*().
+            std::string value_string;
+            trace_value.AppendAsString(TRACE_VALUE_TYPE_DOUBLE, &value_string);
+            base_value = Value(value_string);
           } else {
-            cur_list->GetList().push_back(std::move(new_double));
+            base_value = Value(trace_value.as_double);
+          }
+          if (cur_dict) {
+            cur_dict->SetKey(ReadKeyName(it), std::move(base_value));
+          } else {
+            cur_list->Append(std::move(base_value));
           }
         } break;
 
         case kTypeString: {
           std::string value;
           CHECK(it.ReadString(&value));
-          base::Value new_str(std::move(value));
           if (cur_dict) {
-            cur_dict->SetKey(ReadKeyName(it), std::move(new_str));
+            cur_dict->SetStringKey(ReadKeyName(it), std::move(value));
           } else {
-            cur_list->GetList().push_back(std::move(new_str));
+            cur_list->Append(std::move(value));
           }
         } break;
 
@@ -454,12 +460,14 @@ void TracedValue::SetWriterFactoryCallback(WriterFactoryCallback callback) {
   g_writer_factory_callback.store(callback);
 }
 
-TracedValue::TracedValue() : TracedValue(0) {}
+TracedValue::TracedValue(size_t capacity)
+    : TracedValue(capacity, /*forced_json*/ false) {}
 
-TracedValue::TracedValue(size_t capacity) {
+TracedValue::TracedValue(size_t capacity, bool forced_json) {
   DEBUG_PUSH_CONTAINER(kStackTypeDict);
 
-  writer_ = CreateWriter(capacity);
+  writer_ = forced_json ? std::make_unique<PickleWriter>(capacity)
+                        : CreateWriter(capacity);
 }
 
 TracedValue::~TracedValue() {
@@ -590,7 +598,8 @@ void TracedValue::EndDictionary() {
 }
 
 std::unique_ptr<base::Value> TracedValue::ToBaseValue() const {
-  return writer_->ToBaseValue();
+  DCHECK(writer_->IsPickleWriter());
+  return static_cast<const PickleWriter*>(writer_.get())->ToBaseValue();
 }
 
 void TracedValue::AppendAsTraceFormat(std::string* out) const {
@@ -607,6 +616,22 @@ bool TracedValue::AppendToProto(ProtoAppender* appender) {
 void TracedValue::EstimateTraceMemoryOverhead(
     TraceEventMemoryOverhead* overhead) {
   writer_->EstimateTraceMemoryOverhead(overhead);
+}
+
+std::string TracedValueJSON::ToJSON() const {
+  std::string result;
+  AppendAsTraceFormat(&result);
+  return result;
+}
+
+std::string TracedValueJSON::ToFormattedJSON() const {
+  std::string str;
+  base::JSONWriter::WriteWithOptions(
+      *ToBaseValue(),
+      base::JSONWriter::OPTIONS_OMIT_DOUBLE_TYPE_PRESERVATION |
+          base::JSONWriter::OPTIONS_PRETTY_PRINT,
+      &str);
+  return str;
 }
 
 }  // namespace trace_event

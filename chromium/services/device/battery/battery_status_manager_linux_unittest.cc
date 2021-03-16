@@ -470,8 +470,8 @@ void BatteryStatusManagerLinuxTest::ExpectGetObjectProxy(
 void BatteryStatusManagerLinuxTest::DeviceSignalChanged(
     MockBatteryObject* device) {
   manager_->GetNotifierThreadForTesting()->task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(&MockBatteryObject::SignalChanged, base::Unretained(device)));
+      FROM_HERE, base::BindOnce(&MockBatteryObject::SignalChanged,
+                                base::Unretained(device)));
   SyncWithNotifierThread();
 }
 
@@ -479,8 +479,8 @@ void BatteryStatusManagerLinuxTest::DeviceSignalPropertyChanged(
     MockBatteryObject* device,
     const std::string& property_name) {
   manager_->GetNotifierThreadForTesting()->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&MockBatteryObject::SignalPropertyChanged,
-                            base::Unretained(device), property_name));
+      FROM_HERE, base::BindOnce(&MockBatteryObject::SignalPropertyChanged,
+                                base::Unretained(device), property_name));
   SyncWithNotifierThread();
 }
 
@@ -488,8 +488,8 @@ void BatteryStatusManagerLinuxTest::UPowerSignalDeviceAdded(
     const std::string& device_path) {
   ASSERT_FALSE(mock_upower_.signal_callback_device_added.is_null());
   manager_->GetNotifierThreadForTesting()->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&MockUPowerObject::SignalDeviceAdded,
-                            base::Unretained(&mock_upower_), device_path));
+      FROM_HERE, base::BindOnce(&MockUPowerObject::SignalDeviceAdded,
+                                base::Unretained(&mock_upower_), device_path));
   SyncWithNotifierThread();
 }
 
@@ -497,15 +497,15 @@ void BatteryStatusManagerLinuxTest::UPowerSignalDeviceRemoved(
     const std::string& device_path) {
   ASSERT_FALSE(mock_upower_.signal_callback_device_removed.is_null());
   manager_->GetNotifierThreadForTesting()->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&MockUPowerObject::SignalDeviceRemoved,
-                            base::Unretained(&mock_upower_), device_path));
+      FROM_HERE, base::BindOnce(&MockUPowerObject::SignalDeviceRemoved,
+                                base::Unretained(&mock_upower_), device_path));
   SyncWithNotifierThread();
 }
 
 void BatteryStatusManagerLinuxTest::StartBatteryStatusManagerLinux() {
   manager_ = BatteryStatusManagerLinux::CreateForTesting(
-      base::Bind(&BatteryStatusManagerLinuxTest::BatteryUpdateCallback,
-                 base::Unretained(this)),
+      base::BindRepeating(&BatteryStatusManagerLinuxTest::BatteryUpdateCallback,
+                          base::Unretained(this)),
       mock_bus_.get());
   manager_->StartListeningBatteryChange();
   SyncWithNotifierThread();
@@ -536,7 +536,7 @@ void BatteryStatusManagerLinuxTest::SyncWithNotifierThread() {
                             base::WaitableEvent::InitialState::NOT_SIGNALED);
   manager_->GetNotifierThreadForTesting()->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(&base::WaitableEvent::Signal, base::Unretained(&event)));
+      base::BindOnce(&base::WaitableEvent::Signal, base::Unretained(&event)));
   event.Wait();
 }
 

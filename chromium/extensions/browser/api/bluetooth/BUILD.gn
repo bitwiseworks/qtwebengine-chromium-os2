@@ -24,11 +24,10 @@ source_set("bluetooth") {
   ]
 
   deps = [
+    "//components/device_event_log",
     "//content/public/browser",
     "//extensions/common/api",
   ]
 
-  public_deps = [
-    "//extensions/browser:browser_sources",
-  ]
+  public_deps = [ "//extensions/browser:browser_sources" ]
 }

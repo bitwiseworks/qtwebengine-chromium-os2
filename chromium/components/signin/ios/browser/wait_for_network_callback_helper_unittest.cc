@@ -4,9 +4,11 @@
 
 #include "components/signin/ios/browser/wait_for_network_callback_helper.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "net/base/mock_network_change_notifier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,35 +21,36 @@ class WaitForNetworkCallbackHelperTest : public testing::Test {
   WaitForNetworkCallbackHelperTest() : num_callbacks_invoked_(0) {}
 
   int num_callbacks_invoked_;
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
-  net::test::MockNetworkChangeNotifier network_change_notifier_;
+  base::test::TaskEnvironment task_environment_;
+  std::unique_ptr<net::test::MockNetworkChangeNotifier>
+      network_change_notifier_ = net::test::MockNetworkChangeNotifier::Create();
   WaitForNetworkCallbackHelper callback_helper_;
 };
 
 TEST_F(WaitForNetworkCallbackHelperTest, CallbackInvokedImmediately) {
-  network_change_notifier_.SetConnectionType(
+  network_change_notifier_->SetConnectionType(
       net::NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI);
   callback_helper_.HandleCallback(
-      base::Bind(&WaitForNetworkCallbackHelperTest::CallbackFunction,
-                 base::Unretained(this)));
+      base::BindOnce(&WaitForNetworkCallbackHelperTest::CallbackFunction,
+                     base::Unretained(this)));
   EXPECT_EQ(1, num_callbacks_invoked_);
 }
 
 TEST_F(WaitForNetworkCallbackHelperTest, CallbackInvokedLater) {
-  network_change_notifier_.SetConnectionType(
+  network_change_notifier_->SetConnectionType(
       net::NetworkChangeNotifier::ConnectionType::CONNECTION_NONE);
   callback_helper_.HandleCallback(
-      base::Bind(&WaitForNetworkCallbackHelperTest::CallbackFunction,
-                 base::Unretained(this)));
+      base::BindOnce(&WaitForNetworkCallbackHelperTest::CallbackFunction,
+                     base::Unretained(this)));
   callback_helper_.HandleCallback(
-      base::Bind(&WaitForNetworkCallbackHelperTest::CallbackFunction,
-                 base::Unretained(this)));
+      base::BindOnce(&WaitForNetworkCallbackHelperTest::CallbackFunction,
+                     base::Unretained(this)));
   EXPECT_EQ(0, num_callbacks_invoked_);
 
-  network_change_notifier_.SetConnectionType(
+  network_change_notifier_->SetConnectionType(
       net::NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI);
-  network_change_notifier_.NotifyObserversOfConnectionTypeChangeForTests(
+  network_change_notifier_->NotifyObserversOfConnectionTypeChangeForTests(
       net::NetworkChangeNotifier::ConnectionType::CONNECTION_WIFI);
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
   EXPECT_EQ(2, num_callbacks_invoked_);
 }

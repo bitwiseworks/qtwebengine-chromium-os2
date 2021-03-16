@@ -5,7 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_RESPONSE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_RESPONSE_H_
 
-#include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom-blink.h"
+#include "services/network/public/mojom/fetch_api.mojom-blink.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -24,7 +25,6 @@ namespace blink {
 class ExceptionState;
 class ResponseInit;
 class ScriptState;
-class WebServiceWorkerResponse;
 
 class CORE_EXPORT Response final : public Body {
   DEFINE_WRAPPERTYPEINFO();
@@ -52,8 +52,17 @@ class CORE_EXPORT Response final : public Body {
   static Response* error(ScriptState*);
   static Response* redirect(ScriptState*,
                             const String& url,
-                            unsigned short status,
+                            uint16_t status,
                             ExceptionState&);
+
+  static FetchResponseData* CreateUnfilteredFetchResponseDataWithoutBody(
+      ScriptState*,
+      mojom::blink::FetchAPIResponse&);
+
+  static FetchResponseData* FilterResponseData(
+      network::mojom::FetchResponseType response_type,
+      FetchResponseData* response,
+      WTF::Vector<WTF::String>& headers);
 
   explicit Response(ExecutionContext*);
   Response(ExecutionContext*, FetchResponseData*);
@@ -65,7 +74,7 @@ class CORE_EXPORT Response final : public Body {
   String type() const;
   String url() const;
   bool redirected() const;
-  unsigned short status() const;
+  uint16_t status() const;
   bool ok() const;
   String statusText() const;
   Headers* headers() const;
@@ -77,10 +86,16 @@ class CORE_EXPORT Response final : public Body {
   // ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // Does not call response.setBlobDataHandle().
-  void PopulateWebServiceWorkerResponse(
-      WebServiceWorkerResponse& /* response */);
-  mojom::blink::FetchAPIResponsePtr PopulateFetchAPIResponse();
+  // Does not contain the blob response body or any side data blob.
+  // |request_url| is the current request URL that resulted in the response. It
+  // is needed to process some response headers (e.g. CSP).
+  // TODO(lfg, kinuko): The FetchResponseData::url_list_ should include the
+  // request URL per step 9 in Main Fetch
+  // https://fetch.spec.whatwg.org/#main-fetch. Just fixing it might break the
+  // logic in ResourceMultiBufferDataProvider, please see
+  // https://chromium-review.googlesource.com/c/1366464 for more details.
+  mojom::blink::FetchAPIResponsePtr PopulateFetchAPIResponse(
+      const KURL& request_url);
 
   bool HasBody() const;
   BodyStreamBuffer* BodyBuffer() override { return response_->Buffer(); }
@@ -104,7 +119,9 @@ class CORE_EXPORT Response final : public Body {
 
   const Vector<KURL>& InternalURLList() const;
 
-  void Trace(blink::Visitor*) override;
+  FetchHeaderList* InternalHeaderList() const;
+
+  void Trace(Visitor*) override;
 
  protected:
   // A version of IsBodyUsed() which catches exceptions and returns
@@ -112,7 +129,7 @@ class CORE_EXPORT Response final : public Body {
   bool IsBodyUsedForDCheck(ExceptionState&) override;
 
  private:
-  const TraceWrapperMember<FetchResponseData> response_;
+  const Member<FetchResponseData> response_;
   const Member<Headers> headers_;
   DISALLOW_COPY_AND_ASSIGN(Response);
 };

@@ -21,16 +21,11 @@ namespace blink {
 class InternalDictionary;
 class InternalDictionaryDerived;
 class InternalDictionaryDerivedDerived;
-class ScriptState;
 
 class DictionaryTest : public ScriptWrappable {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DictionaryTest* Create() {
-    return MakeGarbageCollected<DictionaryTest>();
-  }
-
   DictionaryTest();
   ~DictionaryTest() override;
 
@@ -38,9 +33,6 @@ class DictionaryTest : public ScriptWrappable {
   void set(const InternalDictionary*);
   // Sets each member of the given TestDictionary from fields
   InternalDictionary* get();
-  // Returns properties of the latest |dictionaryMember| which was set via
-  // set().
-  ScriptValue getDictionaryMemberProperties(ScriptState*);
 
   void setDerived(const InternalDictionaryDerived*);
   InternalDictionaryDerived* getDerived();
@@ -48,11 +40,7 @@ class DictionaryTest : public ScriptWrappable {
   void setDerivedDerived(const InternalDictionaryDerivedDerived*);
   InternalDictionaryDerivedDerived* getDerivedDerived();
 
-  String stringFromIterable(ScriptState*,
-                            Dictionary iterable,
-                            ExceptionState&) const;
-
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   void Reset();
@@ -99,7 +87,7 @@ class DictionaryTest : public ScriptWrappable {
   base::Optional<HashMap<String, String>> dictionary_member_properties_;
   InternalEnumOrInternalEnumSequence internal_enum_or_internal_enum_sequence_;
   ScriptValue any_member_;
-  TraceWrapperMember<V8TestCallback> callback_function_member_;
+  Member<V8TestCallback> callback_function_member_;
 };
 
 }  // namespace blink

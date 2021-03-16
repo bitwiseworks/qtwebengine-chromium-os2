@@ -58,11 +58,11 @@ Crypto* WorkerGlobalScopeCrypto::crypto(
 
 Crypto* WorkerGlobalScopeCrypto::crypto() const {
   if (!crypto_)
-    crypto_ = Crypto::Create();
+    crypto_ = MakeGarbageCollected<Crypto>();
   return crypto_.Get();
 }
 
-void WorkerGlobalScopeCrypto::Trace(blink::Visitor* visitor) {
+void WorkerGlobalScopeCrypto::Trace(Visitor* visitor) {
   visitor->Trace(crypto_);
   Supplement<WorkerGlobalScope>::Trace(visitor);
 }

@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cstdint>
 #include <fstream>
 #include <memory>
 
@@ -54,6 +55,14 @@
 # include <mach/task.h>
 # include <mach/vm_map.h>
 #endif  // GTEST_OS_MAC
+
+#if GTEST_OS_DRAGONFLY || GTEST_OS_FREEBSD || GTEST_OS_GNU_KFREEBSD || \
+    GTEST_OS_NETBSD || GTEST_OS_OPENBSD
+# include <sys/sysctl.h>
+# if GTEST_OS_DRAGONFLY || GTEST_OS_FREEBSD || GTEST_OS_GNU_KFREEBSD
+#  include <sys/user.h>
+# endif
+#endif
 
 #if GTEST_OS_QNX
 # include <devctl.h>
@@ -109,7 +118,7 @@ T ReadProcFileField(const std::string& filename, int field) {
 size_t GetThreadCount() {
   const std::string filename =
       (Message() << "/proc/" << getpid() << "/stat").GetString();
-  return ReadProcFileField<int>(filename, 19);
+  return ReadProcFileField<size_t>(filename, 19);
 }
 
 #elif GTEST_OS_MAC
@@ -129,6 +138,81 @@ size_t GetThreadCount() {
   } else {
     return 0;
   }
+}
+
+#elif GTEST_OS_DRAGONFLY || GTEST_OS_FREEBSD || GTEST_OS_GNU_KFREEBSD || \
+      GTEST_OS_NETBSD
+
+#if GTEST_OS_NETBSD
+#undef KERN_PROC
+#define KERN_PROC KERN_PROC2
+#define kinfo_proc kinfo_proc2
+#endif
+
+#if GTEST_OS_DRAGONFLY
+#define KP_NLWP(kp) (kp.kp_nthreads)
+#elif GTEST_OS_FREEBSD || GTEST_OS_GNU_KFREEBSD
+#define KP_NLWP(kp) (kp.ki_numthreads)
+#elif GTEST_OS_NETBSD
+#define KP_NLWP(kp) (kp.p_nlwps)
+#endif
+
+// Returns the number of threads running in the process, or 0 to indicate that
+// we cannot detect it.
+size_t GetThreadCount() {
+  int mib[] = {
+    CTL_KERN,
+    KERN_PROC,
+    KERN_PROC_PID,
+    getpid(),
+#if GTEST_OS_NETBSD
+    sizeof(struct kinfo_proc),
+    1,
+#endif
+  };
+  u_int miblen = sizeof(mib) / sizeof(mib[0]);
+  struct kinfo_proc info;
+  size_t size = sizeof(info);
+  if (sysctl(mib, miblen, &info, &size, NULL, 0)) {
+    return 0;
+  }
+  return static_cast<size_t>(KP_NLWP(info));
+}
+#elif GTEST_OS_OPENBSD
+
+// Returns the number of threads running in the process, or 0 to indicate that
+// we cannot detect it.
+size_t GetThreadCount() {
+  int mib[] = {
+    CTL_KERN,
+    KERN_PROC,
+    KERN_PROC_PID | KERN_PROC_SHOW_THREADS,
+    getpid(),
+    sizeof(struct kinfo_proc),
+    0,
+  };
+  u_int miblen = sizeof(mib) / sizeof(mib[0]);
+
+  // get number of structs
+  size_t size;
+  if (sysctl(mib, miblen, NULL, &size, NULL, 0)) {
+    return 0;
+  }
+  mib[5] = size / mib[4];
+
+  // populate array of structs
+  struct kinfo_proc info[mib[5]];
+  if (sysctl(mib, miblen, &info, &size, NULL, 0)) {
+    return 0;
+  }
+
+  // exclude empty members
+  int nthreads = 0;
+  for (int i = 0; i < size / mib[4]; i++) {
+    if (info[i].p_tid != -1)
+      nthreads++;
+  }
+  return nthreads;
 }
 
 #elif GTEST_OS_QNX
@@ -196,7 +280,7 @@ size_t GetThreadCount() {
 #if GTEST_IS_THREADSAFE && GTEST_OS_WINDOWS
 
 void SleepMilliseconds(int n) {
-  ::Sleep(n);
+  ::Sleep(static_cast<DWORD>(n));
 }
 
 AutoHandle::AutoHandle()
@@ -297,6 +381,7 @@ void Mutex::AssertHeld() {
 
 namespace {
 
+#ifdef _MSC_VER
 // Use the RAII idiom to flag mem allocs that are intentionally never
 // deallocated. The motivation is to silence the false positive mem leaks
 // that are reported by the debug version of MS's CRT which can only detect
@@ -309,19 +394,15 @@ class MemoryIsNotDeallocated
 {
  public:
   MemoryIsNotDeallocated() : old_crtdbg_flag_(0) {
-#ifdef _MSC_VER
     old_crtdbg_flag_ = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
     // Set heap allocation block type to _IGNORE_BLOCK so that MS debug CRT
     // doesn't report mem leak if there's no matching deallocation.
     _CrtSetDbgFlag(old_crtdbg_flag_ & ~_CRTDBG_ALLOC_MEM_DF);
-#endif  //  _MSC_VER
   }
 
   ~MemoryIsNotDeallocated() {
-#ifdef _MSC_VER
     // Restore the original _CRTDBG_ALLOC_MEM_DF flag
     _CrtSetDbgFlag(old_crtdbg_flag_);
-#endif  //  _MSC_VER
   }
 
  private:
@@ -329,6 +410,7 @@ class MemoryIsNotDeallocated
 
   GTEST_DISALLOW_COPY_AND_ASSIGN_(MemoryIsNotDeallocated);
 };
+#endif  // _MSC_VER
 
 }  // namespace
 
@@ -344,7 +426,9 @@ void Mutex::ThreadSafeLazyInit() {
         owner_thread_id_ = 0;
         {
           // Use RAII to flag that following mem alloc is never deallocated.
+#ifdef _MSC_VER
           MemoryIsNotDeallocated memory_is_not_deallocated;
+#endif  // _MSC_VER
           critical_section_ = new CRITICAL_SECTION;
         }
         ::InitializeCriticalSection(critical_section_);
@@ -453,6 +537,9 @@ class ThreadLocalRegistryImpl {
   // Returns a value that can be used to identify the thread from other threads.
   static ThreadLocalValueHolderBase* GetValueOnCurrentThread(
       const ThreadLocalBase* thread_local_instance) {
+#ifdef _MSC_VER
+    MemoryIsNotDeallocated memory_is_not_deallocated;
+#endif  // _MSC_VER
     DWORD current_thread = ::GetCurrentThreadId();
     MutexLock lock(&mutex_);
     ThreadIdToThreadLocals* const thread_to_thread_locals =
@@ -587,7 +674,9 @@ class ThreadLocalRegistryImpl {
   // Returns map of thread local instances.
   static ThreadIdToThreadLocals* GetThreadLocalsMapLocked() {
     mutex_.AssertHeld();
+#ifdef _MSC_VER
     MemoryIsNotDeallocated memory_is_not_deallocated;
+#endif  // _MSC_VER
     static ThreadIdToThreadLocals* map = new ThreadIdToThreadLocals();
     return map;
   }
@@ -630,7 +719,7 @@ RE::~RE() {
   free(const_cast<char*>(pattern_));
 }
 
-// Returns true iff regular expression re matches the entire str.
+// Returns true if and only if regular expression re matches the entire str.
 bool RE::FullMatch(const char* str, const RE& re) {
   if (!re.is_valid_) return false;
 
@@ -638,8 +727,8 @@ bool RE::FullMatch(const char* str, const RE& re) {
   return regexec(&re.full_regex_, str, 1, &match, 0) == 0;
 }
 
-// Returns true iff regular expression re matches a substring of str
-// (including str itself).
+// Returns true if and only if regular expression re matches a substring of
+// str (including str itself).
 bool RE::PartialMatch(const char* str, const RE& re) {
   if (!re.is_valid_) return false;
 
@@ -679,14 +768,14 @@ void RE::Init(const char* regex) {
 
 #elif GTEST_USES_SIMPLE_RE
 
-// Returns true iff ch appears anywhere in str (excluding the
+// Returns true if and only if ch appears anywhere in str (excluding the
 // terminating '\0' character).
 bool IsInSet(char ch, const char* str) {
   return ch != '\0' && strchr(str, ch) != nullptr;
 }
 
-// Returns true iff ch belongs to the given classification.  Unlike
-// similar functions in <ctype.h>, these aren't affected by the
+// Returns true if and only if ch belongs to the given classification.
+// Unlike similar functions in <ctype.h>, these aren't affected by the
 // current locale.
 bool IsAsciiDigit(char ch) { return '0' <= ch && ch <= '9'; }
 bool IsAsciiPunct(char ch) {
@@ -699,13 +788,13 @@ bool IsAsciiWordChar(char ch) {
       ('0' <= ch && ch <= '9') || ch == '_';
 }
 
-// Returns true iff "\\c" is a supported escape sequence.
+// Returns true if and only if "\\c" is a supported escape sequence.
 bool IsValidEscape(char c) {
   return (IsAsciiPunct(c) || IsInSet(c, "dDfnrsStvwW"));
 }
 
-// Returns true iff the given atom (specified by escaped and pattern)
-// matches ch.  The result is undefined if the atom is invalid.
+// Returns true if and only if the given atom (specified by escaped and
+// pattern) matches ch.  The result is undefined if the atom is invalid.
 bool AtomMatchesChar(bool escaped, char pattern_char, char ch) {
   if (escaped) {  // "\\p" where p is pattern_char.
     switch (pattern_char) {
@@ -743,7 +832,7 @@ bool ValidateRegex(const char* regex) {
 
   bool is_valid = true;
 
-  // True iff ?, *, or + can follow the previous atom.
+  // True if and only if ?, *, or + can follow the previous atom.
   bool prev_repeatable = false;
   for (int i = 0; regex[i]; i++) {
     if (regex[i] == '\\') {  // An escape sequence
@@ -819,8 +908,8 @@ bool MatchRepetitionAndRegexAtHead(
   return false;
 }
 
-// Returns true iff regex matches a prefix of str.  regex must be a
-// valid simple regular expression and not start with "^", or the
+// Returns true if and only if regex matches a prefix of str. regex must
+// be a valid simple regular expression and not start with "^", or the
 // result is undefined.
 bool MatchRegexAtHead(const char* regex, const char* str) {
   if (*regex == '\0')  // An empty regex matches a prefix of anything.
@@ -850,8 +939,8 @@ bool MatchRegexAtHead(const char* regex, const char* str) {
   }
 }
 
-// Returns true iff regex matches any substring of str.  regex must be
-// a valid simple regular expression, or the result is undefined.
+// Returns true if and only if regex matches any substring of str.  regex must
+// be a valid simple regular expression, or the result is undefined.
 //
 // The algorithm is recursive, but the recursion depth doesn't exceed
 // the regex length, so we won't need to worry about running out of
@@ -879,13 +968,13 @@ RE::~RE() {
   free(const_cast<char*>(full_pattern_));
 }
 
-// Returns true iff regular expression re matches the entire str.
+// Returns true if and only if regular expression re matches the entire str.
 bool RE::FullMatch(const char* str, const RE& re) {
   return re.is_valid_ && MatchRegexAnywhere(re.full_pattern_, str);
 }
 
-// Returns true iff regular expression re matches a substring of str
-// (including str itself).
+// Returns true if and only if regular expression re matches a substring of
+// str (including str itself).
 bool RE::PartialMatch(const char* str, const RE& re) {
   return re.is_valid_ && MatchRegexAnywhere(re.pattern_, str);
 }
@@ -1017,17 +1106,19 @@ class CapturedStream {
     // code as part of a regular standalone executable, which doesn't
     // run in a Dalvik process (e.g. when running it through 'adb shell').
     //
-    // The location /sdcard is directly accessible from native code
-    // and is the only location (unofficially) supported by the Android
-    // team. It's generally a symlink to the real SD Card mount point
-    // which can be /mnt/sdcard, /mnt/sdcard0, /system/media/sdcard, or
-    // other OEM-customized locations. Never rely on these, and always
-    // use /sdcard.
-    char name_template[] = "/sdcard/gtest_captured_stream.XXXXXX";
+    // The location /data/local/tmp is directly accessible from native code.
+    // '/sdcard' and other variants cannot be relied on, as they are not
+    // guaranteed to be mounted, or may have a delay in mounting.
+    char name_template[] = "/data/local/tmp/gtest_captured_stream.XXXXXX";
 #  else
     char name_template[] = "/tmp/captured_stream.XXXXXX";
 #  endif  // GTEST_OS_LINUX_ANDROID
     const int captured_fd = mkstemp(name_template);
+    if (captured_fd == -1) {
+      GTEST_LOG_(WARNING)
+          << "Failed to create tmp file " << name_template
+          << " for test; does the test have access to the /tmp directory?";
+    }
     filename_ = name_template;
 # endif  // GTEST_OS_WINDOWS
     fflush(nullptr);
@@ -1049,6 +1140,10 @@ class CapturedStream {
     }
 
     FILE* const file = posix::FOpen(filename_.c_str(), "r");
+    if (file == nullptr) {
+      GTEST_LOG_(FATAL) << "Failed to open tmp file " << filename_
+                        << " for capturing stream.";
+    }
     const std::string content = ReadEntireFile(file);
     posix::FClose(file);
     return content;
@@ -1162,13 +1257,6 @@ void SetInjectableArgvs(const std::vector<std::string>& new_argvs) {
       new std::vector<std::string>(new_argvs.begin(), new_argvs.end()));
 }
 
-#if GTEST_HAS_GLOBAL_STRING
-void SetInjectableArgvs(const std::vector< ::string>& new_argvs) {
-  SetInjectableArgvs(
-      new std::vector<std::string>(new_argvs.begin(), new_argvs.end()));
-}
-#endif  // GTEST_HAS_GLOBAL_STRING
-
 void ClearInjectableArgvs() {
   delete g_injected_test_argvs;
   g_injected_test_argvs = nullptr;
@@ -1202,7 +1290,7 @@ static std::string FlagToEnvVar(const char* flag) {
 // Parses 'str' for a 32-bit signed integer.  If successful, writes
 // the result to *value and returns true; otherwise leaves *value
 // unchanged and returns false.
-bool ParseInt32(const Message& src_text, const char* str, Int32* value) {
+bool ParseInt32(const Message& src_text, const char* str, int32_t* value) {
   // Parses the environment variable as a decimal integer.
   char* end = nullptr;
   const long long_value = strtol(str, &end, 10);  // NOLINT
@@ -1219,13 +1307,13 @@ bool ParseInt32(const Message& src_text, const char* str, Int32* value) {
     return false;
   }
 
-  // Is the parsed value in the range of an Int32?
-  const Int32 result = static_cast<Int32>(long_value);
+  // Is the parsed value in the range of an int32_t?
+  const auto result = static_cast<int32_t>(long_value);
   if (long_value == LONG_MAX || long_value == LONG_MIN ||
       // The parsed value overflows as a long.  (strtol() returns
       // LONG_MAX or LONG_MIN when the input overflows.)
       result != long_value
-      // The parsed value overflows as an Int32.
+      // The parsed value overflows as an int32_t.
       ) {
     Message msg;
     msg << "WARNING: " << src_text
@@ -1243,7 +1331,7 @@ bool ParseInt32(const Message& src_text, const char* str, Int32* value) {
 // Reads and returns the Boolean environment variable corresponding to
 // the given flag; if it's not set, returns default_value.
 //
-// The value is considered true iff it's not "0".
+// The value is considered true if and only if it's not "0".
 bool BoolFromGTestEnv(const char* flag, bool default_value) {
 #if defined(GTEST_GET_BOOL_FROM_ENV_)
   return GTEST_GET_BOOL_FROM_ENV_(flag, default_value);
@@ -1258,7 +1346,7 @@ bool BoolFromGTestEnv(const char* flag, bool default_value) {
 // Reads and returns a 32-bit integer stored in the environment
 // variable corresponding to the given flag; if it isn't set or
 // doesn't represent a valid 32-bit integer, returns default_value.
-Int32 Int32FromGTestEnv(const char* flag, Int32 default_value) {
+int32_t Int32FromGTestEnv(const char* flag, int32_t default_value) {
 #if defined(GTEST_GET_INT32_FROM_ENV_)
   return GTEST_GET_INT32_FROM_ENV_(flag, default_value);
 #else
@@ -1269,7 +1357,7 @@ Int32 Int32FromGTestEnv(const char* flag, Int32 default_value) {
     return default_value;
   }
 
-  Int32 result = default_value;
+  int32_t result = default_value;
   if (!ParseInt32(Message() << "Environment variable " << env_var,
                   string_value, &result)) {
     printf("The default value %s is used.\n",

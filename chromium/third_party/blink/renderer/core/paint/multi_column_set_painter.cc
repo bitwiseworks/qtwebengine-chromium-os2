@@ -15,7 +15,7 @@
 namespace blink {
 
 void MultiColumnSetPainter::PaintObject(const PaintInfo& paint_info,
-                                        const LayoutPoint& paint_offset) {
+                                        const PhysicalOffset& paint_offset) {
   if (layout_multi_column_set_.StyleRef().Visibility() != EVisibility::kVisible)
     return;
 
@@ -29,17 +29,18 @@ void MultiColumnSetPainter::PaintObject(const PaintInfo& paint_info,
   // It's also really unlikely that the columns would overlap another block.
   if (!layout_multi_column_set_.FlowThread() ||
       (paint_info.phase != PaintPhase::kForeground &&
-       paint_info.phase != PaintPhase::kSelection))
+       paint_info.phase != PaintPhase::kSelectionDragImage))
     return;
 
   PaintColumnRules(paint_info, paint_offset);
 }
 
-void MultiColumnSetPainter::PaintColumnRules(const PaintInfo& paint_info,
-                                             const LayoutPoint& paint_offset) {
+void MultiColumnSetPainter::PaintColumnRules(
+    const PaintInfo& paint_info,
+    const PhysicalOffset& paint_offset) {
   Vector<LayoutRect> column_rule_bounds;
-  if (!layout_multi_column_set_.ComputeColumnRuleBounds(paint_offset,
-                                                        column_rule_bounds))
+  if (!layout_multi_column_set_.ComputeColumnRuleBounds(
+          paint_offset.ToLayoutPoint(), column_rule_bounds))
     return;
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(paint_info.context,

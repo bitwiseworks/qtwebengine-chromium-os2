@@ -23,8 +23,6 @@
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/view.h"
 
-using namespace testing;
-
 namespace {
 
 class MockCanvas : public SkCanvas {
@@ -113,7 +111,7 @@ class MockCanvas : public SkCanvas {
 // Simple Painter that will be used to test BorderPainter.
 class MockPainter : public views::Painter {
  public:
-  MockPainter() {}
+  MockPainter() = default;
 
   // Gets the canvas given to the last call to Paint().
   gfx::Canvas* given_canvas() const { return given_canvas_; }
@@ -155,12 +153,12 @@ class BorderTest : public ViewsTestBase {
   void SetUp() override {
     ViewsTestBase::SetUp();
 
-    view_.reset(new views::View());
+    view_ = std::make_unique<views::View>();
     view_->SetSize(gfx::Size(100, 50));
-    recorder_.reset(new cc::PaintRecorder());
-    canvas_.reset(new gfx::Canvas(
+    recorder_ = std::make_unique<cc::PaintRecorder>();
+    canvas_ = std::make_unique<gfx::Canvas>(
         recorder_->beginRecording(SkRect::MakeWH(kCanvasWidth, kCanvasHeight)),
-        1.0f));
+        1.0f);
   }
 
   void TearDown() override {
@@ -210,7 +208,9 @@ TEST_F(BorderTest, SolidBorder) {
 }
 
 TEST_F(BorderTest, RoundedRectBorder) {
-  std::unique_ptr<Border> border(CreateRoundedRectBorder(3, 4, SK_ColorBLUE));
+  std::unique_ptr<Border> border(CreateRoundedRectBorder(
+      3, LayoutProvider::Get()->GetCornerRadiusMetric(EMPHASIS_LOW),
+      SK_ColorBLUE));
   EXPECT_EQ(gfx::Size(6, 6), border->GetMinimumSize());
   EXPECT_EQ(gfx::Insets(3, 3, 3, 3), border->GetInsets());
   border->Paint(*view_, canvas_.get());
@@ -230,7 +230,7 @@ TEST_F(BorderTest, RoundedRectBorder) {
 }
 
 TEST_F(BorderTest, EmptyBorder) {
-  const gfx::Insets kInsets(1, 2, 3, 4);
+  constexpr gfx::Insets kInsets(1, 2, 3, 4);
 
   std::unique_ptr<Border> border(CreateEmptyBorder(
       kInsets.top(), kInsets.left(), kInsets.bottom(), kInsets.right()));
@@ -245,8 +245,8 @@ TEST_F(BorderTest, EmptyBorder) {
 }
 
 TEST_F(BorderTest, SolidSidedBorder) {
-  const SkColor kBorderColor = SK_ColorMAGENTA;
-  const gfx::Insets kInsets(1, 2, 3, 4);
+  constexpr SkColor kBorderColor = SK_ColorMAGENTA;
+  constexpr gfx::Insets kInsets(1, 2, 3, 4);
 
   std::unique_ptr<Border> border(
       CreateSolidSidedBorder(kInsets.top(), kInsets.left(), kInsets.bottom(),
@@ -263,12 +263,12 @@ TEST_F(BorderTest, SolidSidedBorder) {
   bounds.Inset(border->GetInsets());
 
   ASSERT_EQ(1u, mock->draw_paint_calls().size());
-  EXPECT_EQ(kBorderColor, mock->draw_paint_calls()[0].getColor());
+  EXPECT_EQ(kBorderColor, mock->draw_paint_calls().front().getColor());
   EXPECT_EQ(gfx::RectF(bounds), gfx::SkRectToRectF(mock->last_clip_bounds()));
 }
 
 TEST_F(BorderTest, BorderPainter) {
-  const gfx::Insets kInsets(1, 2, 3, 4);
+  constexpr gfx::Insets kInsets(1, 2, 3, 4);
 
   std::unique_ptr<MockPainter> painter(new MockPainter());
   MockPainter* painter_ptr = painter.get();
@@ -282,6 +282,41 @@ TEST_F(BorderTest, BorderPainter) {
   // Expect that the Painter was called with our canvas and the view's size.
   EXPECT_EQ(canvas_.get(), painter_ptr->given_canvas());
   EXPECT_EQ(view_->size(), painter_ptr->given_size());
+}
+
+TEST_F(BorderTest, ExtraInsetsBorder) {
+  constexpr SkColor kBorderColor = SK_ColorMAGENTA;
+  constexpr int kOriginalInset = 3;
+  std::unique_ptr<Border> border =
+      CreateSolidBorder(kOriginalInset, kBorderColor);
+  constexpr gfx::Insets kOriginalInsets(kOriginalInset);
+  EXPECT_EQ(kOriginalInsets.size(), border->GetMinimumSize());
+  EXPECT_EQ(kOriginalInsets, border->GetInsets());
+  EXPECT_EQ(kBorderColor, border->color());
+
+  constexpr int kExtraInset = 2;
+  constexpr gfx::Insets kExtraInsets(kExtraInset);
+  std::unique_ptr<Border> extra_insets_border =
+      CreatePaddedBorder(std::move(border), kExtraInsets);
+  constexpr gfx::Insets kTotalInsets(kOriginalInset + kExtraInset);
+  EXPECT_EQ(kTotalInsets.size(), extra_insets_border->GetMinimumSize());
+  EXPECT_EQ(kTotalInsets, extra_insets_border->GetInsets());
+  EXPECT_EQ(kBorderColor, extra_insets_border->color());
+
+  extra_insets_border->Paint(*view_, canvas_.get());
+
+  std::unique_ptr<MockCanvas> mock = DrawIntoMockCanvas();
+  std::vector<MockCanvas::DrawRectCall> draw_rect_calls =
+      mock->draw_rect_calls();
+
+  gfx::Rect bounds = view_->GetLocalBounds();
+  // We only use the wrapped border's insets for painting the border. The extra
+  // insets of the ExtraInsetsBorder are applied within the wrapped border.
+  bounds.Inset(extra_insets_border->GetInsets() - gfx::Insets(kExtraInset));
+
+  ASSERT_EQ(1u, mock->draw_paint_calls().size());
+  EXPECT_EQ(kBorderColor, mock->draw_paint_calls().front().getColor());
+  EXPECT_EQ(gfx::RectF(bounds), gfx::SkRectToRectF(mock->last_clip_bounds()));
 }
 
 }  // namespace views

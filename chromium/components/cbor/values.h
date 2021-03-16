@@ -31,10 +31,12 @@ class CBOR_EXPORT Value {
     // https://tools.ietf.org/html/rfc7049#section-3.9
     // TODO(808022): Clarify where this stands.
     bool operator()(const Value& a, const Value& b) const {
-      // The current implementation only supports integer, text string,
-      // and byte string keys.
-      DCHECK((a.is_integer() || a.is_string() || a.is_bytestring()) &&
-             (b.is_integer() || b.is_string() || b.is_bytestring()));
+      // The current implementation only supports integer, text string, byte
+      // string and invalid UTF8 keys.
+      DCHECK((a.is_integer() || a.is_string() || a.is_bytestring() ||
+              a.is_invalid_utf8()) &&
+             (b.is_integer() || b.is_string() || b.is_bytestring() ||
+              b.is_invalid_utf8()));
 
       // Below text from https://tools.ietf.org/html/rfc7049 errata 4409:
       // *  If the major types are different, the one with the lower value
@@ -69,6 +71,13 @@ class CBOR_EXPORT Value {
           const size_t b_length = b_str.size();
           return std::tie(a_length, a_str) < std::tie(b_length, b_str);
         }
+        case Type::INVALID_UTF8: {
+          const auto& a_str = a.GetInvalidUTF8();
+          const size_t a_length = a_str.size();
+          const auto& b_str = b.GetInvalidUTF8();
+          const size_t b_length = b_str.size();
+          return std::tie(a_length, a_str) < std::tie(b_length, b_str);
+        }
         default:
           break;
       }
@@ -94,6 +103,7 @@ class CBOR_EXPORT Value {
     TAG = 6,
     SIMPLE_VALUE = 7,
     NONE = -1,
+    INVALID_UTF8 = -2,
   };
 
   enum class SimpleValue {
@@ -103,6 +113,11 @@ class CBOR_EXPORT Value {
     UNDEFINED = 23,
   };
 
+  // Returns a Value with Type::INVALID_UTF8. This factory method lets tests
+  // encode such a value as a CBOR string. It should never be used outside of
+  // tests since encoding may yield invalid CBOR data.
+  static Value InvalidUTF8StringValueForTesting(base::StringPiece in_string);
+
   Value(Value&& that) noexcept;
   Value() noexcept;  // A NONE value.
 
@@ -111,22 +126,22 @@ class CBOR_EXPORT Value {
   explicit Value(SimpleValue in_simple);
   explicit Value(bool boolean_value);
 
-  explicit Value(int integer_value);
-  explicit Value(int64_t integer_value);
-  explicit Value(uint64_t integer_value) = delete;
+  Value(int integer_value);
+  Value(int64_t integer_value);
+  Value(uint64_t integer_value) = delete;
 
-  explicit Value(base::span<const uint8_t> in_bytes);
-  explicit Value(BinaryValue&& in_bytes) noexcept;
+  Value(base::span<const uint8_t> in_bytes);
+  Value(BinaryValue&& in_bytes) noexcept;
 
-  explicit Value(const char* in_string, Type type = Type::STRING);
-  explicit Value(std::string&& in_string, Type type = Type::STRING) noexcept;
-  explicit Value(base::StringPiece in_string, Type type = Type::STRING);
+  Value(const char* in_string, Type type = Type::STRING);
+  Value(std::string&& in_string, Type type = Type::STRING) noexcept;
+  Value(base::StringPiece in_string, Type type = Type::STRING);
 
   explicit Value(const ArrayValue& in_array);
-  explicit Value(ArrayValue&& in_array) noexcept;
+  Value(ArrayValue&& in_array) noexcept;
 
   explicit Value(const MapValue& in_map);
-  explicit Value(MapValue&& in_map) noexcept;
+  Value(MapValue&& in_map) noexcept;
 
   Value& operator=(Value&& that) noexcept;
 
@@ -142,6 +157,7 @@ class CBOR_EXPORT Value {
   // Returns true if the current object represents a given type.
   bool is_type(Type type) const { return type == type_; }
   bool is_none() const { return type() == Type::NONE; }
+  bool is_invalid_utf8() const { return type() == Type::INVALID_UTF8; }
   bool is_simple() const { return type() == Type::SIMPLE_VALUE; }
   bool is_bool() const {
     return is_simple() && (simple_value_ == SimpleValue::TRUE_VALUE ||
@@ -167,8 +183,14 @@ class CBOR_EXPORT Value {
   const std::string& GetString() const;
   const ArrayValue& GetArray() const;
   const MapValue& GetMap() const;
+  const BinaryValue& GetInvalidUTF8() const;
 
  private:
+  friend class Reader;
+  // This constructor allows INVALID_UTF8 values to be created, which only
+  // |Reader| and InvalidUTF8StringValueForTesting() may do.
+  Value(base::span<const uint8_t> in_bytes, Type type);
+
   Type type_;
 
   union {
@@ -185,6 +207,7 @@ class CBOR_EXPORT Value {
 
   DISALLOW_COPY_AND_ASSIGN(Value);
 };
+
 }  // namespace cbor
 
 #endif  // COMPONENTS_CBOR_VALUES_H_

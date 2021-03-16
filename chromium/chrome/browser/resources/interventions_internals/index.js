@@ -284,7 +284,7 @@ function changeTab() {
  * Helper function to check if all keywords, case insensitive, are in the given
  * text.
  *
- * @param {string[]} keywords The collection of keywords.
+ * @param {Array<string>} keywords The collection of keywords.
  * @param {string} text The given text to search.
  * @return True iff all keywords present in the given text.
  */
@@ -370,7 +370,7 @@ function setupExpandLogs() {
  * Create and add a copy to clipboard button to a given node.
  *
  * @param {string} text The text that will be copied to the clipboard.
- * @param {element!} node The node that will have the button appended to.
+ * @param {Element} node The node that will have the button appended to.
  */
 function appendCopyToClipBoardButton(text, node) {
   if (!document.queryCommandSupported ||
@@ -449,10 +449,12 @@ function setupLogClear() {
   $('clear-log-button').addEventListener('click', removeAllLogMessagesRows);
 }
 
-/** @constructor */
-const InterventionsInternalPageImpl = function(request) {
-  this.binding_ =
-      new mojo.Binding(mojom.InterventionsInternalsPage, this, request);
+/**
+ * @constructor
+ * @implements {mojom.InterventionsInternalsPageInterface}
+ */
+const InterventionsInternalPageImpl = function() {
+  this.receiver_ = new mojom.InterventionsInternalsPageReceiver(this);
 };
 
 InterventionsInternalPageImpl.prototype = {
@@ -460,10 +462,10 @@ InterventionsInternalPageImpl.prototype = {
    * Post a new log message to the web page.
    *
    * @override
-   * @param {!MessageLog} log The new log message recorded by
+   * @param {!mojom.MessageLog} log The new log message recorded by
    * PreviewsLogger.
    */
-  logNewMessage: function(log) {
+  logNewMessage(log) {
     insertMessageRowToMessageLogTable(
         log.time, log.type, log.description, log.url.url, log.pageId);
   },
@@ -476,7 +478,7 @@ InterventionsInternalPageImpl.prototype = {
    * @param {number} time The time when the host was blacklisted in milliseconds
    * since Unix epoch.
    */
-  onBlacklistedHost: function(host, time) {
+  onBlacklistedHost(host, time) {
     const row = document.createElement('tr');
     row.setAttribute('class', 'blacklisted-host-row');
 
@@ -501,7 +503,7 @@ InterventionsInternalPageImpl.prototype = {
    * @param {boolean} blacklisted The time of the event in milliseconds since
    * Unix epoch.
    */
-  onUserBlacklistedStatusChange: function(blacklisted) {
+  onUserBlacklistedStatusChange(blacklisted) {
     const userBlacklistedStatus = $('user-blacklisted-status-value');
     userBlacklistedStatus.textContent =
         (blacklisted ? 'Blacklisted' : 'Not blacklisted');
@@ -514,7 +516,7 @@ InterventionsInternalPageImpl.prototype = {
    * @param {number} time The time of the event in milliseconds since Unix
    * epoch.
    */
-  onBlacklistCleared: function(time) {
+  onBlacklistCleared(time) {
     const blacklistClearedStatus = $('blacklist-last-cleared-time');
     blacklistClearedStatus.textContent = getTimeFormat(time);
 
@@ -539,7 +541,7 @@ InterventionsInternalPageImpl.prototype = {
    * @param {boolean} ignored The new status of whether the previews blacklist
    * decisions is blacklisted or not.
    */
-  onIgnoreBlacklistDecisionStatusChanged: function(ignored) {
+  onIgnoreBlacklistDecisionStatusChanged(ignored) {
     const ignoreButton = $('ignore-blacklist-button');
     ignoreButton.textContent =
         ignored ? ENABLE_BLACKLIST_BUTTON : IGNORE_BLACKLIST_BUTTON;
@@ -558,7 +560,7 @@ InterventionsInternalPageImpl.prototype = {
    * @param {string} maxInterventionType The string representation of the
    * session's maximum ECT threshold for interventions.
    */
-  updateEffectiveConnectionType: function(type, maxInterventionType) {
+  updateEffectiveConnectionType(type, maxInterventionType) {
     // Change the current ECT.
     const ectType = $('nqe-type');
     ectType.textContent = type;
@@ -583,6 +585,14 @@ InterventionsInternalPageImpl.prototype = {
     nqeCol.textContent = type;
     nqeRow.appendChild(nqeCol);
   },
+
+  /**
+   * Returns a remote interface to the receiver.
+   */
+  bindNewPipeAndPassRemote() {
+    const helper = this.receiver_.$;
+    return helper.bindNewPipeAndPassRemote();
+  },
 };
 
 cr.define('interventions_internals', () => {
@@ -603,23 +613,7 @@ cr.define('interventions_internals', () => {
   }
 
   /**
-   * Sort keys by the value of each value by its description attribute of a
-   * |mapObject|.
-   *
-   * @param mapObject {!Map<string, Object} A map where all values have a
-   * description attribute.
-   * @return A list of keys sorted by their descriptions.
-   */
-  function getSortedKeysByDescription(mapObject) {
-    const sortedKeys = Array.from(mapObject.keys());
-    sortedKeys.sort((a, b) => {
-      return mapObject.get(a).description > mapObject.get(b).description;
-    });
-    return sortedKeys;
-  }
-
-  /**
-   * Retrieves the statuses of previews (i.e. Offline, LoFi, AMP Redirection),
+   * Retrieves the statuses of previews (i.e. Offline, Lite Pages, etc),
    * and posts them on chrome://intervention-internals.
    */
   function getPreviewsEnabled() {
@@ -702,15 +696,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (window.testPageHandler) {
       pageHandler = window.testPageHandler;
     } else {
-      pageHandler = new mojom.InterventionsInternalsPageHandlerPtr;
-      Mojo.bindInterface(
-          mojom.InterventionsInternalsPageHandler.name,
-          mojo.makeRequest(pageHandler).handle);
+      pageHandler = mojom.InterventionsInternalsPageHandler.getRemote();
 
       // Set up client side mojo interface.
-      const client = new mojom.InterventionsInternalsPagePtr;
-      pageImpl = new InterventionsInternalPageImpl(mojo.makeRequest(client));
-      pageHandler.setClientPage(client);
+      pageImpl = new InterventionsInternalPageImpl();
+      pageHandler.setClientPage(pageImpl.bindNewPipeAndPassRemote());
     }
 
     interventions_internals.init(pageHandler);

@@ -34,7 +34,7 @@
 
 #ifdef __FreeBSD__
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: head/sys/netinet/sctp_auth.c 334532 2018-06-02 16:28:10Z tuexen $");
+__FBSDID("$FreeBSD: head/sys/netinet/sctp_auth.c 355931 2019-12-20 15:25:08Z tuexen $");
 #endif
 
 #include <netinet/sctp_os.h>
@@ -525,7 +525,7 @@ sctp_insert_sharedkey(struct sctp_keyhead *shared_keys,
 		} else if (new_skey->keyid == skey->keyid) {
 			/* replace the existing key */
 			/* verify this key *can* be replaced */
-			if ((skey->deactivated) && (skey->refcount > 1)) {
+			if ((skey->deactivated) || (skey->refcount > 1)) {
 				SCTPDBG(SCTP_DEBUG_AUTH1,
 					"can't replace shared key id %u\n",
 					new_skey->keyid);
@@ -1084,40 +1084,6 @@ sctp_hmac_m(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
 	return (digestlen);
 }
 
-/*-
- * verify the HMAC digest using the desired hash key, text, and HMAC
- * algorithm.
- * Returns -1 on error, 0 on success.
- */
-int
-sctp_verify_hmac(uint16_t hmac_algo, uint8_t *key, uint32_t keylen,
-    uint8_t *text, uint32_t textlen,
-    uint8_t *digest, uint32_t digestlen)
-{
-	uint32_t len;
-	uint8_t temp[SCTP_AUTH_DIGEST_LEN_MAX];
-
-	/* sanity check the material and length */
-	if ((key == NULL) || (keylen == 0) ||
-	    (text == NULL) || (textlen == 0) || (digest == NULL)) {
-		/* can't do HMAC with empty key or text or digest */
-		return (-1);
-	}
-	len = sctp_get_hmac_digest_len(hmac_algo);
-	if ((len == 0) || (digestlen != len))
-		return (-1);
-
-	/* compute the expected hash */
-	if (sctp_hmac(hmac_algo, key, keylen, text, textlen, temp) != len)
-		return (-1);
-
-	if (memcmp(digest, temp, digestlen) != 0)
-		return (-1);
-	else
-		return (0);
-}
-
-
 /*
  * computes the requested HMAC using a key struct (which may be modified if
  * the keylen exceeds the HMAC block len).
@@ -1455,7 +1421,8 @@ sctp_auth_get_cookie_params(struct sctp_tcb *stcb, struct mbuf *m,
 		ptype = ntohs(phdr->param_type);
 		plen = ntohs(phdr->param_length);
 
-		if ((plen == 0) || (offset + plen > length))
+		if ((plen < sizeof(struct sctp_paramhdr)) ||
+		    (offset + plen > length))
 			break;
 
 		if (ptype == SCTP_RANDOM) {
@@ -1763,8 +1730,13 @@ sctp_handle_auth(struct sctp_tcb *stcb, struct sctp_auth_chunk *auth,
 	(void)sctp_compute_hmac_m(hmac_id, stcb->asoc.authinfo.recv_key,
 	    m, offset, computed_digest);
 
+#if defined(__Userspace__)
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+	return (0);
+#endif
+#endif
 	/* compare the computed digest with the one in the AUTH chunk */
-	if (memcmp(digest, computed_digest, digestlen) != 0) {
+	if (timingsafe_bcmp(digest, computed_digest, digestlen) != 0) {
 		SCTP_STAT_INCR(sctps_recvauthfailed);
 		SCTPDBG(SCTP_DEBUG_AUTH1,
 			"SCTP Auth: HMAC digest check failed\n");

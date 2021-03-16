@@ -6,13 +6,14 @@
 
 #include <utility>
 
-#include "core/fxcodec/codec/cfx_codec_memory.h"
+#include "core/fxcodec/cfx_codec_memory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace fxcodec {
 
 class CFX_GifContextForTest final : public CFX_GifContext {
  public:
-  CFX_GifContextForTest(CCodec_GifModule* gif_module,
-                        CCodec_GifModule::Delegate* delegate)
+  CFX_GifContextForTest(GifModule* gif_module, GifModule::Delegate* delegate)
       : CFX_GifContext(gif_module, delegate) {}
   ~CFX_GifContextForTest() override {}
 
@@ -49,38 +50,38 @@ TEST(CFX_GifContext, ReadAllOrNone) {
   std::vector<uint8_t> dest_buffer;
   uint8_t src_buffer[] = {0x00, 0x01, 0x02, 0x03, 0x04,
                           0x05, 0x06, 0x07, 0x08, 0x09};
-    CFX_GifContextForTest context(nullptr, nullptr);
+  CFX_GifContextForTest context(nullptr, nullptr);
 
-    context.SetTestInputBuffer({nullptr, 0});
-    EXPECT_FALSE(context.ReadAllOrNone(nullptr, 0));
-    EXPECT_FALSE(context.ReadAllOrNone(nullptr, 10));
+  context.SetTestInputBuffer({nullptr, 0});
+  EXPECT_FALSE(context.ReadAllOrNone(nullptr, 0));
+  EXPECT_FALSE(context.ReadAllOrNone(nullptr, 10));
 
-    EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), 0));
-    EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), 10));
+  EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), 0));
+  EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), 10));
 
-    context.SetTestInputBuffer({src_buffer, 0});
-    dest_buffer.resize(sizeof(src_buffer));
-    EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
+  context.SetTestInputBuffer({src_buffer, 0});
+  dest_buffer.resize(sizeof(src_buffer));
+  EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
 
-    context.SetTestInputBuffer({src_buffer, 1});
-    EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
-    EXPECT_EQ(0u, context.InputBuffer()->GetPosition());
-    EXPECT_FALSE(context.ReadAllOrNone(nullptr, sizeof(src_buffer)));
-    EXPECT_FALSE(context.ReadAllOrNone(nullptr, 1));
+  context.SetTestInputBuffer({src_buffer, 1});
+  EXPECT_FALSE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
+  EXPECT_EQ(0u, context.InputBuffer()->GetPosition());
+  EXPECT_FALSE(context.ReadAllOrNone(nullptr, sizeof(src_buffer)));
+  EXPECT_FALSE(context.ReadAllOrNone(nullptr, 1));
+  EXPECT_TRUE(context.ReadAllOrNone(dest_buffer.data(), 1));
+  EXPECT_EQ(src_buffer[0], dest_buffer[0]);
+
+  context.SetTestInputBuffer(src_buffer);
+  EXPECT_FALSE(context.ReadAllOrNone(nullptr, sizeof(src_buffer)));
+  EXPECT_TRUE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
+  for (size_t i = 0; i < sizeof(src_buffer); i++)
+    EXPECT_EQ(src_buffer[i], dest_buffer[i]);
+
+  context.SetTestInputBuffer(src_buffer);
+  for (size_t i = 0; i < sizeof(src_buffer); i++) {
     EXPECT_TRUE(context.ReadAllOrNone(dest_buffer.data(), 1));
-    EXPECT_EQ(src_buffer[0], dest_buffer[0]);
-
-    context.SetTestInputBuffer(src_buffer);
-    EXPECT_FALSE(context.ReadAllOrNone(nullptr, sizeof(src_buffer)));
-    EXPECT_TRUE(context.ReadAllOrNone(dest_buffer.data(), sizeof(src_buffer)));
-    for (size_t i = 0; i < sizeof(src_buffer); i++)
-      EXPECT_EQ(src_buffer[i], dest_buffer[i]);
-
-    context.SetTestInputBuffer(src_buffer);
-    for (size_t i = 0; i < sizeof(src_buffer); i++) {
-      EXPECT_TRUE(context.ReadAllOrNone(dest_buffer.data(), 1));
-      EXPECT_EQ(src_buffer[i], dest_buffer[0]);
-    }
+    EXPECT_EQ(src_buffer[i], dest_buffer[0]);
+  }
 }
 
 TEST(CFX_GifContext, ReadGifSignature) {
@@ -164,7 +165,6 @@ TEST(CFX_GifContext, ReadLocalScreenDescriptor) {
     EXPECT_EQ(0, context.width_);
     EXPECT_EQ(0, context.height_);
     EXPECT_EQ(0u, context.bc_index_);
-    EXPECT_EQ(0u, context.pixel_aspect_);
     context.SetTestInputBuffer({});
   }
   // LSD with no global palette
@@ -181,7 +181,6 @@ TEST(CFX_GifContext, ReadLocalScreenDescriptor) {
     EXPECT_EQ(0x000A, context.width_);
     EXPECT_EQ(0x0F00, context.height_);
     EXPECT_EQ(0u, context.bc_index_);  // bc_index_ is 0 if no global palette
-    EXPECT_EQ(2u, context.pixel_aspect_);
     context.SetTestInputBuffer({});
   }
   // LSD with global palette bit set, but no global palette
@@ -213,7 +212,6 @@ TEST(CFX_GifContext, ReadLocalScreenDescriptor) {
     EXPECT_EQ(0x000A, context.width_);
     EXPECT_EQ(0x0F00, context.height_);
     EXPECT_EQ(1u, context.bc_index_);
-    EXPECT_EQ(2u, context.pixel_aspect_);
     EXPECT_EQ(1u, context.global_pal_exp_);
     EXPECT_EQ(1, context.global_sort_flag_);
     EXPECT_EQ(2, context.global_color_resolution_);
@@ -264,7 +262,6 @@ TEST(CFX_GifContext, ReadHeader) {
     EXPECT_EQ(0x000A, context.width_);
     EXPECT_EQ(0x0F00, context.height_);
     EXPECT_EQ(0u, context.bc_index_);  // bc_index_ is 0 if no global palette
-    EXPECT_EQ(2u, context.pixel_aspect_);
     context.SetTestInputBuffer({});
   }
   // Missing Global Palette
@@ -298,7 +295,6 @@ TEST(CFX_GifContext, ReadHeader) {
     EXPECT_EQ(0x000A, context.width_);
     EXPECT_EQ(0x0F00, context.height_);
     EXPECT_EQ(1u, context.bc_index_);
-    EXPECT_EQ(2u, context.pixel_aspect_);
     EXPECT_EQ(1u, context.global_pal_exp_);
     EXPECT_EQ(1, context.global_sort_flag_);
     EXPECT_EQ(2, context.global_color_resolution_);
@@ -307,3 +303,5 @@ TEST(CFX_GifContext, ReadHeader) {
     context.SetTestInputBuffer({});
   }
 }
+
+}  // namespace fxcodec

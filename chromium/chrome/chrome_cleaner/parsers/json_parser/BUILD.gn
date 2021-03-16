@@ -2,15 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+# Nothing outside //chrome/chrome_cleaner can depend on these targets.
+visibility = [ "//chrome/chrome_cleaner/*" ]
+
 static_library("json_splicer") {
   sources = [
     "json_splicer.cc",
     "json_splicer.h",
   ]
 
-  deps = [
-    "//base:base",
-  ]
+  deps = [ "//base" ]
 }
 
 static_library("json_parser") {
@@ -23,11 +24,11 @@ static_library("json_parser") {
   ]
 
   deps = [
-    "//base:base",
+    "//base",
     "//chrome/chrome_cleaner/constants:common_strings",
-    "//chrome/chrome_cleaner/interfaces:parser_interface",
     "//chrome/chrome_cleaner/ipc:mojo_task_runner",
     "//chrome/chrome_cleaner/ipc:sandbox",
+    "//chrome/chrome_cleaner/mojom:parser_interface",
     "//chrome/chrome_cleaner/os:common_os",
     "//chrome/chrome_cleaner/parsers/broker:parser_sandbox_broker",
     "//chrome/chrome_cleaner/parsers/target:parser_sandbox_target",
@@ -40,17 +41,15 @@ static_library("json_parser") {
 source_set("unittest_sources") {
   testonly = true
 
-  sources = [
-    "json_splicer_unittest.cc",
-  ]
+  sources = [ "json_splicer_unittest.cc" ]
 
   deps = [
     ":json_parser",
     ":json_splicer",
-    "//base:base",
+    "//base",
     "//base/test:test_support",
-    "//chrome/chrome_cleaner/interfaces:parser_interface",
     "//chrome/chrome_cleaner/ipc:mojo_task_runner",
+    "//chrome/chrome_cleaner/mojom:parser_interface",
     "//chrome/chrome_cleaner/parsers/broker:parser_sandbox_broker",
     "//chrome/chrome_cleaner/parsers/target:parser_sandbox_target",
     "//mojo/public/cpp/bindings",

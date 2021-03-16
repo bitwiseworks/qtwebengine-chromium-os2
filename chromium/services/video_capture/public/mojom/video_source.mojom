@@ -6,7 +6,7 @@ module video_capture.mojom;
 
 import "media/capture/mojom/image_capture.mojom";
 import "media/capture/mojom/video_capture_types.mojom";
-import "services/video_capture/public/mojom/receiver.mojom";
+import "services/video_capture/public/mojom/video_frame_handler.mojom";
 
 enum CreatePushSubscriptionResultCode {
   kCreatedWithRequestedSettings,
@@ -24,7 +24,11 @@ interface PushVideoStreamSubscription {
   // pushed to |subscriber| in case the obtained settings are unacceptable.
   Activate();
 
-  // The callback event indicates that no more frames will be pushed.
+  // When suspended, the subscriber will no longer receive any calls to
+  // OnFrameReadyInBuffer() and OnFrameDropped(), but will still receive any
+  // other calls, e.g. OnNewBuffer() and OnBufferRetired().
+  // Callers may wait for the empty callback event to get notified when it is
+  // guaranteed that no more frames will be pushed.
   Suspend() => ();
 
   Resume();
@@ -76,10 +80,11 @@ interface VideoSource {
   // source will be reopened trying to match |requested_settings|. This will
   // potentially briefly interrupt the video stream received by other
   // subscribers.
-  CreatePushSubscription(Receiver subscriber,
-                         media.mojom.VideoCaptureParams requested_settings,
-                         bool force_reopen_with_new_settings,
-                         PushVideoStreamSubscription& subscription)
+  CreatePushSubscription(
+      pending_remote<VideoFrameHandler> subscriber,
+      media.mojom.VideoCaptureParams requested_settings,
+      bool force_reopen_with_new_settings,
+      pending_receiver<PushVideoStreamSubscription> subscription)
       => (CreatePushSubscriptionResultCode result_code,
           media.mojom.VideoCaptureParams settings_source_was_opened_with);
 };

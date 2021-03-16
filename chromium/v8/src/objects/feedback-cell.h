@@ -18,29 +18,26 @@ namespace internal {
 // number of closures created for a certain function per native
 // context. There's at most one FeedbackCell for each function in
 // a native context.
-class FeedbackCell : public Struct {
+class FeedbackCell : public TorqueGeneratedFeedbackCell<FeedbackCell, Struct> {
  public:
-  // [value]: value of the cell.
-  DECL_ACCESSORS(value, HeapObject)
-
-  DECL_CAST(FeedbackCell)
-
   // Dispatched behavior.
   DECL_PRINTER(FeedbackCell)
-  DECL_VERIFIER(FeedbackCell)
 
-// Layout description.
-#define FEEDBACK_CELL_FIELDS(V) \
-  V(kValueOffset, kTaggedSize)  \
-  /* Total size. */             \
-  V(kSize, 0)
+  static const int kUnalignedSize = kSize;
+  static const int kAlignedSize = RoundUp<kObjectAlignment>(int{kSize});
 
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, FEEDBACK_CELL_FIELDS)
-#undef FEEDBACK_CELL_FIELDS
+  inline void clear_padding();
+  inline void reset_feedback_vector(
+      base::Optional<std::function<void(HeapObject object, ObjectSlot slot,
+                                        HeapObject target)>>
+          gc_notify_updated_slot = base::nullopt);
+  inline void SetInitialInterruptBudget();
+  inline void SetInterruptBudget();
 
-  typedef FixedBodyDescriptor<kValueOffset, kSize, kSize> BodyDescriptor;
+  using BodyDescriptor =
+      FixedBodyDescriptor<kValueOffset, kInterruptBudgetOffset, kAlignedSize>;
 
-  OBJECT_CONSTRUCTORS(FeedbackCell, Struct);
+  TQ_OBJECT_CONSTRUCTORS(FeedbackCell)
 };
 
 }  // namespace internal

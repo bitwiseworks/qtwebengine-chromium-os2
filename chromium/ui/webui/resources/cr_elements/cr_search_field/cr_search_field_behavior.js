@@ -7,7 +7,7 @@
  * <settings-subpage-search> for a simple implementation.
  * @polymerBehavior
  */
-const CrSearchFieldBehavior = {
+/* #export */ const CrSearchFieldBehavior = {
   properties: {
     label: {
       type: String,
@@ -24,13 +24,10 @@ const CrSearchFieldBehavior = {
       reflectToAttribute: true,
       value: false,
     },
-
-    /** @private */
-    lastValue_: {
-      type: String,
-      value: '',
-    },
   },
+
+  /** @private {string} */
+  effectiveValue_: '',
 
   /** @private {number} */
   searchDelayTimer_: -1,
@@ -39,12 +36,12 @@ const CrSearchFieldBehavior = {
    * @return {!HTMLInputElement} The input field element the behavior should
    *     use.
    */
-  getSearchInput: function() {},
+  getSearchInput() {},
 
   /**
    * @return {string} The value of the search field.
    */
-  getValue: function() {
+  getValue() {
     return this.getSearchInput().value;
   },
 
@@ -54,16 +51,26 @@ const CrSearchFieldBehavior = {
    * @param {boolean=} opt_noEvent Whether to prevent a 'search-changed' event
    *     firing for this change.
    */
-  setValue: function(value, opt_noEvent) {
-    const searchInput = this.getSearchInput();
-    searchInput.value = value;
+  setValue(value, opt_noEvent) {
+    const updated = this.updateEffectiveValue_(value);
+    this.getSearchInput().value = this.effectiveValue_;
+    if (!updated) {
+      // If the input is only whitespace and value is empty, |hasSearchText|
+      // needs to be updated.
+      if (value === '' && this.hasSearchText) {
+        this.hasSearchText = false;
+      }
+      return;
+    }
 
     this.onSearchTermInput();
-    this.onValueChanged_(value, !!opt_noEvent);
+    if (!opt_noEvent) {
+      this.fire('search-changed', this.effectiveValue_);
+    }
   },
 
   /** @private */
-  scheduleSearch_: function() {
+  scheduleSearch_() {
     if (this.searchDelayTimer_ >= 0) {
       clearTimeout(this.searchDelayTimer_);
     }
@@ -83,7 +90,7 @@ const CrSearchFieldBehavior = {
     }, timeoutMs);
   },
 
-  onSearchTermSearch: function() {
+  onSearchTermSearch() {
     this.onValueChanged_(this.getValue(), false);
   },
 
@@ -92,8 +99,8 @@ const CrSearchFieldBehavior = {
    * changes. Unlike onsearch or onkeypress, this is reliably called immediately
    * after any change, whether the result of user input or JS modification.
    */
-  onSearchTermInput: function() {
-    this.hasSearchText = this.$.searchInput.value != '';
+  onSearchTermInput() {
+    this.hasSearchText = this.$.searchInput.value !== '';
     this.scheduleSearch_();
   },
 
@@ -105,16 +112,28 @@ const CrSearchFieldBehavior = {
    *     for this change.
    * @private
    */
-  onValueChanged_: function(newValue, noEvent) {
-    const effectiveValue = newValue.replace(/\s+/g, ' ');
-    if (effectiveValue == this.lastValue_) {
-      return;
+  onValueChanged_(newValue, noEvent) {
+    const updated = this.updateEffectiveValue_(newValue);
+    if (updated && !noEvent) {
+      this.fire('search-changed', this.effectiveValue_);
+    }
+  },
+
+  /**
+   * Trim leading whitespace and replace consecutive whitespace with single
+   * space. This will prevent empty string searches and searches for
+   * effectively the same query.
+   * @param {string} value
+   * @return {boolean}
+   * @private
+   */
+  updateEffectiveValue_(value) {
+    const effectiveValue = value.replace(/\s+/g, ' ').replace(/^\s/, '');
+    if (effectiveValue === this.effectiveValue_) {
+      return false;
     }
 
-    this.lastValue_ = effectiveValue;
-
-    if (!noEvent) {
-      this.fire('search-changed', effectiveValue);
-    }
+    this.effectiveValue_ = effectiveValue;
+    return true;
   },
 };

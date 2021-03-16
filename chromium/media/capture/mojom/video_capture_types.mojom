@@ -8,8 +8,9 @@ import "gpu/ipc/common/mailbox_holder.mojom";
 import "mojo/public/mojom/base/shared_memory.mojom";
 import "mojo/public/mojom/base/time.mojom";
 import "mojo/public/mojom/base/values.mojom";
-import "ui/gfx/geometry/mojo/geometry.mojom";
-import "ui/gfx/mojo/color_space.mojom";
+import "ui/gfx/geometry/mojom/geometry.mojom";
+import "ui/gfx/mojom/buffer_types.mojom";
+import "ui/gfx/mojom/color_space.mojom";
 
 enum VideoCapturePixelFormat {
   UNKNOWN,
@@ -25,9 +26,7 @@ enum VideoCapturePixelFormat {
   ARGB,
   XRGB,
   RGB24,
-  RGB32,
   MJPEG,
-  MT21,
   YUV420P9,
   YUV420P10,
   YUV422P9,
@@ -41,6 +40,9 @@ enum VideoCapturePixelFormat {
   ABGR,
   XBGR,
   P016LE,
+  XR30,
+  XB30,
+  BGRA,
 };
 
 enum ResolutionChangePolicy {
@@ -91,7 +93,9 @@ enum VideoCaptureBufferType {
   // TODO(chfremer): Remove this when https://crbug.com/857537 is resolved.
   kSharedMemoryViaRawFileDescriptor,
 
-  kMailboxHolder
+  kMailboxHolder,
+
+  kGpuMemoryBuffer
 };
 
 enum VideoCaptureError {
@@ -228,7 +232,17 @@ enum VideoCaptureFrameDropReason {
   kWinMediaFoundationLockingBufferDelieveredNullptr,
   kWinMediaFoundationGetBufferByIndexReturnedNull,
   kBufferPoolMaxBufferCountExceeded,
-  kBufferPoolBufferAllocationFailed
+  kBufferPoolBufferAllocationFailed,
+  kVideoCaptureImplNotInStartedState,
+  kVideoCaptureImplFailedToWrapDataAsMediaVideoFrame,
+  kVideoTrackAdapterHasNoResolutionAdapters,
+  kResolutionAdapterFrameIsNotValid,
+  kResolutionAdapterWrappingFrameForCroppingFailed,
+  kResolutionAdapterTimestampTooCloseToPrevious,
+  kResolutionAdapterFrameRateIsHigherThanRequested,
+  kResolutionAdapterHasNoCallbacks,
+  kVideoTrackFrameDelivererNotEnabledReplacingWithBlackFrame,
+  kRendererSinkFrameDelivererIsNotStarted
 };
 
 struct VideoCaptureFormat {
@@ -264,18 +278,11 @@ struct VideoFrameInfo{
   // This field is only optional to work around the issue of native enums
   // not being usable for non-Chromium Mojo clients.
   // TODO(chfremer): Make this non-optional once gfx.mojom.ColorSpace has been
-  // migrated to a full Mojo struct.
+  // migrated to a full Mojo struct. See https://crbug.com/893203.
   gfx.mojom.ColorSpace? color_space;
   // Optionally, stride information can be provided.
   // If not provided, it is assumed that frame data is tightly packed.
   PlaneStrides? strides;
-};
-
-struct VideoCaptureDeviceDescriptorCameraCalibration {
-  double focal_length_x;
-  double focal_length_y;
-  double depth_near;
-  double depth_far;
 };
 
 struct VideoCaptureDeviceDescriptor {
@@ -285,7 +292,6 @@ struct VideoCaptureDeviceDescriptor {
   VideoFacingMode facing_mode;
   VideoCaptureApi capture_api;
   VideoCaptureTransportType transport_type;
-  VideoCaptureDeviceDescriptorCameraCalibration? camera_calibration;
 };
 
 struct VideoCaptureDeviceInfo {
@@ -299,7 +305,7 @@ struct MailboxBufferHandleSet {
 };
 
 struct SharedMemoryViaRawFileDescriptor {
-  handle file_descriptor_handle;
+  handle<platform> file_descriptor_handle;
   uint32 shared_memory_size_in_bytes;
 };
 
@@ -308,4 +314,5 @@ union VideoBufferHandle {
   mojo_base.mojom.ReadOnlySharedMemoryRegion read_only_shmem_region;
   SharedMemoryViaRawFileDescriptor shared_memory_via_raw_file_descriptor;
   MailboxBufferHandleSet mailbox_handles;
+  gfx.mojom.GpuMemoryBufferHandle gpu_memory_buffer_handle;
 };

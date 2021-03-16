@@ -15,7 +15,8 @@ TEST(StyleDifferenceTest, StreamOutputDefault) {
   string_stream << diff;
   EXPECT_EQ(
       "StyleDifference{layoutType=NoLayout, "
-      "paintInvalidationType=NoPaintInvalidation, recomputeOverflow=0, "
+      "collectInlines=0, reshape=0, "
+      "paintInvalidation=0, recomputeVisualOverflow=0, "
       "visualRectUpdate=0, propertySpecificDifferences=, "
       "scrollAnchorDisablingPropertyChanged=0}",
       string_stream.str());
@@ -24,17 +25,20 @@ TEST(StyleDifferenceTest, StreamOutputDefault) {
 TEST(StyleDifferenceTest, StreamOutputAllFieldsMutated) {
   std::stringstream string_stream;
   StyleDifference diff;
-  diff.SetNeedsPaintInvalidationObject();
+  diff.SetNeedsPaintInvalidation();
   diff.SetNeedsPositionedMovementLayout();
-  diff.SetNeedsRecomputeOverflow();
+  diff.SetNeedsReshape();
+  diff.SetNeedsCollectInlines();
+  diff.SetNeedsRecomputeVisualOverflow();
   diff.SetNeedsVisualRectUpdate();
   diff.SetTransformChanged();
   diff.SetScrollAnchorDisablingPropertyChanged();
   string_stream << diff;
   EXPECT_EQ(
       "StyleDifference{layoutType=PositionedMovement, "
-      "paintInvalidationType=PaintInvalidationObject, recomputeOverflow=1, "
-      "visualRectUpdate=1, propertySpecificDifferences=TransformChanged, "
+      "collectInlines=1, reshape=1, paintInvalidation=1, "
+      "recomputeVisualOverflow=1, visualRectUpdate=1, "
+      "propertySpecificDifferences=TransformChanged, "
       "scrollAnchorDisablingPropertyChanged=1}",
       string_stream.str());
 }
@@ -53,8 +57,8 @@ TEST(StyleDifferenceTest, StreamOutputSetAllProperties) {
   string_stream << diff;
   EXPECT_EQ(
       "StyleDifference{layoutType=NoLayout, "
-      "paintInvalidationType=NoPaintInvalidation, recomputeOverflow=0, "
-      "visualRectUpdate=0, "
+      "collectInlines=0, reshape=0, paintInvalidation=0, "
+      "recomputeVisualOverflow=0, visualRectUpdate=0, "
       "propertySpecificDifferences=TransformChanged|OpacityChanged|"
       "ZIndexChanged|FilterChanged|BackdropFilterChanged|CSSClipChanged|"
       "TextDecorationOrColorChanged|BlendModeChanged, "

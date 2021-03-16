@@ -7,7 +7,6 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/js_based_event_listener.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_event_listener.h"
-#include "third_party/blink/renderer/platform/bindings/trace_wrapper_member.h"
 
 namespace blink {
 
@@ -23,7 +22,7 @@ class CORE_EXPORT JSEventListener final : public JSBasedEventListener {
       : event_listener_(listener) {}
 
   // blink::CustomWrappable overrides:
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // blink::EventListener overrides:
   //
@@ -71,7 +70,7 @@ class CORE_EXPORT JSEventListener final : public JSBasedEventListener {
                       Event&,
                       v8::Local<v8::Value> js_event) override;
 
-  const TraceWrapperMember<V8EventListener> event_listener_;
+  const Member<V8EventListener> event_listener_;
 };
 
 template <>

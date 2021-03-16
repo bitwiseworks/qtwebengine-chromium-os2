@@ -4,7 +4,9 @@
 
 package org.chromium.components.autofill;
 
-import android.support.annotation.IntDef;
+import android.graphics.RectF;
+
+import androidx.annotation.IntDef;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -20,12 +22,13 @@ public class FormFieldData {
     /**
      * Define the control types supported by android.view.autofill.AutofillValue.
      */
-    @IntDef({TYPE_TEXT, TYPE_TOGGLE, TYPE_LIST})
+    @IntDef({ControlType.TEXT, ControlType.TOGGLE, ControlType.LIST})
     @Retention(RetentionPolicy.SOURCE)
-    public @interface ControlType {}
-    public static final int TYPE_TEXT = 0;
-    public static final int TYPE_TOGGLE = 1;
-    public static final int TYPE_LIST = 2;
+    public @interface ControlType {
+        int TEXT = 0;
+        int TOGGLE = 1;
+        int LIST = 2;
+    }
 
     public final String mLabel;
     public final String mName;
@@ -39,6 +42,10 @@ public class FormFieldData {
     public final @ControlType int mControlType;
     public final int mMaxLength;
     public final String mHeuristicType;
+    // The bounds in the viewport's coordinates
+    private final RectF mBounds;
+    // The bounds in the container view's coordinates.
+    private RectF mBoundsInContainerViewCoordinates;
 
     private boolean mIsChecked;
     private String mValue;
@@ -50,7 +57,7 @@ public class FormFieldData {
     private FormFieldData(String name, String label, String value, String autocompleteAttr,
             boolean shouldAutocomplete, String placeholder, String type, String id,
             String[] optionValues, String[] optionContents, boolean isCheckField, boolean isChecked,
-            int maxLength, String heuristicType) {
+            int maxLength, String heuristicType, float left, float top, float right, float bottom) {
         mName = name;
         mLabel = label;
         mValue = value;
@@ -63,18 +70,31 @@ public class FormFieldData {
         mOptionContents = optionContents;
         mIsChecked = isChecked;
         if (mOptionValues != null && mOptionValues.length != 0) {
-            mControlType = TYPE_LIST;
+            mControlType = ControlType.LIST;
         } else if (isCheckField) {
-            mControlType = TYPE_TOGGLE;
+            mControlType = ControlType.TOGGLE;
         } else {
-            mControlType = TYPE_TEXT;
+            mControlType = ControlType.TEXT;
         }
         mMaxLength = maxLength;
         mHeuristicType = heuristicType;
+        mBounds = new RectF(left, top, right, bottom);
     }
 
     public @ControlType int getControlType() {
         return mControlType;
+    }
+
+    public RectF getBounds() {
+        return mBounds;
+    }
+
+    public void setBoundsInContainerViewCoordinates(RectF bounds) {
+        mBoundsInContainerViewCoordinates = bounds;
+    }
+
+    public RectF getBoundsInContainerViewCoordinates() {
+        return mBoundsInContainerViewCoordinates;
     }
 
     /**
@@ -119,9 +139,10 @@ public class FormFieldData {
     private static FormFieldData createFormFieldData(String name, String label, String value,
             String autocompleteAttr, boolean shouldAutocomplete, String placeholder, String type,
             String id, String[] optionValues, String[] optionContents, boolean isCheckField,
-            boolean isChecked, int maxLength, String heuristicType) {
+            boolean isChecked, int maxLength, String heuristicType, float left, float top,
+            float right, float bottom) {
         return new FormFieldData(name, label, value, autocompleteAttr, shouldAutocomplete,
                 placeholder, type, id, optionValues, optionContents, isCheckField, isChecked,
-                maxLength, heuristicType);
+                maxLength, heuristicType, left, top, right, bottom);
     }
 }

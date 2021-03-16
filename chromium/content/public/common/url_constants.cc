@@ -9,16 +9,16 @@ namespace content {
 
 // Before adding new chrome schemes please check with security@chromium.org.
 // There are security implications associated with introducing new schemes.
-const char kChromeDevToolsScheme[] = "chrome-devtools";
+const char kChromeDevToolsScheme[] = "devtools";
 const char kChromeErrorScheme[] = "chrome-error";
 const char kChromeUIScheme[] = "chrome";
+const char kChromeUIUntrustedScheme[] = "chrome-untrusted";
 const char kGuestScheme[] = "chrome-guest";
 const char kViewSourceScheme[] = "view-source";
 #if defined(OS_CHROMEOS)
 const char kExternalFileScheme[] = "externalfile";
 #endif
-
-const char kAboutSrcDocURL[] = "about:srcdoc";
+const char kGoogleChromeScheme[] = "googlechrome";
 
 const char kChromeUIAppCacheInternalsHost[] = "appcache-internals";
 const char kChromeUIIndexedDBInternalsHost[] = "indexeddb-internals";
@@ -50,6 +50,10 @@ const char kChromeUIGpuHangURL[] = "chrome://gpuhang/";
 const char kChromeUIHangURL[] = "chrome://hang/";
 const char kChromeUIKillURL[] = "chrome://kill/";
 const char kChromeUIMemoryExhaustURL[] = "chrome://memory-exhaust/";
+const char kChromeUIMemoryPressureCriticalURL[] =
+    "chrome://memory-pressure-critical/";
+const char kChromeUIMemoryPressureModerateURL[] =
+    "chrome://memory-pressure-moderate/";
 const char kChromeUINetworkErrorURL[] = "chrome://network-error/";
 const char kChromeUINetworkErrorsListingURL[] = "chrome://network-errors/";
 const char kChromeUIPpapiFlashCrashURL[] = "chrome://ppapiflashcrash/";

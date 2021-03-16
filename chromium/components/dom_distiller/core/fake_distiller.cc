@@ -8,7 +8,6 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -21,17 +20,16 @@ MockDistillerFactory::MockDistillerFactory() {}
 MockDistillerFactory::~MockDistillerFactory() {}
 
 FakeDistiller::FakeDistiller(bool execute_callback)
-    : execute_callback_(execute_callback),
-      destruction_allowed_(true) {
+    : execute_callback_(execute_callback), destruction_allowed_(true) {
   EXPECT_CALL(*this, Die()).Times(testing::AnyNumber());
 }
 
-FakeDistiller::FakeDistiller(
-    bool execute_callback,
-    const base::Closure& distillation_initiated_callback)
+FakeDistiller::FakeDistiller(bool execute_callback,
+                             base::OnceClosure distillation_initiated_callback)
     : execute_callback_(execute_callback),
       destruction_allowed_(true),
-      distillation_initiated_callback_(distillation_initiated_callback) {
+      distillation_initiated_callback_(
+          std::move(distillation_initiated_callback)) {
   EXPECT_CALL(*this, Die()).Times(testing::AnyNumber());
 }
 
@@ -43,13 +41,13 @@ FakeDistiller::~FakeDistiller() {
 void FakeDistiller::DistillPage(
     const GURL& url,
     std::unique_ptr<DistillerPage> distiller_page,
-    const DistillationFinishedCallback& article_callback,
+    DistillationFinishedCallback article_callback,
     const DistillationUpdateCallback& page_callback) {
   url_ = url;
-  article_callback_ = article_callback;
+  article_callback_ = std::move(article_callback);
   page_callback_ = page_callback;
-  if (!distillation_initiated_callback_.is_null()) {
-    base::ResetAndReturn(&distillation_initiated_callback_).Run();
+  if (distillation_initiated_callback_) {
+    std::move(distillation_initiated_callback_).Run();
   }
   if (execute_callback_) {
     std::unique_ptr<DistilledArticleProto> proto(new DistilledArticleProto);
@@ -84,8 +82,7 @@ void FakeDistiller::RunDistillerCallbackInternal(
 
   base::AutoReset<bool> dont_delete_this_in_callback(&destruction_allowed_,
                                                      false);
-  article_callback_.Run(std::move(proto));
-  article_callback_.Reset();
+  std::move(article_callback_).Run(std::move(proto));
 }
 
 }  // namespace test

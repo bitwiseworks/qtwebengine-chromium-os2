@@ -6,11 +6,11 @@
 
 #include <list>
 #include <string>
-#include <vector>
 
 #include "base/test/scoped_feature_list.h"
 #include "services/network/public/cpp/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
 #include "third_party/blink/renderer/core/frame/csp/source_list_directive.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
@@ -22,19 +22,22 @@
 
 namespace blink {
 
+using network::mojom::ContentSecurityPolicySource;
+using network::mojom::ContentSecurityPolicyType;
+
 class CSPDirectiveListTest : public testing::Test {
  public:
-  CSPDirectiveListTest() : csp(ContentSecurityPolicy::Create()) {}
+  CSPDirectiveListTest() : csp(MakeGarbageCollected<ContentSecurityPolicy>()) {}
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures({network::features::kReporting}, {});
     csp->SetupSelf(
         *SecurityOrigin::CreateFromString("https://example.test/image.png"));
   }
 
-  CSPDirectiveList* CreateList(const String& list,
-                               ContentSecurityPolicyHeaderType type,
-                               ContentSecurityPolicyHeaderSource source =
-                                   kContentSecurityPolicyHeaderSourceHTTP) {
+  CSPDirectiveList* CreateList(
+      const String& list,
+      ContentSecurityPolicyType type,
+      ContentSecurityPolicySource source = ContentSecurityPolicySource::kHTTP) {
     Vector<UChar> characters;
     list.AppendTo(characters);
     const UChar* begin = characters.data();
@@ -59,10 +62,9 @@ TEST_F(CSPDirectiveListTest, Header) {
 
   for (const auto& test : cases) {
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeReport);
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
     EXPECT_EQ(test.expected, directive_list->Header());
-    directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.expected, directive_list->Header());
   }
 }
@@ -134,7 +136,7 @@ TEST_F(CSPDirectiveListTest, IsMatchingNoncePresent) {
   for (const auto& test : cases) {
     // Report-only
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeReport);
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
     Member<SourceListDirective> directive =
         directive_list->OperativeDirective(test.type);
     EXPECT_EQ(test.expected,
@@ -144,8 +146,7 @@ TEST_F(CSPDirectiveListTest, IsMatchingNoncePresent) {
     EXPECT_FALSE(directive_list->IsMatchingNoncePresent(directive, String()));
 
     // Enforce
-    directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
     directive = directive_list->OperativeDirective(test.type);
     EXPECT_EQ(test.expected,
               directive_list->IsMatchingNoncePresent(directive, test.nonce));
@@ -211,21 +212,22 @@ TEST_F(CSPDirectiveListTest, AllowScriptFromSourceNoNonce) {
 
     // Report-only
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeReport);
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  script_src, String(), IntegrityMetadataSet(), kParserInserted,
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  script_src, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(),
+                  IntegrityMetadataSet(), kParserInserted));
 
     // Enforce
-    directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  script_src, String(), IntegrityMetadataSet(), kParserInserted,
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  script_src, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(),
+                  IntegrityMetadataSet(), kParserInserted));
   }
 }
 
@@ -266,69 +268,76 @@ TEST_F(CSPDirectiveListTest, AllowFromSourceWithNonce) {
     const KURL resource(test.url);
 
     // Report-only 'script-src'
-    Member<CSPDirectiveList> directive_list =
-        CreateList(String("script-src ") + test.list,
-                   kContentSecurityPolicyHeaderTypeReport);
+    Member<CSPDirectiveList> directive_list = CreateList(
+        String("script-src ") + test.list, ContentSecurityPolicyType::kReport);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(test.nonce), IntegrityMetadataSet(),
-                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(test.nonce),
+                  IntegrityMetadataSet(), kParserInserted));
 
     // Enforce 'script-src'
     directive_list = CreateList(String("script-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeEnforce);
+                                ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(test.nonce), IntegrityMetadataSet(),
-                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(test.nonce),
+                  IntegrityMetadataSet(), kParserInserted));
 
     // Report-only 'style-src'
     directive_list = CreateList(String("style-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeReport);
-    EXPECT_EQ(test.expected,
-              directive_list->AllowStyleFromSource(
-                  resource, String(test.nonce),
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+                                ContentSecurityPolicyType::kReport);
+    EXPECT_EQ(
+        test.expected,
+        directive_list->AllowFromSource(
+            ContentSecurityPolicy::DirectiveType::kStyleSrcElem, resource,
+            ResourceRequest::RedirectStatus::kNoRedirect,
+            ReportingDisposition::kSuppressReporting, String(test.nonce)));
 
     // Enforce 'style-src'
     directive_list = CreateList(String("style-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeEnforce);
-    EXPECT_EQ(test.expected,
-              directive_list->AllowStyleFromSource(
-                  resource, String(test.nonce),
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+                                ContentSecurityPolicyType::kEnforce);
+    EXPECT_EQ(
+        test.expected,
+        directive_list->AllowFromSource(
+            ContentSecurityPolicy::DirectiveType::kStyleSrcElem, resource,
+            ResourceRequest::RedirectStatus::kNoRedirect,
+            ReportingDisposition::kSuppressReporting, String(test.nonce)));
 
     // Report-only 'style-src'
     directive_list = CreateList(String("default-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeReport);
-    EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(test.nonce), IntegrityMetadataSet(),
-                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
-    EXPECT_EQ(test.expected,
-              directive_list->AllowStyleFromSource(
-                  resource, String(test.nonce),
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+                                ContentSecurityPolicyType::kReport);
+    EXPECT_EQ(
+        test.expected,
+        directive_list->AllowFromSource(
+            ContentSecurityPolicy::DirectiveType::kScriptSrcElem, resource,
+            ResourceRequest::RedirectStatus::kNoRedirect,
+            ReportingDisposition::kSuppressReporting, String(test.nonce)));
+    EXPECT_EQ(
+        test.expected,
+        directive_list->AllowFromSource(
+            ContentSecurityPolicy::DirectiveType::kStyleSrcElem, resource,
+            ResourceRequest::RedirectStatus::kNoRedirect,
+            ReportingDisposition::kSuppressReporting, String(test.nonce)));
 
     // Enforce 'style-src'
     directive_list = CreateList(String("default-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeEnforce);
+                                ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(test.nonce), IntegrityMetadataSet(),
-                  kParserInserted, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
-    EXPECT_EQ(test.expected,
-              directive_list->AllowStyleFromSource(
-                  resource, String(test.nonce),
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(test.nonce),
+                  IntegrityMetadataSet(), kParserInserted));
+    EXPECT_EQ(
+        test.expected,
+        directive_list->AllowFromSource(
+            ContentSecurityPolicy::DirectiveType::kStyleSrcElem, resource,
+            ResourceRequest::RedirectStatus::kNoRedirect,
+            ReportingDisposition::kSuppressReporting, String(test.nonce)));
   }
 }
 
@@ -411,23 +420,24 @@ TEST_F(CSPDirectiveListTest, AllowScriptFromSourceWithHash) {
             integrity_metadata));
 
     // Report-only 'script-src'
-    Member<CSPDirectiveList> directive_list =
-        CreateList(String("script-src ") + test.list,
-                   kContentSecurityPolicyHeaderTypeReport);
+    Member<CSPDirectiveList> directive_list = CreateList(
+        String("script-src ") + test.list, ContentSecurityPolicyType::kReport);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(), integrity_metadata, kParserInserted,
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(),
+                  integrity_metadata, kParserInserted));
 
     // Enforce 'script-src'
     directive_list = CreateList(String("script-src ") + test.list,
-                                kContentSecurityPolicyHeaderTypeEnforce);
+                                ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.expected,
-              directive_list->AllowScriptFromSource(
-                  resource, String(), integrity_metadata, kParserInserted,
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kScriptSrcElem,
+                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting, String(),
+                  integrity_metadata, kParserInserted));
   }
 }
 
@@ -537,20 +547,18 @@ TEST_F(CSPDirectiveListTest, allowRequestWithoutIntegrity) {
     const KURL resource(test.url);
     // Report-only
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeReport);
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
     EXPECT_EQ(true, directive_list->AllowRequestWithoutIntegrity(
                         test.context, resource,
                         ResourceRequest::RedirectStatus::kNoRedirect,
-                        SecurityViolationReportingPolicy::kSuppressReporting));
+                        ReportingDisposition::kSuppressReporting));
 
     // Enforce
-    directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
-    EXPECT_EQ(test.expected,
-              directive_list->AllowRequestWithoutIntegrity(
-                  test.context, resource,
-                  ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
+    EXPECT_EQ(test.expected, directive_list->AllowRequestWithoutIntegrity(
+                                 test.context, resource,
+                                 ResourceRequest::RedirectStatus::kNoRedirect,
+                                 ReportingDisposition::kSuppressReporting));
   }
 }
 
@@ -591,11 +599,12 @@ TEST_F(CSPDirectiveListTest, WorkerSrc) {
     SCOPED_TRACE(test.list);
     const KURL resource("https://example.test/worker.js");
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
+        CreateList(test.list, ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.allowed,
-              directive_list->AllowWorkerFromSource(
-                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kWorkerSrc, resource,
+                  ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting));
   }
 }
 
@@ -636,11 +645,12 @@ TEST_F(CSPDirectiveListTest, WorkerSrcChildSrcFallback) {
     SCOPED_TRACE(test.list);
     const KURL resource("https://example.test/worker.js");
     Member<CSPDirectiveList> directive_list =
-        CreateList(test.list, kContentSecurityPolicyHeaderTypeEnforce);
+        CreateList(test.list, ContentSecurityPolicyType::kEnforce);
     EXPECT_EQ(test.allowed,
-              directive_list->AllowWorkerFromSource(
-                  resource, ResourceRequest::RedirectStatus::kNoRedirect,
-                  SecurityViolationReportingPolicy::kSuppressReporting));
+              directive_list->AllowFromSource(
+                  ContentSecurityPolicy::DirectiveType::kWorkerSrc, resource,
+                  ResourceRequest::RedirectStatus::kNoRedirect,
+                  ReportingDisposition::kSuppressReporting));
   }
 }
 
@@ -648,10 +658,10 @@ TEST_F(CSPDirectiveListTest, SubsumesBasedOnCSPSourcesOnly) {
   CSPDirectiveList* a = CreateList(
       "script-src http://*.one.com; img-src https://one.com "
       "http://two.com/imgs/",
-      kContentSecurityPolicyHeaderTypeEnforce);
+      ContentSecurityPolicyType::kEnforce);
 
   struct TestCase {
-    const std::vector<const char*> policies;
+    const Vector<const char*> policies;
     bool expected;
     bool expected_first_policy_opposite;
   } cases[] = {
@@ -708,13 +718,12 @@ TEST_F(CSPDirectiveListTest, SubsumesBasedOnCSPSourcesOnly) {
   };
 
   CSPDirectiveList* empty_a =
-      CreateList("", kContentSecurityPolicyHeaderTypeEnforce);
+      CreateList("", ContentSecurityPolicyType::kEnforce);
 
   for (const auto& test : cases) {
     HeapVector<Member<CSPDirectiveList>> list_b;
     for (auto* const policy : test.policies) {
-      list_b.push_back(
-          CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
+      list_b.push_back(CreateList(policy, ContentSecurityPolicyType::kEnforce));
     }
 
     EXPECT_EQ(test.expected, a->Subsumes(list_b));
@@ -729,7 +738,7 @@ TEST_F(CSPDirectiveListTest, SubsumesBasedOnCSPSourcesOnly) {
 TEST_F(CSPDirectiveListTest, SubsumesIfNoneIsPresent) {
   struct TestCase {
     const char* policy_a;
-    const std::vector<const char*> policies_b;
+    const Vector<const char*> policies_b;
     bool expected;
   } cases[] = {
       // `policyA` subsumes any vector of policies.
@@ -816,12 +825,13 @@ TEST_F(CSPDirectiveListTest, SubsumesIfNoneIsPresent) {
 
   for (const auto& test : cases) {
     CSPDirectiveList* a =
-        CreateList(test.policy_a, kContentSecurityPolicyHeaderTypeEnforce);
+        CreateList(test.policy_a, ContentSecurityPolicyType::kEnforce);
 
     HeapVector<Member<CSPDirectiveList>> list_b;
-    for (auto* const policy_b : test.policies_b)
+    for (auto* const policy_b : test.policies_b) {
       list_b.push_back(
-          CreateList(policy_b, kContentSecurityPolicyHeaderTypeEnforce));
+          CreateList(policy_b, ContentSecurityPolicyType::kEnforce));
+    }
 
     EXPECT_EQ(test.expected, a->Subsumes(list_b));
   }
@@ -830,7 +840,7 @@ TEST_F(CSPDirectiveListTest, SubsumesIfNoneIsPresent) {
 TEST_F(CSPDirectiveListTest, SubsumesPluginTypes) {
   struct TestCase {
     const char* policy_a;
-    const std::vector<const char*> policies_b;
+    const Vector<const char*> policies_b;
     bool expected;
   } cases[] = {
       // `policyA` subsumes `policiesB`.
@@ -898,12 +908,13 @@ TEST_F(CSPDirectiveListTest, SubsumesPluginTypes) {
 
   for (const auto& test : cases) {
     CSPDirectiveList* a =
-        CreateList(test.policy_a, kContentSecurityPolicyHeaderTypeEnforce);
+        CreateList(test.policy_a, ContentSecurityPolicyType::kEnforce);
 
     HeapVector<Member<CSPDirectiveList>> list_b;
-    for (auto* const policy_b : test.policies_b)
+    for (auto* const policy_b : test.policies_b) {
       list_b.push_back(
-          CreateList(policy_b, kContentSecurityPolicyHeaderTypeEnforce));
+          CreateList(policy_b, ContentSecurityPolicyType::kEnforce));
+    }
 
     EXPECT_EQ(test.expected, a->Subsumes(list_b));
   }
@@ -912,7 +923,7 @@ TEST_F(CSPDirectiveListTest, SubsumesPluginTypes) {
 TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
   struct TestCase {
     ContentSecurityPolicy::DirectiveType directive;
-    std::vector<ContentSecurityPolicy::DirectiveType> fallback_list;
+    Vector<ContentSecurityPolicy::DirectiveType> fallback_list;
   } cases[] = {
       // Directives with default directive.
       {ContentSecurityPolicy::DirectiveType::kChildSrc,
@@ -960,8 +971,7 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
     all_directives << name << " http://" << name << ".com; ";
   }
 
-  CSPDirectiveList* empty =
-      CreateList("", kContentSecurityPolicyHeaderTypeEnforce);
+  CSPDirectiveList* empty = CreateList("", ContentSecurityPolicyType::kEnforce);
 
   std::string directive_string;
   CSPDirectiveList* directive_list;
@@ -972,14 +982,14 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
     EXPECT_FALSE(empty->OperativeDirective(test.directive));
 
     // Add the directive itself as it should be the first one to be returned.
-    test.fallback_list.insert(test.fallback_list.begin(), test.directive);
+    test.fallback_list.push_front(test.directive);
 
     // Start the tests with all directives present.
     directive_string = all_directives.str();
 
-    while (test.fallback_list.size()) {
+    while (!test.fallback_list.IsEmpty()) {
       directive_list = CreateList(directive_string.c_str(),
-                                  kContentSecurityPolicyHeaderTypeEnforce);
+                                  ContentSecurityPolicyType::kEnforce);
 
       CSPDirective* operative_directive =
           directive_list->OperativeDirective(test.directive);
@@ -1012,13 +1022,13 @@ TEST_F(CSPDirectiveListTest, OperativeDirectiveGivenType) {
     // chain we should ensure that there is no unexpected directive outside of
     // the fallback chain that is returned.
     directive_list = CreateList(directive_string.c_str(),
-                                kContentSecurityPolicyHeaderTypeEnforce);
+                                ContentSecurityPolicyType::kEnforce);
     EXPECT_FALSE(directive_list->OperativeDirective(test.directive));
   }
 }
 
 TEST_F(CSPDirectiveListTest, GetSourceVector) {
-  const std::vector<const char*> policies = {
+  const Vector<const char*> policies = {
       // Policy 1
       "default-src https://default-src.com",
       // Policy 2
@@ -1034,7 +1044,7 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
   HeapVector<Member<CSPDirectiveList>> policy_vector;
   for (auto* const policy : policies) {
     policy_vector.push_back(
-        CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
+        CreateList(policy, ContentSecurityPolicyType::kEnforce));
   }
   HeapVector<Member<SourceListDirective>> result =
       CSPDirectiveList::GetSourceVector(
@@ -1088,15 +1098,14 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
     HeapVector<Member<CSPDirectiveList>> policy_vector;
     for (auto* const policy : policies) {
       policy_vector.push_back(
-          CreateList(policy, kContentSecurityPolicyHeaderTypeEnforce));
+          CreateList(policy, ContentSecurityPolicyType::kEnforce));
     }
     // Append current test's policy.
     std::stringstream current_directive;
     const char* name = ContentSecurityPolicy::GetDirectiveName(test.directive);
     current_directive << name << " http://" << name << ".com;";
-    policy_vector.push_back(
-        CreateList(current_directive.str().c_str(),
-                   kContentSecurityPolicyHeaderTypeEnforce));
+    policy_vector.push_back(CreateList(current_directive.str().c_str(),
+                                       ContentSecurityPolicyType::kEnforce));
 
     HeapVector<Member<SourceListDirective>> result =
         CSPDirectiveList::GetSourceVector(test.directive, policy_vector);
@@ -1122,9 +1131,8 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
     EXPECT_EQ(actual_child, test.expected_child_src);
 
     // If another default-src is added that should only impact Fetch Directives
-    policy_vector.push_back(
-        CreateList("default-src https://default-src.com;",
-                   kContentSecurityPolicyHeaderTypeEnforce));
+    policy_vector.push_back(CreateList("default-src https://default-src.com;",
+                                       ContentSecurityPolicyType::kEnforce));
     size_t udpated_total =
         test.type != kNoDefault ? test.expected_total + 1 : test.expected_total;
     EXPECT_EQ(
@@ -1141,9 +1149,8 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
 
     // If another child-src is added that should only impact frame-src and
     // child-src
-    policy_vector.push_back(
-        CreateList("child-src http://child-src.com;",
-                   kContentSecurityPolicyHeaderTypeEnforce));
+    policy_vector.push_back(CreateList("child-src http://child-src.com;",
+                                       ContentSecurityPolicyType::kEnforce));
     udpated_total = test.type == kChildAndDefault ||
                             test.directive ==
                                 ContentSecurityPolicy::DirectiveType::kChildSrc
@@ -1161,9 +1168,8 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
 
     // If we add sandbox, nothing should change since it is currenly not
     // considered.
-    policy_vector.push_back(
-        CreateList("sandbox http://sandbox.com;",
-                   kContentSecurityPolicyHeaderTypeEnforce));
+    policy_vector.push_back(CreateList("sandbox http://sandbox.com;",
+                                       ContentSecurityPolicyType::kEnforce));
     EXPECT_EQ(
         CSPDirectiveList::GetSourceVector(test.directive, policy_vector).size(),
         udpated_total);
@@ -1178,67 +1184,67 @@ TEST_F(CSPDirectiveListTest, GetSourceVector) {
 TEST_F(CSPDirectiveListTest, ReportEndpointsProperlyParsed) {
   struct TestCase {
     const char* policy;
-    ContentSecurityPolicyHeaderSource header_source;
+    ContentSecurityPolicySource header_source;
     Vector<String> expected_endpoints;
     bool expected_use_reporting_api;
   } cases[] = {
-      {"script-src 'self';", kContentSecurityPolicyHeaderSourceHTTP, {}, false},
+      {"script-src 'self';", ContentSecurityPolicySource::kHTTP, {}, false},
       {"script-src 'self'; report-uri https://example.com",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"https://example.com"},
        false},
       {"script-src 'self'; report-uri https://example.com "
        "https://example2.com",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"https://example.com", "https://example2.com"},
        false},
       {"script-src 'self'; report-uri https://example.com",
-       kContentSecurityPolicyHeaderSourceMeta,
+       ContentSecurityPolicySource::kMeta,
        {},
        false},
       {"script-src 'self'; report-to group",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       // report-to supersedes report-uri
       {"script-src 'self'; report-to group; report-uri https://example.com",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       {"script-src 'self'; report-to group",
-       kContentSecurityPolicyHeaderSourceMeta,
+       ContentSecurityPolicySource::kMeta,
        {"group"},
        true},
       {"script-src 'self'; report-to group; report-to group2;",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       {"script-src 'self'; report-to group; report-uri https://example.com; "
        "report-to group2",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       {"script-src 'self'; report-uri https://example.com; report-to group; "
        "report-to group2",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       {"script-src 'self'; report-uri https://example.com "
        "https://example2.com; report-to group",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
       {"script-src 'self'; report-uri https://example.com; report-to group; "
        "report-uri https://example.com",
-       kContentSecurityPolicyHeaderSourceHTTP,
+       ContentSecurityPolicySource::kHTTP,
        {"group"},
        true},
   };
 
   for (const auto& test : cases) {
     // Test both enforce and report, there should not be a difference
-    for (const auto& header_type : {kContentSecurityPolicyHeaderTypeEnforce,
-                                    kContentSecurityPolicyHeaderTypeReport}) {
+    for (const auto& header_type : {ContentSecurityPolicyType::kEnforce,
+                                    ContentSecurityPolicyType::kReport}) {
       Member<CSPDirectiveList> directive_list =
           CreateList(test.policy, header_type, test.header_source);
 
@@ -1254,6 +1260,112 @@ TEST_F(CSPDirectiveListTest, ReportEndpointsProperlyParsed) {
         EXPECT_TRUE(test.expected_endpoints.Contains(endpoint));
       }
     }
+  }
+}
+
+TEST_F(CSPDirectiveListTest, ReasonableObjectRestriction) {
+  struct TestCase {
+    const char* list;
+    bool expected;
+  } cases[] = {// Insufficient restriction!
+               {"img-src *", false},
+               {"object-src *", false},
+               {"object-src https://very.safe.test/", false},
+               {"object-src https:", false},
+               {"script-src *", false},
+               {"script-src https://very.safe.test/", false},
+               {"script-src https:", false},
+               {"script-src 'none'; object-src *", false},
+               {"script-src 'none'; object-src https://very.safe.test/", false},
+               {"script-src 'none'; object-src https:", false},
+
+               // Sufficient restrictions!
+               {"default-src 'none'", true},
+               {"object-src 'none'", true},
+               {"object-src 'none'; script-src 'unsafe-inline'", true},
+               {"object-src 'none'; script-src *", true}};
+
+  for (const auto& test : cases) {
+    SCOPED_TRACE(testing::Message() << "List: `" << test.list << "`");
+    Member<CSPDirectiveList> directive_list =
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
+    EXPECT_EQ(test.expected, directive_list->IsObjectRestrictionReasonable());
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
+    EXPECT_EQ(test.expected, directive_list->IsObjectRestrictionReasonable());
+  }
+}
+
+TEST_F(CSPDirectiveListTest, ReasonableBaseRestriction) {
+  struct TestCase {
+    const char* list;
+    bool expected;
+  } cases[] = {// Insufficient restriction!
+               {"default-src 'none'", false},
+               {"base-uri https://very.safe.test/", false},
+               {"base-uri *", false},
+               {"base-uri https:", false},
+
+               // Sufficient restrictions!
+               {"base-uri 'none'", true},
+               {"base-uri 'self'", true}};
+
+  for (const auto& test : cases) {
+    SCOPED_TRACE(testing::Message() << "List: `" << test.list << "`");
+    Member<CSPDirectiveList> directive_list =
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
+    EXPECT_EQ(test.expected, directive_list->IsBaseRestrictionReasonable());
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
+    EXPECT_EQ(test.expected, directive_list->IsBaseRestrictionReasonable());
+  }
+}
+
+TEST_F(CSPDirectiveListTest, ReasonableScriptRestriction) {
+  struct TestCase {
+    const char* list;
+    bool expected;
+  } cases[] = {
+      // Insufficient restriction!
+      {"img-src *", false},
+      {"script-src *", false},
+      {"script-src https://very.safe.test/", false},
+      {"script-src https:", false},
+      {"default-src 'none'; script-src *", false},
+      {"default-src 'none'; script-src https://very.safe.test/", false},
+      {"default-src 'none'; script-src https:", false},
+
+      // Sufficient restrictions!
+      {"default-src 'none'", true},
+      {"script-src 'none'", true},
+      {"script-src 'nonce-abc'", true},
+      {"script-src 'sha256-abc'", true},
+      {"script-src 'nonce-abc' 'unsafe-inline'", true},
+      {"script-src 'sha256-abc' 'unsafe-inline'", true},
+      {"script-src 'nonce-abc' 'strict-dynamic'", true},
+      {"script-src 'sha256-abc' 'strict-dynamic'", true},
+      {"script-src 'nonce-abc' 'unsafe-inline' 'strict-dynamic'", true},
+      {"script-src 'sha256-abc' 'unsafe-inline' 'strict-dynamic'", true},
+      {"script-src 'nonce-abc' 'unsafe-inline' 'unsafe-eval' 'unsafe-hashes'",
+       true},
+      {"script-src 'sha256-abc' 'unsafe-inline' 'unsafe-eval' 'unsafe-hashes'",
+       true},
+      {"script-src 'nonce-abc' 'strict-dynamic' 'unsafe-eval' 'unsafe-hashes'",
+       true},
+      {"script-src 'sha256-abc' 'strict-dynamic' 'unsafe-eval' 'unsafe-hashes'",
+       true},
+      {"script-src 'nonce-abc' 'unsafe-inline' 'strict-dynamic' 'unsafe-eval' "
+       "'unsafe-hashes'",
+       true},
+      {"script-src 'sha256-abc' 'unsafe-inline' 'strict-dynamic' 'unsafe-eval' "
+       "'unsafe-hashes'",
+       true}};
+
+  for (const auto& test : cases) {
+    SCOPED_TRACE(testing::Message() << "List: `" << test.list << "`");
+    Member<CSPDirectiveList> directive_list =
+        CreateList(test.list, ContentSecurityPolicyType::kReport);
+    EXPECT_EQ(test.expected, directive_list->IsScriptRestrictionReasonable());
+    directive_list = CreateList(test.list, ContentSecurityPolicyType::kEnforce);
+    EXPECT_EQ(test.expected, directive_list->IsScriptRestrictionReasonable());
   }
 }
 

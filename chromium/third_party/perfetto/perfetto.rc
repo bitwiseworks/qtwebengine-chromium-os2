@@ -35,10 +35,10 @@ service traced_probes /system/bin/traced_probes
     file /dev/kmsg w
     capabilities DAC_READ_SEARCH
 
-on property:sys.traced.enable_override=1
+on property:persist.device_config.global_settings.sys_traced=1
     setprop persist.traced.enable 1
 
-on property:sys.traced.enable_override=0
+on property:persist.device_config.global_settings.sys_traced=0
     setprop persist.traced.enable 0
 
 on property:debug.atrace.user_initiated=1
@@ -62,3 +62,7 @@ on property:persist.traced.enable=1
 on property:persist.traced.enable=0
     stop traced
     stop traced_probes
+
+# Reset the Perfetto guard rail state on boot:
+on post-fs-data
+    rm /data/misc/perfetto-traces/.guardraildata

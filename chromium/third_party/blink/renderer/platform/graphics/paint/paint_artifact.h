@@ -10,8 +10,9 @@
 #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_chunk_subset.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 namespace cc {
 class PaintCanvas;
@@ -35,6 +36,8 @@ class PaintChunkSubset;
 // Unless its dangerous accessors are used, it promises to be in a reasonable
 // state (e.g. chunk bounding boxes computed).
 class PLATFORM_EXPORT PaintArtifact final : public RefCounted<PaintArtifact> {
+  USING_FAST_MALLOC(PaintArtifact);
+
  public:
   static scoped_refptr<PaintArtifact> Create(DisplayItemList,
                                              Vector<PaintChunk>);
@@ -58,11 +61,6 @@ class PLATFORM_EXPORT PaintArtifact final : public RefCounted<PaintArtifact> {
     return PaintChunkSubset(PaintChunks(), subset_indices);
   }
 
-  Vector<PaintChunk>::const_iterator FindChunkByDisplayItemIndex(
-      size_t index) const {
-    return FindChunkInVectorByDisplayItemIndex(PaintChunks(), index);
-  }
-
   // Returns the approximate memory usage, excluding memory likely to be
   // shared with the embedder after copying to cc::DisplayItemList.
   size_t ApproximateUnsharedMemoryUsage() const;
@@ -83,6 +81,8 @@ class PLATFORM_EXPORT PaintArtifact final : public RefCounted<PaintArtifact> {
 
   sk_sp<PaintRecord> GetPaintRecord(const PropertyTreeState& replay_state,
                                     const IntPoint& offset = IntPoint()) const;
+
+  SkColor SafeOpaqueBackgroundColor(const PaintChunkSubset&) const;
 
   // Called when the caller finishes updating a full document life cycle.
   // Will cleanup data (e.g. raster invalidations) that will no longer be used

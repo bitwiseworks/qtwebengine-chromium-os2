@@ -5,12 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_BACKGROUND_IMAGE_GEOMETRY_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_BACKGROUND_IMAGE_GEOMETRY_H_
 
+#include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
 #include "third_party/blink/renderer/core/paint/paint_phase.h"
 #include "third_party/blink/renderer/platform/geometry/layout_point.h"
 #include "third_party/blink/renderer/platform/geometry/layout_rect.h"
 #include "third_party/blink/renderer/platform/geometry/layout_size.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_types.h"
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace blink {
 
@@ -30,7 +31,7 @@ class BackgroundImageGeometry {
 
  public:
   // Constructor for LayoutView where the coordinate space is different.
-  BackgroundImageGeometry(const LayoutView&);
+  BackgroundImageGeometry(const LayoutView&, bool root_elemnet_has_transform);
 
   // Constructor for table cells where background_object may be the row or
   // column the background image is attached to.
@@ -44,7 +45,7 @@ class BackgroundImageGeometry {
                  PaintPhase,
                  GlobalPaintFlags,
                  const FillLayer&,
-                 const LayoutRect& paint_rect);
+                 const PhysicalRect& paint_rect);
 
   // Destination rects define the area into which the image will paint.
   // For cases where no explicit background size is requested, the destination
@@ -56,8 +57,12 @@ class BackgroundImageGeometry {
   // unsnapped rectangle is the size and location intended by the content
   // author, and is needed to correctly subset images when no background-size
   // size is given.
-  const LayoutRect& UnsnappedDestRect() const { return unsnapped_dest_rect_; }
-  const LayoutRect& SnappedDestRect() const { return snapped_dest_rect_; }
+  PhysicalRect UnsnappedDestRect() const {
+    return PhysicalRectToBeNoop(unsnapped_dest_rect_);
+  }
+  PhysicalRect SnappedDestRect() const {
+    return PhysicalRectToBeNoop(snapped_dest_rect_);
+  }
 
   // Tile size is the area into which to draw one copy of the image. It
   // need not be the same as the intrinsic size of the image; if not,
@@ -90,6 +95,8 @@ class BackgroundImageGeometry {
   const ComputedStyle& ImageStyle() const;
   InterpolationQuality ImageInterpolationQuality() const;
 
+  static bool ShouldUseFixedAttachment(const FillLayer&);
+
  private:
   void SetSpaceSize(const LayoutSize& repeat_spacing) {
     repeat_spacing_ = repeat_spacing;
@@ -97,8 +104,12 @@ class BackgroundImageGeometry {
   void SetPhaseX(float x) { phase_.SetX(x); }
   void SetPhaseY(float y) { phase_.SetY(y); }
 
-  void SetNoRepeatX(LayoutUnit x_offset, LayoutUnit snapped_x_offset);
-  void SetNoRepeatY(LayoutUnit y_offset, LayoutUnit snapped_y_offset);
+  void SetNoRepeatX(const FillLayer&,
+                    LayoutUnit x_offset,
+                    LayoutUnit snapped_x_offset);
+  void SetNoRepeatY(const FillLayer&,
+                    LayoutUnit y_offset,
+                    LayoutUnit snapped_y_offset);
   void SetRepeatX(const FillLayer&,
                   LayoutUnit available_width,
                   LayoutUnit extra_offset);
@@ -170,10 +181,11 @@ class BackgroundImageGeometry {
   FloatPoint phase_;
   LayoutSize tile_size_;
   LayoutSize repeat_spacing_;
-  bool has_non_local_geometry_;
-  bool painting_view_;
-  bool painting_table_cell_;
-  bool cell_using_container_background_;
+  bool has_non_local_geometry_ = false;
+  bool painting_view_ = false;
+  bool painting_table_cell_ = false;
+  bool cell_using_container_background_ = false;
+  bool root_element_has_transform_ = false;
 };
 
 }  // namespace blink

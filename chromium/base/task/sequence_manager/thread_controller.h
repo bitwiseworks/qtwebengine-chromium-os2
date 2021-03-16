@@ -6,6 +6,7 @@
 #define BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_H_
 
 #include "base/message_loop/message_pump.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task/sequence_manager/lazy_now.h"
 #include "base/time/time.h"
@@ -14,7 +15,6 @@
 namespace base {
 
 class MessageLoopBase;
-class MessagePump;
 class TickClock;
 struct PendingTask;
 
@@ -39,7 +39,8 @@ class ThreadController {
   // Notifies that |pending_task| is about to be enqueued. Needed for tracing
   // purposes. The impl may use this opportunity add metadata to |pending_task|
   // before it is moved into the queue.
-  virtual void WillQueueTask(PendingTask* pending_task) = 0;
+  virtual void WillQueueTask(PendingTask* pending_task,
+                             const char* task_queue_name) = 0;
 
   // Notify the controller that its associated sequence has immediate work
   // to run. Shortly after this is called, the thread associated with this
@@ -72,11 +73,6 @@ class ThreadController {
   // Completes delayed initialization of unbound ThreadControllers.
   // BindToCurrentThread(MessageLoopBase*) or BindToCurrentThread(MessagePump*)
   // may only be called once.
-  virtual void BindToCurrentThread(MessageLoopBase* message_loop_base) = 0;
-
-  // Completes delayed initialization of unbound ThreadControllers.
-  // BindToCurrentThread(MessageLoopBase*) or BindToCurrentThread(MessagePump*)
-  // may only be called once.
   virtual void BindToCurrentThread(
       std::unique_ptr<MessagePump> message_pump) = 0;
 
@@ -98,6 +94,12 @@ class ThreadController {
   // AttachToMessagePump(), which connects this ThreadController to the
   // UI thread's CFRunLoop and allows PostTask() to work.
   virtual void AttachToMessagePump() = 0;
+#endif
+
+#if defined(OS_IOS)
+  // Detaches this ThreadController from the message pump, allowing the
+  // controller to be shut down cleanly.
+  virtual void DetachFromMessagePump() = 0;
 #endif
 
   // TODO(altimin): Get rid of the methods below.

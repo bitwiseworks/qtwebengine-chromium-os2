@@ -48,17 +48,22 @@
 #include "third_party/blink/renderer/core/dom/events/event.h"
 #include "third_party/blink/renderer/core/editing/ephemeral_range.h"
 #include "third_party/blink/renderer/core/editing/iterators/text_iterator.h"
+#include "third_party/blink/renderer/core/frame/visual_viewport.h"
 #include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/html/forms/html_form_element.h"
 #include "third_party/blink/renderer/core/html/html_all_collection.h"
 #include "third_party/blink/renderer/core/html/html_body_element.h"
 #include "third_party/blink/renderer/core/html/html_collection.h"
+#include "third_party/blink/renderer/core/html/html_document.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/html/html_head_element.h"
 #include "third_party/blink/renderer/core/html/html_link_element.h"
+#include "third_party/blink/renderer/core/html/plugin_document.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/platform/heap/heap.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 
@@ -83,11 +88,6 @@ WebSecurityOrigin WebDocument::GetSecurityOrigin() const {
   return WebSecurityOrigin(ConstUnwrap<Document>()->GetSecurityOrigin());
 }
 
-void WebDocument::GrantLoadLocalResources() {
-  if (Document* document = Unwrap<Document>())
-    document->GetMutableSecurityOrigin()->GrantLoadLocalResources();
-}
-
 bool WebDocument::IsSecureContext() const {
   const Document* document = ConstUnwrap<Document>();
   return document && document->IsSecureContext();
@@ -105,8 +105,11 @@ WebString WebDocument::GetReferrer() const {
   return ConstUnwrap<Document>()->referrer();
 }
 
-SkColor WebDocument::ThemeColor() const {
-  return ConstUnwrap<Document>()->ThemeColor().Rgb();
+base::Optional<SkColor> WebDocument::ThemeColor() const {
+  base::Optional<Color> color = ConstUnwrap<Document>()->ThemeColor();
+  if (color)
+    return color->Rgb();
+  return base::nullopt;
 }
 
 WebURL WebDocument::OpenSearchDescriptionURL() const {
@@ -119,7 +122,7 @@ WebLocalFrame* WebDocument::GetFrame() const {
 }
 
 bool WebDocument::IsHTMLDocument() const {
-  return ConstUnwrap<Document>()->IsHTMLDocument();
+  return IsA<HTMLDocument>(ConstUnwrap<Document>());
 }
 
 bool WebDocument::IsXHTMLDocument() const {
@@ -127,15 +130,23 @@ bool WebDocument::IsXHTMLDocument() const {
 }
 
 bool WebDocument::IsPluginDocument() const {
-  return ConstUnwrap<Document>()->IsPluginDocument();
+  return IsA<PluginDocument>(ConstUnwrap<Document>());
 }
 
 WebURL WebDocument::BaseURL() const {
   return ConstUnwrap<Document>()->BaseURL();
 }
 
-WebURL WebDocument::SiteForCookies() const {
+ukm::SourceId WebDocument::GetUkmSourceId() const {
+  return ConstUnwrap<Document>()->UkmSourceID();
+}
+
+net::SiteForCookies WebDocument::SiteForCookies() const {
   return ConstUnwrap<Document>()->SiteForCookies();
+}
+
+WebSecurityOrigin WebDocument::TopFrameOrigin() const {
+  return ConstUnwrap<Document>()->TopFrameOrigin();
 }
 
 WebElement WebDocument::DocumentElement() const {
@@ -174,8 +185,8 @@ void WebDocument::Forms(WebVector<WebFormElement>& results) const {
   for (size_t i = 0; i < source_length; ++i) {
     Element* element = forms->item(i);
     // Strange but true, sometimes node can be 0.
-    if (element && element->IsHTMLElement())
-      temp.push_back(WebFormElement(ToHTMLFormElement(element)));
+    if (auto* html_form_element = DynamicTo<HTMLFormElement>(element))
+      temp.push_back(WebFormElement(html_form_element));
   }
   results.Assign(temp);
 }
@@ -197,8 +208,8 @@ WebStyleSheetKey WebDocument::InsertStyleSheet(const WebString& source_code,
                                                CSSOrigin origin) {
   Document* document = Unwrap<Document>();
   DCHECK(document);
-  StyleSheetContents* parsed_sheet =
-      StyleSheetContents::Create(CSSParserContext::Create(*document));
+  auto* parsed_sheet = MakeGarbageCollected<StyleSheetContents>(
+      MakeGarbageCollected<CSSParserContext>(*document));
   parsed_sheet->ParseString(source_code);
   const WebStyleSheetKey& injection_key =
       key && !key->IsNull() ? *key : GenerateStyleSheetKey();
@@ -245,24 +256,6 @@ WebVector<WebDraggableRegion> WebDocument::DraggableRegions() const {
   return draggable_regions;
 }
 
-WebURL WebDocument::ManifestURL() const {
-  const Document* document = ConstUnwrap<Document>();
-  HTMLLinkElement* link_element = document->LinkManifest();
-  if (!link_element)
-    return WebURL();
-  return link_element->Href();
-}
-
-bool WebDocument::ManifestUseCredentials() const {
-  const Document* document = ConstUnwrap<Document>();
-  HTMLLinkElement* link_element = document->LinkManifest();
-  if (!link_element)
-    return false;
-  return EqualIgnoringASCIICase(
-      link_element->FastGetAttribute(html_names::kCrossoriginAttr),
-      "use-credentials");
-}
-
 WebURL WebDocument::CanonicalUrlForSharing() const {
   const Document* document = ConstUnwrap<Document>();
   HTMLLinkElement* link_element = document->LinkCanonical();
@@ -275,9 +268,25 @@ WebDistillabilityFeatures WebDocument::DistillabilityFeatures() {
   return DocumentStatisticsCollector::CollectStatistics(*Unwrap<Document>());
 }
 
+void WebDocument::SetShowBeforeUnloadDialog(bool show_dialog) {
+  if (!IsHTMLDocument())
+    return;
+
+  Document* doc = Unwrap<Document>();
+  doc->SetShowBeforeUnloadDialog(show_dialog);
+}
+
+uint64_t WebDocument::GetVisualViewportScrollingElementIdForTesting() {
+  return blink::To<Document>(private_.Get())
+      ->GetPage()
+      ->GetVisualViewport()
+      .GetScrollElementId()
+      .GetStableId();
+}
+
 WebDocument::WebDocument(Document* elem) : WebNode(elem) {}
 
-DEFINE_WEB_NODE_TYPE_CASTS(WebDocument, ConstUnwrap<Node>()->IsDocumentNode());
+DEFINE_WEB_NODE_TYPE_CASTS(WebDocument, ConstUnwrap<Node>()->IsDocumentNode())
 
 WebDocument& WebDocument::operator=(Document* elem) {
   private_ = elem;

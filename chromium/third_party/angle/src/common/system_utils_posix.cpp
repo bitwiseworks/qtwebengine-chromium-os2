@@ -9,8 +9,12 @@
 #include "system_utils.h"
 
 #include <array>
+#include <iostream>
 
 #include <dlfcn.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace angle
@@ -47,21 +51,40 @@ std::string GetEnvironmentVar(const char *variableName)
     return (value == nullptr ? std::string() : std::string(value));
 }
 
-const char *GetPathSeparator()
+const char *GetPathSeparatorForEnvironmentVar()
 {
     return ":";
+}
+
+std::string GetHelperExecutableDir()
+{
+    std::string directory;
+    static int dummySymbol = 0;
+    Dl_info dlInfo;
+    if (dladdr(&dummySymbol, &dlInfo) != 0)
+    {
+        std::string moduleName = dlInfo.dli_fname;
+        directory              = moduleName.substr(0, moduleName.find_last_of('/') + 1);
+    }
+    return directory;
 }
 
 class PosixLibrary : public Library
 {
   public:
-    PosixLibrary(const char *libraryName)
+    PosixLibrary(const char *libraryName, SearchType searchType)
     {
-        char buffer[1000];
-        int ret = snprintf(buffer, 1000, "%s.%s", libraryName, GetSharedLibraryExtension());
-        if (ret > 0 && ret < 1000)
+        std::string directory;
+        if (searchType == SearchType::ApplicationDir)
         {
-            mModule = dlopen(buffer, RTLD_NOW);
+            directory = GetHelperExecutableDir();
+        }
+
+        std::string fullPath = directory + libraryName + "." + GetSharedLibraryExtension();
+        mModule              = dlopen(fullPath.c_str(), RTLD_NOW);
+        if (!mModule)
+        {
+            std::cerr << "Failed to load " << libraryName << ": " << dlerror() << std::endl;
         }
     }
 
@@ -89,8 +112,39 @@ class PosixLibrary : public Library
     void *mModule = nullptr;
 };
 
-Library *OpenSharedLibrary(const char *libraryName)
+Library *OpenSharedLibrary(const char *libraryName, SearchType searchType)
 {
-    return new PosixLibrary(libraryName);
+    return new PosixLibrary(libraryName, searchType);
+}
+
+bool IsDirectory(const char *filename)
+{
+    struct stat st;
+    int result = stat(filename, &st);
+    return result == 0 && ((st.st_mode & S_IFDIR) == S_IFDIR);
+}
+
+bool IsDebuggerAttached()
+{
+    // This could have a fuller implementation.
+    // See https://cs.chromium.org/chromium/src/base/debug/debugger_posix.cc
+    return false;
+}
+
+void BreakDebugger()
+{
+    // This could have a fuller implementation.
+    // See https://cs.chromium.org/chromium/src/base/debug/debugger_posix.cc
+    abort();
+}
+
+const char *GetExecutableExtension()
+{
+    return "";
+}
+
+char GetPathSeparator()
+{
+    return '/';
 }
 }  // namespace angle

@@ -10,7 +10,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "build/build_config.h"
 #include "media/audio/audio_debug_recording_test.h"
 #include "media/audio/mock_audio_debug_recording_manager.h"
@@ -22,9 +22,9 @@ namespace media {
 namespace {
 
 #if defined(OS_WIN)
-#define IntToStringType base::IntToString16
+#define NumberToStringType base::NumberToString16
 #else
-#define IntToStringType base::IntToString
+#define NumberToStringType base::NumberToString
 #endif
 
 const base::FilePath::CharType kBaseFileName[] =
@@ -71,7 +71,7 @@ class AudioDebugRecordingSessionImplTest : public AudioDebugRecordingTest {
   base::FilePath GetFileName(const base::FilePath::StringType& stream_type,
                              uint32_t id) {
     return base_file_path_.AddExtension(stream_type)
-        .AddExtension(IntToStringType(id))
+        .AddExtension(NumberToStringType(id))
         .AddExtension(kWavExtension);
   }
 
@@ -125,7 +125,7 @@ TEST_F(AudioDebugRecordingSessionImplTest, CreateWavFileCreatesExpectedFiles) {
   CreateDebugRecordingSession();
 
   // Wait for files to be created.
-  scoped_task_environment_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 
   // Check that expected files were created.
   base::FilePath input_recording_filename(GetFileName(kInput, kId));

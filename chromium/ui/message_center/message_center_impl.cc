@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -36,7 +37,7 @@ MessageCenterImpl::MessageCenterImpl(
       lock_screen_controller_(std::move(lock_screen_controller)),
       popup_timers_controller_(std::make_unique<PopupTimersController>(this)),
       stats_collector_(this) {
-  notification_list_.reset(new NotificationList(this));
+  notification_list_ = std::make_unique<NotificationList>(this);
 }
 
 MessageCenterImpl::~MessageCenterImpl() {
@@ -54,7 +55,7 @@ void MessageCenterImpl::RemoveObserver(MessageCenterObserver* observer) {
 
 void MessageCenterImpl::AddNotificationBlocker(NotificationBlocker* blocker) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  if (base::ContainsValue(blockers_, blocker))
+  if (base::Contains(blockers_, blocker))
     return;
 
   blocker->AddObserver(this);
@@ -140,10 +141,21 @@ bool MessageCenterImpl::IsQuietMode() const {
   return notification_list_->quiet_mode();
 }
 
+bool MessageCenterImpl::IsSpokenFeedbackEnabled() const {
+  return spoken_feedback_enabled_;
+}
+
 Notification* MessageCenterImpl::FindVisibleNotificationById(
     const std::string& id) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  return notification_list_->GetNotificationById(id);
+
+  const auto& notifications = GetVisibleNotifications();
+  for (auto* notification : notifications) {
+    if (notification->id() == id)
+      return notification;
+  }
+
+  return nullptr;
 }
 
 NotificationList::Notifications MessageCenterImpl::FindNotificationsByAppId(
@@ -178,15 +190,16 @@ void MessageCenterImpl::AddNotification(
   // |notification_list| will replace the notification instead of adding new.
   // This is essentially an update rather than addition.
   bool already_exists = (notification_list_->GetNotificationById(id) != NULL);
+  if (already_exists) {
+    UpdateNotification(id, std::move(notification));
+    return;
+  }
+
   notification_list_->AddNotification(std::move(notification));
   visible_notifications_ =
       notification_list_->GetVisibleNotifications(blockers_);
-
   for (auto& observer : observer_list_) {
-    if (already_exists)
-      observer.OnNotificationUpdated(id);
-    else
-      observer.OnNotificationAdded(id);
+    observer.OnNotificationAdded(id);
   }
 }
 
@@ -216,7 +229,7 @@ void MessageCenterImpl::RemoveNotification(const std::string& id,
                                            bool by_user) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
-  Notification* notification = FindVisibleNotificationById(id);
+  Notification* notification = notification_list_->GetNotificationById(id);
   if (!notification)
     return;
 
@@ -402,8 +415,10 @@ void MessageCenterImpl::MarkSinglePopupAsShown(const std::string& id,
 
   if (HasMessageCenterView()) {
     notification_list_->MarkSinglePopupAsShown(id, mark_notification_as_read);
-    for (auto& observer : observer_list_)
+    for (auto& observer : observer_list_) {
       observer.OnNotificationUpdated(id);
+      observer.OnNotificationPopupShown(id, mark_notification_as_read);
+    }
   } else {
     RemoveNotification(id, false);
   }
@@ -438,6 +453,10 @@ void MessageCenterImpl::SetQuietMode(bool in_quiet_mode) {
   quiet_mode_timer_.reset();
 }
 
+void MessageCenterImpl::SetSpokenFeedbackEnabled(bool enabled) {
+  spoken_feedback_enabled_ = enabled;
+}
+
 void MessageCenterImpl::EnterQuietModeWithExpire(
     const base::TimeDelta& expires_in) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
@@ -450,12 +469,10 @@ void MessageCenterImpl::EnterQuietModeWithExpire(
     for (auto& observer : observer_list_)
       observer.OnQuietModeChanged(true);
 
-    quiet_mode_timer_.reset(new base::OneShotTimer);
-    quiet_mode_timer_->Start(
-        FROM_HERE,
-        expires_in,
-        base::Bind(
-            &MessageCenterImpl::SetQuietMode, base::Unretained(this), false));
+    quiet_mode_timer_ = std::make_unique<base::OneShotTimer>();
+    quiet_mode_timer_->Start(FROM_HERE, expires_in,
+                             base::BindOnce(&MessageCenterImpl::SetQuietMode,
+                                            base::Unretained(this), false));
   }
 }
 

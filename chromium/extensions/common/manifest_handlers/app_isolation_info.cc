@@ -68,15 +68,15 @@ bool AppIsolationHandler::Parse(Extension* extension, base::string16* error) {
   }
 
   bool has_isolated_storage = false;
-  const base::Value::ListStorage& list_storage = isolation_list->GetList();
-  for (size_t i = 0; i < list_storage.size(); ++i) {
-    if (!list_storage[i].is_string()) {
+  base::Value::ConstListView list_view = isolation_list->GetList();
+  for (size_t i = 0; i < list_view.size(); ++i) {
+    if (!list_view[i].is_string()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           manifest_errors::kInvalidIsolationValue, base::NumberToString(i));
       return false;
     }
 
-    const std::string& isolation_string = list_storage[i].GetString();
+    const std::string& isolation_string = list_view[i].GetString();
     // Check for isolated storage.
     if (isolation_string == manifest_values::kIsolatedStorage) {
       has_isolated_storage = true;
@@ -98,7 +98,11 @@ bool AppIsolationHandler::AlwaysParseForType(Manifest::Type type) const {
 
 base::span<const char* const> AppIsolationHandler::Keys() const {
   static constexpr const char* kKeys[] = {keys::kIsolation};
+#if !defined(__GNUC__) || __GNUC__ > 5
   return kKeys;
+#else
+  return base::make_span(kKeys, 1);
+#endif
 }
 
 }  // namespace extensions

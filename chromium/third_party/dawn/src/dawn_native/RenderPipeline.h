@@ -15,7 +15,7 @@
 #ifndef DAWNNATIVE_RENDERPIPELINE_H_
 #define DAWNNATIVE_RENDERPIPELINE_H_
 
-#include "dawn_native/InputState.h"
+#include "dawn_native/AttachmentState.h"
 #include "dawn_native/Pipeline.h"
 
 #include "dawn_native/dawn_platform.h"
@@ -25,42 +25,99 @@
 
 namespace dawn_native {
 
-    class DeviceBase;
+    struct BeginRenderPassCmd;
 
-    MaybeError ValidateRenderPipelineDescriptor(DeviceBase* device,
+    class DeviceBase;
+    class RenderBundleEncoder;
+
+    MaybeError ValidateRenderPipelineDescriptor(const DeviceBase* device,
                                                 const RenderPipelineDescriptor* descriptor);
+    size_t IndexFormatSize(wgpu::IndexFormat format);
+    uint32_t VertexFormatNumComponents(wgpu::VertexFormat format);
+    size_t VertexFormatComponentSize(wgpu::VertexFormat format);
+    size_t VertexFormatSize(wgpu::VertexFormat format);
+
     bool StencilTestEnabled(const DepthStencilStateDescriptor* mDepthStencilState);
+    bool BlendEnabled(const ColorStateDescriptor* mColorState);
+
+    struct VertexAttributeInfo {
+        wgpu::VertexFormat format;
+        uint64_t offset;
+        uint32_t shaderLocation;
+        uint32_t vertexBufferSlot;
+    };
+
+    struct VertexBufferInfo {
+        uint64_t arrayStride;
+        wgpu::InputStepMode stepMode;
+    };
 
     class RenderPipelineBase : public PipelineBase {
       public:
         RenderPipelineBase(DeviceBase* device, const RenderPipelineDescriptor* descriptor);
+        ~RenderPipelineBase() override;
 
-        const BlendStateDescriptor* GetBlendStateDescriptor(uint32_t attachmentSlot);
-        const DepthStencilStateDescriptor* GetDepthStencilStateDescriptor();
-        dawn::IndexFormat GetIndexFormat() const;
-        InputStateBase* GetInputState();
-        dawn::PrimitiveTopology GetPrimitiveTopology() const;
+        static RenderPipelineBase* MakeError(DeviceBase* device);
+
+        const VertexStateDescriptor* GetVertexStateDescriptor() const;
+        const std::bitset<kMaxVertexAttributes>& GetAttributeLocationsUsed() const;
+        const VertexAttributeInfo& GetAttribute(uint32_t location) const;
+        const std::bitset<kMaxVertexBuffers>& GetVertexBufferSlotsUsed() const;
+        const VertexBufferInfo& GetVertexBuffer(uint32_t slot) const;
+
+        const ColorStateDescriptor* GetColorStateDescriptor(uint32_t attachmentSlot) const;
+        const DepthStencilStateDescriptor* GetDepthStencilStateDescriptor() const;
+        wgpu::PrimitiveTopology GetPrimitiveTopology() const;
+        wgpu::CullMode GetCullMode() const;
+        wgpu::FrontFace GetFrontFace() const;
 
         std::bitset<kMaxColorAttachments> GetColorAttachmentsMask() const;
         bool HasDepthStencilAttachment() const;
-        dawn::TextureFormat GetColorAttachmentFormat(uint32_t attachment) const;
-        dawn::TextureFormat GetDepthStencilFormat() const;
+        wgpu::TextureFormat GetColorAttachmentFormat(uint32_t attachment) const;
+        wgpu::TextureFormat GetDepthStencilFormat() const;
+        uint32_t GetSampleCount() const;
 
-        // A pipeline can be used in a render pass if its attachment info matches the actual
-        // attachments in the render pass. This returns whether it is the case.
-        bool IsCompatibleWith(const RenderPassDescriptorBase* renderPass) const;
+        const AttachmentState* GetAttachmentState() const;
+
+        std::bitset<kMaxVertexAttributes> GetAttributesUsingVertexBuffer(uint32_t slot) const;
+        std::array<std::bitset<kMaxVertexAttributes>, kMaxVertexBuffers>
+            attributesUsingVertexBuffer;
+
+        // Functors necessary for the unordered_set<RenderPipelineBase*>-based cache.
+        struct HashFunc {
+            size_t operator()(const RenderPipelineBase* pipeline) const;
+        };
+        struct EqualityFunc {
+            bool operator()(const RenderPipelineBase* a, const RenderPipelineBase* b) const;
+        };
 
       private:
-        DepthStencilStateDescriptor mDepthStencilState;
-        dawn::IndexFormat mIndexFormat;
-        Ref<InputStateBase> mInputState;
-        dawn::PrimitiveTopology mPrimitiveTopology;
-        std::array<BlendStateDescriptor, kMaxColorAttachments> mBlendStates;
+        RenderPipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag);
 
-        std::bitset<kMaxColorAttachments> mColorAttachmentsSet;
-        std::array<dawn::TextureFormat, kMaxColorAttachments> mColorAttachmentFormats;
-        bool mHasDepthStencilAttachment = false;
-        dawn::TextureFormat mDepthStencilFormat;
+        // Vertex state
+        VertexStateDescriptor mVertexState;
+        std::bitset<kMaxVertexAttributes> mAttributeLocationsUsed;
+        std::array<VertexAttributeInfo, kMaxVertexAttributes> mAttributeInfos;
+        std::bitset<kMaxVertexBuffers> mVertexBufferSlotsUsed;
+        std::array<VertexBufferInfo, kMaxVertexBuffers> mVertexBufferInfos;
+
+        // Attachments
+        Ref<AttachmentState> mAttachmentState;
+        DepthStencilStateDescriptor mDepthStencilState;
+        std::array<ColorStateDescriptor, kMaxColorAttachments> mColorStates;
+
+        // Other state
+        wgpu::PrimitiveTopology mPrimitiveTopology;
+        RasterizationStateDescriptor mRasterizationState;
+        uint32_t mSampleMask;
+        bool mAlphaToCoverageEnabled;
+
+        // Stage information
+        // TODO(cwallez@chromium.org): Store a crypto hash of the modules instead.
+        Ref<ShaderModuleBase> mVertexModule;
+        std::string mVertexEntryPoint;
+        Ref<ShaderModuleBase> mFragmentModule;
+        std::string mFragmentEntryPoint;
     };
 
 }  // namespace dawn_native

@@ -11,9 +11,11 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "ui/ozone/ozone_base_export.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "ui/ozone/public/mojom/gesture_properties_service.mojom.h"
 
 namespace base {
 class TimeDelta;
@@ -28,7 +30,7 @@ enum class DomCode;
 // The object provides methods for the preference page to configure input
 // devices w.r.t. the user setting. On ChromeOS, this replaces the inputcontrol
 // script that is originally located at /opt/google/chrome/.
-class OZONE_BASE_EXPORT InputController {
+class COMPONENT_EXPORT(OZONE_BASE) InputController {
  public:
   using GetTouchDeviceStatusReply =
       base::OnceCallback<void(const std::string&)>;
@@ -57,15 +59,21 @@ class OZONE_BASE_EXPORT InputController {
 
   // Touchpad settings.
   virtual void SetTouchpadSensitivity(int value) = 0;
+  virtual void SetTouchpadScrollSensitivity(int value) = 0;
   virtual void SetTapToClick(bool enabled) = 0;
   virtual void SetThreeFingerClick(bool enabled) = 0;
   virtual void SetTapDragging(bool enabled) = 0;
   virtual void SetNaturalScroll(bool enabled) = 0;
+  virtual void SetTouchpadAcceleration(bool enabled) = 0;
+  virtual void SetTouchpadScrollAcceleration(bool enabled) = 0;
 
   // Mouse settings.
   virtual void SetMouseSensitivity(int value) = 0;
+  virtual void SetMouseScrollSensitivity(int value) = 0;
   virtual void SetPrimaryButtonRight(bool right) = 0;
   virtual void SetMouseReverseScroll(bool enabled) = 0;
+  virtual void SetMouseAcceleration(bool enabled) = 0;
+  virtual void SetMouseScrollAcceleration(bool enabled) = 0;
 
   // Touch log collection.
   virtual void GetTouchDeviceStatus(GetTouchDeviceStatusReply reply) = 0;
@@ -88,12 +96,17 @@ class OZONE_BASE_EXPORT InputController {
   virtual void SetInternalKeyboardFilter(bool enable_filter,
                                          std::vector<DomCode> allowed_keys) = 0;
 
+  virtual void GetGesturePropertiesService(
+      mojo::PendingReceiver<ui::ozone::mojom::GesturePropertiesService>
+          receiver) = 0;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(InputController);
 };
 
 // Create an input controller that does nothing.
-OZONE_BASE_EXPORT std::unique_ptr<InputController> CreateStubInputController();
+COMPONENT_EXPORT(OZONE_BASE)
+std::unique_ptr<InputController> CreateStubInputController();
 
 }  // namespace ui
 

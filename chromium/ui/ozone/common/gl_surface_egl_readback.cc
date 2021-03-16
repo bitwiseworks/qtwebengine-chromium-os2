@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/ozone/common/egl_util.h"
 
@@ -22,7 +23,7 @@ GLSurfaceEglReadback::GLSurfaceEglReadback()
 
 bool GLSurfaceEglReadback::Resize(const gfx::Size& size,
                                   float scale_factor,
-                                  ColorSpace color_space,
+                                  const gfx::ColorSpace& color_space,
                                   bool has_alpha) {
   pixels_.reset();
 
@@ -41,7 +42,7 @@ bool GLSurfaceEglReadback::IsOffscreen() {
 }
 
 gfx::SwapResult GLSurfaceEglReadback::SwapBuffers(
-    const PresentationCallback& callback) {
+    PresentationCallback callback) {
   const gfx::Size size = GetSize();
   glReadPixels(0, 0, size.width(), size.height(), GL_BGRA, GL_UNSIGNED_BYTE,
                pixels_.get());
@@ -61,12 +62,8 @@ gfx::SwapResult GLSurfaceEglReadback::SwapBuffers(
   return swap_result;
 }
 
-bool GLSurfaceEglReadback::SupportsPresentationCallback() {
-  return true;
-}
-
-bool GLSurfaceEglReadback::FlipsVertically() const {
-  return true;
+gfx::SurfaceOrigin GLSurfaceEglReadback::GetOrigin() const {
+  return gfx::SurfaceOrigin::kTopLeft;
 }
 
 GLSurfaceEglReadback::~GLSurfaceEglReadback() {

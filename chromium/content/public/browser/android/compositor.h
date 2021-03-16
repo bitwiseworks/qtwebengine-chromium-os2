@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "cc/resources/ui_resource_bitmap.h"
+#include "cc/trees/layer_tree_host_client.h"
 #include "content/common/content_export.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ui/android/resources/ui_resource_provider.h"
@@ -47,7 +48,7 @@ class CONTENT_EXPORT Compositor {
   // Creates a GL context for the provided |handle|. If a null handle is passed,
   // an offscreen context is created. This must be called on the UI thread.
   using ContextProviderCallback =
-      base::Callback<void(scoped_refptr<viz::ContextProvider>)>;
+      base::OnceCallback<void(scoped_refptr<viz::ContextProvider>)>;
   static void CreateContextProvider(
       gpu::SurfaceHandle handle,
       gpu::ContextCreationAttribs attributes,
@@ -68,7 +69,8 @@ class CONTENT_EXPORT Compositor {
   virtual void SetWindowBounds(const gfx::Size& size) = 0;
 
   // Set the output surface which the compositor renders into.
-  virtual void SetSurface(jobject surface) = 0;
+  virtual void SetSurface(jobject surface,
+                          bool can_be_used_with_surface_control) = 0;
 
   // Set the background color used by the layer tree host.
   virtual void SetBackgroundColor(int color) = 0;
@@ -82,11 +84,30 @@ class CONTENT_EXPORT Compositor {
   // Composite *without* having modified the layer tree.
   virtual void SetNeedsComposite() = 0;
 
+  // Request a draw and swap even if there is no change to the layer tree.
+  virtual void SetNeedsRedraw() = 0;
+
   // Returns the UI resource provider associated with the compositor.
   virtual ui::UIResourceProvider& GetUIResourceProvider() = 0;
 
   // Returns the resource manager associated with the compositor.
   virtual ui::ResourceManager& GetResourceManager() = 0;
+
+  // Caches the back buffer associated with the current surface, if any. The
+  // client is responsible for evicting this cache entry before destroying the
+  // associated window.
+  virtual void CacheBackBufferForCurrentSurface() = 0;
+
+  // Evicts the cache entry created from the cached call above.
+  virtual void EvictCachedBackBuffer() = 0;
+
+  // Registers a callback that is run when the next frame successfully makes it
+  // to the screen (it's entirely possible some frames may be dropped between
+  // the time this is called and the callback is run).
+  using PresentationTimeCallback =
+      base::OnceCallback<void(const gfx::PresentationFeedback&)>;
+  virtual void RequestPresentationTimeForNextFrame(
+      PresentationTimeCallback callback) = 0;
 
  protected:
   Compositor() {}

@@ -6,17 +6,16 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
+#include "base/task/post_task.h"
+#include "base/task/thread_pool.h"
 #include "services/device/device_service.h"
 #include "services/device/public/cpp/geolocation/location_provider.h"
-#include "services/device/public/mojom/constants.mojom.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
-#include "services/service_manager/public/mojom/service_factory.mojom.h"
+#include "services/network/test/test_network_connection_tracker.h"
 
 namespace device {
 
@@ -31,41 +30,46 @@ std::unique_ptr<DeviceService> CreateTestDeviceService(
     scoped_refptr<base::SingleThreadTaskRunner> file_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    service_manager::mojom::ServiceRequest request) {
+    mojo::PendingReceiver<mojom::DeviceService> receiver) {
 #if defined(OS_ANDROID)
   return CreateDeviceService(
       file_task_runner, io_task_runner, url_loader_factory,
+      network::TestNetworkConnectionTracker::GetInstance(),
       kTestGeolocationApiKey, false, WakeLockContextCallback(),
       base::BindRepeating(&GetCustomLocationProviderForTest), nullptr,
-      std::move(request));
+      std::move(receiver));
 #else
   return CreateDeviceService(
       file_task_runner, io_task_runner, url_loader_factory,
+      network::TestNetworkConnectionTracker::GetInstance(),
       kTestGeolocationApiKey,
       base::BindRepeating(&GetCustomLocationProviderForTest),
-      std::move(request));
+      std::move(receiver));
 #endif
 }
 
 }  // namespace
 
 DeviceServiceTestBase::DeviceServiceTestBase()
-    : file_thread_("DeviceServiceTestFileThread"),
-      io_thread_("DeviceServiceTestIOThread"),
-      connector_(test_connector_factory_.CreateConnector()) {
-  file_thread_.Start();
-  io_thread_.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
-}
+    : file_task_runner_(base::ThreadPool::CreateSingleThreadTaskRunner(
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT})),
+      io_task_runner_(base::ThreadPool::CreateSingleThreadTaskRunner(
+          {base::TaskPriority::USER_VISIBLE})),
+      network_connection_tracker_(
+          network::TestNetworkConnectionTracker::CreateInstance()) {}
 
 DeviceServiceTestBase::~DeviceServiceTestBase() = default;
 
 void DeviceServiceTestBase::SetUp() {
   service_ = CreateTestDeviceService(
-      file_thread_.task_runner(), io_thread_.task_runner(),
+      file_task_runner_, io_task_runner_,
       base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
           &test_url_loader_factory_),
-      test_connector_factory_.RegisterInstance(mojom::kServiceName));
+      service_remote_.BindNewPipeAndPassReceiver());
+}
+
+void DeviceServiceTestBase::DestroyDeviceService() {
+  service_.reset();
 }
 
 }  // namespace device

@@ -5,15 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "SkImage_Base.h"
-#include "SkImageGenerator.h"
-#include "SkCanvas.h"
-#include "SkMakeUnique.h"
-#include "SkMatrix.h"
-#include "SkPaint.h"
-#include "SkPicture.h"
-#include "SkSurface.h"
-#include "SkTLazy.h"
+#include "include/core/SkCanvas.h"
+#include "include/core/SkImageGenerator.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPicture.h"
+#include "include/core/SkSurface.h"
+#include "src/core/SkTLazy.h"
+#include "src/gpu/SkGr.h"
+#include "src/image/SkImage_Base.h"
 
 class SkPictureImageGenerator : public SkImageGenerator {
 public:
@@ -25,9 +25,8 @@ protected:
         override;
 
 #if SK_SUPPORT_GPU
-    TexGenType onCanGenerateTexture() const override { return TexGenType::kExpensive; }
-    sk_sp<GrTextureProxy> onGenerateTexture(GrContext*, const SkImageInfo&, const SkIPoint&,
-                                            bool willNeedMipMaps) override;
+    GrSurfaceProxyView onGenerateTexture(GrRecordingContext*, const SkImageInfo&, const SkIPoint&,
+                                         GrMipMapped, GrImageTexGenPolicy) override;
 #endif
 
 private:
@@ -53,8 +52,8 @@ SkImageGenerator::MakeFromPicture(const SkISize& size, sk_sp<SkPicture> picture,
         colorType = kRGBA_F16_SkColorType;
     }
 
-    SkImageInfo info = SkImageInfo::Make(size.width(), size.height(), colorType,
-                                         kPremul_SkAlphaType, std::move(colorSpace));
+    SkImageInfo info =
+            SkImageInfo::Make(size, colorType, kPremul_SkAlphaType, std::move(colorSpace));
     return std::unique_ptr<SkImageGenerator>(
         new SkPictureImageGenerator(info, std::move(picture), matrix, paint));
 }
@@ -92,16 +91,27 @@ bool SkPictureImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels,
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if SK_SUPPORT_GPU
-sk_sp<GrTextureProxy> SkPictureImageGenerator::onGenerateTexture(
-        GrContext* ctx, const SkImageInfo& info, const SkIPoint& origin, bool willNeedMipMaps) {
+#include "include/private/GrRecordingContext.h"
+#include "src/gpu/GrRecordingContextPriv.h"
+
+GrSurfaceProxyView SkPictureImageGenerator::onGenerateTexture(GrRecordingContext* ctx,
+                                                              const SkImageInfo& info,
+                                                              const SkIPoint& origin,
+                                                              GrMipMapped mipMapped,
+                                                              GrImageTexGenPolicy texGenPolicy) {
     SkASSERT(ctx);
 
     SkSurfaceProps props(0, kUnknown_SkPixelGeometry);
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctx, SkBudgeted::kYes, info, 0,
-                                                         kTopLeft_GrSurfaceOrigin, &props,
-                                                         willNeedMipMaps));
+
+    SkBudgeted budgeted = texGenPolicy == GrImageTexGenPolicy::kNew_Uncached_Unbudgeted
+                                  ? SkBudgeted::kNo
+                                  : SkBudgeted::kYes;
+    // CONTEXT TODO: remove this use of 'backdoor' to create an SkSkSurface
+    auto surface = SkSurface::MakeRenderTarget(ctx->priv().backdoor(), budgeted, info, 0,
+                                               kTopLeft_GrSurfaceOrigin, &props,
+                                               mipMapped == GrMipMapped::kYes);
     if (!surface) {
-        return nullptr;
+        return {};
     }
 
     SkMatrix matrix = fMatrix;
@@ -110,10 +120,12 @@ sk_sp<GrTextureProxy> SkPictureImageGenerator::onGenerateTexture(
     surface->getCanvas()->drawPicture(fPicture.get(), &matrix, fPaint.getMaybeNull());
     sk_sp<SkImage> image(surface->makeImageSnapshot());
     if (!image) {
-        return nullptr;
+        return {};
     }
-    sk_sp<GrTextureProxy> proxy = as_IB(image)->asTextureProxyRef();
-    SkASSERT(!willNeedMipMaps || GrMipMapped::kYes == proxy->mipMapped());
-    return proxy;
+    const GrSurfaceProxyView* view = as_IB(image)->view(ctx);
+    SkASSERT(view);
+    SkASSERT(mipMapped == GrMipMapped::kNo ||
+             view->asTextureProxy()->mipMapped() == GrMipMapped::kYes);
+    return *view;
 }
 #endif

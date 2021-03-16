@@ -31,6 +31,12 @@ namespace blink {
 
 class HTMLInputElement;
 
+// LayoutObject for text-field <input>s.
+//
+// This class inherits from LayoutTextControl and LayoutBlockFlow. If we'd like
+// to change the base class, we need to make sure that
+// ShouldIgnoreOverflowPropertyForInlineBlockBaseline flag works with the new
+// base class.
 class LayoutTextControlSingleLine : public LayoutTextControl {
  public:
   LayoutTextControlSingleLine(HTMLInputElement*);
@@ -47,8 +53,6 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
   HTMLInputElement* InputElement() const;
 
  private:
-  bool HasControlClip() const final;
-  LayoutRect ControlClipRect(const LayoutPoint&) const final;
   bool IsOfType(LayoutObjectType type) const override {
     return type == kLayoutObjectTextField || LayoutTextControl::IsOfType(type);
   }
@@ -57,22 +61,15 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
   void UpdateLayout() override;
 
   bool NodeAtPoint(HitTestResult&,
-                   const HitTestLocation& location_in_container,
-                   const LayoutPoint& accumulated_offset,
+                   const HitTestLocation&,
+                   const PhysicalOffset& accumulated_offset,
                    HitTestAction) final;
 
-  void Autoscroll(const IntPoint&) final;
-
   // Subclassed to forward to our inner div.
-  LayoutUnit ScrollLeft() const final;
-  LayoutUnit ScrollTop() const final;
   LayoutUnit ScrollWidth() const final;
   LayoutUnit ScrollHeight() const final;
-  void SetScrollLeft(LayoutUnit) final;
-  void SetScrollTop(LayoutUnit) final;
 
   int TextBlockWidth() const;
-  float GetAvgCharWidth(const AtomicString& family) const final;
   LayoutUnit PreferredContentLogicalWidth(float char_width) const final;
   LayoutUnit ComputeControlLogicalHeight(
       LayoutUnit line_height,
@@ -92,16 +89,18 @@ class LayoutTextControlSingleLine : public LayoutTextControl {
   bool should_draw_caps_lock_indicator_;
 };
 
-DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutTextControlSingleLine, IsTextField());
+template <>
+struct DowncastTraits<LayoutTextControlSingleLine> {
+  static bool AllowFrom(const LayoutObject& object) {
+    return object.IsTextField();
+  }
+};
 
 // ----------------------------
 
 class LayoutTextControlInnerEditor : public LayoutBlockFlow {
  public:
   LayoutTextControlInnerEditor(Element* element) : LayoutBlockFlow(element) {}
-  bool ShouldIgnoreOverflowPropertyForInlineBlockBaseline() const override {
-    return true;
-  }
 
  private:
   bool IsIntrinsicallyScrollable(
@@ -110,7 +109,6 @@ class LayoutTextControlInnerEditor : public LayoutBlockFlow {
   }
   bool ScrollsOverflowX() const override { return HasOverflowClip(); }
   bool ScrollsOverflowY() const override { return false; }
-  bool HasLineIfEmpty() const override { return true; }
 };
 
 }  // namespace blink

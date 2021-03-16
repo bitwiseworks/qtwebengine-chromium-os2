@@ -17,15 +17,16 @@
 #include "extensions/browser/api/hid/hid_device_manager.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/common/api/hid.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/device/public/mojom/hid.mojom.h"
 
 namespace extensions {
 
 class DevicePermissionsPrompt;
 
-class HidGetDevicesFunction : public UIThreadExtensionFunction {
+class HidGetDevicesFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.getDevices", HID_GETDEVICES);
+  DECLARE_EXTENSION_FUNCTION("hid.getDevices", HID_GETDEVICES)
 
   HidGetDevicesFunction();
 
@@ -40,7 +41,7 @@ class HidGetDevicesFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(HidGetDevicesFunction);
 };
 
-class HidGetUserSelectedDevicesFunction : public UIThreadExtensionFunction {
+class HidGetUserSelectedDevicesFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("hid.getUserSelectedDevices",
                              HID_GETUSERSELECTEDDEVICES)
@@ -60,9 +61,9 @@ class HidGetUserSelectedDevicesFunction : public UIThreadExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(HidGetUserSelectedDevicesFunction);
 };
 
-class HidConnectFunction : public UIThreadExtensionFunction {
+class HidConnectFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.connect", HID_CONNECT);
+  DECLARE_EXTENSION_FUNCTION("hid.connect", HID_CONNECT)
 
   HidConnectFunction();
 
@@ -72,16 +73,17 @@ class HidConnectFunction : public UIThreadExtensionFunction {
   // ExtensionFunction:
   ResponseAction Run() override;
 
-  void OnConnectComplete(device::mojom::HidConnectionPtr connection);
+  void OnConnectComplete(
+      mojo::PendingRemote<device::mojom::HidConnection> connection);
 
   ApiResourceManager<HidConnectionResource>* connection_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(HidConnectFunction);
 };
 
-class HidDisconnectFunction : public UIThreadExtensionFunction {
+class HidDisconnectFunction : public ExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.disconnect", HID_DISCONNECT);
+  DECLARE_EXTENSION_FUNCTION("hid.disconnect", HID_DISCONNECT)
 
   HidDisconnectFunction();
 
@@ -96,7 +98,7 @@ class HidDisconnectFunction : public UIThreadExtensionFunction {
 
 // Base class for extension functions that start some asynchronous work after
 // looking up a HidConnection.
-class HidConnectionIoFunction : public UIThreadExtensionFunction {
+class HidConnectionIoFunction : public ExtensionFunction {
  public:
   HidConnectionIoFunction();
 
@@ -118,7 +120,7 @@ class HidConnectionIoFunction : public UIThreadExtensionFunction {
 
 class HidReceiveFunction : public HidConnectionIoFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.receive", HID_RECEIVE);
+  DECLARE_EXTENSION_FUNCTION("hid.receive", HID_RECEIVE)
 
   HidReceiveFunction();
 
@@ -140,7 +142,7 @@ class HidReceiveFunction : public HidConnectionIoFunction {
 
 class HidSendFunction : public HidConnectionIoFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.send", HID_SEND);
+  DECLARE_EXTENSION_FUNCTION("hid.send", HID_SEND)
 
   HidSendFunction();
 
@@ -161,7 +163,7 @@ class HidSendFunction : public HidConnectionIoFunction {
 class HidReceiveFeatureReportFunction : public HidConnectionIoFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("hid.receiveFeatureReport",
-                             HID_RECEIVEFEATUREREPORT);
+                             HID_RECEIVEFEATUREREPORT)
 
   HidReceiveFeatureReportFunction();
 
@@ -182,7 +184,7 @@ class HidReceiveFeatureReportFunction : public HidConnectionIoFunction {
 
 class HidSendFeatureReportFunction : public HidConnectionIoFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("hid.sendFeatureReport", HID_SENDFEATUREREPORT);
+  DECLARE_EXTENSION_FUNCTION("hid.sendFeatureReport", HID_SENDFEATUREREPORT)
 
   HidSendFeatureReportFunction();
 

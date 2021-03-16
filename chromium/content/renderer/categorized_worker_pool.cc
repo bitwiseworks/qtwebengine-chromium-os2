@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
@@ -79,7 +80,6 @@ class CategorizedWorkerPool::CategorizedWorkerPoolSequencedTaskRunner
                        base::TimeDelta delay) override {
     return PostNonNestableDelayedTask(from_here, std::move(task), delay);
   }
-  bool RunsTasksInCurrentSequence() const override { return true; }
 
   // Overridden from base::SequencedTaskRunner:
   bool PostNonNestableDelayedTask(const base::Location& from_here,
@@ -120,12 +120,17 @@ class CategorizedWorkerPool::CategorizedWorkerPoolSequencedTaskRunner
     return true;
   }
 
+  bool RunsTasksInCurrentSequence() const override { return true; }
+
  private:
   ~CategorizedWorkerPoolSequencedTaskRunner() override {
-    task_graph_runner_->WaitForTasksToFinishRunning(namespace_token_);
+    {
+      base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
+      task_graph_runner_->WaitForTasksToFinishRunning(namespace_token_);
+    }
     task_graph_runner_->CollectCompletedTasks(namespace_token_,
                                               &completed_tasks_);
-  };
+  }
 
   // Lock to exclusively access all the following members that are used to
   // implement the SequencedTaskRunner interfaces.
@@ -165,6 +170,9 @@ void CategorizedWorkerPool::Start(int num_threads) {
   foreground_categories.push_back(cc::TASK_CATEGORY_FOREGROUND);
 
   for (int i = 0; i < num_threads; i++) {
+    base::SimpleThread::Options thread_options;
+    // Use same priority for foreground workers as compositor thread.
+    thread_options.priority = base::PlatformThread::GetCurrentThreadPriority();
     std::unique_ptr<base::SimpleThread> thread(new CategorizedWorkerPoolThread(
         base::StringPrintf("CompositorTileWorker%d", i + 1).c_str(),
         base::SimpleThread::Options(), this, foreground_categories,
@@ -195,7 +203,11 @@ void CategorizedWorkerPool::Start(int num_threads) {
 }
 
 void CategorizedWorkerPool::Shutdown() {
-  WaitForTasksToFinishRunning(namespace_token_);
+  {
+    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
+    WaitForTasksToFinishRunning(namespace_token_);
+  }
+
   CollectCompletedTasks(namespace_token_, &completed_tasks_);
   // Shutdown raster threads.
   {
@@ -227,11 +239,9 @@ bool CategorizedWorkerPool::PostDelayedTask(const base::Location& from_here,
   DCHECK(completed_tasks_.empty());
   CollectCompletedTasksWithLockAcquired(namespace_token_, &completed_tasks_);
 
-  auto end = std::remove_if(
-      tasks_.begin(), tasks_.end(), [this](const scoped_refptr<cc::Task>& e) {
-        return base::ContainsValue(this->completed_tasks_, e);
-      });
-  tasks_.erase(end, tasks_.end());
+  base::EraseIf(tasks_, [this](const scoped_refptr<cc::Task>& e) {
+    return base::Contains(this->completed_tasks_, e);
+  });
 
   tasks_.push_back(base::MakeRefCounted<ClosureTask>(std::move(task)));
   graph_.Reset();
@@ -245,10 +255,6 @@ bool CategorizedWorkerPool::PostDelayedTask(const base::Location& from_here,
 
   ScheduleTasksWithLockAcquired(namespace_token_, &graph_);
   completed_tasks_.clear();
-  return true;
-}
-
-bool CategorizedWorkerPool::RunsTasksInCurrentSequence() const {
   return true;
 }
 
@@ -336,8 +342,6 @@ void CategorizedWorkerPool::WaitForTasksToFinishRunning(
 
   {
     base::AutoLock lock(lock_);
-    // http://crbug.com/902823
-    base::ScopedAllowBaseSyncPrimitivesOutsideBlockingScope allow_wait;
 
     auto* task_namespace = work_queue_.GetNamespaceForToken(token);
 

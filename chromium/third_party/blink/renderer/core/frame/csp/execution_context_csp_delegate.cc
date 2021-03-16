@@ -4,21 +4,26 @@
 
 #include "third_party/blink/renderer/core/frame/csp/execution_context_csp_delegate.h"
 
+#include "third_party/blink/public/common/security_context/insecure_request_policy.h"
+#include "third_party/blink/public/mojom/security_context/insecure_request_policy.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/events/security_policy_violation_event.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/frame/csp/csp_violation_report_body.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
+#include "third_party/blink/renderer/core/frame/report.h"
+#include "third_party/blink/renderer/core/frame/reporting_context.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/ping_loader.h"
-#include "third_party/blink/renderer/core/origin_trials/origin_trials.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/network/encoded_form_data.h"
-#include "third_party/blink/renderer/platform/weborigin/reporting_service_proxy_ptr_holder.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -27,7 +32,7 @@ ExecutionContextCSPDelegate::ExecutionContextCSPDelegate(
     ExecutionContext& execution_context)
     : execution_context_(&execution_context) {}
 
-void ExecutionContextCSPDelegate::Trace(blink::Visitor* visitor) {
+void ExecutionContextCSPDelegate::Trace(Visitor* visitor) {
   visitor->Trace(execution_context_);
   ContentSecurityPolicyDelegate::Trace(visitor);
 }
@@ -36,25 +41,42 @@ const SecurityOrigin* ExecutionContextCSPDelegate::GetSecurityOrigin() {
   return execution_context_->GetSecurityOrigin();
 }
 
+SecureContextMode ExecutionContextCSPDelegate::GetSecureContextMode() {
+  return GetSecurityContext().GetSecureContextMode();
+}
+
 const KURL& ExecutionContextCSPDelegate::Url() const {
   return execution_context_->Url();
 }
 
 void ExecutionContextCSPDelegate::SetSandboxFlags(SandboxFlags mask) {
-  GetSecurityContext().EnforceSandboxFlags(mask);
-}
+  // Ideally sandbox flags are determined at construction time since
+  // sandbox flags influence the security origin and that influences
+  // the Agent that is assigned for the ExecutionContext. Changing
+  // an ExecutionContext's agent in the middle of an object lifecycle
+  // is not permitted.
 
-void ExecutionContextCSPDelegate::SetAddressSpace(mojom::IPAddressSpace space) {
-  GetSecurityContext().SetAddressSpace(space);
+  // Since Workers and Worklets don't share agents (each one is unique)
+  // we allow them to apply new sandbox flags on top of the current ones.
+  WorkerOrWorkletGlobalScope* worklet_or_worker =
+      DynamicTo<WorkerOrWorkletGlobalScope>(execution_context_.Get());
+  if (worklet_or_worker) {
+    worklet_or_worker->ApplySandboxFlags(mask);
+  }
+  // Just check that all the sandbox flags that are set by CSP have
+  // already been set on the security context. Meta tags can't set them
+  // and we should have already constructed the document with the correct
+  // sandbox flags from CSP already.
+  mojom::blink::WebSandboxFlags flags = GetSecurityContext().GetSandboxFlags();
+  CHECK_EQ(flags | mask, flags);
 }
 
 void ExecutionContextCSPDelegate::SetRequireTrustedTypes() {
-  if (origin_trials::TrustedDOMTypesEnabled(execution_context_))
-    GetSecurityContext().SetRequireTrustedTypes();
+  GetSecurityContext().SetRequireTrustedTypes();
 }
 
 void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
-    WebInsecureRequestPolicy policy) {
+    mojom::blink::InsecureRequestPolicy policy) {
   SecurityContext& security_context = GetSecurityContext();
 
   Document* document = GetDocument();
@@ -67,7 +89,9 @@ void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
     document->DidEnforceInsecureRequestPolicy();
 
   // Upgrade Insecure Requests: Update the set of insecure URLs to upgrade.
-  if (policy & kUpgradeInsecureRequests) {
+  if ((policy &
+       mojom::blink::InsecureRequestPolicy::kUpgradeInsecureRequests) !=
+      mojom::blink::InsecureRequestPolicy::kLeaveInsecureRequestsAlone) {
     // Spec: Enforcing part of:
     // https://w3c.github.io/webappsec-upgrade-insecure-requests/#delivery
     // Step 3. Let tuple be a tuple of the protected resource’s URL's host and
@@ -75,11 +99,14 @@ void ExecutionContextCSPDelegate::AddInsecureRequestPolicy(
     // Step 4. Insert tuple into settings’s upgrade insecure navigations set.
     // [spec text]
     Count(WebFeature::kUpgradeInsecureRequestsEnabled);
-    if (!Url().Host().IsEmpty()) {
+    // We don't add the hash if |document| is null, to prevent
+    // WorkerGlobalScope::Url() before it's ready. https://crbug.com/861564
+    // This should be safe, because the insecure navigations set is not used
+    // in non-Document contexts.
+    if (document && !Url().Host().IsEmpty()) {
       uint32_t hash = Url().Host().Impl()->GetHash();
       security_context.AddInsecureNavigationUpgrade(hash);
-      if (document)
-        document->DidEnforceInsecureNavigationsSet();
+      document->DidEnforceInsecureNavigationsSet();
     }
   }
 }
@@ -136,7 +163,7 @@ void ExecutionContextCSPDelegate::PostViolationReport(
                 ContentSecurityPolicy::GetDirectiveType(
                     violation_data.effectiveDirective()));
 
-  // TODO(mkwst): Support POSTing violation reports from a Worker.
+  // TODO(crbug/929370): Support POSTing violation reports from a Worker.
   Document* document = GetDocument();
   if (!document)
     return;
@@ -148,23 +175,19 @@ void ExecutionContextCSPDelegate::PostViolationReport(
   scoped_refptr<EncodedFormData> report =
       EncodedFormData::Create(stringified_report.Utf8());
 
-  DEFINE_STATIC_LOCAL(ReportingServiceProxyPtrHolder,
-                      reporting_service_proxy_holder, ());
+  // Construct and route the report to the ReportingContext, to be observed
+  // by any ReportingObservers.
+  auto* body = MakeGarbageCollected<CSPViolationReportBody>(violation_data);
+  Report* observed_report = MakeGarbageCollected<Report>(
+      ReportType::kCSPViolation, Url().GetString(), body);
+  ReportingContext::From(document->ToExecutionContext())
+      ->QueueReport(observed_report,
+                    use_reporting_api ? report_endpoints : Vector<String>());
+
+  if (use_reporting_api)
+    return;
 
   for (const auto& report_endpoint : report_endpoints) {
-    if (use_reporting_api) {
-      // https://w3c.github.io/webappsec-csp/#report-violation
-      // Step 3.5. If violation’s policy’s directive set contains a directive
-      // named "report-to" (directive): [spec text]
-      //
-      // https://w3c.github.io/reporting/#queue-report
-      // Step 2. If url was not provided by the caller, let url be settings’s
-      // creation URL. [spec text]
-      reporting_service_proxy_holder.QueueCspViolationReport(
-          Url(), report_endpoint, &violation_data);
-      continue;
-    }
-
     // Use the frame's document to complete the endpoint URL, overriding its URL
     // with the blocked document's URL.
     // https://w3c.github.io/webappsec-csp/#report-violation
@@ -182,8 +205,7 @@ void ExecutionContextCSPDelegate::PostViolationReport(
                    // inconsistent.
                    : document->CompleteURLWithOverride(
                          report_endpoint, document->FallbackBaseURL());
-    PingLoader::SendViolationReport(
-        frame, url, report, PingLoader::kContentSecurityPolicyViolationReport);
+    PingLoader::SendViolationReport(frame, url, report);
   }
 }
 
@@ -202,14 +224,21 @@ void ExecutionContextCSPDelegate::DisableEval(const String& error_message) {
 
 void ExecutionContextCSPDelegate::ReportBlockedScriptExecutionToInspector(
     const String& directive_text) {
-  probe::scriptExecutionBlockedByCSP(execution_context_, directive_text);
+  probe::ScriptExecutionBlockedByCSP(execution_context_, directive_text);
 }
 
 void ExecutionContextCSPDelegate::DidAddContentSecurityPolicies(
-    const blink::WebVector<WebContentSecurityPolicy>& policies) {
+    WTF::Vector<network::mojom::blink::ContentSecurityPolicyPtr> policies) {
   Document* document = GetDocument();
-  if (document && document->GetFrame())
-    document->GetFrame()->Client()->DidAddContentSecurityPolicies(policies);
+  if (!document)
+    return;
+
+  LocalFrame* frame = document->GetFrame();
+  if (!frame)
+    return;
+
+  frame->GetLocalFrameHostRemote().DidAddContentSecurityPolicies(
+      std::move(policies));
 }
 
 SecurityContext& ExecutionContextCSPDelegate::GetSecurityContext() {
@@ -217,7 +246,8 @@ SecurityContext& ExecutionContextCSPDelegate::GetSecurityContext() {
 }
 
 Document* ExecutionContextCSPDelegate::GetDocument() {
-  return DynamicTo<Document>(execution_context_.Get());
+  auto* window = DynamicTo<LocalDOMWindow>(execution_context_.Get());
+  return window ? window->document() : nullptr;
 }
 
 void ExecutionContextCSPDelegate::DispatchViolationEventInternal(

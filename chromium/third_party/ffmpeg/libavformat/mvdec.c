@@ -46,7 +46,7 @@ typedef struct MvContext {
 
 #define AUDIO_FORMAT_SIGNED 401
 
-static int mv_probe(AVProbeData *p)
+static int mv_probe(const AVProbeData *p)
 {
     if (AV_RB32(p->buf) == MKBETAG('M', 'O', 'V', 'I') &&
         AV_RB16(p->buf + 4) < 3)
@@ -211,6 +211,8 @@ static int parse_video_var(AVFormatContext *avctx, AVStream *st,
     } else if (!strcmp(name, "ORIENTATION")) {
         if (var_read_int(pb, size) == 1101) {
             st->codecpar->extradata      = av_strdup("BottomUp");
+            if (!st->codecpar->extradata)
+                return AVERROR(ENOMEM);
             st->codecpar->extradata_size = 9;
         }
     } else if (!strcmp(name, "Q_SPATIAL") || !strcmp(name, "Q_TEMPORAL")) {

@@ -9,7 +9,6 @@
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
 
@@ -46,10 +45,11 @@ class SimNetwork final : public WebURLLoaderTestDelegate {
                int64_t total_encoded_body_length,
                int64_t total_decoded_body_length) override;
   void DidFinishLoading(WebURLLoaderClient*,
-                        TimeTicks finish_time,
+                        base::TimeTicks finish_time,
                         int64_t total_encoded_data_length,
                         int64_t total_encoded_body_length,
                         int64_t total_decoded_body_length) override;
+  bool FillNavigationParamsResponse(WebNavigationParams*) override;
 
   SimRequestBase* current_request_;
   HashMap<String, SimRequestBase*> requests_;

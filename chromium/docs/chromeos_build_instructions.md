@@ -11,7 +11,7 @@ etc.) are stubbed out. The entire system UI runs in a single X11 window on your
 desktop.
 
 First, follow the [normal Linux build
-instructions](https://chromium.googlesource.com/chromium/src/+/master/docs/linux_build_instructions.md)
+instructions](https://chromium.googlesource.com/chromium/src/+/master/docs/linux/build_instructions.md)
 as usual to get a Chromium checkout.
 
 ## Updating your gclient config
@@ -76,7 +76,8 @@ By default this build signs in with a stub user. To specify a real user:
     `--user-data-dir=/tmp/chrome --login-manager`
 *   Go through the out-of-the-box UX and sign in with a real Gmail account.
 *   For subsequent runs, add:
-    `--user-data-dir=/tmp/chrome --login-user=username@gmail.com`
+    `--user-data-dir=/tmp/chrome --login-user=username@gmail.com
+    --login-profile=username@gmail.com-hash`
 *   To run in guest mode instantly, add:
     `--user-data-dir=/tmp/chrome --bwsi --incognito --login-user='$guest'
     --login-profile=user`

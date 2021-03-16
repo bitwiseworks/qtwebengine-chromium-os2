@@ -4,8 +4,9 @@
 
 #include "xfa/fde/cfde_texteditengine.h"
 
+#include "core/fxge/text_char_pos.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "testing/test_support.h"
+#include "testing/xfa_unit_test_support.h"
 #include "third_party/base/ptr_util.h"
 #include "xfa/fgas/font/cfgas_gefont.h"
 
@@ -158,6 +159,53 @@ TEST_F(CFDE_TextEditEngineTest, Insert) {
   engine()->LimitVerticalScroll(false);
 
   engine()->SetDelegate(nullptr);
+}
+
+TEST_F(CFDE_TextEditEngineTest, InsertToggleLimit) {
+  engine()->SetHasCharacterLimit(true);
+  engine()->Insert(0, L"Hello World");
+  engine()->SetCharacterLimit(5);
+  engine()->Insert(0, L"Not Inserted before ");
+  EXPECT_STREQ(L"Hello World", engine()->GetText().c_str());
+
+  engine()->SetHasCharacterLimit(false);
+  engine()->Insert(0, L"Inserted before ");
+  engine()->SetHasCharacterLimit(true);
+  engine()->Insert(0, L"Not Inserted before ");
+  EXPECT_STREQ(L"Inserted before Hello World", engine()->GetText().c_str());
+}
+
+TEST_F(CFDE_TextEditEngineTest, InsertSkipNotify) {
+  engine()->SetHasCharacterLimit(true);
+  engine()->SetCharacterLimit(8);
+  engine()->Insert(0, L"Hello");
+  engine()->Insert(5, L" World",
+                   CFDE_TextEditEngine::RecordOperation::kSkipNotify);
+  EXPECT_STREQ(L"Hello World", engine()->GetText().c_str());
+
+  engine()->Insert(0, L"Not inserted");
+  EXPECT_STREQ(L"Hello World", engine()->GetText().c_str());
+
+  engine()->Delete(5, 1);
+  EXPECT_STREQ(L"HelloWorld", engine()->GetText().c_str());
+
+  engine()->Insert(0, L"****");
+  EXPECT_STREQ(L"*HelloWorld", engine()->GetText().c_str());
+}
+
+TEST_F(CFDE_TextEditEngineTest, InsertGrowGap) {
+  engine()->Insert(0, L"||");
+  for (size_t i = 1; i < 1023; ++i) {
+    engine()->Insert(i, L"a");
+  }
+  WideString result = engine()->GetText();
+  ASSERT_EQ(result.GetLength(), 1024u);
+  EXPECT_EQ(result[0], L'|');
+  EXPECT_EQ(result[1], L'a');
+  EXPECT_EQ(result[2], L'a');
+  // ...
+  EXPECT_EQ(result[1022], L'a');
+  EXPECT_EQ(result[1023], L'|');
 }
 
 TEST_F(CFDE_TextEditEngineTest, Delete) {

@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/values.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -46,7 +47,8 @@ bool CanUseDeprecatedAudioApi(const Extension* extension) {
       .is_available();
 }
 
-bool CanReceiveDeprecatedAudioEvent(content::BrowserContext* context,
+bool CanReceiveDeprecatedAudioEvent(content::BrowserContext* browser_context,
+                                    Feature::Context target_context,
                                     const Extension* extension,
                                     Event* event,
                                     const base::DictionaryValue* filter) {

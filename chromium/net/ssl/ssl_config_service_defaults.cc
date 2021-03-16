@@ -9,11 +9,16 @@ namespace net {
 SSLConfigServiceDefaults::SSLConfigServiceDefaults() = default;
 SSLConfigServiceDefaults::~SSLConfigServiceDefaults() = default;
 
-void SSLConfigServiceDefaults::GetSSLConfig(SSLConfig* config) {
-  *config = default_config_;
+SSLContextConfig SSLConfigServiceDefaults::GetSSLContextConfig() {
+  return default_config_;
 }
 
 bool SSLConfigServiceDefaults::CanShareConnectionWithClientCerts(
+    const std::string& hostname) const {
+  return false;
+}
+
+bool SSLConfigServiceDefaults::ShouldSuppressLegacyTLSWarning(
     const std::string& hostname) const {
   return false;
 }

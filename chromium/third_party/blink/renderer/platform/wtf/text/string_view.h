@@ -5,12 +5,13 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_VIEW_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_STRING_VIEW_H_
 
-#include "third_party/blink/renderer/platform/wtf/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/get_ptr.h"
 #if DCHECK_IS_ON()
 #include "base/memory/scoped_refptr.h"
 #endif
 #include <cstring>
+#include "base/containers/span.h"
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/unicode.h"
@@ -57,12 +58,12 @@ class WTF_EXPORT StringView {
   StringView(StringImpl&, unsigned offset);
   StringView(StringImpl&, unsigned offset, unsigned length);
 
-  // From a String, implemented in String.h
+  // From a String, implemented in wtf_string.h
   inline StringView(const String&, unsigned offset, unsigned length);
   inline StringView(const String&, unsigned offset);
   inline StringView(const String&);
 
-  // From an AtomicString, implemented in AtomicString.h
+  // From an AtomicString, implemented in atomic_string.h
   inline StringView(const AtomicString&, unsigned offset, unsigned length);
   inline StringView(const AtomicString&, unsigned offset);
   inline StringView(const AtomicString&);
@@ -86,10 +87,8 @@ class WTF_EXPORT StringView {
         characters16_(chars),
         length_(length) {}
   StringView(const UChar* chars);
-#if (U_ICU_VERSION_MAJOR_NUM < 59) || !defined(USING_SYSTEM_ICU)
   StringView(const char16_t* chars)
       : StringView(reinterpret_cast<const UChar*>(chars)) {}
-#endif
 
 #if DCHECK_IS_ON()
   ~StringView();
@@ -122,6 +121,16 @@ class WTF_EXPORT StringView {
   const UChar* Characters16() const {
     DCHECK(!Is8Bit());
     return characters16_;
+  }
+
+  base::span<const LChar> Span8() const {
+    DCHECK(Is8Bit());
+    return {characters8_, length_};
+  }
+
+  base::span<const UChar> Span16() const {
+    DCHECK(!Is8Bit());
+    return {characters16_, length_};
   }
 
   UChar32 CodepointAt(unsigned i) const {
@@ -243,6 +252,15 @@ WTF_EXPORT bool DeprecatedEqualIgnoringCaseAndNullity(const StringView&,
                                                       const StringView&);
 
 WTF_EXPORT bool EqualIgnoringASCIICase(const StringView&, const StringView&);
+
+template <size_t N>
+inline bool EqualIgnoringASCIICase(const StringView& a,
+                                   const char (&literal)[N]) {
+  if (a.length() != N - 1 || (N == 1 && a.IsNull()))
+    return false;
+  return a.Is8Bit() ? EqualIgnoringASCIICase(a.Characters8(), literal, N - 1)
+                    : EqualIgnoringASCIICase(a.Characters16(), literal, N - 1);
+}
 
 // TODO(esprehn): Can't make this an overload of WTF::equal since that makes
 // calls to equal() that pass literal strings ambiguous. Figure out if we can

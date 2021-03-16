@@ -14,12 +14,24 @@ if (use_udev) {
       "udev0_loader.h",
       "udev1_loader.cc",
       "udev1_loader.h",
-      "udev_linux.cc",
-      "udev_linux.h",
       "udev_loader.cc",
       "udev_loader.h",
       "udev_watcher.cc",
       "udev_watcher.h",
+    ]
+
+    deps = [
+      "//base",
+      "//build/linux/libudev",
+    ]
+  }
+
+  source_set("test_support") {
+    testonly = true
+    public_deps = [ ":udev_linux" ]
+    sources = [
+      "fake_udev_loader.cc",
+      "fake_udev_loader.h",
     ]
 
     deps = [

@@ -24,17 +24,16 @@ class GL_EXPORT GLSurfaceStub : public GLSurface {
   void Destroy() override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
-              ColorSpace color_space,
+              const gfx::ColorSpace& color_space,
               bool has_alpha) override;
   bool IsOffscreen() override;
-  gfx::SwapResult SwapBuffers(const PresentationCallback& callback) override;
+  gfx::SwapResult SwapBuffers(PresentationCallback callback) override;
   gfx::Size GetSize() override;
   void* GetHandle() override;
   bool BuffersFlipped() const override;
   GLSurfaceFormat GetFormat() override;
   bool SupportsDCLayers() const override;
   gfx::Vector2d GetDrawOffset() const override;
-  bool SupportsPresentationCallback() override;
 
  protected:
   ~GLSurfaceStub() override;

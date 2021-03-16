@@ -10,6 +10,7 @@
 #include "base/time/time.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/input_event_activation_protector.h"
 #include "ui/views/window/client_view.h"
 #include "ui/views/window/dialog_observer.h"
 
@@ -29,27 +30,25 @@ class Widget;
 //   +------------------------------+
 //   | [Extra View]   [OK] [Cancel] |
 //   +------------------------------+
+//
+// You must not directly depend on or use DialogClientView; it is internal to
+// //ui/views. Access it through the public interfaces on DialogDelegate. It is
+// only VIEWS_EXPORT to make it available to views_unittests.
 class VIEWS_EXPORT DialogClientView : public ClientView,
                                       public ButtonListener,
                                       public DialogObserver {
  public:
+  METADATA_HEADER(DialogClientView);
+
   DialogClientView(Widget* widget, View* contents_view);
   ~DialogClientView() override;
-
-  // Accept or Cancel the dialog.
-  void AcceptWindow();
-  void CancelWindow();
 
   // Accessors in case the user wishes to adjust these buttons.
   LabelButton* ok_button() const { return ok_button_; }
   LabelButton* cancel_button() const { return cancel_button_; }
+  View* extra_view() const { return extra_view_; }
 
   void SetButtonRowInsets(const gfx::Insets& insets);
-
-  // ClientView implementation:
-  bool CanClose() override;
-  DialogClientView* AsDialogClientView() override;
-  const DialogClientView* AsDialogClientView() const override;
 
   // View implementation:
   gfx::Size CalculatePreferredSize() const override;
@@ -61,7 +60,7 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
   // ButtonListener implementation:
   void ButtonPressed(Button* sender, const ui::Event& event) override;
@@ -84,7 +83,6 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   DialogDelegate* GetDialogDelegate() const;
 
   // View implementation.
-  void ChildPreferredSizeChanged(View* child) override;
   void ChildVisibilityChanged(View* child) override;
 
   // DialogObserver:
@@ -100,7 +98,7 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   void UpdateDialogButton(LabelButton** member, ui::DialogButton type);
 
   // Returns the spacing between the extra view and the ok/cancel buttons. 0 if
-  // no extra view. Otherwise uses GetExtraViewPadding() or the default padding.
+  // no extra view. Otherwise uses the default padding.
   int GetExtraViewSpacing() const;
 
   // Returns Views in the button row, as they should appear in the layout. If
@@ -131,18 +129,11 @@ class VIEWS_EXPORT DialogClientView : public ClientView,
   // Container view for the button row.
   ButtonRowContainer* button_row_container_ = nullptr;
 
-  // True if we've notified the delegate the window is closing and the delegate
-  // allowed the close. In some situations it's possible to get two closes (see
-  // http://crbug.com/71940). This is used to avoid notifying the delegate
-  // twice, which can have bad consequences.
-  bool delegate_allowed_close_ = false;
-
   // Used to prevent unnecessary or potentially harmful changes during
   // SetupLayout(). Everything will be manually updated afterwards.
   bool adding_or_removing_views_ = false;
 
-  // Time when view has been shown.
-  base::TimeTicks view_shown_time_stamp_;
+  InputEventActivationProtector input_protector_;
 
   DISALLOW_COPY_AND_ASSIGN(DialogClientView);
 };

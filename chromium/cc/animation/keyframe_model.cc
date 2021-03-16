@@ -12,6 +12,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/animation/animation_curve.h"
+#include "cc/trees/target_property.h"
 
 namespace {
 
@@ -50,9 +51,11 @@ std::unique_ptr<KeyframeModel> KeyframeModel::Create(
     std::unique_ptr<AnimationCurve> curve,
     int keyframe_model_id,
     int group_id,
-    int target_property_id) {
+    int target_property_id,
+    const std::string& custom_property_name) {
   return base::WrapUnique(new KeyframeModel(std::move(curve), keyframe_model_id,
-                                            group_id, target_property_id));
+                                            group_id, target_property_id,
+                                            custom_property_name));
 }
 
 std::unique_ptr<KeyframeModel> KeyframeModel::CreateImplInstance(
@@ -61,7 +64,8 @@ std::unique_ptr<KeyframeModel> KeyframeModel::CreateImplInstance(
   // creating multiple controlling instances.
   DCHECK(!is_controlling_instance_);
   std::unique_ptr<KeyframeModel> to_return(
-      new KeyframeModel(curve_->Clone(), id_, group_, target_property_id_));
+      new KeyframeModel(curve_->Clone(), id_, group_, target_property_id_,
+                        custom_property_name_));
   to_return->element_id_ = element_id_;
   to_return->run_state_ = initial_run_state;
   to_return->iterations_ = iterations_;
@@ -81,7 +85,8 @@ std::unique_ptr<KeyframeModel> KeyframeModel::CreateImplInstance(
 KeyframeModel::KeyframeModel(std::unique_ptr<AnimationCurve> curve,
                              int keyframe_model_id,
                              int group_id,
-                             int target_property_id)
+                             int target_property_id,
+                             const std::string& custom_property_name)
     : curve_(std::move(curve)),
       id_(keyframe_model_id),
       group_(group_id),
@@ -97,7 +102,11 @@ KeyframeModel::KeyframeModel(std::unique_ptr<AnimationCurve> curve,
       is_controlling_instance_(false),
       is_impl_only_(false),
       affects_active_elements_(true),
-      affects_pending_elements_(true) {}
+      affects_pending_elements_(true),
+      custom_property_name_(custom_property_name) {
+  DCHECK(custom_property_name_.empty() ||
+         target_property_id_ == TargetProperty::CSS_CUSTOM_PROPERTY);
+}
 
 KeyframeModel::~KeyframeModel() {
   if (run_state_ == RUNNING || run_state_ == PAUSED)
@@ -114,8 +123,9 @@ void KeyframeModel::SetRunState(RunState run_state,
       run_state_ == WAITING_FOR_TARGET_AVAILABILITY || run_state_ == STARTING;
 
   if (is_controlling_instance_ && is_waiting_to_start && run_state == RUNNING) {
-    TRACE_EVENT_ASYNC_BEGIN1("cc", "KeyframeModel", this, "Name",
-                             TRACE_STR_COPY(name_buffer));
+    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1("cc", "KeyframeModel",
+                                      TRACE_ID_LOCAL(this), "Name",
+                                      TRACE_STR_COPY(name_buffer));
   }
 
   bool was_finished = is_finished();
@@ -130,8 +140,10 @@ void KeyframeModel::SetRunState(RunState run_state,
 
   const char* new_run_state_name = s_runStateNames[run_state];
 
-  if (is_controlling_instance_ && !was_finished && is_finished())
-    TRACE_EVENT_ASYNC_END0("cc", "KeyframeModel", this);
+  if (is_controlling_instance_ && !was_finished && is_finished()) {
+    TRACE_EVENT_NESTABLE_ASYNC_END0("cc", "KeyframeModel",
+                                    TRACE_ID_LOCAL(this));
+  }
 
   char state_buffer[256];
   base::snprintf(state_buffer, sizeof(state_buffer), "%s->%s",
@@ -160,7 +172,7 @@ bool KeyframeModel::IsFinishedAt(base::TimeTicks monotonic_time) const {
   if (playback_rate_ == 0)
     return false;
 
-  return run_state_ == RUNNING && iterations_ >= 0 &&
+  return run_state_ == RUNNING && std::isfinite(iterations_) &&
          (curve_->Duration() * (iterations_ / std::abs(playback_rate_))) <=
              (ConvertMonotonicTimeToLocalTime(monotonic_time) + time_offset_);
 }
@@ -193,8 +205,7 @@ KeyframeModel::Phase KeyframeModel::CalculatePhase(
   // TODO(crbug.com/909794): By spec end time = max(start delay + duration +
   // end delay, 0). The logic should be updated once "end delay" is supported.
   base::TimeDelta active_after_boundary_time =
-      // Negative iterations_ represents "infinite iterations".
-      iterations_ >= 0
+      std::isfinite(iterations_)
           ? std::max(opposite_time_offset + active_duration, base::TimeDelta())
           : base::TimeDelta::Max();
   if (local_time > active_after_boundary_time ||
@@ -218,7 +229,7 @@ base::Optional<base::TimeDelta> KeyframeModel::CalculateActiveTime(
       return local_time + time_offset_;
     case KeyframeModel::Phase::AFTER:
       if (fill_mode_ == FillMode::FORWARDS || fill_mode_ == FillMode::BOTH) {
-        DCHECK_GE(iterations_, 0);
+        DCHECK_NE(iterations_, std::numeric_limits<double>::infinity());
         base::TimeDelta active_duration =
             curve_->Duration() * iterations_ / std::abs(playback_rate_);
         return std::max(std::min(local_time + time_offset_, active_duration),
@@ -277,6 +288,7 @@ base::TimeDelta KeyframeModel::TrimTimeToCurrentIteration(
   // Calculate the scaled active time
   base::TimeDelta scaled_active_time;
   if (playback_rate_ < 0) {
+    DCHECK(std::isfinite(iterations_));
     scaled_active_time =
         ((active_time - active_duration) * playback_rate_) + start_offset;
   } else {

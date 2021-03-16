@@ -11,8 +11,8 @@ scripts and used to generate very specific database files, perhaps with
 deliberately introduced corruption.  The cov1/corrupt*.test modules in
 TH3 make extensive use of dbtotxt.
 
-More recently (2018-12-13) the dbtotxt utility has been added to the SQLite
-core and the command-line shell (CLI) has been augmented to be able to read
+More recently (2018-12-13) the dbtotxt utility has been added to the SQLite 
+core and the command-line shell (CLI) has been augmented to be able to read 
 dbtotxt output.  The CLI dot-command is:
 
 >     .open --hexdb  ?OPTIONAL-FILENAME?
@@ -50,7 +50,7 @@ databases to be embedded directly in scripts.  Consider this example:
     SELECT rowid FROM t1;
     PRAGMA integrity_check;
 
-You can run this script to see that the database file is correctly decoded
+You can run this script to see that the database file is correctly decoded 
 and loaded.  Furthermore, you can make subtle corruptions to the input
 database simply by editing the hexadecimal description, then rerun the
 script to verify that SQLite correctly handles the corruption.

@@ -85,13 +85,12 @@ bool IsValidInput(const base::StringPiece& scheme,
     //
     // TODO: Migrate "content:" and "externalfile:" to be standard schemes, and
     // remove this local scheme exception.
-    if (base::ContainsValue(GetLocalSchemes(), scheme) && host.empty() &&
-        port == 0)
+    if (base::Contains(GetLocalSchemes(), scheme) && host.empty() && port == 0)
       return true;
 
     // Otherwise, allow non-standard schemes only if the Android WebView
     // workaround is enabled.
-    return AllowNonStandardSchemesForAndroidWebView();
+    return !base::Contains(url::GetNoAccessSchemes(), scheme) && AllowNonStandardSchemesForAndroidWebView();
   }
 
   switch (scheme_type) {
@@ -152,15 +151,15 @@ SchemeHostPort::SchemeHostPort(std::string scheme,
                                ConstructPolicy policy)
     : port_(0) {
   if (!IsValidInput(scheme, host, port, policy)) {
-    DCHECK(IsInvalid());
+    DCHECK(!IsValid());
     return;
   }
 
   scheme_ = std::move(scheme);
   host_ = std::move(host);
   port_ = port;
-  DCHECK(!IsInvalid()) << "Scheme: " << scheme_ << " Host: " << host_
-                       << " Port: " << port;
+  DCHECK(IsValid()) << "Scheme: " << scheme_ << " Host: " << host_
+                    << " Port: " << port;
 }
 
 SchemeHostPort::SchemeHostPort(base::StringPiece scheme,
@@ -190,19 +189,19 @@ SchemeHostPort::SchemeHostPort(const GURL& url) : port_(0) {
   if (!IsValidInput(scheme, host, port, ALREADY_CANONICALIZED))
     return;
 
-  scheme.CopyToString(&scheme_);
-  host.CopyToString(&host_);
+  scheme_ = std::string(scheme);
+  host_ = std::string(host);
   port_ = port;
 }
 
 SchemeHostPort::~SchemeHostPort() = default;
 
-bool SchemeHostPort::IsInvalid() const {
+bool SchemeHostPort::IsValid() const {
   // It suffices to just check |scheme_| for emptiness; the other fields are
   // never present without it.
   DCHECK(!scheme_.empty() || host_.empty());
   DCHECK(!scheme_.empty() || port_ == 0);
-  return scheme_.empty();
+  return !scheme_.empty();
 }
 
 std::string SchemeHostPort::Serialize() const {
@@ -249,7 +248,7 @@ GURL SchemeHostPort::GetURL() const {
   url::Parsed parsed;
   std::string serialized = SerializeInternal(&parsed);
 
-  if (IsInvalid())
+  if (!IsValid())
     return GURL(std::move(serialized), parsed, false);
 
   // SchemeHostPort does not have enough information to determine if an empty
@@ -274,7 +273,7 @@ bool SchemeHostPort::operator<(const SchemeHostPort& other) const {
 
 std::string SchemeHostPort::SerializeInternal(url::Parsed* parsed) const {
   std::string result;
-  if (IsInvalid())
+  if (!IsValid())
     return result;
 
   // Reserve enough space for the "normal" case of scheme://host/.
@@ -303,7 +302,7 @@ std::string SchemeHostPort::SerializeInternal(url::Parsed* parsed) const {
     return result;
   if (port_ != default_port) {
     result.push_back(':');
-    std::string port(base::UintToString(port_));
+    std::string port(base::NumberToString(port_));
     parsed->port = Component(result.length(), port.length());
     result.append(std::move(port));
   }

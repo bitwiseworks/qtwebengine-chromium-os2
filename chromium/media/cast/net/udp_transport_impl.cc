@@ -51,16 +51,15 @@ int32_t GetTransportSendBufferSize(const base::DictionaryValue& options) {
 }  // namespace
 
 UdpTransportImpl::UdpTransportImpl(
-    net::NetLog* net_log,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_thread_proxy,
     const net::IPEndPoint& local_end_point,
     const net::IPEndPoint& remote_end_point,
-    const CastTransportStatusCallback& status_callback)
+    CastTransportStatusCallback status_callback)
     : io_thread_proxy_(io_thread_proxy),
       local_addr_(local_end_point),
       remote_addr_(remote_end_point),
       udp_socket_(new net::UDPSocket(net::DatagramSocket::DEFAULT_BIND,
-                                     net_log,
+                                     nullptr /* net_log */,
                                      net::NetLogSource())),
       send_pending_(false),
       receive_pending_(false),
@@ -68,16 +67,15 @@ UdpTransportImpl::UdpTransportImpl(
       next_dscp_value_(net::DSCP_NO_CHANGE),
       send_buffer_size_(media::cast::kMaxBurstSize *
                         media::cast::kMaxIpPacketSize),
-      status_callback_(status_callback),
-      bytes_sent_(0),
-      weak_factory_(this) {
+      status_callback_(std::move(status_callback)),
+      bytes_sent_(0) {
   DCHECK(!IsEmpty(local_end_point) || !IsEmpty(remote_end_point));
 }
 
 UdpTransportImpl::~UdpTransportImpl() = default;
 
 void UdpTransportImpl::StartReceiving(
-    const PacketReceiverCallbackWithStatus& packet_receiver) {
+    PacketReceiverCallbackWithStatus packet_receiver) {
   DCHECK(io_thread_proxy_->RunsTasksInCurrentSequence());
 
   if (!udp_socket_) {
@@ -85,7 +83,7 @@ void UdpTransportImpl::StartReceiving(
     return;
   }
 
-  packet_receiver_ = packet_receiver;
+  packet_receiver_ = std::move(packet_receiver);
   udp_socket_->SetMulticastLoopbackMode(true);
   if (!IsEmpty(local_addr_)) {
     if (udp_socket_->Open(local_addr_.GetFamily()) < 0 ||
@@ -181,8 +179,8 @@ void UdpTransportImpl::ReceiveNextPacket(int length_or_status) {
           reinterpret_cast<char*>(&next_packet_->front()));
       length_or_status = udp_socket_->RecvFrom(
           recv_buf_.get(), media::cast::kMaxIpPacketSize, &recv_addr_,
-          base::BindRepeating(&UdpTransportImpl::ReceiveNextPacket,
-                              weak_factory_.GetWeakPtr()));
+          base::BindOnce(&UdpTransportImpl::ReceiveNextPacket,
+                         weak_factory_.GetWeakPtr()));
       if (length_or_status == net::ERR_IO_PENDING) {
         receive_pending_ = true;
         return;

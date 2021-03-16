@@ -45,8 +45,8 @@
 #endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-#include "components/crash/content/app/breakpad_linux.h"         // nogncheck
-#include "components/crash/content/app/crash_reporter_client.h"  // nogncheck
+#include "components/crash/core/app/breakpad_linux.h"         // nogncheck
+#include "components/crash/core/app/crash_reporter_client.h"  // nogncheck
 #include "extensions/shell/app/shell_crash_reporter_client.h"
 #endif
 
@@ -99,7 +99,7 @@ void InitLogging() {
   // Set up log initialization settings.
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_ALL;
-  settings.log_file = log_path.value().c_str();
+  settings.log_file_path = log_path.value().c_str();
 
   // Replace the old log file if this is the first process.
   std::string process_type =
@@ -134,8 +134,6 @@ ShellMainDelegate::~ShellMainDelegate() {
 
 bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
   InitLogging();
-  content_client_.reset(new ShellContentClient);
-  SetContentClient(content_client_.get());
 
 #if defined(OS_CHROMEOS)
   chromeos::RegisterPathProvider();
@@ -161,6 +159,11 @@ void ShellMainDelegate::PreSandboxStartup() {
   if (ProcessNeedsResourceBundle(process_type))
     ui::ResourceBundle::InitSharedInstanceWithPakPath(
         GetResourcesPakFilePath());
+}
+
+content::ContentClient* ShellMainDelegate::CreateContentClient() {
+  content_client_ = std::make_unique<ShellContentClient>();
+  return content_client_.get();
 }
 
 content::ContentBrowserClient* ShellMainDelegate::CreateContentBrowserClient() {

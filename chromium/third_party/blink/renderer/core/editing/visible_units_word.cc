@@ -43,13 +43,23 @@ namespace blink {
 
 namespace {
 
+// Helpers used during word movement
+static bool IsLineBreak(UChar ch) {
+  return ch == kNewlineCharacter || ch == kCarriageReturnCharacter;
+}
+
+static bool IsWordBreak(UChar ch) {
+  return WTF::unicode::IsAlphanumeric(ch) || IsLineBreak(ch) ||
+         ch == kLowLineCharacter || WTF::unicode::IsPunct(ch);
+}
+
 PositionInFlatTree EndOfWordPositionInternal(const PositionInFlatTree& position,
-                                             EWordSide side) {
+                                             WordSide side) {
   class Finder final : public TextSegments::Finder {
     STACK_ALLOCATED();
 
    public:
-    Finder(EWordSide side) : side_(side) {}
+    Finder(WordSide side) : side_(side) {}
 
    private:
     Position Find(const String text, unsigned offset) final {
@@ -69,44 +79,92 @@ PositionInFlatTree EndOfWordPositionInternal(const PositionInFlatTree& position,
 
     static Position FindInternal(const String text, unsigned offset) {
       DCHECK_LE(offset, text.length());
-      TextBreakIterator* it =
-          WordBreakIterator(text.Characters16(), text.length());
+      TextBreakIterator* it = WordBreakIterator(text.Span16());
       const int result = it->following(offset);
       if (result == kTextBreakDone || result == 0)
         return Position();
       return Position::After(result - 1);
     }
 
-    const EWordSide side_;
+    const WordSide side_;
     bool is_first_time_ = true;
   } finder(side);
   return TextSegments::FindBoundaryForward(position, &finder);
 }
 
 PositionInFlatTree NextWordPositionInternal(
-    const PositionInFlatTree& position) {
+    const PositionInFlatTree& position,
+    PlatformWordBehavior platform_word_behavior) {
   class Finder final : public TextSegments::Finder {
     STACK_ALLOCATED();
+
+   public:
+    Finder(PlatformWordBehavior platform_word_behavior)
+        : platform_word_behavior_(platform_word_behavior) {}
 
    private:
     Position Find(const String text, unsigned offset) final {
       DCHECK_LE(offset, text.length());
+      if (!is_first_time_ && static_cast<unsigned>(offset) < text.length()) {
+        // These conditions check if we found a valid word break position after
+        // another iteration of scanning contents from the position that was
+        // passed to this function. Ex: |Hello |World|\n |foo |bar
+        // When we are after World|, the first iteration of this loop after call
+        // to TextSegments::Finder::find will return empty position as there
+        // aren't any meaningful word in that inline_content. In the next
+        // iteration of this loop, it fetches the word |foo, so we return the
+        // current position as we don't want to skip this valid position by
+        // advancing from this position and return |bar instead.
+        if (IsWordBreak(text[offset]))
+          return SkipWhitespaceIfNeeded(text, offset);
+      }
+      is_first_time_ = false;
       if (offset == text.length() || text.length() == 0)
         return Position();
-      TextBreakIterator* it =
-          WordBreakIterator(text.Characters16(), text.length());
+      TextBreakIterator* it = WordBreakIterator(text.Span16());
       for (int runner = it->following(offset); runner != kTextBreakDone;
            runner = it->following(runner)) {
-        // We stop searching when the character preceding the break is
-        // alphanumeric or underscore.
+        // Move after line break
+        if (IsLineBreak(text[runner]))
+          return SkipWhitespaceIfNeeded(text, runner);
+        // Accumulate punctuation runs
         if (static_cast<unsigned>(runner) < text.length() &&
-            (WTF::unicode::IsAlphanumeric(text[runner - 1]) ||
-             text[runner - 1] == kLowLineCharacter))
-          return Position::After(runner - 1);
+            WTF::unicode::IsPunct(text[runner])) {
+          if (WTF::unicode::IsAlphanumeric(text[runner - 1]))
+            return SkipWhitespaceIfNeeded(text, runner);
+          continue;
+        }
+        // We stop searching when the character preceding the break is
+        // alphanumeric or punctuations or underscore or linebreaks.
+        if (static_cast<unsigned>(runner) < text.length() &&
+            IsWordBreak(text[runner - 1]))
+          return SkipWhitespaceIfNeeded(text, runner);
       }
-      return Position::After(text.length() - 1);
+      if (text[text.length() - 1] != kNewlineCharacter)
+        return Position::After(text.length() - 1);
+      return Position();
     }
-  } finder;
+
+    Position SkipWhitespaceIfNeeded(const String text, int offset) {
+      DCHECK_NE(offset, kTextBreakDone);
+      // On Windows next word should skip trailing whitespaces but not line
+      // break
+      if (platform_word_behavior_ == PlatformWordBehavior::kWordSkipSpaces) {
+        for (unsigned runner = static_cast<unsigned>(offset);
+             runner < text.length(); ++runner) {
+          if (!(IsWhitespace(text[runner]) ||
+                WTF::unicode::Direction(text[runner]) ==
+                    WTF::unicode::kWhiteSpaceNeutral) ||
+              IsLineBreak(text[runner]))
+            return Position::Before(runner);
+        }
+      }
+      return Position::Before(offset);
+    }
+
+    const PlatformWordBehavior platform_word_behavior_;
+    bool is_first_time_ = true;
+  } finder(platform_word_behavior);
   return TextSegments::FindBoundaryForward(position, &finder);
 }
 
@@ -118,32 +176,59 @@ PositionInFlatTree PreviousWordPositionInternal(
    private:
     Position Find(const String text, unsigned offset) final {
       DCHECK_LE(offset, text.length());
+      if (!is_first_time_ && text.length() > 0 &&
+          static_cast<unsigned>(offset) <= text.length()) {
+        // These conditions check if we found a valid word break position after
+        // another iteration of scanning contents from the position that was
+        // passed to this function. Ex: |Hello |World|\n |foo |bar
+        // When we are before |foo, the first iteration of this loop after call
+        // to TextSegments::Finder::find will return empty position as there
+        // aren't any meaningful word in that inline_content. In the next
+        // iteration of this loop, it fetches the word World|, so we return the
+        // current position as we don't want to skip this valid position by
+        // advancing from this position and return |World instead.
+        if (IsWordBreak(text[offset - 1]))
+          return Position::Before(offset);
+      }
+      is_first_time_ = false;
       if (!offset || text.length() == 0)
         return Position();
-      TextBreakIterator* it =
-          WordBreakIterator(text.Characters16(), text.length());
+      TextBreakIterator* it = WordBreakIterator(text.Span16());
+      int punct_runner = -1;
       for (int runner = it->preceding(offset); runner != kTextBreakDone;
            runner = it->preceding(runner)) {
+        // Accumulate punctuation runs
+        if (static_cast<unsigned>(runner) < text.length() &&
+            WTF::unicode::IsPunct(text[runner])) {
+          if (WTF::unicode::IsAlphanumeric(text[runner - 1]))
+            return Position::Before(runner);
+          punct_runner = runner;
+          continue;
+        }
+
+        if (punct_runner >= 0)
+          return Position::Before(punct_runner);
         // We stop searching when the character following the break is
-        // alphanumeric or underscore.
-        if (runner && (WTF::unicode::IsAlphanumeric(text[runner]) ||
-                       text[runner] == kLowLineCharacter))
+        // alphanumeric or punctuations or underscore or linebreaks.
+        if (static_cast<unsigned>(runner) < text.length() &&
+            IsWordBreak(text[runner]))
           return Position::Before(runner);
       }
       return Position::Before(0);
     }
+    bool is_first_time_ = true;
   } finder;
   return TextSegments::FindBoundaryBackward(position, &finder);
 }
 
 PositionInFlatTree StartOfWordPositionInternal(
     const PositionInFlatTree& position,
-    EWordSide side) {
+    WordSide side) {
   class Finder final : public TextSegments::Finder {
     STACK_ALLOCATED();
 
    public:
-    Finder(EWordSide side) : side_(side) {}
+    Finder(WordSide side) : side_(side) {}
 
    private:
     Position Find(const String text, unsigned offset) final {
@@ -163,15 +248,14 @@ PositionInFlatTree StartOfWordPositionInternal(
 
     static Position FindInternal(const String text, unsigned offset) {
       DCHECK_LE(offset, text.length());
-      TextBreakIterator* it =
-          WordBreakIterator(text.Characters16(), text.length());
+      TextBreakIterator* it = WordBreakIterator(text.Span16());
       const int result = it->preceding(offset);
       if (result == kTextBreakDone)
         return Position();
       return Position::Before(result);
     }
 
-    const EWordSide side_;
+    const WordSide side_;
     bool is_first_time_ = true;
   } finder(side);
   return TextSegments::FindBoundaryBackward(position, &finder);
@@ -179,7 +263,7 @@ PositionInFlatTree StartOfWordPositionInternal(
 }  // namespace
 
 PositionInFlatTree EndOfWordPosition(const PositionInFlatTree& start,
-                                     EWordSide side) {
+                                     WordSide side) {
   return AdjustForwardPositionToAvoidCrossingEditingBoundaries(
              PositionInFlatTreeWithAffinity(
                  EndOfWordPositionInternal(start, side)),
@@ -187,19 +271,19 @@ PositionInFlatTree EndOfWordPosition(const PositionInFlatTree& start,
       .GetPosition();
 }
 
-Position EndOfWordPosition(const Position& position, EWordSide side) {
+Position EndOfWordPosition(const Position& position, WordSide side) {
   return ToPositionInDOMTree(
       EndOfWordPosition(ToPositionInFlatTree(position), side));
 }
 
-VisiblePosition EndOfWord(const VisiblePosition& position, EWordSide side) {
+VisiblePosition EndOfWord(const VisiblePosition& position, WordSide side) {
   return CreateVisiblePosition(
       EndOfWordPosition(position.DeepEquivalent(), side),
       TextAffinity::kUpstreamIfPossible);
 }
 
 VisiblePositionInFlatTree EndOfWord(const VisiblePositionInFlatTree& position,
-                                    EWordSide side) {
+                                    WordSide side) {
   return CreateVisiblePosition(
       EndOfWordPosition(position.DeepEquivalent(), side),
       TextAffinity::kUpstreamIfPossible);
@@ -209,8 +293,10 @@ VisiblePositionInFlatTree EndOfWord(const VisiblePositionInFlatTree& position,
 // TODO(editing-dev): Because of word boundary can not be an upstream position,
 // we should make this function to return |PositionInFlatTree|.
 PositionInFlatTreeWithAffinity NextWordPosition(
-    const PositionInFlatTree& start) {
-  const PositionInFlatTree next = NextWordPositionInternal(start);
+    const PositionInFlatTree& start,
+    PlatformWordBehavior platform_word_behavior) {
+  const PositionInFlatTree next =
+      NextWordPositionInternal(start, platform_word_behavior);
   // Note: The word boundary can not be upstream position.
   const PositionInFlatTreeWithAffinity adjusted =
       AdjustForwardPositionToAvoidCrossingEditingBoundaries(
@@ -219,9 +305,11 @@ PositionInFlatTreeWithAffinity NextWordPosition(
   return adjusted;
 }
 
-PositionWithAffinity NextWordPosition(const Position& start) {
+PositionWithAffinity NextWordPosition(
+    const Position& start,
+    PlatformWordBehavior platform_word_behavior) {
   const PositionInFlatTreeWithAffinity& next =
-      NextWordPosition(ToPositionInFlatTree(start));
+      NextWordPosition(ToPositionInFlatTree(start), platform_word_behavior);
   return ToPositionInDOMTreeWithAffinity(next);
 }
 
@@ -239,25 +327,25 @@ PositionWithAffinity PreviousWordPosition(const Position& start) {
 }
 
 PositionInFlatTree StartOfWordPosition(const PositionInFlatTree& position,
-                                       EWordSide side) {
+                                       WordSide side) {
   const PositionInFlatTree start = StartOfWordPositionInternal(position, side);
   return AdjustBackwardPositionToAvoidCrossingEditingBoundaries(
              PositionInFlatTreeWithAffinity(start), position)
       .GetPosition();
 }
 
-Position StartOfWordPosition(const Position& position, EWordSide side) {
+Position StartOfWordPosition(const Position& position, WordSide side) {
   return ToPositionInDOMTree(
       StartOfWordPosition(ToPositionInFlatTree(position), side));
 }
 
-VisiblePosition StartOfWord(const VisiblePosition& position, EWordSide side) {
+VisiblePosition StartOfWord(const VisiblePosition& position, WordSide side) {
   return CreateVisiblePosition(
       StartOfWordPosition(position.DeepEquivalent(), side));
 }
 
 VisiblePositionInFlatTree StartOfWord(const VisiblePositionInFlatTree& position,
-                                      EWordSide side) {
+                                      WordSide side) {
   return CreateVisiblePosition(
       StartOfWordPosition(position.DeepEquivalent(), side));
 }

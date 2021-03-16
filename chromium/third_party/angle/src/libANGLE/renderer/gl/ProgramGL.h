@@ -13,7 +13,11 @@
 #include <vector>
 
 #include "libANGLE/renderer/ProgramImpl.h"
-#include "libANGLE/renderer/gl/WorkaroundsGL.h"
+
+namespace angle
+{
+struct FeaturesGL;
+}  // namespace angle
 
 namespace rx
 {
@@ -27,15 +31,14 @@ class ProgramGL : public ProgramImpl
   public:
     ProgramGL(const gl::ProgramState &data,
               const FunctionsGL *functions,
-              const WorkaroundsGL &workarounds,
+              const angle::FeaturesGL &features,
               StateManagerGL *stateManager,
-              bool enablePathRendering,
               const std::shared_ptr<RendererGL> &renderer);
     ~ProgramGL() override;
 
-    angle::Result load(const gl::Context *context,
-                       gl::InfoLog &infoLog,
-                       gl::BinaryInputStream *stream) override;
+    std::unique_ptr<LinkEvent> load(const gl::Context *context,
+                                    gl::BinaryInputStream *stream,
+                                    gl::InfoLog &infoLog) override;
     void save(const gl::Context *context, gl::BinaryOutputStream *stream) override;
     void setBinaryRetrievableHint(bool retrievable) override;
     void setSeparable(bool separable) override;
@@ -98,11 +101,6 @@ class ProgramGL : public ProgramImpl
     void getUniformiv(const gl::Context *context, GLint location, GLint *params) const override;
     void getUniformuiv(const gl::Context *context, GLint location, GLuint *params) const override;
 
-    void setPathFragmentInputGen(const std::string &inputName,
-                                 GLenum genMode,
-                                 GLint components,
-                                 const GLfloat *coeffs) override;
-
     void markUnusedUniformLocations(std::vector<gl::VariableLocation> *uniformLocations,
                                     std::vector<gl::SamplerBinding> *samplerBindings,
                                     std::vector<gl::ImageBinding> *imageBindings) override;
@@ -117,6 +115,7 @@ class ProgramGL : public ProgramImpl
 
   private:
     class LinkTask;
+    class LinkEventNativeParallel;
     class LinkEventGL;
 
     void preLink();
@@ -146,20 +145,12 @@ class ProgramGL : public ProgramImpl
     GLint uniLoc(GLint glLocation) const { return mUniformRealLocationMap[glLocation]; }
 
     const FunctionsGL *mFunctions;
-    const WorkaroundsGL &mWorkarounds;
+    const angle::FeaturesGL &mFeatures;
     StateManagerGL *mStateManager;
 
     std::vector<GLint> mUniformRealLocationMap;
     std::vector<GLuint> mUniformBlockRealLocationMap;
 
-    struct PathRenderingFragmentInput
-    {
-        std::string mappedName;
-        GLint location;
-    };
-    std::vector<PathRenderingFragmentInput> mPathRenderingFragmentInputs;
-
-    bool mEnablePathRendering;
     GLint mMultiviewBaseViewLayerIndexUniformLocation;
 
     GLuint mProgramID;

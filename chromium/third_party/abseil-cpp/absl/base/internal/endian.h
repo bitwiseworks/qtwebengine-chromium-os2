@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//      https://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,9 +19,6 @@
 // The following guarantees declaration of the byte swap functions
 #ifdef _MSC_VER
 #include <stdlib.h>  // NOLINT(build/include)
-#elif defined(__APPLE__)
-// Mac OS X / Darwin features
-#include <libkern/OSByteOrder.h>
 #elif defined(__FreeBSD__)
 #include <sys/endian.h>
 #elif defined(__GLIBC__)
@@ -34,6 +31,7 @@
 #include "absl/base/port.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 // Use compiler byte-swapping intrinsics if they are available.  32-bit
 // and 64-bit versions are available in Clang and GCC as of GCC 4.3.0.
@@ -63,11 +61,6 @@ inline uint16_t gbswap_16(uint16_t host_int) {
   return _byteswap_ushort(host_int);
 }
 
-#elif defined(__APPLE__)
-inline uint64_t gbswap_64(uint64_t host_int) { return OSSwapInt16(host_int); }
-inline uint32_t gbswap_32(uint32_t host_int) { return OSSwapInt32(host_int); }
-inline uint16_t gbswap_16(uint16_t host_int) { return OSSwapInt64(host_int); }
-
 #else
 inline uint64_t gbswap_64(uint64_t host_int) {
 #if defined(__GNUC__) && defined(__x86_64__) && !defined(__APPLE__)
@@ -75,7 +68,7 @@ inline uint64_t gbswap_64(uint64_t host_int) {
   if (__builtin_constant_p(host_int)) {
     return __bswap_constant_64(host_int);
   } else {
-    register uint64_t result;
+    uint64_t result;
     __asm__("bswap %0" : "=r"(result) : "0"(host_int));
     return result;
   }
@@ -113,7 +106,7 @@ inline uint16_t gbswap_16(uint16_t host_int) {
 #endif
 }
 
-#endif  // intrinics available
+#endif  // intrinsics available
 
 #ifdef ABSL_IS_LITTLE_ENDIAN
 
@@ -267,6 +260,7 @@ inline void Store64(void *p, uint64_t v) {
 
 }  // namespace big_endian
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_BASE_INTERNAL_ENDIAN_H_

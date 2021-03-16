@@ -6,14 +6,15 @@
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_SERVICE_WORKER_SERVICE_WORKER_REGISTRATION_H_
 
 #include <memory>
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "mojo/public/cpp/bindings/associated_receiver.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/service_worker/web_service_worker_registration_object_info.h"
 #include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/modules/service_worker/navigation_preload_manager.h"
 #include "third_party/blink/renderer/modules/service_worker/service_worker.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
@@ -21,6 +22,7 @@
 
 namespace blink {
 
+class ExceptionState;
 class ScriptPromise;
 class ScriptState;
 
@@ -28,11 +30,12 @@ class ScriptState;
 class ServiceWorkerRegistration final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<ServiceWorkerRegistration>,
-      public ContextLifecycleObserver,
+      public ExecutionContextLifecycleObserver,
       public Supplementable<ServiceWorkerRegistration>,
       public mojom::blink::ServiceWorkerRegistrationObject {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(ServiceWorkerRegistration);
+  USING_PRE_FINALIZER(ServiceWorkerRegistration, Dispose);
 
  public:
   // Called from CallbackPromiseAdapter.
@@ -44,10 +47,9 @@ class ServiceWorkerRegistration final
   ServiceWorkerRegistration(ExecutionContext*,
                             WebServiceWorkerRegistrationObjectInfo);
 
-  // Eager finalization needed to promptly invalidate the corresponding entry of
-  // the (registration id, WeakMember<ServiceWorkerRegistration>) map inside
-  // ServiceWorkerContainer.
-  EAGERLY_FINALIZE();
+  ServiceWorkerRegistration(
+      ExecutionContext*,
+      mojom::blink::ServiceWorkerRegistrationObjectInfoPtr);
 
   // Called in 2 scenarios:
   //   - when constructing |this|.
@@ -63,7 +65,7 @@ class ServiceWorkerRegistration final
   // EventTarget overrides.
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override {
-    return ContextLifecycleObserver::GetExecutionContext();
+    return ExecutionContextLifecycleObserver::GetExecutionContext();
   }
 
   ServiceWorker* installing() { return installing_; }
@@ -81,18 +83,20 @@ class ServiceWorkerRegistration final
   void SetNavigationPreloadHeader(const String& value,
                                   ScriptPromiseResolver* resolver);
 
-  ScriptPromise update(ScriptState*);
-  ScriptPromise unregister(ScriptState*);
+  ScriptPromise update(ScriptState*, ExceptionState&);
+  ScriptPromise unregister(ScriptState*, ExceptionState&);
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(updatefound, kUpdatefound);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(updatefound, kUpdatefound)
 
   ~ServiceWorkerRegistration() override;
 
-  void Trace(blink::Visitor*) override;
+  void Dispose();
+
+  void Trace(Visitor*) override;
 
  private:
-  // ContextLifecycleObserver overrides.
-  void ContextDestroyed(ExecutionContext*) override;
+  // ExecutionContextLifecycleObserver overrides.
+  void ContextDestroyed() override;
 
   // Implements mojom::blink::ServiceWorkerRegistrationObject.
   void SetServiceWorkerObjects(
@@ -112,24 +116,23 @@ class ServiceWorkerRegistration final
   const int64_t registration_id_;
   const KURL scope_;
   mojom::ServiceWorkerUpdateViaCache update_via_cache_;
-  // Both |host_| and |binding_| are associated with
-  // content.mojom.ServiceWorkerContainer interface for a Document, and
-  // content.mojom.ServiceWorker interface for a ServiceWorkerGlobalScope.
+  // Both |host_| and |receiver_| are associated with
+  // blink.mojom.ServiceWorkerContainer interface for a Document, and
+  // blink.mojom.ServiceWorker interface for a ServiceWorkerGlobalScope.
   //
   // |host_| keeps the Mojo connection to the
   // browser-side ServiceWorkerRegistrationObjectHost, whose lifetime is bound
   // to the Mojo connection. It is bound on the
   // main thread for service worker clients (document), and is bound on the
   // service worker thread for service worker execution contexts.
-  mojom::blink::ServiceWorkerRegistrationObjectHostAssociatedPtr host_;
-  // |binding_| keeps the Mojo binding to serve its other Mojo endpoint (i.e.
-  // the caller end) held by the ServiceWorkerRegistrationObjectHost in
-  // the browser process.
-  // It is bound on the main thread for service worker clients (document), and
-  // is bound on the service worker thread for service worker execution
-  // contexts.
-  mojo::AssociatedBinding<mojom::blink::ServiceWorkerRegistrationObject>
-      binding_;
+  mojo::AssociatedRemote<mojom::blink::ServiceWorkerRegistrationObjectHost>
+      host_;
+  // |receiver_| receives messages from the ServiceWorkerRegistrationObjectHost
+  // in the browser process. It is bound on the main thread for service worker
+  // clients (document), and is bound on the service worker thread for service
+  // worker execution contexts.
+  mojo::AssociatedReceiver<mojom::blink::ServiceWorkerRegistrationObject>
+      receiver_{this};
 
   bool stopped_;
 };

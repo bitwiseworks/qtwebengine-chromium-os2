@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/html/forms/base_temporal_input_type.h"
 
 #include <limits>
+#include "third_party/blink/public/strings/grit/blink_strings.h"
 #include "third_party/blink/renderer/core/html/forms/chooser_only_temporal_input_type_view.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/multiple_fields_temporal_input_type_view.h"
@@ -38,24 +39,23 @@
 #include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
-#include "third_party/blink/renderer/platform/wtf/time.h"
 
 namespace blink {
-
-using blink::WebLocalizedString;
 
 static const int kMsecPerMinute = 60 * 1000;
 static const int kMsecPerSecond = 1000;
 
 String BaseTemporalInputType::BadInputText() const {
-  return GetLocale().QueryString(
-      WebLocalizedString::kValidationBadInputForDateTime);
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_BAD_INPUT_DATETIME);
 }
 
 InputTypeView* BaseTemporalInputType::CreateView() {
-  if (RuntimeEnabledFeatures::InputMultipleFieldsUIEnabled())
-    return MultipleFieldsTemporalInputTypeView::Create(GetElement(), *this);
-  return ChooserOnlyTemporalInputTypeView::Create(GetElement(), *this);
+  if (RuntimeEnabledFeatures::InputMultipleFieldsUIEnabled()) {
+    return MakeGarbageCollected<MultipleFieldsTemporalInputTypeView>(
+        GetElement(), *this);
+  }
+  return MakeGarbageCollected<ChooserOnlyTemporalInputTypeView>(GetElement(),
+                                                                *this);
 }
 
 InputType::ValueMode BaseTemporalInputType::GetValueMode() const {
@@ -66,9 +66,10 @@ double BaseTemporalInputType::ValueAsDate() const {
   return ValueAsDouble();
 }
 
-void BaseTemporalInputType::SetValueAsDate(double value,
-                                           ExceptionState&) const {
-  GetElement().setValue(SerializeWithMilliseconds(value));
+void BaseTemporalInputType::SetValueAsDate(
+    const base::Optional<base::Time>& value,
+    ExceptionState&) const {
+  GetElement().setValue(SerializeWithDate(value));
 }
 
 double BaseTemporalInputType::ValueAsDouble() const {
@@ -94,19 +95,28 @@ bool BaseTemporalInputType::TypeMismatch() const {
 }
 
 String BaseTemporalInputType::RangeOverflowText(const Decimal& maximum) const {
-  return GetLocale().QueryString(
-      WebLocalizedString::kValidationRangeOverflowDateTime,
-      LocalizeValue(Serialize(maximum)));
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_RANGE_OVERFLOW_DATETIME,
+                                 LocalizeValue(Serialize(maximum)));
 }
 
 String BaseTemporalInputType::RangeUnderflowText(const Decimal& minimum) const {
-  return GetLocale().QueryString(
-      WebLocalizedString::kValidationRangeUnderflowDateTime,
-      LocalizeValue(Serialize(minimum)));
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_RANGE_UNDERFLOW_DATETIME,
+                                 LocalizeValue(Serialize(minimum)));
+}
+
+String BaseTemporalInputType::RangeInvalidText(const Decimal& minimum,
+                                               const Decimal& maximum) const {
+  DCHECK(minimum > maximum)
+      << "RangeInvalidText should only be called with minimum>maximum";
+
+  return GetLocale().QueryString(IDS_FORM_VALIDATION_RANGE_INVALID_DATETIME,
+                                 LocalizeValue(Serialize(minimum)),
+                                 LocalizeValue(Serialize(maximum)));
 }
 
 Decimal BaseTemporalInputType::DefaultValueForStepUp() const {
-  return Decimal::FromDouble(ConvertToLocalTime(CurrentTimeMS()));
+  return Decimal::FromDouble(
+      ConvertToLocalTime(base::Time::Now()).InMillisecondsF());
 }
 
 bool BaseTemporalInputType::IsSteppable() const {
@@ -155,8 +165,11 @@ String BaseTemporalInputType::SerializeWithComponents(
   return date.ToString(DateComponents::kMillisecond);
 }
 
-String BaseTemporalInputType::SerializeWithMilliseconds(double value) const {
-  return Serialize(Decimal::FromDouble(value));
+String BaseTemporalInputType::SerializeWithDate(
+    const base::Optional<base::Time>& value) const {
+  if (!value)
+    return g_empty_string;
+  return Serialize(Decimal::FromDouble(value->ToJsTimeIgnoringNull()));
 }
 
 String BaseTemporalInputType::LocalizeValue(
@@ -187,7 +200,11 @@ bool BaseTemporalInputType::ShouldRespectListAttribute() {
 }
 
 bool BaseTemporalInputType::ValueMissing(const String& value) const {
-  return GetElement().IsRequired() && value.IsEmpty();
+  // For text-mode input elements (including dates), the value is missing only
+  // if it is mutable.
+  // https://html.spec.whatwg.org/multipage/input.html#the-required-attribute
+  return GetElement().IsRequired() && value.IsEmpty() &&
+         !GetElement().IsDisabledOrReadOnly();
 }
 
 bool BaseTemporalInputType::MayTriggerVirtualKeyboard() const {

@@ -30,6 +30,8 @@ class GL_EXPORT GLImageAHardwareBuffer : public GLImageEGL {
 
   // Overridden from GLImage:
   unsigned GetInternalFormat() override;
+  unsigned GetDataType() override;
+  bool BindTexImage(unsigned target) override;
   bool CopyTexImage(unsigned target) override;
   bool CopyTexSubImage(unsigned target,
                        const gfx::Point& offset,
@@ -41,7 +43,6 @@ class GL_EXPORT GLImageAHardwareBuffer : public GLImageEGL {
                             const gfx::RectF& crop_rect,
                             bool enable_blend,
                             std::unique_ptr<gfx::GpuFence> gpu_fence) override;
-  void SetColorSpace(const gfx::ColorSpace& color_space) override {}
   void Flush() override;
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
@@ -53,8 +54,11 @@ class GL_EXPORT GLImageAHardwareBuffer : public GLImageEGL {
   ~GLImageAHardwareBuffer() override;
 
  private:
+  class ScopedHardwareBufferFenceSyncImpl;
+
   base::android::ScopedHardwareBufferHandle handle_;
   unsigned internal_format_ = GL_RGBA;
+  unsigned data_type_ = GL_UNSIGNED_BYTE;
 
   DISALLOW_COPY_AND_ASSIGN(GLImageAHardwareBuffer);
 };

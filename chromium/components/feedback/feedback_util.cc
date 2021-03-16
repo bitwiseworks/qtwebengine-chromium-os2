@@ -12,6 +12,9 @@
 #include "third_party/zlib/google/zip.h"
 
 namespace feedback_util {
+namespace {
+
+}  // namespace
 
 bool ZipString(const base::FilePath& filename,
                const std::string& data, std::string* compressed_logs) {

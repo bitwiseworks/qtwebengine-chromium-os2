@@ -33,7 +33,7 @@ CSSMediaRule::CSSMediaRule(StyleRuleMedia* media_rule, CSSStyleSheet* parent)
 CSSMediaRule::~CSSMediaRule() = default;
 
 scoped_refptr<MediaQuerySet> CSSMediaRule::MediaQueries() const {
-  return ToStyleRuleMedia(group_rule_.Get())->MediaQueries();
+  return To<StyleRuleMedia>(group_rule_.Get())->MediaQueries();
 }
 
 String CSSMediaRule::cssText() const {
@@ -58,9 +58,10 @@ String CSSMediaRule::conditionText() const {
 MediaList* CSSMediaRule::media() const {
   if (!MediaQueries())
     return nullptr;
-  if (!media_cssom_wrapper_)
-    media_cssom_wrapper_ =
-        MediaList::Create(MediaQueries(), const_cast<CSSMediaRule*>(this));
+  if (!media_cssom_wrapper_) {
+    media_cssom_wrapper_ = MakeGarbageCollected<MediaList>(
+        MediaQueries(), const_cast<CSSMediaRule*>(this));
+  }
   return media_cssom_wrapper_.Get();
 }
 
@@ -70,7 +71,7 @@ void CSSMediaRule::Reattach(StyleRuleBase* rule) {
     media_cssom_wrapper_->Reattach(MediaQueries());
 }
 
-void CSSMediaRule::Trace(blink::Visitor* visitor) {
+void CSSMediaRule::Trace(Visitor* visitor) {
   visitor->Trace(media_cssom_wrapper_);
   CSSConditionRule::Trace(visitor);
 }

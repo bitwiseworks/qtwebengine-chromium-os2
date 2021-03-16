@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/proxy/error_conversion.h"
@@ -189,8 +190,7 @@ void UDPSocketFilter::RecvQueue::DataReceivedOnIOThread(
         base::Unretained(recvfrom_addr_resource_)));
     last_recvfrom_addr_ = addr;
     PpapiGlobals::Get()->GetMainThreadMessageLoop()->PostTask(
-        FROM_HERE,
-        RunWhileLocked(slot_available_callback_));
+        FROM_HERE, RunWhileLocked(base::BindOnce(slot_available_callback_)));
   }
 
   read_buffer_ = NULL;

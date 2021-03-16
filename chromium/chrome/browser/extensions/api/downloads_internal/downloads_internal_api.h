@@ -10,11 +10,10 @@
 
 namespace extensions {
 
-class DownloadsInternalDetermineFilenameFunction
-    : public UIThreadExtensionFunction {
+class DownloadsInternalDetermineFilenameFunction : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloadsInternal.determineFilename",
-                             DOWNLOADSINTERNAL_DETERMINEFILENAME);
+                             DOWNLOADSINTERNAL_DETERMINEFILENAME)
   DownloadsInternalDetermineFilenameFunction();
   ResponseAction Run() override;
 

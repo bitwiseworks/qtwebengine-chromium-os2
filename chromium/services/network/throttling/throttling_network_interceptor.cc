@@ -9,6 +9,7 @@
 #include <limits>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
 #include "services/network/throttling/network_conditions.h"
@@ -41,8 +42,7 @@ ThrottlingNetworkInterceptor::ThrottleRecord::~ThrottleRecord() {}
 ThrottlingNetworkInterceptor::ThrottlingNetworkInterceptor()
     : conditions_(new NetworkConditions()),
       download_last_tick_(0),
-      upload_last_tick_(0),
-      weak_ptr_factory_(this) {}
+      upload_last_tick_(0) {}
 
 ThrottlingNetworkInterceptor::~ThrottlingNetworkInterceptor() {}
 
@@ -217,8 +217,8 @@ void ThrottlingNetworkInterceptor::ArmTimer(base::TimeTicks now) {
   }
 
   timer_.Start(FROM_HERE, desired_time - now,
-               base::Bind(&ThrottlingNetworkInterceptor::OnTimer,
-                          base::Unretained(this)));
+               base::BindOnce(&ThrottlingNetworkInterceptor::OnTimer,
+                              base::Unretained(this)));
 }
 
 int ThrottlingNetworkInterceptor::StartThrottle(
@@ -276,7 +276,7 @@ void ThrottlingNetworkInterceptor::RemoveRecord(
     const ThrottleCallback& callback) {
   records->erase(std::remove_if(records->begin(), records->end(),
                                 [&callback](const ThrottleRecord& record) {
-                                  return record.callback.Equals(callback);
+                                  return record.callback == callback;
                                 }),
                  records->end());
 }

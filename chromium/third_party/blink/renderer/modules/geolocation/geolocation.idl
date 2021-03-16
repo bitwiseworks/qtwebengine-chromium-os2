@@ -23,10 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://www.w3.org/TR/geolocation-API/#geolocation_interface
+// https://w3c.github.io/geolocation-api/#geolocation_interface
 [
     ActiveScriptWrappable,
-    NoInterfaceObject
+    Exposed=Window
 ] interface Geolocation {
     [
         LogActivity,
@@ -35,7 +35,7 @@
         PositionCallback successCallback,
         // TODO(crbug.com/841185): |errorCallback| is not nullable in the spec.
         optional PositionErrorCallback? errorCallback,
-        optional PositionOptions options);
+        optional PositionOptions options = {});
 
     [
         LogActivity,
@@ -44,13 +44,14 @@
         PositionCallback successCallback,
         // TODO(crbug.com/841185): |errorCallback| is not nullable in the spec.
         optional PositionErrorCallback? errorCallback,
-        optional PositionOptions options);
+        optional PositionOptions options = {});
 
     void clearWatch(long watchID);
 };
 
 // https://www.w3.org/TR/geolocation-API/#position-callback
-callback PositionCallback = void(Position position);
+callback PositionCallback = void(GeolocationPosition position);
 
 // https://www.w3.org/TR/geolocation-API/#error-callback
-callback PositionErrorCallback = void (PositionError positionError);
+callback PositionErrorCallback =
+    void (GeolocationPositionError positionError);

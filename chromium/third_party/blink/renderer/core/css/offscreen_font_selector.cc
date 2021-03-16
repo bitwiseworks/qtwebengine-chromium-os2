@@ -10,11 +10,11 @@
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
-#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_selector_client.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
+#include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
 
 namespace blink {
@@ -85,6 +85,20 @@ bool OffscreenFontSelector::IsPlatformFamilyMatchAvailable(
 
 void OffscreenFontSelector::ReportNotDefGlyph() const {}
 
+// TODO(crbug.com/1025945): Find a way to access the document object to report
+// OffscreenCanvas font usage in workers.
+void OffscreenFontSelector::ReportSuccessfulFontFamilyMatch(
+    const AtomicString& font_family_name) {}
+
+void OffscreenFontSelector::ReportFailedFontFamilyMatch(
+    const AtomicString& font_family_name) {}
+
+void OffscreenFontSelector::ReportSuccessfulLocalFontMatch(
+    const AtomicString& font_name) {}
+
+void OffscreenFontSelector::ReportFailedLocalFontMatch(
+    const AtomicString& font_name) {}
+
 void OffscreenFontSelector::FontCacheInvalidated() {
   font_face_cache_.IncrementVersion();
 }
@@ -93,7 +107,7 @@ void OffscreenFontSelector::FontFaceInvalidated() {
   FontCacheInvalidated();
 }
 
-void OffscreenFontSelector::Trace(blink::Visitor* visitor) {
+void OffscreenFontSelector::Trace(Visitor* visitor) {
   visitor->Trace(execution_context_);
   visitor->Trace(font_face_cache_);
   FontSelector::Trace(visitor);

@@ -25,10 +25,10 @@
 
 #include "third_party/blink/renderer/modules/webaudio/channel_splitter_node.h"
 
+#include "third_party/blink/renderer/bindings/modules/v8/v8_channel_splitter_options.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
-#include "third_party/blink/renderer/modules/webaudio/channel_splitter_options.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 
@@ -61,7 +61,7 @@ scoped_refptr<ChannelSplitterHandler> ChannelSplitterHandler::Create(
 }
 
 void ChannelSplitterHandler::Process(uint32_t frames_to_process) {
-  AudioBus* source = Input(0).Bus();
+  scoped_refptr<AudioBus> source = Input(0).Bus();
   DCHECK(source);
   DCHECK_EQ(frames_to_process, source->length());
 
@@ -149,11 +149,6 @@ ChannelSplitterNode* ChannelSplitterNode::Create(
     ExceptionState& exception_state) {
   DCHECK(IsMainThread());
 
-  if (context.IsContextClosed()) {
-    context.ThrowExceptionForClosedState(exception_state);
-    return nullptr;
-  }
-
   if (!number_of_outputs ||
       number_of_outputs > BaseAudioContext::MaxNumberOfChannels()) {
     exception_state.ThrowDOMException(
@@ -182,6 +177,14 @@ ChannelSplitterNode* ChannelSplitterNode::Create(
   node->HandleChannelOptions(options, exception_state);
 
   return node;
+}
+
+void ChannelSplitterNode::ReportDidCreate() {
+  GraphTracer().DidCreateAudioNode(this);
+}
+
+void ChannelSplitterNode::ReportWillBeDestroyed() {
+  GraphTracer().WillDestroyAudioNode(this);
 }
 
 }  // namespace blink

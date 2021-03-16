@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2002-2014 The ANGLE Project Authors. All rights reserved.
+// Copyright 2002 The ANGLE Project Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -20,9 +20,9 @@
 #include "libANGLE/Constants.h"
 #include "libANGLE/Context.h"
 #include "libANGLE/ResourceManager.h"
-#include "libANGLE/WorkerThread.h"
 #include "libANGLE/renderer/GLImplFactory.h"
 #include "libANGLE/renderer/ShaderImpl.h"
+#include "platform/FrontendFeatures.h"
 
 namespace gl
 {
@@ -108,45 +108,10 @@ class ScopedExit final : angle::NonCopyable
     std::function<void()> mExit;
 };
 
-using CompileImplFunctor = std::function<void(const std::string &)>;
-class CompileTask : public angle::Closure
+struct Shader::CompilingState
 {
-  public:
-    CompileTask(ShHandle handle,
-                std::string &&sourcePath,
-                std::string &&source,
-                ShCompileOptions options,
-                CompileImplFunctor &&functor)
-        : mHandle(handle),
-          mSourcePath(sourcePath),
-          mSource(source),
-          mOptions(options),
-          mCompileImplFunctor(functor),
-          mResult(false)
-    {}
-    void operator()() override
-    {
-        std::vector<const char *> srcStrings;
-        if (!mSourcePath.empty())
-        {
-            srcStrings.push_back(mSourcePath.c_str());
-        }
-        srcStrings.push_back(mSource.c_str());
-        mResult = sh::Compile(mHandle, &srcStrings[0], srcStrings.size(), mOptions);
-        if (mResult)
-        {
-            mCompileImplFunctor(sh::GetObjectCode(mHandle));
-        }
-    }
-    bool getResult() { return mResult; }
-
-  private:
-    ShHandle mHandle;
-    std::string mSourcePath;
-    std::string mSource;
-    ShCompileOptions mOptions;
-    CompileImplFunctor mCompileImplFunctor;
-    bool mResult;
+    std::shared_ptr<rx::WaitableCompileEvent> compileEvent;
+    ShCompilerInstance shCompilerInstance;
 };
 
 ShaderState::ShaderState(ShaderType shaderType)
@@ -166,7 +131,7 @@ Shader::Shader(ShaderProgramManager *manager,
                rx::GLImplFactory *implFactory,
                const gl::Limitations &rendererLimitations,
                ShaderType type,
-               GLuint handle)
+               ShaderProgramID handle)
     : mState(type),
       mImplementation(implFactory->createShader(mState)),
       mRendererLimitations(rendererLimitations),
@@ -204,7 +169,7 @@ const std::string &Shader::getLabel() const
     return mState.mLabel;
 }
 
-GLuint Shader::getHandle() const
+ShaderProgramID Shader::getHandle() const
 {
     return mHandle;
 }
@@ -357,17 +322,11 @@ void Shader::compile(const Context *context)
     mState.mCompileStatus = CompileStatus::COMPILE_REQUESTED;
     mBoundCompiler.set(context, context->getCompiler());
 
-    // Cache the compile source and options for compilation. Must be done now, since the source
-    // can change before the link call or another call that resolves the compile.
+    ShCompileOptions options = (SH_OBJECT_CODE | SH_VARIABLES | SH_EMULATE_GL_DRAW_ID |
+                                SH_EMULATE_GL_BASE_VERTEX_BASE_INSTANCE);
 
-    std::stringstream sourceStream;
-    std::string sourcePath;
-    ShCompileOptions options =
-        mImplementation->prepareSourceAndReturnOptions(context, &sourceStream, &sourcePath);
-    options |= (SH_OBJECT_CODE | SH_VARIABLES | SH_EMULATE_GL_DRAW_ID);
-    auto source = sourceStream.str();
-
-    // Add default options to WebGL shaders to prevent unexpected behavior during compilation.
+    // Add default options to WebGL shaders to prevent unexpected behavior during
+    // compilation.
     if (context->getExtensions().webglCompatibility)
     {
         options |= SH_INIT_GL_POSITION;
@@ -377,38 +336,34 @@ void Shader::compile(const Context *context)
         options |= SH_INIT_SHARED_VARIABLES;
     }
 
-    // Some targets (eg D3D11 Feature Level 9_3 and below) do not support non-constant loop indexes
-    // in fragment shaders. Shader compilation will fail. To provide a better error message we can
-    // instruct the compiler to pre-validate.
+    // Some targets (eg D3D11 Feature Level 9_3 and below) do not support non-constant loop
+    // indexes in fragment shaders. Shader compilation will fail. To provide a better error
+    // message we can instruct the compiler to pre-validate.
     if (mRendererLimitations.shadersRequireIndexedLoopValidation)
     {
         options |= SH_VALIDATE_LOOP_INDEXING;
     }
 
-    mCurrentMaxComputeWorkGroupInvocations = context->getCaps().maxComputeWorkGroupInvocations;
+    if (context->getFrontendFeatures().scalarizeVecAndMatConstructorArgs.enabled)
+    {
+        options |= SH_SCALARIZE_VEC_AND_MAT_CONSTRUCTOR_ARGS;
+    }
+
+    mCurrentMaxComputeWorkGroupInvocations =
+        static_cast<GLuint>(context->getCaps().maxComputeWorkGroupInvocations);
+
+    mMaxComputeSharedMemory = context->getCaps().maxComputeSharedMemorySize;
 
     ASSERT(mBoundCompiler.get());
-    mShCompilerInstance     = mBoundCompiler->getInstance(mState.mShaderType);
-    ShHandle compilerHandle = mShCompilerInstance.getHandle();
+    ShCompilerInstance compilerInstance = mBoundCompiler->getInstance(mState.mShaderType);
+    ShHandle compilerHandle             = compilerInstance.getHandle();
     ASSERT(compilerHandle);
-    mCompilerResourcesString = mShCompilerInstance.getBuiltinResourcesString();
+    mCompilerResourcesString = compilerInstance.getBuiltinResourcesString();
 
-    mWorkerPool   = context->getWorkerThreadPool();
-    std::function<void(const std::string &)> compileImplFunctor;
-    if (mWorkerPool->isAsync())
-    {
-        compileImplFunctor = [this](const std::string &source) {
-            mImplementation->compileAsync(source);
-        };
-    }
-    else
-    {
-        compileImplFunctor = [](const std::string &source) {};
-    }
-    mCompileTask =
-        std::make_shared<CompileTask>(compilerHandle, std::move(sourcePath), std::move(source),
-                                      options, std::move(compileImplFunctor));
-    mCompileEvent = mWorkerPool->postWorkerTask(mCompileTask);
+    mCompilingState.reset(new CompilingState());
+    mCompilingState->shCompilerInstance = std::move(compilerInstance);
+    mCompilingState->compileEvent =
+        mImplementation->compile(context, &(mCompilingState->shCompilerInstance), options);
 }
 
 void Shader::resolveCompile()
@@ -418,23 +373,22 @@ void Shader::resolveCompile()
         return;
     }
 
-    ASSERT(mCompileEvent.get());
-    ASSERT(mCompileTask.get());
+    ASSERT(mCompilingState.get());
 
-    mCompileEvent->wait();
+    mCompilingState->compileEvent->wait();
 
-    mCompileEvent.reset();
-    mWorkerPool.reset();
+    mInfoLog += mCompilingState->compileEvent->getInfoLog();
 
-    bool compiled = mCompileTask->getResult();
-    mCompileTask.reset();
+    ScopedExit exit([this]() {
+        mBoundCompiler->putInstance(std::move(mCompilingState->shCompilerInstance));
+        mCompilingState->compileEvent.reset();
+        mCompilingState.reset();
+    });
 
-    ScopedExit exit([this]() { mBoundCompiler->putInstance(std::move(mShCompilerInstance)); });
-
-    ShHandle compilerHandle = mShCompilerInstance.getHandle();
-    if (!compiled)
+    ShHandle compilerHandle = mCompilingState->shCompilerInstance.getHandle();
+    if (!mCompilingState->compileEvent->getResult())
     {
-        mInfoLog = sh::GetInfoLog(compilerHandle);
+        mInfoLog += sh::GetInfoLog(compilerHandle);
         WARN() << std::endl << mInfoLog;
         mState.mCompileStatus = CompileStatus::NOT_COMPILED;
         return;
@@ -456,7 +410,15 @@ void Shader::resolveCompile()
         // Remove null characters from the source line
         line.erase(std::remove(line.begin(), line.end(), '\0'), line.end());
 
-        shaderStream << "// " << line << std::endl;
+        shaderStream << "// " << line;
+
+        // glslang complains if a comment ends with backslash
+        if (!line.empty() && line.back() == '\\')
+        {
+            shaderStream << "\\";
+        }
+
+        shaderStream << std::endl;
     }
     shaderStream << "\n\n";
     shaderStream << mState.mTranslatedSource;
@@ -474,7 +436,9 @@ void Shader::resolveCompile()
     {
         case ShaderType::Compute:
         {
-            mState.mLocalSize = sh::GetComputeShaderLocalGroupSize(compilerHandle);
+            mState.mAllAttributes    = GetShaderVariables(sh::GetAttributes(compilerHandle));
+            mState.mActiveAttributes = GetActiveShaderVariables(&mState.mAllAttributes);
+            mState.mLocalSize        = sh::GetComputeShaderLocalGroupSize(compilerHandle);
             if (mState.mLocalSize.isDeclared())
             {
                 angle::CheckedNumeric<uint32_t> checked_local_size_product(mState.mLocalSize[0]);
@@ -499,21 +463,29 @@ void Shader::resolveCompile()
                     return;
                 }
             }
+
+            unsigned int sharedMemSize = sh::GetShaderSharedMemorySize(compilerHandle);
+            if (sharedMemSize > mMaxComputeSharedMemory)
+            {
+                WARN() << std::endl << "Exceeded maximum shared memory size";
+                mState.mCompileStatus = CompileStatus::NOT_COMPILED;
+                return;
+            }
             break;
         }
         case ShaderType::Vertex:
         {
-            {
-                mState.mOutputVaryings = GetShaderVariables(sh::GetOutputVaryings(compilerHandle));
-                mState.mAllAttributes    = GetShaderVariables(sh::GetAttributes(compilerHandle));
-                mState.mActiveAttributes = GetActiveShaderVariables(&mState.mAllAttributes);
-                mState.mNumViews         = sh::GetVertexShaderNumViews(compilerHandle);
-            }
+            mState.mOutputVaryings   = GetShaderVariables(sh::GetOutputVaryings(compilerHandle));
+            mState.mAllAttributes    = GetShaderVariables(sh::GetAttributes(compilerHandle));
+            mState.mActiveAttributes = GetActiveShaderVariables(&mState.mAllAttributes);
+            mState.mNumViews         = sh::GetVertexShaderNumViews(compilerHandle);
             break;
         }
         case ShaderType::Fragment:
         {
-            mState.mInputVaryings = GetShaderVariables(sh::GetInputVaryings(compilerHandle));
+            mState.mAllAttributes    = GetShaderVariables(sh::GetAttributes(compilerHandle));
+            mState.mActiveAttributes = GetActiveShaderVariables(&mState.mAllAttributes);
+            mState.mInputVaryings    = GetShaderVariables(sh::GetInputVaryings(compilerHandle));
             // TODO(jmadill): Figure out why we only sort in the FS, and if we need to.
             std::sort(mState.mInputVaryings.begin(), mState.mInputVaryings.end(), CompareShaderVar);
             mState.mActiveOutputVariables =
@@ -549,7 +521,7 @@ void Shader::resolveCompile()
 
     ASSERT(!mState.mTranslatedSource.empty());
 
-    bool success          = mImplementation->postTranslateCompile(&mShCompilerInstance, &mInfoLog);
+    bool success          = mCompilingState->compileEvent->postTranslate(&mInfoLog);
     mState.mCompileStatus = success ? CompileStatus::COMPILED : CompileStatus::NOT_COMPILED;
 }
 
@@ -591,7 +563,7 @@ bool Shader::isCompiled()
 
 bool Shader::isCompleted()
 {
-    return (!mState.compilePending() || mCompileEvent->isReady());
+    return (!mState.compilePending() || mCompilingState->compileEvent->isReady());
 }
 
 int Shader::getShaderVersion()
@@ -600,19 +572,19 @@ int Shader::getShaderVersion()
     return mState.mShaderVersion;
 }
 
-const std::vector<sh::Varying> &Shader::getInputVaryings()
+const std::vector<sh::ShaderVariable> &Shader::getInputVaryings()
 {
     resolveCompile();
     return mState.getInputVaryings();
 }
 
-const std::vector<sh::Varying> &Shader::getOutputVaryings()
+const std::vector<sh::ShaderVariable> &Shader::getOutputVaryings()
 {
     resolveCompile();
     return mState.getOutputVaryings();
 }
 
-const std::vector<sh::Uniform> &Shader::getUniforms()
+const std::vector<sh::ShaderVariable> &Shader::getUniforms()
 {
     resolveCompile();
     return mState.getUniforms();
@@ -630,19 +602,19 @@ const std::vector<sh::InterfaceBlock> &Shader::getShaderStorageBlocks()
     return mState.getShaderStorageBlocks();
 }
 
-const std::vector<sh::Attribute> &Shader::getActiveAttributes()
+const std::vector<sh::ShaderVariable> &Shader::getActiveAttributes()
 {
     resolveCompile();
     return mState.getActiveAttributes();
 }
 
-const std::vector<sh::Attribute> &Shader::getAllAttributes()
+const std::vector<sh::ShaderVariable> &Shader::getAllAttributes()
 {
     resolveCompile();
     return mState.getAllAttributes();
 }
 
-const std::vector<sh::OutputVariable> &Shader::getActiveOutputVariables()
+const std::vector<sh::ShaderVariable> &Shader::getActiveOutputVariables()
 {
     resolveCompile();
     return mState.getActiveOutputVariables();
@@ -651,7 +623,8 @@ const std::vector<sh::OutputVariable> &Shader::getActiveOutputVariables()
 std::string Shader::getTransformFeedbackVaryingMappedName(const std::string &tfVaryingName)
 {
     // TODO(jiawei.shao@intel.com): support transform feedback on geometry shader.
-    ASSERT(mState.getShaderType() == ShaderType::Vertex);
+    ASSERT(mState.getShaderType() == ShaderType::Vertex ||
+           mState.getShaderType() == ShaderType::Geometry);
     const auto &varyings = getOutputVaryings();
     auto bracketPos      = tfVaryingName.find("[");
     if (bracketPos != std::string::npos)
@@ -677,7 +650,8 @@ std::string Shader::getTransformFeedbackVaryingMappedName(const std::string &tfV
             }
             else if (varying.isStruct())
             {
-                const auto *field = FindShaderVarField(varying, tfVaryingName);
+                GLuint fieldIndex = 0;
+                const auto *field = FindShaderVarField(varying, tfVaryingName, &fieldIndex);
                 ASSERT(field != nullptr && !field->isStruct() && !field->isArray());
                 return varying.mappedName + "." + field->mappedName;
             }

@@ -10,13 +10,14 @@
 #include <utility>
 #include <vector>
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/test/scoped_task_environment.h"
+#include "base/test/task_environment.h"
 #include "chromeos/disks/disk.h"
 #include "chromeos/disks/mock_disk_mount_manager.h"
 #include "components/storage_monitor/mock_removable_storage_observer.h"
@@ -24,7 +25,8 @@
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/test_media_transfer_protocol_manager_chromeos.h"
 #include "components/storage_monitor/test_storage_monitor.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/browser_task_environment.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace storage_monitor {
@@ -70,11 +72,12 @@ class TestStorageMonitorCros : public StorageMonitorCros {
   ~TestStorageMonitorCros() override {}
 
   void Init() override {
-    device::mojom::MtpManagerPtr fake_mtp_manager_ptr;
+    mojo::PendingRemote<device::mojom::MtpManager> pending_fake_mtp_manager;
     auto* fake_mtp_manager =
         TestMediaTransferProtocolManagerChromeOS::GetFakeMtpManager();
-    fake_mtp_manager->AddBinding(mojo::MakeRequest(&fake_mtp_manager_ptr));
-    SetMediaTransferProtocolManagerForTest(std::move(fake_mtp_manager_ptr));
+    fake_mtp_manager->AddReceiver(
+        pending_fake_mtp_manager.InitWithNewPipeAndPassReceiver());
+    SetMediaTransferProtocolManagerForTest(std::move(pending_fake_mtp_manager));
 
     StorageMonitorCros::Init();
   }
@@ -96,8 +99,8 @@ class TestStorageMonitorCros : public StorageMonitorCros {
     return StorageMonitorCros::GetStorageInfoForPath(path, device_info);
   }
   void EjectDevice(const std::string& device_id,
-                   base::Callback<void(EjectStatus)> callback) override {
-    StorageMonitorCros::EjectDevice(device_id, callback);
+                   base::OnceCallback<void(EjectStatus)> callback) override {
+    StorageMonitorCros::EjectDevice(device_id, std::move(callback));
   }
 
  private:
@@ -150,7 +153,7 @@ class StorageMonitorCrosTest : public testing::Test {
   StorageMonitor::EjectStatus status_;
 
  private:
-  content::TestBrowserThreadBundle thread_bundle_;
+  content::BrowserTaskEnvironment task_environment_;
 
   // Temporary directory for created test data.
   base::ScopedTempDir scoped_temp_dir_;
@@ -193,7 +196,7 @@ void StorageMonitorCrosTest::TearDown() {
 
   disk_mount_manager_mock_ = NULL;
   DiskMountManager::Shutdown();
-  thread_bundle_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 void StorageMonitorCrosTest::MountDevice(
@@ -213,7 +216,7 @@ void StorageMonitorCrosTest::MountDevice(
         true /* on_removable_device */, kFileSystemType);
   }
   monitor_->OnMountEvent(DiskMountManager::MOUNTING, error_code, mount_info);
-  thread_bundle_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 void StorageMonitorCrosTest::UnmountDevice(
@@ -222,7 +225,7 @@ void StorageMonitorCrosTest::UnmountDevice(
   monitor_->OnMountEvent(DiskMountManager::UNMOUNTING, error_code, mount_info);
   if (error_code == chromeos::MOUNT_ERROR_NONE)
     disk_mount_manager_mock_->RemoveDiskEntryForMountDevice(mount_info);
-  thread_bundle_.RunUntilIdle();
+  task_environment_.RunUntilIdle();
 }
 
 uint64_t StorageMonitorCrosTest::GetDeviceStorageSize(
@@ -523,17 +526,16 @@ TEST_F(StorageMonitorCrosTest, EjectTest) {
   EXPECT_EQ(0, observer().detach_calls());
 
   // testing::Invoke doesn't handle move-only types, so use a lambda instead.
-  ON_CALL(*disk_mount_manager_mock_, UnmountPath(_, _, _))
+  ON_CALL(*disk_mount_manager_mock_, UnmountPath(_, _))
       .WillByDefault([](const std::string& location,
-                        chromeos::UnmountOptions options,
                         DiskMountManager::UnmountPathCallback cb) {
         std::move(cb).Run(chromeos::MOUNT_ERROR_NONE);
       });
   EXPECT_CALL(*disk_mount_manager_mock_,
-              UnmountPath(observer().last_attached().location(), _, _));
+              UnmountPath(observer().last_attached().location(), _));
   monitor_->EjectDevice(observer().last_attached().device_id(),
-                        base::Bind(&StorageMonitorCrosTest::EjectNotify,
-                                   base::Unretained(this)));
+                        base::BindOnce(&StorageMonitorCrosTest::EjectNotify,
+                                       base::Unretained(this)));
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(StorageMonitor::EJECT_OK, status_);

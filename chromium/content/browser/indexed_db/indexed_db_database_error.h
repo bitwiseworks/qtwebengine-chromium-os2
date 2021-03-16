@@ -8,26 +8,27 @@
 #include <stdint.h>
 
 #include "base/strings/string16.h"
-#include "base/strings/utf_string_conversions.h"
 #include "content/common/content_export.h"
+#include "third_party/blink/public/mojom/indexeddb/indexeddb.mojom-forward.h"
 
 namespace content {
 
 class CONTENT_EXPORT IndexedDBDatabaseError {
  public:
   IndexedDBDatabaseError();
-  explicit IndexedDBDatabaseError(uint16_t code);
-  IndexedDBDatabaseError(uint16_t code, const char* message);
-  IndexedDBDatabaseError(uint16_t code, const base::string16& message);
+  explicit IndexedDBDatabaseError(blink::mojom::IDBException code);
+  IndexedDBDatabaseError(blink::mojom::IDBException code, const char* message);
+  IndexedDBDatabaseError(blink::mojom::IDBException code,
+                         const base::string16& message);
   ~IndexedDBDatabaseError();
 
   IndexedDBDatabaseError& operator=(const IndexedDBDatabaseError& rhs);
 
-  uint16_t code() const { return code_; }
+  blink::mojom::IDBException code() const { return code_; }
   const base::string16& message() const { return message_; }
 
  private:
-  uint16_t code_ = 0;
+  blink::mojom::IDBException code_ = blink::mojom::IDBException::kNoError;
   base::string16 message_;
 };
 

@@ -17,11 +17,13 @@
 #include <sys/stat.h>
 
 #include "perfetto/base/build_config.h"
-#include "perfetto/base/file_utils.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/base/scoped_file.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/utils.h"
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) || \
+    PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
 #include <unistd.h>
 #else
 #include <corecrt_io.h>
@@ -57,6 +59,10 @@ bool ReadFileDescriptor(int fd, std::string* out) {
       return bytes_read == 0;
     }
   }
+}
+
+bool ReadFileStream(FILE* f, std::string* out) {
+  return ReadFileDescriptor(fileno(f), out);
 }
 
 bool ReadFile(const std::string& path, std::string* out) {

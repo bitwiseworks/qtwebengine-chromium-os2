@@ -5,7 +5,7 @@
 */
 
 
-/*
+/* 
 ** This test file includes lsmInt.h to get access to the definition of the
 ** ShmHeader structure. This is required to cause strategic damage to the
 ** shared memory header as part of recovery testing.
@@ -24,9 +24,9 @@ struct SetupStep {
 };
 
 static void doSetupStep(
-  TestDb *pDb,
-  Datasource *pData,
-  const SetupStep *pStep,
+  TestDb *pDb, 
+  Datasource *pData, 
+  const SetupStep *pStep, 
   int *pRc
 ){
   testWriteDatasourceRange(pDb, pData, pStep->iInsStart, pStep->nIns, pRc);
@@ -50,9 +50,9 @@ static void doSetupStep(
 }
 
 static void doSetupStepArray(
-  TestDb *pDb,
-  Datasource *pData,
-  const SetupStep *aStep,
+  TestDb *pDb, 
+  Datasource *pData, 
+  const SetupStep *aStep, 
   int nStep
 ){
   int i;
@@ -103,10 +103,10 @@ void testReadFile(const char *zFile, int iOff, void *pOut, int nByte, int *pRc){
 }
 
 void testWriteFile(
-  const char *zFile,
-  int iOff,
-  void *pOut,
-  int nByte,
+  const char *zFile, 
+  int iOff, 
+  void *pOut, 
+  int nByte, 
   int *pRc
 ){
   if( *pRc==0 ){
@@ -141,7 +141,7 @@ static ShmHeader *getShmHeader(const char *zDb){
 }
 
 /*
-** This function makes a copy of the three files associated with LSM
+** This function makes a copy of the three files associated with LSM 
 ** database zDb (i.e. if zDb is "test.db", it makes copies of "test.db",
 ** "test.db-log" and "test.db-shm").
 **
@@ -150,10 +150,10 @@ static ShmHeader *getShmHeader(const char *zDb){
 ** to the db (holding a shared lock on DMS2). This prevents recovery from
 ** running. Then:
 **
-**    1) Check that the checksum of the database is zCksum.
-**    2) Write a few keys to the database. Then delete the same keys.
+**    1) Check that the checksum of the database is zCksum. 
+**    2) Write a few keys to the database. Then delete the same keys. 
 **    3) Check that the checksum is zCksum.
-**    4) Flush the db to disk and run a checkpoint.
+**    4) Flush the db to disk and run a checkpoint. 
 **    5) Check once more that the checksum is still zCksum.
 */
 static void doLiveRecovery(const char *zDb, const char *zCksum, int *pRc){
@@ -235,7 +235,7 @@ static void doWriterCrash1(int *pRc){
 
 /*
 ** This test case verifies that inconsistent tree-headers in shared-memory
-** are resolved correctly.
+** are resolved correctly. 
 */
 static void doWriterCrash2(int *pRc){
   int rc = 0;

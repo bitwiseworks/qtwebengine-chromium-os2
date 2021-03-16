@@ -23,8 +23,8 @@
 #include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/active_script_wrappable.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
+#include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
@@ -45,15 +45,11 @@ class MediaQuerySet;
 class CORE_EXPORT MediaQueryList final
     : public EventTargetWithInlineData,
       public ActiveScriptWrappable<MediaQueryList>,
-      public ContextLifecycleObserver {
+      public ExecutionContextLifecycleObserver {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(MediaQueryList);
 
  public:
-  static MediaQueryList* Create(ExecutionContext*,
-                                MediaQueryMatcher*,
-                                scoped_refptr<MediaQuerySet>);
-
   MediaQueryList(ExecutionContext*,
                  MediaQueryMatcher*,
                  scoped_refptr<MediaQuerySet>);
@@ -62,7 +58,7 @@ class CORE_EXPORT MediaQueryList final
   String media() const;
   bool matches();
 
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(change, kChange)
 
   // These two functions are provided for compatibility with JS code
   // written before the change listener became a DOM event.
@@ -78,13 +74,13 @@ class CORE_EXPORT MediaQueryList final
   bool MediaFeaturesChanged(
       HeapVector<Member<MediaQueryListListener>>* listeners_to_notify);
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   // From ScriptWrappable
   bool HasPendingActivity() const final;
 
-  // From ContextLifecycleObserver
-  void ContextDestroyed(ExecutionContext*) override;
+  // From ExecutionContextLifecycleObserver
+  void ContextDestroyed() override;
 
   const AtomicString& InterfaceName() const override;
   ExecutionContext* GetExecutionContext() const override;

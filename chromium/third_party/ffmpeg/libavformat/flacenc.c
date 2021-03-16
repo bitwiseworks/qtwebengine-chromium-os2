@@ -65,7 +65,7 @@ static int flac_write_block_comment(AVIOContext *pb, AVDictionary **m,
 
     ff_metadata_conv(m, ff_vorbiscomment_metadata_conv, NULL);
 
-    len = ff_vorbiscomment_length(*m, vendor);
+    len = ff_vorbiscomment_length(*m, vendor, NULL, 0);
     if (len >= ((1<<24) - 4))
         return AVERROR(EINVAL);
     p0 = av_malloc(len+4);
@@ -75,7 +75,7 @@ static int flac_write_block_comment(AVIOContext *pb, AVDictionary **m,
 
     bytestream_put_byte(&p, last_block ? 0x84 : 0x04);
     bytestream_put_be24(&p, len);
-    ff_vorbiscomment_write(&p, m, vendor);
+    ff_vorbiscomment_write(&p, m, vendor, NULL, 0);
 
     avio_write(pb, p0, len+4);
     av_freep(&p0);
@@ -93,7 +93,7 @@ static int flac_write_picture(struct AVFormatContext *s, AVPacket *pkt)
     AVDictionaryEntry *e;
     const char *mimetype = NULL, *desc = "";
     const AVStream *st = s->streams[pkt->stream_index];
-    int i, mimelen, desclen, type = 0;
+    int i, mimelen, desclen, type = 0, blocklen;
 
     if (!pkt->data)
         return 0;
@@ -140,8 +140,14 @@ static int flac_write_picture(struct AVFormatContext *s, AVPacket *pkt)
         desc = e->value;
     desclen = strlen(desc);
 
+    blocklen = 4 + 4 + mimelen + 4 + desclen + 4 + 4 + 4 + 4 + 4 + pkt->size;
+    if (blocklen >= 1<<24) {
+        av_log(s, AV_LOG_ERROR, "Picture block too big %d >= %d\n", blocklen, 1<<24);
+        return AVERROR(EINVAL);
+    }
+
     avio_w8(pb, 0x06);
-    avio_wb24(pb, 4 + 4 + mimelen + 4 + desclen + 4 + 4 + 4 + 4 + 4 + pkt->size);
+    avio_wb24(pb, blocklen);
 
     avio_wb32(pb, type);
 
@@ -343,14 +349,19 @@ static int flac_write_trailer(struct AVFormatContext *s)
         avio_seek(pb, 8, SEEK_SET);
         avio_write(pb, streaminfo, FLAC_STREAMINFO_SIZE);
         avio_seek(pb, file_size, SEEK_SET);
-        avio_flush(pb);
     } else {
         av_log(s, AV_LOG_WARNING, "unable to rewrite FLAC header.\n");
     }
 
-    av_freep(&c->streaminfo);
-
     return 0;
+}
+
+static void flac_deinit(struct AVFormatContext *s)
+{
+    FlacMuxerContext *c = s->priv_data;
+
+    ff_packet_list_free(&c->queue, &c->queue_end);
+    av_freep(&c->streaminfo);
 }
 
 static int flac_write_packet(struct AVFormatContext *s, AVPacket *pkt)
@@ -425,6 +436,7 @@ AVOutputFormat ff_flac_muxer = {
     .write_header      = flac_write_header,
     .write_packet      = flac_write_packet,
     .write_trailer     = flac_write_trailer,
+    .deinit            = flac_deinit,
     .flags             = AVFMT_NOTIMESTAMPS,
     .priv_class        = &flac_muxer_class,
 };

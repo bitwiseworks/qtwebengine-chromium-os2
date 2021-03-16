@@ -5,7 +5,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_BACKGROUND_SYNC_SYNC_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_BACKGROUND_SYNC_SYNC_EVENT_H_
 
-#include "third_party/blink/renderer/modules/background_sync/sync_event_init.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
 #include "third_party/blink/renderer/modules/service_worker/extendable_event.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
@@ -13,6 +12,8 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
+
+class SyncEventInit;
 
 class MODULES_EXPORT SyncEvent final : public ExtendableEvent {
   DEFINE_WRAPPERTYPEINFO();
@@ -29,16 +30,17 @@ class MODULES_EXPORT SyncEvent final : public ExtendableEvent {
     return MakeGarbageCollected<SyncEvent>(type, init);
   }
 
-  SyncEvent(const AtomicString& type, const String&, bool, WaitUntilObserver*);
-  SyncEvent(const AtomicString& type, const SyncEventInit*);
+  SyncEvent(const AtomicString& type,
+            const String& tag,
+            bool last_chance,
+            WaitUntilObserver* observer);
+  SyncEvent(const AtomicString& type, const SyncEventInit* init);
   ~SyncEvent() override;
 
   const AtomicString& InterfaceName() const override;
 
-  String tag();
-  bool lastChance();
-
-  void Trace(blink::Visitor*) override;
+  const String& tag() const;
+  bool lastChance() const;
 
  private:
   String tag_;

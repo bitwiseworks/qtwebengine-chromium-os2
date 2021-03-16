@@ -39,14 +39,40 @@ class RenderbufferVk : public RenderbufferImpl
     angle::Result getAttachmentRenderTarget(const gl::Context *context,
                                             GLenum binding,
                                             const gl::ImageIndex &imageIndex,
+                                            GLsizei samples,
                                             FramebufferAttachmentRenderTarget **rtOut) override;
 
     angle::Result initializeContents(const gl::Context *context,
                                      const gl::ImageIndex &imageIndex) override;
 
+    vk::ImageHelper *getImage() const { return mImage; }
+    void releaseOwnershipOfImage(const gl::Context *context);
+
+    GLenum getColorReadFormat(const gl::Context *context) override;
+    GLenum getColorReadType(const gl::Context *context) override;
+
+    angle::Result getRenderbufferImage(const gl::Context *context,
+                                       const gl::PixelPackState &packState,
+                                       gl::Buffer *packBuffer,
+                                       GLenum format,
+                                       GLenum type,
+                                       void *pixels) override;
+
   private:
-    vk::ImageHelper mImage;
-    vk::ImageView mImageView;
+    void releaseAndDeleteImage(ContextVk *contextVk);
+    void releaseImage(ContextVk *contextVk);
+
+    angle::Result setStorageImpl(const gl::Context *context,
+                                 size_t samples,
+                                 GLenum internalformat,
+                                 size_t width,
+                                 size_t height);
+
+    const gl::InternalFormat &getImplementationSizedFormat() const;
+
+    bool mOwnsImage;
+    vk::ImageHelper *mImage;
+    vk::ImageViewHelper mImageViews;
     RenderTargetVk mRenderTarget;
 };
 

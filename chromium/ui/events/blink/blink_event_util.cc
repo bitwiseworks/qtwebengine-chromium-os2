@@ -13,9 +13,9 @@
 
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "third_party/blink/public/platform/web_input_event.h"
-#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
-#include "third_party/blink/public/platform/web_pointer_event.h"
+#include "third_party/blink/public/common/input/web_input_event.h"
+#include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+#include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "ui/events/android/gesture_event_android.h"
 #include "ui/events/android/gesture_event_type.h"
 #include "ui/events/base_event_utils.h"
@@ -24,11 +24,13 @@
 #include "ui/events/gesture_detection/motion_event.h"
 #include "ui/events/gesture_event_details.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/angle_conversions.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/transform.h"
 
+using blink::WebGestureDevice;
 using blink::WebGestureEvent;
 using blink::WebInputEvent;
 using blink::WebMouseEvent;
@@ -266,8 +268,9 @@ WebInputEvent::DispatchType MergeDispatchTypes(
 bool CanCoalesce(const WebPointerEvent& event_to_coalesce,
                  const WebPointerEvent& event) {
   return (event.GetType() == WebInputEvent::kPointerMove ||
-          event.GetType() == WebInputEvent::kPointerRawMove) &&
+          event.GetType() == WebInputEvent::kPointerRawUpdate) &&
          event.GetType() == event_to_coalesce.GetType() &&
+         event.GetModifiers() == event_to_coalesce.GetModifiers() &&
          event.id == event_to_coalesce.id &&
          event.pointer_type == event_to_coalesce.pointer_type;
 }
@@ -290,6 +293,7 @@ bool CanCoalesce(const WebMouseEvent& event_to_coalesce,
   // coalescing mouse events.
   return event.GetType() == WebInputEvent::kMouseMove &&
          event.GetType() == event_to_coalesce.GetType() &&
+         event.GetModifiers() == event_to_coalesce.GetModifiers() &&
          event.id == event_to_coalesce.id &&
          event.pointer_type == event_to_coalesce.pointer_type;
 }
@@ -315,17 +319,9 @@ bool HaveConsistentPhase(const WebMouseWheelEvent& event_to_coalesce,
   }
 
   if (event.has_synthetic_phase) {
-    // Synthetic phase information is added based on a timer in
-    // MouseWheelPhaseHandler. This information is for simulating scroll
-    // sequences when the beginning and end of scrolls are not available. It is
-    // alright to coalesce an event with synthetic phaseBegan to its previous
-    // event with synthetic phaseEnded since these phase values don't correspond
-    // with real start and end of the scroll sequences.
-    // It is also alright to coalesce a wheel event with synthetic phaseChanged
-    // to its previous one with synthetic phaseBegan.
-    return (event.phase == WebMouseWheelEvent::kPhaseEnded &&
-            event_to_coalesce.phase == WebMouseWheelEvent::kPhaseBegan) ||
-           (event.phase == WebMouseWheelEvent::kPhaseBegan &&
+    // It is alright to coalesce a wheel event with synthetic phaseChanged to
+    // its previous one with synthetic phaseBegan.
+    return (event.phase == WebMouseWheelEvent::kPhaseBegan &&
             event_to_coalesce.phase == WebMouseWheelEvent::kPhaseChanged);
   }
   return false;
@@ -334,11 +330,8 @@ bool HaveConsistentPhase(const WebMouseWheelEvent& event_to_coalesce,
 bool CanCoalesce(const WebMouseWheelEvent& event_to_coalesce,
                  const WebMouseWheelEvent& event) {
   return event.GetModifiers() == event_to_coalesce.GetModifiers() &&
-         event.scroll_by_page == event_to_coalesce.scroll_by_page &&
-         HaveConsistentPhase(event_to_coalesce, event) &&
-         event.resending_plugin_id == event_to_coalesce.resending_plugin_id &&
-         event.has_precise_scrolling_deltas ==
-             event_to_coalesce.has_precise_scrolling_deltas;
+         event.delta_units == event_to_coalesce.delta_units &&
+         HaveConsistentPhase(event_to_coalesce, event);
 }
 
 void Coalesce(const WebMouseWheelEvent& event_to_coalesce,
@@ -375,18 +368,11 @@ void Coalesce(const WebMouseWheelEvent& event_to_coalesce,
       MergeDispatchTypes(old_dispatch_type, event_to_coalesce.dispatch_type);
   if (event_to_coalesce.has_synthetic_phase &&
       event_to_coalesce.phase != old_phase) {
-    if (event_to_coalesce.phase == WebMouseWheelEvent::kPhaseBegan) {
-      // Coalesce a wheel event with synthetic phase began with a wheel event
-      // with synthetic phase ended.
-      DCHECK_EQ(WebMouseWheelEvent::kPhaseEnded, old_phase);
-      event->phase = WebMouseWheelEvent::kPhaseChanged;
-    } else {
-      // Coalesce  a wheel event with synthetic phase changed to a wheel event
-      // with synthetic phase began.
-      DCHECK_EQ(WebMouseWheelEvent::kPhaseChanged, event_to_coalesce.phase);
-      DCHECK_EQ(WebMouseWheelEvent::kPhaseBegan, old_phase);
-      event->phase = WebMouseWheelEvent::kPhaseBegan;
-    }
+    // Coalesce  a wheel event with synthetic phase changed to a wheel event
+    // with synthetic phase began.
+    DCHECK_EQ(WebMouseWheelEvent::kPhaseChanged, event_to_coalesce.phase);
+    DCHECK_EQ(WebMouseWheelEvent::kPhaseBegan, old_phase);
+    event->phase = WebMouseWheelEvent::kPhaseBegan;
   }
 }
 
@@ -446,7 +432,6 @@ void Coalesce(const WebTouchEvent& event_to_coalesce, WebTouchEvent* event) {
 bool CanCoalesce(const WebGestureEvent& event_to_coalesce,
                  const WebGestureEvent& event) {
   if (event.GetType() != event_to_coalesce.GetType() ||
-      event.resending_plugin_id != event_to_coalesce.resending_plugin_id ||
       event.SourceDevice() != event_to_coalesce.SourceDevice() ||
       event.GetModifiers() != event_to_coalesce.GetModifiers())
     return false;
@@ -460,10 +445,10 @@ bool CanCoalesce(const WebGestureEvent& event_to_coalesce,
   // not be exactly equal, so we only require approximate equality.
   constexpr float kAnchorTolerance = 1.f;
   if (event.GetType() == WebInputEvent::kGesturePinchUpdate &&
-      (std::abs(event.PositionInWidget().x -
-                event_to_coalesce.PositionInWidget().x) < kAnchorTolerance) &&
-      (std::abs(event.PositionInWidget().y -
-                event_to_coalesce.PositionInWidget().y) < kAnchorTolerance)) {
+      (std::abs(event.PositionInWidget().x() -
+                event_to_coalesce.PositionInWidget().x()) < kAnchorTolerance) &&
+      (std::abs(event.PositionInWidget().y() -
+                event_to_coalesce.PositionInWidget().y()) < kAnchorTolerance)) {
     return true;
   }
 
@@ -478,9 +463,6 @@ void Coalesce(const WebGestureEvent& event_to_coalesce,
         event_to_coalesce.data.scroll_update.delta_x;
     event->data.scroll_update.delta_y +=
         event_to_coalesce.data.scroll_update.delta_y;
-    DCHECK_EQ(event->data.scroll_update.previous_update_in_sequence_prevented,
-              event_to_coalesce.data.scroll_update
-                  .previous_update_in_sequence_prevented);
   } else if (event->GetType() == WebInputEvent::kGesturePinchUpdate) {
     event->data.pinch_update.scale *= event_to_coalesce.data.pinch_update.scale;
     // Ensure the scale remains bounded above 0 and below Infinity so that
@@ -500,11 +482,11 @@ gfx::Transform GetTransformForEvent(const WebGestureEvent& gesture_event) {
                                 gesture_event.data.scroll_update.delta_y);
   } else if (gesture_event.GetType() == WebInputEvent::kGesturePinchUpdate) {
     float scale = gesture_event.data.pinch_update.scale;
-    gesture_transform.Translate(-gesture_event.PositionInWidget().x,
-                                -gesture_event.PositionInWidget().y);
+    gesture_transform.Translate(-gesture_event.PositionInWidget().x(),
+                                -gesture_event.PositionInWidget().y());
     gesture_transform.Scale(scale, scale);
-    gesture_transform.Translate(gesture_event.PositionInWidget().x,
-                                gesture_event.PositionInWidget().y);
+    gesture_transform.Translate(gesture_event.PositionInWidget().x(),
+                                gesture_event.PositionInWidget().y());
   } else {
     NOTREACHED() << "Invalid event type for transform retrieval: "
                  << WebInputEvent::GetName(gesture_event.GetType());
@@ -597,8 +579,8 @@ bool IsCompatibleScrollorPinch(const WebGestureEvent& new_event,
   return (event_in_queue.GetType() == WebInputEvent::kGestureScrollUpdate ||
           event_in_queue.GetType() == WebInputEvent::kGesturePinchUpdate) &&
          event_in_queue.GetModifiers() == new_event.GetModifiers() &&
-         event_in_queue.SourceDevice() == blink::kWebGestureDeviceTouchscreen &&
-         new_event.SourceDevice() == blink::kWebGestureDeviceTouchscreen;
+         event_in_queue.SourceDevice() == WebGestureDevice::kTouchscreen &&
+         new_event.SourceDevice() == WebGestureDevice::kTouchscreen;
 }
 
 std::pair<WebGestureEvent, WebGestureEvent> CoalesceScrollAndPinch(
@@ -632,19 +614,19 @@ std::pair<WebGestureEvent, WebGestureEvent> CoalesceScrollAndPinch(
   combined_scroll_pinch.ConcatTransform(GetTransformForEvent(new_event));
 
   float combined_scale =
-      SkMScalarToFloat(combined_scroll_pinch.matrix().get(0, 0));
+      SkScalarToFloat(combined_scroll_pinch.matrix().get(0, 0));
   float combined_scroll_pinch_x =
-      SkMScalarToFloat(combined_scroll_pinch.matrix().get(0, 3));
+      SkScalarToFloat(combined_scroll_pinch.matrix().get(0, 3));
   float combined_scroll_pinch_y =
-      SkMScalarToFloat(combined_scroll_pinch.matrix().get(1, 3));
+      SkScalarToFloat(combined_scroll_pinch.matrix().get(1, 3));
   scroll_event.data.scroll_update.delta_x =
-      (combined_scroll_pinch_x + pinch_event.PositionInWidget().x) /
+      (combined_scroll_pinch_x + pinch_event.PositionInWidget().x()) /
           combined_scale -
-      pinch_event.PositionInWidget().x;
+      pinch_event.PositionInWidget().x();
   scroll_event.data.scroll_update.delta_y =
-      (combined_scroll_pinch_y + pinch_event.PositionInWidget().y) /
+      (combined_scroll_pinch_y + pinch_event.PositionInWidget().y()) /
           combined_scale -
-      pinch_event.PositionInWidget().y;
+      pinch_event.PositionInWidget().y();
   pinch_event.data.pinch_update.scale = combined_scale;
 
   return std::make_pair(scroll_event, pinch_event);
@@ -726,13 +708,13 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
                                       const gfx::PointF& raw_location,
                                       int flags,
                                       uint32_t unique_touch_event_id) {
-  blink::WebGestureDevice source_device = blink::kWebGestureDeviceUninitialized;
+  WebGestureDevice source_device = WebGestureDevice::kUninitialized;
   switch (details.device_type()) {
     case GestureDeviceType::DEVICE_TOUCHSCREEN:
-      source_device = blink::kWebGestureDeviceTouchscreen;
+      source_device = WebGestureDevice::kTouchscreen;
       break;
     case GestureDeviceType::DEVICE_TOUCHPAD:
-      source_device = blink::kWebGestureDeviceTouchpad;
+      source_device = WebGestureDevice::kTouchpad;
       break;
     case GestureDeviceType::DEVICE_UNKNOWN:
       NOTREACHED() << "Unknown device type is not allowed";
@@ -763,8 +745,7 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
       gesture.data.tap.tap_count = details.tap_count();
       gesture.data.tap.width = details.bounding_box_f().width();
       gesture.data.tap.height = details.bounding_box_f().height();
-      gesture.SetNeedsWheelEvent(source_device ==
-                                 blink::kWebGestureDeviceTouchpad);
+      gesture.SetNeedsWheelEvent(source_device == WebGestureDevice::kTouchpad);
       break;
     case ET_GESTURE_TAP:
       gesture.SetType(WebInputEvent::kGestureTap);
@@ -802,19 +783,13 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
       gesture.data.scroll_begin.pointer_count = details.touch_points();
       gesture.data.scroll_begin.delta_x_hint = details.scroll_x_hint();
       gesture.data.scroll_begin.delta_y_hint = details.scroll_y_hint();
-      gesture.data.scroll_begin.delta_hint_units =
-          static_cast<blink::WebGestureEvent::ScrollUnits>(
-              details.scroll_begin_units());
+      gesture.data.scroll_begin.delta_hint_units = details.scroll_begin_units();
       break;
     case ET_GESTURE_SCROLL_UPDATE:
       gesture.SetType(WebInputEvent::kGestureScrollUpdate);
       gesture.data.scroll_update.delta_x = details.scroll_x();
       gesture.data.scroll_update.delta_y = details.scroll_y();
-      gesture.data.scroll_update.delta_units =
-          static_cast<blink::WebGestureEvent::ScrollUnits>(
-              details.scroll_update_units());
-      gesture.data.scroll_update.previous_update_in_sequence_prevented =
-          details.previous_scroll_update_in_sequence_prevented();
+      gesture.data.scroll_update.delta_units = details.scroll_update_units();
       break;
     case ET_GESTURE_SCROLL_END:
       gesture.SetType(WebInputEvent::kGestureScrollEnd);
@@ -829,19 +804,16 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
       break;
     case ET_GESTURE_PINCH_BEGIN:
       gesture.SetType(WebInputEvent::kGesturePinchBegin);
-      gesture.SetNeedsWheelEvent(source_device ==
-                                 blink::kWebGestureDeviceTouchpad);
+      gesture.SetNeedsWheelEvent(source_device == WebGestureDevice::kTouchpad);
       break;
     case ET_GESTURE_PINCH_UPDATE:
       gesture.SetType(WebInputEvent::kGesturePinchUpdate);
       gesture.data.pinch_update.scale = details.scale();
-      gesture.SetNeedsWheelEvent(source_device ==
-                                 blink::kWebGestureDeviceTouchpad);
+      gesture.SetNeedsWheelEvent(source_device == WebGestureDevice::kTouchpad);
       break;
     case ET_GESTURE_PINCH_END:
       gesture.SetType(WebInputEvent::kGesturePinchEnd);
-      gesture.SetNeedsWheelEvent(source_device ==
-                                 blink::kWebGestureDeviceTouchpad);
+      gesture.SetNeedsWheelEvent(source_device == WebGestureDevice::kTouchpad);
       break;
     case ET_GESTURE_TAP_CANCEL:
       gesture.SetType(WebInputEvent::kGestureTapCancel);
@@ -890,10 +862,12 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     blink::WebMouseWheelEvent* wheel_event = new blink::WebMouseWheelEvent;
     scaled_event.reset(wheel_event);
     *wheel_event = static_cast<const blink::WebMouseWheelEvent&>(event);
-    float x = (wheel_event->PositionInWidget().x + delta.x()) * scale;
-    float y = (wheel_event->PositionInWidget().y + delta.y()) * scale;
+    float x = (wheel_event->PositionInWidget().x() + delta.x()) * scale;
+    float y = (wheel_event->PositionInWidget().y() + delta.y()) * scale;
     wheel_event->SetPositionInWidget(x, y);
-    if (!wheel_event->scroll_by_page) {
+    if (wheel_event->delta_units != ui::ScrollGranularity::kScrollByPage &&
+        wheel_event->delta_units !=
+            ui::ScrollGranularity::kScrollByPercentage) {
       wheel_event->delta_x *= scale;
       wheel_event->delta_y *= scale;
       wheel_event->wheel_ticks_x *= scale;
@@ -903,19 +877,22 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     blink::WebMouseEvent* mouse_event = new blink::WebMouseEvent;
     scaled_event.reset(mouse_event);
     *mouse_event = static_cast<const blink::WebMouseEvent&>(event);
-    float x = (mouse_event->PositionInWidget().x + delta.x()) * scale;
-    float y = (mouse_event->PositionInWidget().y + delta.y()) * scale;
+    float x = (mouse_event->PositionInWidget().x() + delta.x()) * scale;
+    float y = (mouse_event->PositionInWidget().y() + delta.y()) * scale;
     mouse_event->SetPositionInWidget(x, y);
-    mouse_event->movement_x *= scale;
-    mouse_event->movement_y *= scale;
+    // Do not scale movement of raw movement events.
+    if (!mouse_event->is_raw_movement_event) {
+      mouse_event->movement_x *= scale;
+      mouse_event->movement_y *= scale;
+    }
   } else if (blink::WebInputEvent::IsTouchEventType(event.GetType())) {
     blink::WebTouchEvent* touch_event = new blink::WebTouchEvent;
     scaled_event.reset(touch_event);
     *touch_event = static_cast<const blink::WebTouchEvent&>(event);
     for (unsigned i = 0; i < touch_event->touches_length; i++) {
       touch_event->touches[i].SetPositionInWidget(
-          (touch_event->touches[i].PositionInWidget().x + delta.x()) * scale,
-          (touch_event->touches[i].PositionInWidget().y + delta.y()) * scale);
+          (touch_event->touches[i].PositionInWidget().x() + delta.x()) * scale,
+          (touch_event->touches[i].PositionInWidget().y() + delta.y()) * scale);
       touch_event->touches[i].radius_x *= scale;
       touch_event->touches[i].radius_y *= scale;
     }
@@ -923,20 +900,24 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     blink::WebGestureEvent* gesture_event = new blink::WebGestureEvent;
     scaled_event.reset(gesture_event);
     *gesture_event = static_cast<const blink::WebGestureEvent&>(event);
-    gesture_event->SetPositionInWidget(blink::WebFloatPoint(
-        (gesture_event->PositionInWidget().x + delta.x()) * scale,
-        (gesture_event->PositionInWidget().y + delta.y()) * scale));
+    gesture_event->SetPositionInWidget(gfx::PointF(
+        (gesture_event->PositionInWidget().x() + delta.x()) * scale,
+        (gesture_event->PositionInWidget().y() + delta.y()) * scale));
     switch (gesture_event->GetType()) {
       case blink::WebInputEvent::kGestureScrollUpdate:
-        if (gesture_event->data.scroll_update.delta_units !=
-            blink::WebGestureEvent::ScrollUnits::kPage) {
+        if (gesture_event->data.scroll_update.delta_units ==
+                ui::ScrollGranularity::kScrollByPixel ||
+            gesture_event->data.scroll_update.delta_units ==
+                ui::ScrollGranularity::kScrollByPrecisePixel) {
           gesture_event->data.scroll_update.delta_x *= scale;
           gesture_event->data.scroll_update.delta_y *= scale;
         }
         break;
       case blink::WebInputEvent::kGestureScrollBegin:
-        if (gesture_event->data.scroll_begin.delta_hint_units !=
-            blink::WebGestureEvent::ScrollUnits::kPage) {
+        if (gesture_event->data.scroll_begin.delta_hint_units ==
+                ui::ScrollGranularity::kScrollByPixel ||
+            gesture_event->data.scroll_begin.delta_hint_units ==
+                ui::ScrollGranularity::kScrollByPrecisePixel) {
           gesture_event->data.scroll_begin.delta_x_hint *= scale;
           gesture_event->data.scroll_begin.delta_y_hint *= scale;
         }
@@ -1100,6 +1081,27 @@ EventType WebEventTypeToEventType(WebInputEvent::Type type) {
   }
 }
 
+base::Optional<cc::ScrollInputType> GetScrollInputTypeForEvent(
+    const WebInputEvent& event) {
+  if (event.IsGestureScroll()) {
+    const auto& gesture = static_cast<const WebGestureEvent&>(event);
+    switch (gesture.SourceDevice()) {
+      case WebGestureDevice::kTouchpad:
+        return cc::ScrollInputType::kWheel;
+      case WebGestureDevice::kTouchscreen:
+        return cc::ScrollInputType::kTouchscreen;
+      case WebGestureDevice::kSyntheticAutoscroll:
+        return cc::ScrollInputType::kAutoscroll;
+      case WebGestureDevice::kScrollbar:
+        return cc::ScrollInputType::kScrollbar;
+      case WebGestureDevice::kUninitialized:
+        break;
+    }
+  }
+
+  return base::nullopt;
+}
+
 void SetWebPointerPropertiesFromMotionEventData(
     WebPointerProperties& webPointerProperties,
     int pointer_id,
@@ -1233,6 +1235,72 @@ EventPointerType WebPointerTypeToEventPointerType(
   return EventPointerType::POINTER_TYPE_UNKNOWN;
 }
 
+blink::WebGestureEvent ScrollBeginFromScrollUpdate(
+    const blink::WebGestureEvent& gesture_update) {
+  DCHECK(gesture_update.GetType() == WebInputEvent::kGestureScrollUpdate);
+
+  WebGestureEvent scroll_begin(gesture_update);
+  scroll_begin.SetType(WebInputEvent::kGestureScrollBegin);
+
+  scroll_begin.data.scroll_begin.delta_x_hint =
+      gesture_update.data.scroll_update.delta_x;
+  scroll_begin.data.scroll_begin.delta_y_hint =
+      gesture_update.data.scroll_update.delta_y;
+  scroll_begin.data.scroll_begin.delta_hint_units =
+      gesture_update.data.scroll_update.delta_units;
+  scroll_begin.data.scroll_begin.target_viewport = false;
+  scroll_begin.data.scroll_begin.inertial_phase =
+      gesture_update.data.scroll_update.inertial_phase;
+  scroll_begin.data.scroll_begin.synthetic = false;
+  scroll_begin.data.scroll_begin.pointer_count = 0;
+  scroll_begin.data.scroll_begin.scrollable_area_element_id = 0;
+
+  return scroll_begin;
+}
+
+std::unique_ptr<blink::WebGestureEvent> GenerateInjectedScrollGesture(
+    WebInputEvent::Type type,
+    base::TimeTicks timestamp,
+    WebGestureDevice device,
+    gfx::PointF position_in_widget,
+    gfx::Vector2dF scroll_delta,
+    ScrollGranularity granularity) {
+  DCHECK(IsGestureScroll(type));
+  std::unique_ptr<WebGestureEvent> generated_gesture_event =
+      std::make_unique<WebGestureEvent>(type, WebInputEvent::kNoModifiers,
+                                        timestamp, device);
+
+  if (type == WebInputEvent::Type::kGestureScrollBegin) {
+    // Gesture events expect the scroll delta to be flipped. Gesture events'
+    // scroll deltas are interpreted as the finger's delta in relation to the
+    // screen (which is the reverse of the scrolling direction).
+    generated_gesture_event->data.scroll_begin.delta_x_hint = -scroll_delta.x();
+    generated_gesture_event->data.scroll_begin.delta_y_hint = -scroll_delta.y();
+    generated_gesture_event->data.scroll_begin.inertial_phase =
+        WebGestureEvent::InertialPhaseState::kNonMomentum;
+    generated_gesture_event->data.scroll_begin.delta_hint_units = granularity;
+  } else if (type == WebInputEvent::Type::kGestureScrollUpdate) {
+    generated_gesture_event->data.scroll_update.delta_x = -scroll_delta.x();
+    generated_gesture_event->data.scroll_update.delta_y = -scroll_delta.y();
+    generated_gesture_event->data.scroll_update.inertial_phase =
+        WebGestureEvent::InertialPhaseState::kNonMomentum;
+    generated_gesture_event->data.scroll_update.delta_units = granularity;
+  }
+
+  generated_gesture_event->SetPositionInWidget(position_in_widget);
+  return generated_gesture_event;
+}
+
+gfx::PointF PositionInWidgetFromInputEvent(const blink::WebInputEvent& event) {
+  if (WebInputEvent::IsMouseEventType(event.GetType())) {
+    return static_cast<const WebMouseEvent&>(event).PositionInWidget();
+  } else if (WebInputEvent::IsGestureEventType(event.GetType())) {
+    return static_cast<const WebGestureEvent&>(event).PositionInWidget();
+  } else {
+    return gfx::PointF(0, 0);
+  }
+}
+
 #if defined(OS_ANDROID)
 std::unique_ptr<WebGestureEvent> CreateWebGestureEventFromGestureEventAndroid(
     const GestureEventAndroid& event) {
@@ -1277,9 +1345,9 @@ std::unique_ptr<WebGestureEvent> CreateWebGestureEventFromGestureEventAndroid(
   // event's fields better when extended to handle more cases.
   web_event->SetPositionInWidget(event.location());
   web_event->SetPositionInScreen(event.screen_location());
-  web_event->SetSourceDevice(blink::kWebGestureDeviceTouchscreen);
+  web_event->SetSourceDevice(WebGestureDevice::kTouchscreen);
   if (event.synthetic_scroll())
-    web_event->SetSourceDevice(blink::kWebGestureDeviceSyntheticAutoscroll);
+    web_event->SetSourceDevice(WebGestureDevice::kSyntheticAutoscroll);
   if (event_type == WebInputEvent::kGesturePinchUpdate) {
     web_event->data.pinch_update.scale = event.scale();
   } else if (event_type == WebInputEvent::kGestureScrollBegin) {

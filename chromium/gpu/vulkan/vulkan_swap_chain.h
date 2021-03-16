@@ -5,12 +5,16 @@
 #ifndef GPU_VULKAN_VULKAN_SWAP_CHAIN_H_
 #define GPU_VULKAN_VULKAN_SWAP_CHAIN_H_
 
-#include <memory>
-#include <vector>
 #include <vulkan/vulkan.h>
 
+#include <memory>
+#include <vector>
+
+#include "base/containers/circular_deque.h"
 #include "base/logging.h"
+#include "base/optional.h"
 #include "gpu/vulkan/vulkan_export.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/swap_result.h"
 
@@ -22,59 +26,82 @@ class VulkanDeviceQueue;
 
 class VULKAN_EXPORT VulkanSwapChain {
  public:
+  class VULKAN_EXPORT ScopedWrite {
+   public:
+    explicit ScopedWrite(VulkanSwapChain* swap_chain);
+    ~ScopedWrite();
+
+    bool success() const { return success_; }
+    VkImage image() const { return image_; }
+    uint32_t image_index() const { return image_index_; }
+    VkImageLayout image_layout() const { return image_layout_; }
+    void set_image_layout(VkImageLayout layout) { image_layout_ = layout; }
+
+    // Take the begin write semaphore. The ownership of the semaphore will be
+    // transferred to the caller.
+    VkSemaphore TakeBeginSemaphore();
+
+    // Get the end write semaphore.
+    VkSemaphore GetEndSemaphore();
+
+   private:
+    VulkanSwapChain* const swap_chain_;
+    bool success_ = false;
+    VkImage image_ = VK_NULL_HANDLE;
+    uint32_t image_index_ = 0;
+    VkImageLayout image_layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkSemaphore begin_semaphore_ = VK_NULL_HANDLE;
+    VkSemaphore end_semaphore_ = VK_NULL_HANDLE;
+
+    DISALLOW_COPY_AND_ASSIGN(ScopedWrite);
+  };
+
   VulkanSwapChain();
   ~VulkanSwapChain();
 
+  // min_image_count is the minimum number of presentable images.
   bool Initialize(VulkanDeviceQueue* device_queue,
                   VkSurfaceKHR surface,
-                  const VkSurfaceCapabilitiesKHR& surface_caps,
                   const VkSurfaceFormatKHR& surface_format,
+                  const gfx::Size& image_size,
+                  uint32_t min_image_count,
+                  VkSurfaceTransformFlagBitsKHR pre_transform,
+                  bool use_protected_memory,
                   std::unique_ptr<VulkanSwapChain> old_swap_chain);
+
+  // Destroy() should be called when all related GPU tasks have been finished.
   void Destroy();
 
-  gfx::SwapResult SwapBuffers();
+  // Present the current buffer.
+  gfx::SwapResult PresentBuffer(const gfx::Rect& rect);
 
   uint32_t num_images() const { return static_cast<uint32_t>(images_.size()); }
-  uint32_t current_image() const { return current_image_; }
   const gfx::Size& size() const { return size_; }
-
-  VulkanCommandBuffer* GetCurrentCommandBuffer() const {
-    DCHECK_LT(current_image_, images_.size());
-    return images_[current_image_]->pre_raster_command_buffer.get();
-  }
-
-  VkImage GetImage(uint32_t index) const {
-    DCHECK_LT(index, images_.size());
-    return images_[index]->image;
-  }
-
-  VkImage GetCurrentImage() const {
-    DCHECK_LT(current_image_, images_.size());
-    return images_[current_image_]->image;
-  }
-
-  VkImageLayout GetCurrentImageLayout() const {
-    DCHECK_LT(current_image_, images_.size());
-    return images_[current_image_]->layout;
-  }
-
-  void SetCurrentImageLayout(VkImageLayout layout) {
-    DCHECK_LT(current_image_, images_.size());
-    images_[current_image_]->layout = layout;
-  }
+  bool use_protected_memory() const { return use_protected_memory_; }
 
  private:
   bool InitializeSwapChain(VkSurfaceKHR surface,
-                           const VkSurfaceCapabilitiesKHR& surface_caps,
                            const VkSurfaceFormatKHR& surface_format,
+                           const gfx::Size& image_size,
+                           uint32_t min_image_count,
+                           VkSurfaceTransformFlagBitsKHR pre_transform,
+                           bool use_protected_memory,
                            std::unique_ptr<VulkanSwapChain> old_swap_chain);
   void DestroySwapChain();
 
-  bool InitializeSwapImages(const VkSurfaceCapabilitiesKHR& surface_caps,
-                            const VkSurfaceFormatKHR& surface_format);
+  bool InitializeSwapImages(const VkSurfaceFormatKHR& surface_format);
   void DestroySwapImages();
 
-  VulkanDeviceQueue* device_queue_;
+  bool BeginWriteCurrentImage(VkImage* image,
+                              uint32_t* image_index,
+                              VkImageLayout* layout,
+                              VkSemaphore* semaphore);
+  void EndWriteCurrentImage(VkImageLayout layout, VkSemaphore semaphore);
+  bool AcquireNextImage();
+
+  bool use_protected_memory_ = false;
+  VulkanDeviceQueue* device_queue_ = nullptr;
+  bool is_incremental_present_supported_ = false;
   VkSwapchainKHR swap_chain_ = VK_NULL_HANDLE;
 
   std::unique_ptr<VulkanCommandPool> command_pool_;
@@ -83,20 +110,28 @@ class VULKAN_EXPORT VulkanSwapChain {
 
   struct ImageData {
     ImageData();
+    ImageData(ImageData&& other);
     ~ImageData();
+
+    ImageData& operator=(ImageData&& other);
 
     VkImage image = VK_NULL_HANDLE;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
-    std::unique_ptr<VulkanCommandBuffer> pre_raster_command_buffer;
-    std::unique_ptr<VulkanCommandBuffer> post_raster_command_buffer;
-
-    VkSemaphore render_semaphore = VK_NULL_HANDLE;
-    VkSemaphore present_semaphore = VK_NULL_HANDLE;
+    std::unique_ptr<VulkanCommandBuffer> command_buffer;
+    // Semaphore passed to vkQueuePresentKHR to wait on.
+    VkSemaphore present_begin_semaphore = VK_NULL_HANDLE;
+    // Semaphore signaled when present engine is done with the image.
+    VkSemaphore present_end_semaphore = VK_NULL_HANDLE;
   };
-  std::vector<std::unique_ptr<ImageData>> images_;
-  uint32_t current_image_ = 0;
+  std::vector<ImageData> images_;
 
-  VkSemaphore next_present_semaphore_ = VK_NULL_HANDLE;
+  // Acquired image index.
+  base::circular_deque<uint32_t> in_present_images_;
+  base::Optional<uint32_t> acquired_image_;
+  bool is_writing_ = false;
+  VkSemaphore end_write_semaphore_ = VK_NULL_HANDLE;
+
+  DISALLOW_COPY_AND_ASSIGN(VulkanSwapChain);
 };
 
 }  // namespace gpu

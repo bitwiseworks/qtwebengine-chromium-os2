@@ -22,7 +22,7 @@ GestureEventDetails::GestureEventDetails(ui::EventType type)
 GestureEventDetails::GestureEventDetails(ui::EventType type,
                                          float delta_x,
                                          float delta_y,
-                                         ScrollUnits units)
+                                         ui::ScrollGranularity units)
     : type_(type),
       device_type_(GestureDeviceType::DEVICE_UNKNOWN),
       touch_points_(1) {

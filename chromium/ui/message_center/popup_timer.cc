@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ui/message_center/popup_timer.h"
+#include "base/bind.h"
 
 namespace message_center {
 
@@ -29,9 +30,8 @@ void PopupTimer::Start() {
       timeout_ <= passed_ ? base::TimeDelta() : timeout_ - passed_;
   start_time_ = base::Time::Now();
 
-  timer_->Start(
-      FROM_HERE, timeout_to_close,
-      base::Bind(&Delegate::TimerFinished, timer_delegate_, id_));
+  timer_->Start(FROM_HERE, timeout_to_close,
+                base::BindOnce(&Delegate::TimerFinished, timer_delegate_, id_));
 }
 
 void PopupTimer::Pause() {

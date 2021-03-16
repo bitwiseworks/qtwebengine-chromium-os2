@@ -4,14 +4,17 @@
 
 #include "third_party/blink/renderer/platform/blob/blob_bytes_provider.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/task/post_task.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "base/task/thread_pool.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/renderer/platform/cross_thread_functional.h"
-#include "third_party/blink/renderer/platform/histogram.h"
+#include "third_party/blink/renderer/platform/instrumentation/histogram.h"
 #include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread.h"
+#include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
@@ -22,6 +25,8 @@ namespace {
 // a mojo data pipe. Instances will delete themselves when all data has been
 // written, or when the data pipe is disconnected.
 class BlobBytesStreamer {
+  USING_FAST_MALLOC(BlobBytesStreamer);
+
  public:
   BlobBytesStreamer(Vector<scoped_refptr<RawData>> data,
                     mojo::ScopedDataPipeProducerHandle pipe,
@@ -92,7 +97,7 @@ class BlobBytesStreamer {
 void IncreaseChildProcessRefCount() {
   if (!WTF::IsMainThread()) {
     PostCrossThreadTask(*Thread::MainThread()->GetTaskRunner(), FROM_HERE,
-                        CrossThreadBind(&IncreaseChildProcessRefCount));
+                        CrossThreadBindOnce(&IncreaseChildProcessRefCount));
     return;
   }
   Platform::Current()->SuddenTerminationChanged(false);
@@ -101,7 +106,7 @@ void IncreaseChildProcessRefCount() {
 void DecreaseChildProcessRefCount() {
   if (!WTF::IsMainThread()) {
     PostCrossThreadTask(*Thread::MainThread()->GetTaskRunner(), FROM_HERE,
-                        CrossThreadBind(&DecreaseChildProcessRefCount));
+                        CrossThreadBindOnce(&DecreaseChildProcessRefCount));
     return;
   }
   Platform::Current()->SuddenTerminationChanged(true);
@@ -113,8 +118,8 @@ constexpr size_t BlobBytesProvider::kMaxConsolidatedItemSizeInBytes;
 
 // static
 BlobBytesProvider* BlobBytesProvider::CreateAndBind(
-    mojom::blink::BytesProviderRequest request) {
-  auto task_runner = base::CreateSequencedTaskRunnerWithTraits(
+    mojo::PendingReceiver<mojom::blink::BytesProvider> receiver) {
+  auto task_runner = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
   auto provider = base::WrapUnique(new BlobBytesProvider(task_runner));
   auto* result = provider.get();
@@ -122,12 +127,13 @@ BlobBytesProvider* BlobBytesProvider::CreateAndBind(
   // using the MayBlock taskrunner for actual file operations.
   PostCrossThreadTask(
       *task_runner, FROM_HERE,
-      CrossThreadBind(
+      CrossThreadBindOnce(
           [](std::unique_ptr<BlobBytesProvider> provider,
-             mojom::blink::BytesProviderRequest request) {
-            mojo::MakeStrongBinding(std::move(provider), std::move(request));
+             mojo::PendingReceiver<mojom::blink::BytesProvider> receiver) {
+            mojo::MakeSelfOwnedReceiver(std::move(provider),
+                                        std::move(receiver));
           },
-          WTF::Passed(std::move(provider)), WTF::Passed(std::move(request))));
+          WTF::Passed(std::move(provider)), WTF::Passed(std::move(receiver))));
   return result;
 }
 

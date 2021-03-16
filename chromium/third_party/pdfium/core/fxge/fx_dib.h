@@ -48,26 +48,15 @@ extern const int16_t SDP_Table[513];
 
 struct FXDIB_ResampleOptions {
   FXDIB_ResampleOptions();
-  // TODO(thestig): Remove this ctor once C++14 can be used for more flexible
-  // constexpr initialization.
-  FXDIB_ResampleOptions(bool downsample,
-                        bool bilinear,
-                        bool bicubic,
-                        bool halftone,
-                        bool no_smoothing,
-                        bool lossy);
 
   bool HasAnyOptions() const;
 
-  bool bInterpolateDownsample = false;
   bool bInterpolateBilinear = false;
   bool bInterpolateBicubic = false;
   bool bHalftone = false;
   bool bNoSmoothing = false;
   bool bLossy = false;
 };
-
-extern const FXDIB_ResampleOptions kBilinearInterpolation;
 
 // See PDF 1.7 spec, table 7.2 and 7.3. The enum values need to be in the same
 // order as listed in the spec.
@@ -88,6 +77,7 @@ enum class BlendMode {
   kSaturation,
   kColor,
   kLuminosity,
+  kLast = kLuminosity,
 };
 
 constexpr uint32_t FXSYS_BGR(uint8_t b, uint8_t g, uint8_t r) {
@@ -106,17 +96,35 @@ constexpr uint8_t FXSYS_GetBValue(uint32_t bgr) {
   return (bgr >> 16) & 0xff;
 }
 
+constexpr unsigned int FXSYS_GetUnsignedAlpha(float alpha) {
+  return static_cast<unsigned int>(alpha * 255.f + 0.5f);
+}
+
 #define FXSYS_GetCValue(cmyk) ((uint8_t)((cmyk) >> 24) & 0xff)
 #define FXSYS_GetMValue(cmyk) ((uint8_t)((cmyk) >> 16) & 0xff)
 #define FXSYS_GetYValue(cmyk) ((uint8_t)((cmyk) >> 8) & 0xff)
 #define FXSYS_GetKValue(cmyk) ((uint8_t)(cmyk)&0xff)
 
+// Bits per pixel, not bytes.
 inline int GetBppFromFormat(FXDIB_Format format) {
   return format & 0xff;
 }
 
+// AKA bytes per pixel, assuming 8-bits per component.
 inline int GetCompsFromFormat(FXDIB_Format format) {
   return (format & 0xff) / 8;
+}
+
+inline uint32_t GetAlphaFlagFromFormat(FXDIB_Format format) {
+  return (format >> 8) & 0xff;
+}
+
+inline bool GetIsAlphaFromFormat(FXDIB_Format format) {
+  return format & 0x200;
+}
+
+inline bool GetIsCmykFromFormat(FXDIB_Format format) {
+  return format & 0x400;
 }
 
 inline FX_CMYK CmykEncode(int c, int m, int y, int k) {

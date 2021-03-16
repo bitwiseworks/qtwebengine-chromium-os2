@@ -36,8 +36,6 @@ class SVGFECompositeElement final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  DECLARE_NODE_FACTORY(SVGFECompositeElement);
-
   explicit SVGFECompositeElement(Document&);
 
   SVGAnimatedNumber* k1() { return k1_.Get(); }
@@ -50,12 +48,13 @@ class SVGFECompositeElement final
     return svg_operator_.Get();
   }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  private:
   bool SetFilterEffectAttribute(FilterEffect*, const QualifiedName&) override;
   void SvgAttributeChanged(const QualifiedName&) override;
   FilterEffect* Build(SVGFilterBuilder*, Filter*) override;
+  bool TaintsOrigin() const override { return false; }
 
   Member<SVGAnimatedNumber> k1_;
   Member<SVGAnimatedNumber> k2_;

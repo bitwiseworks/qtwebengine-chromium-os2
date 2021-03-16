@@ -10,4 +10,8 @@ InputHandlerScrollResult::InputHandlerScrollResult()
     : did_scroll(false), did_overscroll_root(false) {
 }
 
+InputHandlerPointerResult::InputHandlerPointerResult()
+    : type(kUnhandled),
+      scroll_units(ui::ScrollGranularity::kScrollByPrecisePixel) {}
+
 }  // namespace cc

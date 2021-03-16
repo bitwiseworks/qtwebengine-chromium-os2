@@ -8,9 +8,9 @@
 #include "third_party/blink/renderer/bindings/core/v8/request_or_usv_string.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_request_init.h"
 #include "third_party/blink/renderer/bindings/modules/v8/request_or_usv_string_or_request_or_usv_string_sequence.h"
 #include "third_party/blink/renderer/core/fetch/request.h"
-#include "third_party/blink/renderer/core/fetch/request_init.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/blob/blob_data.h"
@@ -184,7 +184,7 @@ TEST_F(BackgroundFetchManagerTest, BlobsExtracted) {
   RequestInit* request_init = RequestInit::Create();
   request_init->setMethod("POST");
   request_init->setBody(blink::ScriptValue(
-      scope.GetScriptState(), ToV8(body_text, scope.GetScriptState())));
+      scope.GetIsolate(), ToV8(body_text, scope.GetScriptState())));
   Request* image_request =
       Request::Create(scope.GetScriptState(), image_url.GetString(),
                       request_init, scope.GetExceptionState());

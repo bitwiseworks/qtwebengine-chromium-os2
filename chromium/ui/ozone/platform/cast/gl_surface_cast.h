@@ -5,6 +5,7 @@
 #ifndef UI_OZONE_PLATFORM_CAST_GL_SURFACE_CAST_H_
 #define UI_OZONE_PLATFORM_CAST_GL_SURFACE_CAST_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -25,12 +26,11 @@ class GLSurfaceCast : public gl::NativeViewGLSurfaceEGL {
 
   // gl::GLSurface:
   bool SupportsSwapBuffersWithBounds() override;
-  gfx::SwapResult SwapBuffersWithBounds(
-      const std::vector<gfx::Rect>& rects,
-      const PresentationCallback& callback) override;
+  gfx::SwapResult SwapBuffersWithBounds(const std::vector<gfx::Rect>& rects,
+                                        PresentationCallback callback) override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
-              ColorSpace color_space,
+              const gfx::ColorSpace& color_space,
               bool has_alpha) override;
   bool ScheduleOverlayPlane(int z_order,
                             gfx::OverlayTransform transform,

@@ -37,8 +37,16 @@ class VIEWS_EXPORT WidgetObserver : public base::CheckedObserver {
   // widget has been destroyed.
   virtual void OnWidgetDestroyed(Widget* widget) {}
 
-  virtual void OnWidgetVisibilityChanging(Widget* widget, bool visible) {}
+  // Called before RunShellDrag() is called and after it returns.
+  virtual void OnWidgetDragWillStart(Widget* widget) {}
+  virtual void OnWidgetDragComplete(Widget* widget) {}
 
+  // Called when the widget transitions from a state in which it should render
+  // as active to one in which it should render as inactive or vice-versa.
+  virtual void OnWidgetPaintAsActiveChanged(Widget* widget,
+                                            bool paint_as_active) {}
+
+  virtual void OnWidgetVisibilityChanging(Widget* widget, bool visible) {}
   virtual void OnWidgetVisibilityChanged(Widget* widget, bool visible) {}
 
   virtual void OnWidgetActivationChanged(Widget* widget, bool active) {}
@@ -47,7 +55,7 @@ class VIEWS_EXPORT WidgetObserver : public base::CheckedObserver {
                                      const gfx::Rect& new_bounds) {}
 
  protected:
-  ~WidgetObserver() override {}
+  ~WidgetObserver() override = default;
 };
 
 }  // namespace views

@@ -4,6 +4,7 @@
 
 #include "media/gpu/windows/d3d11_video_decoder_impl.h"
 
+#include "base/bind.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/scheduler.h"
 #include "gpu/ipc/service/gpu_channel.h"
@@ -16,8 +17,7 @@ D3D11VideoDecoderImpl::D3D11VideoDecoderImpl(
     std::unique_ptr<MediaLog> media_log,
     base::RepeatingCallback<scoped_refptr<CommandBufferHelper>()> get_helper_cb)
     : media_log_(std::move(media_log)),
-      get_helper_cb_(std::move(get_helper_cb)),
-      weak_factory_(this) {
+      get_helper_cb_(std::move(get_helper_cb)) {
   // May be called from any thread.
 }
 
@@ -43,10 +43,9 @@ void D3D11VideoDecoderImpl::Initialize(
   if (!helper_ || !helper_->MakeContextCurrent()) {
     const char* reason = "Failed to make context current.";
     DLOG(ERROR) << reason;
-    if (media_log_) {
-      media_log_->AddEvent(media_log_->CreateStringEvent(
-          MediaLogEvent::MEDIA_ERROR_LOG_ENTRY, "error", reason));
-    }
+    if (media_log_)
+      MEDIA_LOG(ERROR, media_log_) << reason;
+
     std::move(init_cb).Run(false);
     return;
   }

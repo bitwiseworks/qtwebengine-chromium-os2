@@ -49,9 +49,9 @@ class ShapeDetectionBrowserTest
       public ::testing::WithParamInterface<struct TestParameters> {
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    // Flag to enable ShapeDetection API.
+    // Enable FaceDetector since it is still experimental.
     CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kEnableBlinkFeatures, "ShapeDetection");
+        switches::kEnableBlinkFeatures, "FaceDetector");
   }
 
  protected:
@@ -64,7 +64,7 @@ class ShapeDetectionBrowserTest
     const GURL html_url(
         embedded_test_server()->GetURL(kShapeDetectionTestHtml));
     const GURL image_url(embedded_test_server()->GetURL(image_path));
-    NavigateToURL(shell(), html_url);
+    EXPECT_TRUE(NavigateToURL(shell(), html_url));
     const std::string js_command = "detectShapesOnImageUrl('" + detector_name +
                                    "', '" + image_url.spec() + "')";
     std::string response_string;
@@ -111,8 +111,8 @@ IN_PROC_BROWSER_TEST_P(ShapeDetectionBrowserTest, MAYBE_DetectShapesInImage) {
                          GetParam().expected_bounding_boxes);
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        ShapeDetectionBrowserTest,
-                        testing::ValuesIn(kTestParameters));
+INSTANTIATE_TEST_SUITE_P(All,
+                         ShapeDetectionBrowserTest,
+                         testing::ValuesIn(kTestParameters));
 
 }  // namespace content

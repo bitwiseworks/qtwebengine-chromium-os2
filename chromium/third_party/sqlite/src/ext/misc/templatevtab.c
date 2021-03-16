@@ -193,11 +193,11 @@ static int templatevtabEof(sqlite3_vtab_cursor *cur){
 /*
 ** This method is called to "rewind" the templatevtab_cursor object back
 ** to the first row of output.  This method is always called at least
-** once prior to any call to templatevtabColumn() or templatevtabRowid() or
+** once prior to any call to templatevtabColumn() or templatevtabRowid() or 
 ** templatevtabEof().
 */
 static int templatevtabFilter(
-  sqlite3_vtab_cursor *pVtabCursor,
+  sqlite3_vtab_cursor *pVtabCursor, 
   int idxNum, const char *idxStr,
   int argc, sqlite3_value **argv
 ){
@@ -222,7 +222,7 @@ static int templatevtabBestIndex(
 }
 
 /*
-** This following structure defines all the methods for the
+** This following structure defines all the methods for the 
 ** virtual table.
 */
 static sqlite3_module templatevtabModule = {
@@ -257,8 +257,8 @@ static sqlite3_module templatevtabModule = {
 __declspec(dllexport)
 #endif
 int sqlite3_templatevtab_init(
-  sqlite3 *db,
-  char **pzErrMsg,
+  sqlite3 *db, 
+  char **pzErrMsg, 
   const sqlite3_api_routines *pApi
 ){
   int rc = SQLITE_OK;

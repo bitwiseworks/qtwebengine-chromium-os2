@@ -1,8 +1,14 @@
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import unittest
+
+import six
 
 from py_utils import discover
 
@@ -20,8 +26,8 @@ class DiscoverTest(unittest.TestCase):
                                        self._base_class,
                                        index_by_class_name=False)
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'another_discover_dummyclass': 'DummyExceptionWithParameterImpl1',
         'discover_dummyclass': 'DummyException',
@@ -35,8 +41,8 @@ class DiscoverTest(unittest.TestCase):
                                        self._base_class,
                                        directly_constructable=True)
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'dummy_exception': 'DummyException',
         'dummy_exception_impl1': 'DummyExceptionImpl1',
@@ -48,8 +54,8 @@ class DiscoverTest(unittest.TestCase):
     classes = discover.DiscoverClasses(self._start_dir, self._base_dir,
                                        self._base_class)
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'dummy_exception': 'DummyException',
         'dummy_exception_impl1': 'DummyExceptionImpl1',
@@ -68,8 +74,8 @@ class DiscoverTest(unittest.TestCase):
                                        pattern='another*',
                                        index_by_class_name=False)
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'another_discover_dummyclass': 'DummyExceptionWithParameterImpl1'
     }
@@ -83,8 +89,8 @@ class DiscoverTest(unittest.TestCase):
                                        pattern='another*',
                                        directly_constructable=True)
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'dummy_exception_impl1': 'DummyExceptionImpl1',
         'dummy_exception_impl2': 'DummyExceptionImpl2',
@@ -97,8 +103,8 @@ class DiscoverTest(unittest.TestCase):
                                        self._base_class,
                                        pattern='another*')
 
-    actual_classes = dict((name, cls.__name__)
-                          for name, cls in classes.iteritems())
+    actual_classes = dict(
+        (name, cls.__name__) for name, cls in six.iteritems(classes))
     expected_classes = {
         'dummy_exception_impl1': 'DummyExceptionImpl1',
         'dummy_exception_impl2': 'DummyExceptionImpl2',

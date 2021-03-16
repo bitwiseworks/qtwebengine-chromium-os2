@@ -18,31 +18,42 @@
 #include "dawn_native/vulkan/FencedDeleter.h"
 #include "dawn_native/vulkan/PipelineLayoutVk.h"
 #include "dawn_native/vulkan/ShaderModuleVk.h"
+#include "dawn_native/vulkan/VulkanError.h"
 
 namespace dawn_native { namespace vulkan {
 
-    ComputePipeline::ComputePipeline(Device* device, const ComputePipelineDescriptor* descriptor)
-        : ComputePipelineBase(device, descriptor) {
+    // static
+    ResultOrError<ComputePipeline*> ComputePipeline::Create(
+        Device* device,
+        const ComputePipelineDescriptor* descriptor) {
+        std::unique_ptr<ComputePipeline> pipeline =
+            std::make_unique<ComputePipeline>(device, descriptor);
+        DAWN_TRY(pipeline->Initialize(descriptor));
+        return pipeline.release();
+    }
+
+    MaybeError ComputePipeline::Initialize(const ComputePipelineDescriptor* descriptor) {
         VkComputePipelineCreateInfo createInfo;
         createInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
         createInfo.pNext = nullptr;
         createInfo.flags = 0;
         createInfo.layout = ToBackend(descriptor->layout)->GetHandle();
-        createInfo.basePipelineHandle = VK_NULL_HANDLE;
+        createInfo.basePipelineHandle = ::VK_NULL_HANDLE;
         createInfo.basePipelineIndex = -1;
 
         createInfo.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         createInfo.stage.pNext = nullptr;
         createInfo.stage.flags = 0;
         createInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        createInfo.stage.module = ToBackend(descriptor->module)->GetHandle();
-        createInfo.stage.pName = descriptor->entryPoint;
+        createInfo.stage.module = ToBackend(descriptor->computeStage.module)->GetHandle();
+        createInfo.stage.pName = descriptor->computeStage.entryPoint;
         createInfo.stage.pSpecializationInfo = nullptr;
 
-        if (device->fn.CreateComputePipelines(device->GetVkDevice(), VK_NULL_HANDLE, 1, &createInfo,
-                                              nullptr, &mHandle) != VK_SUCCESS) {
-            ASSERT(false);
-        }
+        Device* device = ToBackend(GetDevice());
+        return CheckVkSuccess(
+            device->fn.CreateComputePipelines(device->GetVkDevice(), ::VK_NULL_HANDLE, 1,
+                                              &createInfo, nullptr, &*mHandle),
+            "CreateComputePipeline");
     }
 
     ComputePipeline::~ComputePipeline() {

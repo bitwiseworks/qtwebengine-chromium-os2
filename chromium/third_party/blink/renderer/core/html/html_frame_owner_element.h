@@ -21,17 +21,20 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_FRAME_OWNER_ELEMENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_HTML_FRAME_OWNER_ELEMENT_H_
 
+#include "services/network/public/mojom/trust_tokens.mojom-blink-forward.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
+#include "third_party/blink/public/mojom/scroll/scrollbar_mode.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/feature_policy/feature_policy.h"
+#include "third_party/blink/renderer/core/feature_policy/feature_policy_parser.h"
 #include "third_party/blink/renderer/core/frame/dom_window.h"
 #include "third_party/blink/renderer/core/frame/embedded_content_view.h"
 #include "third_party/blink/renderer/core/frame/frame_owner.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
-#include "third_party/blink/renderer/platform/scroll/scroll_types.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/hash_counted_set.h"
 
 namespace blink {
@@ -73,6 +76,8 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
     return embedded_content_view_;
   }
 
+  void FrameCrossOriginToParentFrameChanged();
+
   class PluginDisposeSuspendScope {
     STACK_ALLOCATED();
 
@@ -99,48 +104,55 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
   void ClearContentFrame() final;
   void AddResourceTiming(const ResourceTimingInfo&) final;
   void DispatchLoad() final;
-  SandboxFlags GetSandboxFlags() const final { return sandbox_flags_; }
+  const FramePolicy& GetFramePolicy() const final { return frame_policy_; }
   bool CanRenderFallbackContent() const override { return false; }
   void RenderFallbackContent(Frame*) override {}
   void IntrinsicSizingInfoChanged() override {}
+  void SetNeedsOcclusionTracking(bool) override {}
   AtomicString BrowsingContextContainerName() const override {
-    return getAttribute(html_names::kNameAttr);
+    return FastGetAttribute(html_names::kNameAttr);
   }
-  ScrollbarMode ScrollingMode() const override { return kScrollbarAuto; }
+  mojom::blink::ScrollbarMode ScrollbarMode() const override {
+    return mojom::blink::ScrollbarMode::kAuto;
+  }
   int MarginWidth() const override { return -1; }
   int MarginHeight() const override { return -1; }
   bool AllowFullscreen() const override { return false; }
   bool AllowPaymentRequest() const override { return false; }
   bool IsDisplayNone() const override { return !embedded_content_view_; }
   AtomicString RequiredCsp() const override { return g_null_atom; }
-  const ParsedFeaturePolicy& ContainerPolicy() const override;
   bool ShouldLazyLoadChildren() const final;
 
   // For unit tests, manually trigger the UpdateContainerPolicy method.
   void UpdateContainerPolicyForTests() { UpdateContainerPolicy(); }
 
-  // This function is to notify ChildFrameCompositor of pointer-events changes
-  // of an OOPIF.
-  void PointerEventsChanged();
-
   void CancelPendingLazyLoad();
 
   void ParseAttribute(const AttributeModificationParams&) override;
+
+  void SetEmbeddingToken(const base::UnguessableToken& token);
+  const base::Optional<base::UnguessableToken>& GetEmbeddingToken() const {
+    return embedding_token_;
+  }
 
   void Trace(Visitor*) override;
 
  protected:
   HTMLFrameOwnerElement(const QualifiedName& tag_name, Document&);
 
-  void SetSandboxFlags(SandboxFlags);
+  void SetSandboxFlags(mojom::blink::WebSandboxFlags);
+  void SetAllowedToDownload(bool allowed) {
+    frame_policy_.allowed_to_download = allowed;
+  }
+  void SetDisallowDocumentAccesss(bool disallowed);
 
   bool LoadOrRedirectSubframe(const KURL&,
                               const AtomicString& frame_name,
                               bool replace_current_item);
   bool IsKeyboardFocusable() const override;
+  void FrameOwnerPropertiesChanged() override;
 
   void DisposePluginSoon(WebPluginContainerImpl*);
-  void FrameOwnerPropertiesChanged();
 
   // Return the origin which is to be used for feature policy container
   // policies, as "the origin of the URL in the frame's src attribute" (see
@@ -161,29 +173,46 @@ class CORE_EXPORT HTMLFrameOwnerElement : public HTMLElement,
   // changes.
   void UpdateContainerPolicy(Vector<String>* messages = nullptr);
 
+  // Return a document policy required policy for this frame, based on the
+  // frame attributes.
+  virtual DocumentPolicy::FeatureState ConstructRequiredPolicy() const {
+    return DocumentPolicy::FeatureState{};
+  }
+
+  // Update the required policy and notify the frame loader client of any
+  // changes.
+  void UpdateRequiredPolicy();
+
+  // Return a set of Trust Tokens parameters for requests for this frame,
+  // based on the frame attributes.
+  virtual network::mojom::blink::TrustTokenParamsPtr ConstructTrustTokenParams()
+      const;
+
  private:
   // Intentionally private to prevent redundant checks when the type is
   // already HTMLFrameOwnerElement.
   bool IsLocal() const final { return true; }
   bool IsRemote() const final { return false; }
-
   bool IsFrameOwnerElement() const final { return true; }
+  void SetIsSwappingFrames(bool is_swapping) override {
+    is_swapping_frames_ = is_swapping;
+  }
 
   virtual network::mojom::ReferrerPolicy ReferrerPolicyAttribute() {
     return network::mojom::ReferrerPolicy::kDefault;
   }
 
+  bool IsLoadingFrameDefaultEagerEnforced() const;
+
   Member<Frame> content_frame_;
   Member<EmbeddedContentView> embedded_content_view_;
-  SandboxFlags sandbox_flags_;
-
-  ParsedFeaturePolicy container_policy_;
+  FramePolicy frame_policy_;
+  base::Optional<base::UnguessableToken> embedding_token_;
 
   Member<LazyLoadFrameObserver> lazy_load_frame_observer_;
   bool should_lazy_load_children_;
+  bool is_swapping_frames_;
 };
-
-DEFINE_ELEMENT_TYPE_CASTS(HTMLFrameOwnerElement, IsFrameOwnerElement());
 
 class SubframeLoadingDisabler {
   STACK_ALLOCATED();
@@ -220,14 +249,14 @@ class SubframeLoadingDisabler {
 
   CORE_EXPORT static SubtreeRootSet& DisabledSubtreeRoots();
 
-  Member<Node> root_;
+  Node* root_;
 };
 
-DEFINE_TYPE_CASTS(HTMLFrameOwnerElement,
-                  FrameOwner,
-                  owner,
-                  owner->IsLocal(),
-                  owner.IsLocal());
+template <>
+struct DowncastTraits<HTMLFrameOwnerElement> {
+  static bool AllowFrom(const FrameOwner& owner) { return owner.IsLocal(); }
+  static bool AllowFrom(const Node& node) { return node.IsFrameOwnerElement(); }
+};
 
 }  // namespace blink
 

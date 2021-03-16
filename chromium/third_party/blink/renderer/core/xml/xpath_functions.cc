@@ -382,11 +382,11 @@ static inline String ExpandedNameLocalPart(Node* node) {
   // But note that Blink does not support namespace nodes.
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      return ToElement(node)->localName();
+      return To<Element>(node)->localName();
     case Node::kAttributeNode:
-      return ToAttr(node)->localName();
+      return To<Attr>(node)->localName();
     case Node::kProcessingInstructionNode:
-      return ToProcessingInstruction(node)->target();
+      return To<ProcessingInstruction>(node)->target();
     default:
       return String();
   }
@@ -395,9 +395,9 @@ static inline String ExpandedNameLocalPart(Node* node) {
 static inline String ExpandedNamespaceURI(Node* node) {
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      return ToElement(node)->namespaceURI();
+      return To<Element>(node)->namespaceURI();
     case Node::kAttributeNode:
-      return ToAttr(node)->namespaceURI();
+      return To<Attr>(node)->namespaceURI();
     default:
       return String();
   }
@@ -408,10 +408,10 @@ static inline String ExpandedName(Node* node) {
 
   switch (node->getNodeType()) {
     case Node::kElementNode:
-      prefix = ToElement(node)->prefix();
+      prefix = To<Element>(node)->prefix();
       break;
     case Node::kAttributeNode:
-      prefix = ToAttr(node)->prefix();
+      prefix = To<Attr>(node)->prefix();
       break;
     default:
       break;
@@ -431,7 +431,7 @@ Value FunLocalName::Evaluate(EvaluationContext& context) const {
     return node ? ExpandedNameLocalPart(node) : "";
   }
 
-  return ExpandedNameLocalPart(context.node.Get());
+  return ExpandedNameLocalPart(context.node);
 }
 
 Value FunNamespaceURI::Evaluate(EvaluationContext& context) const {
@@ -444,7 +444,7 @@ Value FunNamespaceURI::Evaluate(EvaluationContext& context) const {
     return node ? ExpandedNamespaceURI(node) : "";
   }
 
-  return ExpandedNamespaceURI(context.node.Get());
+  return ExpandedNamespaceURI(context.node);
 }
 
 Value FunName::Evaluate(EvaluationContext& context) const {
@@ -457,7 +457,7 @@ Value FunName::Evaluate(EvaluationContext& context) const {
     return node ? ExpandedName(node) : "";
   }
 
-  return ExpandedName(context.node.Get());
+  return ExpandedName(context.node);
 }
 
 Value FunCount::Evaluate(EvaluationContext& context) const {
@@ -468,7 +468,7 @@ Value FunCount::Evaluate(EvaluationContext& context) const {
 
 Value FunString::Evaluate(EvaluationContext& context) const {
   if (!ArgCount())
-    return Value(context.node.Get()).ToString();
+    return Value(context.node).ToString();
   return Arg(0)->Evaluate(context).ToString();
 }
 
@@ -478,16 +478,17 @@ Value FunConcat::Evaluate(EvaluationContext& context) const {
 
   unsigned count = ArgCount();
   for (unsigned i = 0; i < count; ++i) {
-    String str(Arg(i)->Evaluate(context).ToString());
-    result.Append(str);
+    EvaluationContext cloned_context(context);
+    result.Append(Arg(i)->Evaluate(cloned_context).ToString());
   }
 
   return result.ToString();
 }
 
 Value FunStartsWith::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context(context);
   String s1 = Arg(0)->Evaluate(context).ToString();
-  String s2 = Arg(1)->Evaluate(context).ToString();
+  String s2 = Arg(1)->Evaluate(cloned_context).ToString();
 
   if (s2.IsEmpty())
     return true;
@@ -496,8 +497,9 @@ Value FunStartsWith::Evaluate(EvaluationContext& context) const {
 }
 
 Value FunContains::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context(context);
   String s1 = Arg(0)->Evaluate(context).ToString();
-  String s2 = Arg(1)->Evaluate(context).ToString();
+  String s2 = Arg(1)->Evaluate(cloned_context).ToString();
 
   if (s2.IsEmpty())
     return true;
@@ -506,8 +508,9 @@ Value FunContains::Evaluate(EvaluationContext& context) const {
 }
 
 Value FunSubstringBefore::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context(context);
   String s1 = Arg(0)->Evaluate(context).ToString();
-  String s2 = Arg(1)->Evaluate(context).ToString();
+  String s2 = Arg(1)->Evaluate(cloned_context).ToString();
 
   if (s2.IsEmpty())
     return "";
@@ -521,8 +524,9 @@ Value FunSubstringBefore::Evaluate(EvaluationContext& context) const {
 }
 
 Value FunSubstringAfter::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context(context);
   String s1 = Arg(0)->Evaluate(context).ToString();
-  String s2 = Arg(1)->Evaluate(context).ToString();
+  String s2 = Arg(1)->Evaluate(cloned_context).ToString();
 
   wtf_size_t i = s1.Find(s2);
   if (i == kNotFound)
@@ -563,11 +567,15 @@ static std::pair<unsigned, unsigned> ComputeSubstringStartEnd(double start,
 //
 // <https://www.w3.org/TR/xpath/#function-substring>
 Value FunSubstring::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context1(context);
+  EvaluationContext cloned_context2(context);
   String source_string = Arg(0)->Evaluate(context).ToString();
-  const double pos = FunRound::Round(Arg(1)->Evaluate(context).ToNumber());
-  const double len = ArgCount() == 3
-                         ? FunRound::Round(Arg(2)->Evaluate(context).ToNumber())
-                         : std::numeric_limits<double>::infinity();
+  const double pos =
+      FunRound::Round(Arg(1)->Evaluate(cloned_context1).ToNumber());
+  const double len =
+      ArgCount() == 3
+          ? FunRound::Round(Arg(2)->Evaluate(cloned_context2).ToNumber())
+          : std::numeric_limits<double>::infinity();
   const auto bounds =
       ComputeSubstringStartEnd(pos, len, source_string.length());
   if (bounds.second <= bounds.first)
@@ -578,24 +586,23 @@ Value FunSubstring::Evaluate(EvaluationContext& context) const {
 
 Value FunStringLength::Evaluate(EvaluationContext& context) const {
   if (!ArgCount())
-    return Value(context.node.Get()).ToString().length();
+    return Value(context.node).ToString().length();
   return Arg(0)->Evaluate(context).ToString().length();
 }
 
 Value FunNormalizeSpace::Evaluate(EvaluationContext& context) const {
-  if (!ArgCount()) {
-    String s = Value(context.node.Get()).ToString();
-    return s.SimplifyWhiteSpace();
-  }
-
-  String s = Arg(0)->Evaluate(context).ToString();
-  return s.SimplifyWhiteSpace();
+  // https://www.w3.org/TR/1999/REC-xpath-19991116/#function-normalize-space
+  String s = (ArgCount() == 0 ? Value(context.node) : Arg(0)->Evaluate(context))
+                 .ToString();
+  return s.SimplifyWhiteSpace(IsXMLSpace);
 }
 
 Value FunTranslate::Evaluate(EvaluationContext& context) const {
+  EvaluationContext cloned_context1(context);
+  EvaluationContext cloned_context2(context);
   String s1 = Arg(0)->Evaluate(context).ToString();
-  String s2 = Arg(1)->Evaluate(context).ToString();
-  String s3 = Arg(2)->Evaluate(context).ToString();
+  String s2 = Arg(1)->Evaluate(cloned_context1).ToString();
+  String s3 = Arg(2)->Evaluate(cloned_context2).ToString();
   StringBuilder result;
 
   for (unsigned i1 = 0; i1 < s1.length(); ++i1) {
@@ -627,12 +634,11 @@ Value FunLang::Evaluate(EvaluationContext& context) const {
   String lang = Arg(0)->Evaluate(context).ToString();
 
   const Attribute* language_attribute = nullptr;
-  Node* node = context.node.Get();
+  Node* node = context.node;
   while (node) {
-    if (node->IsElementNode()) {
-      Element* element = ToElement(node);
+    if (auto* element = DynamicTo<Element>(node))
       language_attribute = element->Attributes().Find(xml_names::kLangAttr);
-    }
+
     if (language_attribute)
       break;
     node = node->parentNode();
@@ -662,7 +668,7 @@ Value FunFalse::Evaluate(EvaluationContext&) const {
 
 Value FunNumber::Evaluate(EvaluationContext& context) const {
   if (!ArgCount())
-    return Value(context.node.Get()).ToNumber();
+    return Value(context.node).ToNumber();
   return Arg(0)->Evaluate(context).ToNumber();
 }
 

@@ -5,11 +5,12 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_PAYMENTS_CAN_MAKE_PAYMENT_EVENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_PAYMENTS_CAN_MAKE_PAYMENT_EVENT_H_
 
+#include "base/macros.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_can_make_payment_event_init.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_details_modifier.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_payment_method_data.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/modules/payments/can_make_payment_event_init.h"
-#include "third_party/blink/renderer/modules/payments/payment_details_modifier.h"
-#include "third_party/blink/renderer/modules/payments/payment_method_data.h"
 #include "third_party/blink/renderer/modules/service_worker/extendable_event.h"
 #include "third_party/blink/renderer/platform/heap/handle.h"
 
@@ -19,24 +20,23 @@ class AtomicString;
 
 namespace blink {
 
-class RespondWithObserver;
+class CanMakePaymentRespondWithObserver;
 class ScriptState;
 
 class MODULES_EXPORT CanMakePaymentEvent final : public ExtendableEvent {
   DEFINE_WRAPPERTYPEINFO();
-  WTF_MAKE_NONCOPYABLE(CanMakePaymentEvent);
 
  public:
   static CanMakePaymentEvent* Create(const AtomicString& type,
                                      const CanMakePaymentEventInit*);
   static CanMakePaymentEvent* Create(const AtomicString& type,
                                      const CanMakePaymentEventInit*,
-                                     RespondWithObserver*,
+                                     CanMakePaymentRespondWithObserver*,
                                      WaitUntilObserver*);
 
   CanMakePaymentEvent(const AtomicString& type,
                       const CanMakePaymentEventInit*,
-                      RespondWithObserver*,
+                      CanMakePaymentRespondWithObserver*,
                       WaitUntilObserver*);
   ~CanMakePaymentEvent() override;
 
@@ -49,15 +49,26 @@ class MODULES_EXPORT CanMakePaymentEvent final : public ExtendableEvent {
 
   void respondWith(ScriptState*, ScriptPromise, ExceptionState&);
 
-  void Trace(blink::Visitor*) override;
+  const String& currency() const;
+  void respondWithMinimalUI(ScriptState*, ScriptPromise, ExceptionState&);
+
+  void Trace(Visitor*) override;
 
  private:
+  void RespondToCanMakePaymentEvent(ScriptState*,
+                                    ScriptPromise,
+                                    ExceptionState&,
+                                    bool is_minimal_ui);
+
   String top_origin_;
   String payment_request_origin_;
   HeapVector<Member<PaymentMethodData>> method_data_;
   HeapVector<Member<PaymentDetailsModifier>> modifiers_;
+  String currency_;
 
-  Member<RespondWithObserver> observer_;
+  Member<CanMakePaymentRespondWithObserver> observer_;
+
+  DISALLOW_COPY_AND_ASSIGN(CanMakePaymentEvent);
 };
 
 }  // namespace blink

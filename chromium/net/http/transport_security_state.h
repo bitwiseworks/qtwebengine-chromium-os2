@@ -28,11 +28,15 @@ namespace net {
 
 namespace ct {
 enum class CTPolicyCompliance;
-};
+}
 
 class HostPortPair;
 class SSLInfo;
 class X509Certificate;
+
+// Controls whether or not Certificate Transparency should be enforced for
+// newly-issued certificates.
+extern const NET_EXPORT_PRIVATE base::Feature kEnforceCTForNewCerts;
 
 void NET_EXPORT_PRIVATE SetTransportSecurityStateSourceForTesting(
     const TransportSecurityStateSource* source);
@@ -330,6 +334,13 @@ class NET_EXPORT TransportSecurityState {
   static const base::Feature kDynamicExpectCTFeature;
 
   TransportSecurityState();
+
+  // Creates a TransportSecurityState object that will skip the check to force
+  // HTTPS from static entries for the given set of hosts. All hostnames in the
+  // bypass list must consist of a single label, i.e. they must be a TLD.
+  explicit TransportSecurityState(
+      std::vector<std::string> hsts_host_bypass_list);
+
   ~TransportSecurityState();
 
   // These functions search for static and dynamic STS and PKP states, and
@@ -454,11 +465,17 @@ class NET_EXPORT TransportSecurityState {
 
   // Returns true and updates |*result| iff |host| has dynamic
   // HSTS/HPKP/Expect-CT (respectively) state. If multiple entries match |host|,
-  // the most specific match determines the return value.
+  // the most specific match determines the return value. |*should_be_dynamic|
+  // is set to true if |host| has no dynamic HSTS state based on the current
+  // implementation but would have it based on a spec-compliant implementation.
+  // See https://crbug.com/821811. |should_be_dynamic| may be nullptr to ignore
+  // the output.
   //
   // Note that these methods are not const because they opportunistically remove
   // entries that have expired.
-  bool GetDynamicSTSState(const std::string& host, STSState* result);
+  bool GetDynamicSTSState(const std::string& host,
+                          STSState* result,
+                          bool* should_be_dynamic);
   bool GetDynamicPKPState(const std::string& host, PKPState* result);
   bool GetDynamicExpectCTState(const std::string& host, ExpectCTState* result);
 
@@ -516,11 +533,9 @@ class NET_EXPORT TransportSecurityState {
     DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   }
 
-  // For unit tests only. Causes CheckCTRequirements() to return
-  // CT_REQUIREMENTS_NOT_MET (if |*required| is true) or CT_REQUIREMENTS_MET (if
-  // |*required| is false) for non-compliant connections by default (that is,
-  // unless a RequireCTDelegate overrides). Set to nullptr to reset.
-  static void SetShouldRequireCTForTesting(bool* required);
+  // For unit tests only. Forces CheckCTRequirements() to unconditionally
+  // check compliance.
+  static void SetRequireCTForTesting(bool required);
 
   // For unit tests only. Clears the caches that deduplicate sent PKP and
   // Expect-CT reports.
@@ -654,6 +669,8 @@ class NET_EXPORT TransportSecurityState {
   // rate-limiting.
   ReportCache sent_hpkp_reports_cache_;
   ReportCache sent_expect_ct_reports_cache_;
+
+  std::set<std::string> hsts_host_bypass_list_;
 
   THREAD_CHECKER(thread_checker_);
 

@@ -6,26 +6,26 @@
 
 #include "base/memory/read_only_shared_memory_region.h"
 #include "media/base/video_frame.h"
-#include "mojo/public/cpp/base/shared_memory_utils.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 
 namespace mirroring {
 
 FakeVideoCaptureHost::FakeVideoCaptureHost(
-    media::mojom::VideoCaptureHostRequest request)
-    : binding_(this, std::move(request)) {}
+    mojo::PendingReceiver<media::mojom::VideoCaptureHost> receiver)
+    : receiver_(this, std::move(receiver)) {}
 FakeVideoCaptureHost::~FakeVideoCaptureHost() {}
 
 void FakeVideoCaptureHost::Start(
-    int32_t device_id,
-    int32_t session_id,
+    const base::UnguessableToken& device_id,
+    const base::UnguessableToken& session_id,
     const media::VideoCaptureParams& params,
-    media::mojom::VideoCaptureObserverPtr observer) {
+    mojo::PendingRemote<media::mojom::VideoCaptureObserver> observer) {
   ASSERT_TRUE(observer);
-  observer_ = std::move(observer);
+  observer_.Bind(std::move(observer));
   observer_->OnStateChanged(media::mojom::VideoCaptureState::STARTED);
 }
 
-void FakeVideoCaptureHost::Stop(int32_t device_id) {
+void FakeVideoCaptureHost::Stop(const base::UnguessableToken& device_id) {
   if (!observer_)
     return;
 
@@ -39,7 +39,7 @@ void FakeVideoCaptureHost::SendOneFrame(const gfx::Size& size,
   if (!observer_)
     return;
 
-  auto shmem = mojo::CreateReadOnlySharedMemoryRegion(5000);
+  auto shmem = base::ReadOnlySharedMemoryRegion::Create(5000);
   memset(shmem.mapping.memory(), 125, 5000);
   observer_->OnNewBuffer(
       0, media::mojom::VideoBufferHandle::NewReadOnlyShmemRegion(

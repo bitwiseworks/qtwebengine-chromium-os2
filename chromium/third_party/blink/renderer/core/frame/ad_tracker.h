@@ -5,8 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_AD_TRACKER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FRAME_AD_TRACKER_H_
 
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/probe/async_task_id.h"
 #include "third_party/blink/renderer/platform/heap/member.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
@@ -16,21 +18,27 @@
 
 namespace blink {
 class ExecutionContext;
-class DocumentLoader;
 class ResourceRequest;
-class ResourceResponse;
 enum class ResourceType : uint8_t;
-struct FetchInitiatorInfo;
 
 namespace probe {
 class CallFunction;
 class ExecuteScript;
 }  // namespace probe
 
+namespace features {
+CORE_EXPORT extern const base::Feature kAsyncStackAdTagging;
+CORE_EXPORT extern const base::Feature kTopOfStackAdTagging;
+}
+
 // Tracker for tagging resources as ads based on the call stack scripts.
 // The tracker is maintained per local root.
-class CORE_EXPORT AdTracker : public GarbageCollectedFinalized<AdTracker> {
+class CORE_EXPORT AdTracker : public GarbageCollected<AdTracker> {
  public:
+  enum class StackType { kBottomOnly, kBottomAndTop };
+  // Finds an AdTracker for a given ExecutionContext.
+  static AdTracker* FromExecutionContext(ExecutionContext*);
+
   // Instrumenting methods.
   // Called when a script module or script gets executed from native code.
   void Will(const probe::ExecuteScript&);
@@ -40,25 +48,37 @@ class CORE_EXPORT AdTracker : public GarbageCollectedFinalized<AdTracker> {
   void Will(const probe::CallFunction&);
   void Did(const probe::CallFunction&);
 
-  // Called when a resource request is about to be sent. This will do the
-  // following:
-  // - Mark a resource request as an ad if any executing scripts contain an ad.
-  // - If the marked resource is a script, also save it to keep track of all
-  // those script resources that have been identified as ads.
+  // Called when a subresource request is about to be sent or is redirected.
+  // Returns true if:
+  // - If the resource is loaded in an ad iframe
+  // - If ad script is in the v8 stack
+  // - |known_ad| is true
   // Virtual for testing.
-  virtual void WillSendRequest(ExecutionContext*,
-                               unsigned long identifier,
-                               DocumentLoader*,
-                               ResourceRequest&,
-                               const ResourceResponse& redirect_response,
-                               const FetchInitiatorInfo&,
-                               ResourceType);
+  virtual bool CalculateIfAdSubresource(ExecutionContext* execution_context,
+                                        const ResourceRequest& request,
+                                        ResourceType resource_type,
+                                        bool known_ad);
+
+  // Called when an async task is created. Check at this point for ad script on
+  // the stack and annotate the task if so.
+  void DidCreateAsyncTask(probe::AsyncTaskId* task);
+
+  // Called when an async task is eventually run.
+  void DidStartAsyncTask(probe::AsyncTaskId* task);
+
+  // Called when the task has finished running.
+  void DidFinishAsyncTask(probe::AsyncTaskId* task);
 
   // Returns true if any script in the pseudo call stack has previously been
-  // identified as an ad resource.
-  bool IsAdScriptInStack();
+  // identified as an ad resource, if the current ExecutionContext is a known ad
+  // execution context, or if the script at the top of isolate's
+  // stack is ad script. Whether to look at just the bottom of the
+  // stack or the top and bottom is indicated by |stack_type|. kBottomAndTop is
+  // generally best as it catches more ads, but if you're calling very
+  // frequently then consider just the bottom of the stack for performance sake.
+  bool IsAdScriptInStack(StackType stack_type);
 
-  virtual void Trace(blink::Visitor*);
+  virtual void Trace(Visitor*);
 
   void Shutdown();
   explicit AdTracker(LocalFrame*);
@@ -66,7 +86,7 @@ class CORE_EXPORT AdTracker : public GarbageCollectedFinalized<AdTracker> {
 
  protected:
   // Protected for testing.
-  virtual String ScriptAtTopOfStack(ExecutionContext*);
+  virtual String ScriptAtTopOfStack();
   virtual ExecutionContext* GetCurrentExecutionContext();
 
  private:
@@ -89,6 +109,18 @@ class CORE_EXPORT AdTracker : public GarbageCollectedFinalized<AdTracker> {
 
   // The set of ad scripts detected outside of ad-frame contexts.
   HeapHashMap<WeakMember<ExecutionContext>, HashSet<String>> known_ad_scripts_;
+
+  // The number of ad-related async tasks currently running in the stack.
+  uint32_t running_ad_async_tasks_ = 0;
+
+  // True if the AdTracker looks not only at the current V8 stack for ad script
+  // but also at the previous asynchronous stacks that caused this current
+  // callstack to run (e.g., registered callbacks).
+  const bool async_stack_enabled_;
+
+  // True if the TopOfStack experiment is running, which forces the AdTracker to
+  // ignore the bottom of stack frames when looking for ad script.
+  const bool top_of_stack_only_;
 
   DISALLOW_COPY_AND_ASSIGN(AdTracker);
 };
